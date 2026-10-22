@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.hermes.hermes-mobile</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/opt/node@24/bin/node</string>
+    <string>/Users/hajimenakagawa/Projects/hermes-mobile-pwa/apps/bridge/src/server.js</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HM_HOST</key>
+    <string>127.0.0.1</string>
+    <key>HM_PORT</key>
+    <string>4097</string>
+    <key>HERMES_HOME</key>
+    <string>/Users/hajimenakagawa/.hermes</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/opt/node@24/bin:/Users/hajimenakagawa/.hermes/hermes-agent/.hermes/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/hajimenakagawa/Projects/hermes-mobile-pwa</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>ExitTimeOut</key>
+  <integer>15</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/hajimenakagawa/.hermes/logs/hermes-mobile.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/hajimenakagawa/.hermes/logs/hermes-mobile.error.log</string>
+</dict>
+</plist>
