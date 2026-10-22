@@ -1,19 +1,22 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { openSocket } from '../api.js'
+import { useChatSocket } from '../lib/useChatSocket.js'
 import { Icon, Sheet, relTime } from '../components/Ui.jsx'
 
 /**
  * チャットタブ。ブリッジの /ws/chat 経由で Hermes の JSON-RPC（/api/ws）をそのまま話す。
  * 実測したプロトコル:
- *   session.list / session.create {title} / session.history {session_id}
+ *   session.list / session.create {title} / session.resume {session_id}
  *   prompt.submit {session_id, text} / session.interrupt {session_id}
  *   通知: gateway.ready / message.start / message.delta {text} / thinking.delta {text}
  *         message.complete {text, usage} / session.title / session.info / sessions.changed
+ *
+ * 再接続（画面OFF→復帰・回線断）は useChatSocket が担当し、
+ * 戻ってきたら保存済みの stored_session_id に `session.resume` で繋ぎ直す。
  */
 export function ChatPane({ notify }) {
-  const [conn, setConn] = useState('connecting')
   const [sessions, setSessions] = useState([])
   const [sid, setSid] = useState(null)
+  const [storedSid, setStoredSid] = useState(null)
   const [title, setTitle] = useState('')
   const [blocks, setBlocks] = useState([])
   const [text, setText] = useState('')
@@ -22,105 +25,63 @@ export function ChatPane({ notify }) {
   const [drawer, setDrawer] = useState(false)
   const [thinking, setThinking] = useState('')
 
-  const wsRef = useRef(null)
-  const idRef = useRef(1)
-  const pending = useRef(new Map())
   const sidRef = useRef(null)
+  const storedRef = useRef(null)
+  const sessionsRef = useRef([])
   const listRef = useRef(null)
   const taRef = useRef(null)
   const stickRef = useRef(true)
+  const notifiedOffline = useRef(false)
 
   sidRef.current = sid
+  storedRef.current = storedSid
 
-  /** JSON-RPC を送って応答を待つ。 */
-  const rpc = useCallback((method, params = {}, timeoutMs = 20000) => {
-    const ws = wsRef.current
-    const id = idRef.current++
-    return new Promise((resolve) => {
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        resolve({ error: { message: '未接続' } })
-        return
-      }
-      const t = setTimeout(() => {
-        pending.current.delete(id)
-        resolve({ error: { message: 'timeout' } })
-      }, timeoutMs)
-      pending.current.set(id, (m) => {
-        clearTimeout(t)
-        resolve(m)
-      })
-      ws.send(JSON.stringify({ jsonrpc: '2.0', id, method, params }))
-    })
-  }, [])
-
-  const loadSessions = useCallback(async () => {
+  /** セッション一覧を取り直す。 */
+  const loadSessions = useCallback(async (rpc) => {
     const r = await rpc('session.list', {})
     const list = r?.result?.sessions ?? []
+    sessionsRef.current = list
     setSessions(list)
     return list
-  }, [rpc])
+  }, [])
 
-  const openSession = useCallback(
-    async (storedId) => {
-      const s = sessions.find((x) => x.id === storedId)
-      setTitle(s?.title ?? '')
-      setBlocks([])
-      setUsage(null)
-      setThinking('')
-      // 履歴は session.resume が返す（session.history は resume 前は 4001 になる）
-      const r = await rpc('session.resume', { session_id: storedId })
+  /**
+   * サーバのセッションを UI に繋ぎ直す（履歴も置き換える）。
+   * @param {Function} rpc JSON-RPC
+   * @param {string} target stored session id
+   * @returns {Promise<boolean>} 成否
+   */
+  const resumeInto = useCallback(
+    async (rpc, target) => {
+      const r = await rpc('session.resume', { session_id: target })
       const res = r?.result
-      if (res?.session_id) {
-        setSid(res.session_id)
-        const msgs = Array.isArray(res.messages) ? res.messages : []
-        setBlocks(
-          msgs
-            .filter((m) => m.role === 'user' || m.role === 'assistant')
-            .map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', text: m.text ?? '' })),
-        )
-      } else {
-        setSid(storedId)
-        notify(r?.error?.message ?? 'セッションを復元できませんでした')
-      }
+      if (!res?.session_id) return { ok: false, sid: null }
+      setSid(res.session_id)
+      setStoredSid(res.resumed ?? target)
+      const msgs = Array.isArray(res.messages) ? res.messages : []
+      setBlocks(
+        msgs
+          .filter((m) => m.role === 'user' || m.role === 'assistant')
+          .map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', text: String(m.text ?? '') }))
+          // 空（ツール呼び出しだけのターン）は吹き出しを作らない
+          .filter((m) => m.text.trim().length > 0),
+      )
+      return { ok: true, sid: res.session_id }
     },
-    [rpc, sessions, notify],
+    [],
   )
 
-  // 接続
-  useEffect(() => {
-    const ws = openSocket('/ws/chat')
-    wsRef.current = ws
-    ws.onopen = () => setConn('open')
-    ws.onclose = () => {
-      setConn('closed')
-      setStreaming(false)
-    }
-    ws.onerror = () => setConn('error')
-    ws.onmessage = (ev) => {
-      let msg
-      try {
-        msg = JSON.parse(ev.data)
-      } catch {
-        return
-      }
-      if (msg.id && pending.current.has(msg.id)) {
-        pending.current.get(msg.id)(msg)
-        pending.current.delete(msg.id)
-        return
-      }
+  /** 通知の処理（セッションは ref で判定するので再購読しない）。 */
+  const onEvent = useCallback(
+    (msg) => {
       const type = msg?.params?.type
       const p = msg?.params?.payload ?? {}
       const sidMsg = msg?.params?.session_id
       if (sidMsg && sidRef.current && sidMsg !== sidRef.current) return
 
-      if (type === 'gateway.ready') {
-        setConn('ready')
-        return
-      }
       if (type === 'message.start') {
         setStreaming(true)
         setThinking('')
-        // 送信時に置いた空のバブルがあれば再利用する（二重に作らない）
         setBlocks((prev) => {
           const last = prev[prev.length - 1]
           if (last?.role === 'assistant' && last.open && !last.text) return prev
@@ -154,46 +115,76 @@ export function ChatPane({ notify }) {
           if (last?.role === 'assistant') next[next.length - 1] = { ...last, text: p.text ?? last.text, open: false }
           return next
         })
-        loadSessions()
         return
       }
       if (type === 'session.title') {
         if (p.title) setTitle(p.title)
-        return
       }
-      if (type === 'sessions.changed') {
-        loadSessions()
+    },
+    [],
+  )
+
+  const sockRef = useRef(null)
+
+  /** 接続が ready になったとき（初回・再接続の両方）。 */
+  const onReady = useCallback(async () => {
+    const rpc = sockRef.current?.rpc
+    if (!rpc) return
+    if (notifiedOffline.current) {
+      notifiedOffline.current = false
+      notify('再接続しました')
+    }
+    await loadSessions(rpc)
+    // 進行中の会話があれば繋ぎ直す（会話が切れない）
+    const target = storedRef.current
+    if (target) {
+      const resumed = await resumeInto(rpc, target)
+      if (!resumed.ok) {
+        // セッションが消えていたら作り直し（次の送信で作る）
+        setSid(null)
+        setStoredSid(null)
+      } else {
+        // タイトルは一覧から拾う（resume の戻り値には含まれない）
+        const found = sessionsRef.current.find((x) => x.id === target)
+        if (found?.title) setTitle(found.title)
       }
     }
-    return () => ws.close()
-  }, [loadSessions])
+  }, [loadSessions, notify, resumeInto])
 
-  // 初回: 一覧だけ読む（セッションは最初の送信時に作る。無駄な空セッションを作らない）
+  const onState = useCallback((s) => {
+    if (s === 'closed' || s === 'error') {
+      setStreaming(false)
+      notifiedOffline.current = true
+    }
+  }, [])
+
+  const sock = useChatSocket({ onEvent, onReady, onState })
+  sockRef.current = sock
+  const { rpc, showBanner, state: connState } = sock
+
+  // 直近の会話を端末に覚えておく（アプリを閉じても続きから話せる）
   useEffect(() => {
-    if (conn !== 'ready') return
-    loadSessions()
-  }, [conn, loadSessions])
+    const saved = localStorage.getItem('hm.storedSid')
+    if (saved && !storedRef.current) {
+      setStoredSid(saved)
+      setSid(null) // resume は onReady で行う
+    }
+  }, [])
+  useEffect(() => {
+    try {
+      if (storedSid) localStorage.setItem('hm.storedSid', storedSid)
+      else localStorage.removeItem('hm.storedSid')
+    } catch {
+      /* noop */
+    }
+  }, [storedSid])
 
   useEffect(() => {
     const el = listRef.current
     if (el && stickRef.current) el.scrollTop = el.scrollHeight
   }, [blocks, streaming])
 
-  const ensureSession = useCallback(
-    async (title) => {
-      if (sid) return sid
-      const r = await rpc('session.create', { title: title ?? 'mobile' })
-      const created = r?.result?.session_id
-      if (created) {
-        setSid(created)
-        setTitle(title ?? '新しい会話')
-        return created
-      }
-      return null
-    },
-    [sid, rpc],
-  )
-
+  /** 送信。セッションは最初の送信時に作る。 */
   const send = useCallback(async () => {
     const body = text.trim()
     if (!body || streaming) return
@@ -201,21 +192,26 @@ export function ChatPane({ notify }) {
     setStreaming(true)
     setBlocks((prev) => [...prev, { role: 'user', text: body }, { role: 'assistant', text: '', open: true }])
 
-    let target = await ensureSession(body.slice(0, 24))
+    let target = sid
     if (!target) {
-      setStreaming(false)
-      notify('セッションを作成できませんでした')
-      return
+      const r = await rpc('session.create', { title: body.slice(0, 24) })
+      target = r?.result?.session_id
+      setStoredSid(r?.result?.stored_session_id ?? null)
+      if (!target) {
+        setStreaming(false)
+        notify('セッションを作成できませんでした')
+        return
+      }
+      setSid(target)
+      setTitle(body.slice(0, 24))
     }
     let r = await rpc('prompt.submit', { session_id: target, text: body })
-    // ソケット再接続などで sid が無効になった場合は 1 度だけ作り直す
+    // 再接続で sid が無効になった場合は stored から復元して 1 度だけやり直す
     if (r?.error && /session not found/i.test(r.error.message ?? '')) {
-      const recreated = await rpc('session.create', { title: body.slice(0, 24) })
-      const newSid = recreated?.result?.session_id
-      if (newSid) {
-        setSid(newSid)
-        target = newSid
-        r = await rpc('prompt.submit', { session_id: target, text: body })
+      const stored = storedRef.current
+      if (stored) {
+        const resumed = await resumeInto(rpc, stored)
+        if (resumed.ok && resumed.sid) r = await rpc('prompt.submit', { session_id: resumed.sid, text: body })
       }
     }
     if (r?.error) {
@@ -224,7 +220,7 @@ export function ChatPane({ notify }) {
       setBlocks((prev) => [...prev, { role: 'notice', text: `送信に失敗: ${r.error.message}` }])
     }
     navigator.vibrate?.(8)
-  }, [text, streaming, ensureSession, rpc, notify])
+  }, [text, streaming, sid, rpc, notify, resumeInto])
 
   const interrupt = useCallback(async () => {
     if (!sid) return
@@ -234,20 +230,33 @@ export function ChatPane({ notify }) {
     notify('中断しました')
   }, [sid, rpc, notify])
 
-  const newSession = useCallback(async () => {
-    const r = await rpc('session.create', { title: 'mobile' })
-    const created = r?.result?.session_id
-    if (created) {
-      setSid(created)
-      setTitle('新しい会話')
+  const newSession = useCallback(() => {
+    setSid(null)
+    setStoredSid(null)
+    setTitle('')
+    setBlocks([])
+    setUsage(null)
+    setDrawer(false)
+  }, [])
+
+  const openSession = useCallback(
+    async (storedTarget) => {
+      setDrawer(false)
       setBlocks([])
       setUsage(null)
-      setDrawer(false)
-    }
-  }, [rpc])
+      setTitle(sessions.find((s) => s.id === storedTarget)?.title ?? '')
+      const resumed = await resumeInto(rpc, storedTarget)
+      if (!resumed.ok) {
+        setSid(null)
+        setStoredSid(null)
+        notify('セッションを復元できませんでした')
+      }
+    },
+    [rpc, resumeInto, sessions, notify],
+  )
 
   return (
-    <div className="pane chat">
+    <div className="pane chat" data-conn={connState}>
       <div className="chat-head">
         <button className="icon-btn" onClick={() => setDrawer(true)} aria-label="会話一覧">
           <Icon name="grid" size={18} />
@@ -258,14 +267,17 @@ export function ChatPane({ notify }) {
         </button>
       </div>
 
-      {conn !== 'ready' ? (
-        <div className="banner">{conn === 'connecting' ? '接続中…' : `未接続（${conn}）`}</div>
-      ) : null}
+      {/* 切断直後（2秒未満）は出さない。タブ切替の一瞬のフラッシュ対策 */}
+      {showBanner ? <div className="banner">接続を回復しています…</div> : null}
 
-      <div className="chat-scroll" ref={listRef} onScroll={() => {
-        const el = listRef.current
-        if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
-      }}>
+      <div
+        className="chat-scroll"
+        ref={listRef}
+        onScroll={() => {
+          const el = listRef.current
+          if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+        }}
+      >
         {!blocks.length ? <div className="empty">メッセージを送って開始</div> : null}
         {blocks.map((b, i) =>
           b.role === 'user' ? (
@@ -274,12 +286,12 @@ export function ChatPane({ notify }) {
             </div>
           ) : b.role === 'assistant' ? (
             <div key={i} className="msg bot">
-              <div className="bubble">
-                {b.text || (b.open ? <span className="dots">…</span> : '')}
-              </div>
+              <div className="bubble">{b.text || (b.open ? <span className="dots">…</span> : '')}</div>
             </div>
           ) : (
-            <div key={i} className="msg notice">{b.text}</div>
+            <div key={i} className="msg notice">
+              {b.text}
+            </div>
           ),
         )}
         {streaming && thinking ? <div className="thinking">{thinking}</div> : null}
@@ -331,14 +343,7 @@ export function ChatPane({ notify }) {
             <Icon name="plus" size={16} />
           </button>
           {sessions.map((s) => (
-            <button
-              key={s.id}
-              className={`row${s.id === sid ? ' on' : ''}`}
-              onClick={() => {
-                openSession(s.id)
-                setDrawer(false)
-              }}
-            >
+            <button key={s.id} className={`row${s.id === storedSid ? ' on' : ''}`} onClick={() => openSession(s.id)}>
               <span className="row-main">
                 <span className="row-title">{s.title || s.id}</span>
                 <span className="row-sub">

@@ -168,3 +168,38 @@ npm run revoke             # 全端末をログアウト（トークンはその
 ```
 
 書き込みは 5 秒に 1 回までに抑えてある（`authorized()` のたびにディスクへ書かない）。
+
+## チャットの切断復帰とレイアウト（2026-10-23 修正）
+
+### 再接続（画面OFF→復帰 / 回線断 / ブリッジ再起動）
+
+`apps/web/src/lib/useChatSocket.js` が担当する。
+
+- 切断で指数バックオフ再接続（1s → 2s → 4s … 最大15s）
+- `visibilitychange`（復帰）/ `online` / `pageshow` で即再接続
+- 復帰したら `session.resume` で**元の会話に繋ぎ直す**（`localStorage` の `hm.storedSid` を使用）
+- 未解決の RPC は切断時に解放する（呼び出し側が20秒待たない）
+
+実測（ブリッジを kill → launchd が自動復帰）:
+
+```
+conn=ready → kill → conn=closed (t=18.1s) → conn=ready (t=20.0s)   ← リロード無しで復帰
+```
+
+### 赤帯（未接続バナー）の出し方
+
+- **切断から2秒以上**つながらないときだけ出す。タブ切替時の一瞬のフラッシュは出さない
+- 実装の注意: 「再接続のたびにタイマーを張り直す」とバックオフ中に一度も発火しない。
+  **切断開始時刻からの経過**で判定する（`offlineSince` + 400ms 間隔の判定）
+- 実測: タブ切替15回でバナー表示 0 回 / ブリッジ復帰は約1.9秒なのでバナーは出ない（正常）
+
+### 下部ナビが消える問題への対策
+
+端末（Android）で再現した事象の再発防止。ナビが消えない構造にした:
+
+- `html, body, #root { overflow: hidden }` + `.app { height:100%; max-height:100dvh; overflow:hidden }`
+  → ページ自体がスクロールしてナビが画面外に出る経路を塞ぐ
+- `.nav { flex: 0 0 auto; position: sticky; bottom: 0 }`
+- タブ内の描画エラーは **ErrorBoundary** で 1 画面に閉じ込める（ナビは残る）
+- 万一の原因調査用に、端末の例外を `~/.hermes/mobile-pwa/client-errors.log` に記録する
+  （`POST /api/client-error`、30件/分まで）

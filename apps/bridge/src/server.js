@@ -216,6 +216,22 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, { sessions })
   }
 
+  // --- 端末側の例外を受け取る（下部ナビ消失などの原因調査用）-------------
+  if (a === 'client-error' && req.method === 'POST') {
+    if (!writeAllowed(30, 60_000)) return sendJson(res, 429, { error: { message: 'too many' } })
+    const body = await readJson(req, 200_000)
+    try {
+      fs.mkdirSync(cfg.dataDir, { recursive: true })
+      fs.appendFileSync(
+        path.join(cfg.dataDir, 'client-errors.log'),
+        `${JSON.stringify({ at: new Date().toISOString(), ...body })}\n`,
+      )
+    } catch {
+      /* 記録に失敗しても返すだけ */
+    }
+    return sendJson(res, 200, { ok: true })
+  }
+
   if (a === 'logs') {
     const name = url.searchParams.get('file') ?? 'gateway'
     const lines = Number(url.searchParams.get('lines') ?? 200)
@@ -322,6 +338,7 @@ server.on('upgrade', (req, socket, head) => {
  */
 async function proxyChat(client) {
   let upstream
+  const started = Date.now()
   try {
     upstream = new WebSocket(await hermes.wsUrl('/api/ws'), { headers: { Origin: cfg.hermesBase } })
   } catch (err) {
@@ -339,6 +356,7 @@ async function proxyChat(client) {
   upstream.on('open', () => {
     for (const q of queue.splice(0)) upstream.send(q)
     client.send(JSON.stringify({ jsonrpc: '2.0', method: 'event', params: { type: 'bridge.ready', payload: {} } }))
+    console.log(`[chat] upstream open (${Date.now() - started}ms)`)
   })
   upstream.on('message', (raw) => {
     if (client.readyState === WebSocket.OPEN) client.send(raw.toString())
@@ -355,7 +373,10 @@ async function proxyChat(client) {
       /* noop */
     }
   }
-  upstream.on('close', (code) => closeBoth(code === 1000 ? 1000 : 1011, `upstream ${code}`))
+  upstream.on('close', (code) => {
+    console.log(`[chat] upstream closed code=${code} after ${Date.now() - started}ms`)
+    closeBoth(code === 1000 ? 1000 : 1011, `upstream ${code}`)
+  })
   upstream.on('error', () => closeBoth(1011, 'upstream error'))
   client.on('close', () => {
     try {

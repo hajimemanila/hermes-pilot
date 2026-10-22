@@ -13,6 +13,63 @@ const TABS = [
   { id: 'settings', label: '設定', icon: 'gear' },
 ]
 
+/**
+ * タブ内の描画エラーを1画面に閉じ込める（下部ナビは絶対に残す）。
+ * 発生したら内容とスタックをブリッジに送って記録する。
+ */
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props)
+    this.state = { error: null }
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error }
+  }
+
+  componentDidCatch(error, info) {
+    try {
+      fetch('/api/client-error', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json', 'x-client': 'mobile' },
+        body: JSON.stringify({
+          message: String(error?.message ?? error),
+          stack: String(error?.stack ?? '').slice(0, 4000),
+          componentStack: String(info?.componentStack ?? '').slice(0, 4000),
+          tab: this.props.tab,
+          ua: navigator.userAgent,
+          url: location.href,
+        }),
+      }).catch(() => {})
+    } catch {
+      /* noop */
+    }
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="pane">
+          <div className="card">
+            <div className="row-title">このタブでエラーが発生しました</div>
+            <div className="row-sub" style={{ marginTop: 6, lineHeight: 1.7 }}>
+              {String(this.state.error?.message ?? this.state.error)}
+            </div>
+            <button className="btn" style={{ marginTop: 12 }} onClick={() => this.setState({ error: null })}>
+              再試行
+            </button>
+            <div className="row-sub" style={{ marginTop: 8 }}>
+              記録は ~/.hermes/mobile-pwa/client-errors.log
+            </div>
+          </div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 export function App() {
   const [tab, setTab] = useState('tasks')
   const [overview, setOverview] = useState(null)
@@ -117,17 +174,19 @@ export function App() {
       ) : null}
 
       <main className="panes">
-        {booting ? (
-          <div className="empty">読み込み中…</div>
-        ) : tab === 'tasks' ? (
-          <TasksPane overview={overview} refresh={refresh} notify={notify} />
-        ) : tab === 'chat' ? (
-          <ChatPane notify={notify} />
-        ) : tab === 'term' ? (
-          <TermPane notify={notify} />
-        ) : (
-          <SettingsPane overview={overview} notify={notify} refresh={refresh} />
-        )}
+        <ErrorBoundary tab={tab}>
+          {booting ? (
+            <div className="empty">読み込み中…</div>
+          ) : tab === 'tasks' ? (
+            <TasksPane overview={overview} refresh={refresh} notify={notify} />
+          ) : tab === 'chat' ? (
+            <ChatPane notify={notify} />
+          ) : tab === 'term' ? (
+            <TermPane notify={notify} />
+          ) : (
+            <SettingsPane overview={overview} notify={notify} refresh={refresh} />
+          )}
+        </ErrorBoundary>
       </main>
 
       <nav className="nav">

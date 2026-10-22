@@ -26,6 +26,10 @@ html,
 body,
 #root {
   height: 100%;
+  /* Android で画面OFF→復帰したときや、キーボードでビューポートが変わったときに
+     ページ自体がスクロールして下部ナビが画面外へ出るのを防ぐ */
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 body {
@@ -40,7 +44,9 @@ body {
 .app {
   display: flex;
   flex-direction: column;
-  height: 100dvh;
+  height: 100%;
+  max-height: 100dvh;
+  overflow: hidden;
   padding-top: var(--safe-t);
 }
 
@@ -709,7 +715,10 @@ body {
 
 /* ---------- ナビ ---------- */
 .nav {
-  flex: none;
+  flex: 0 0 auto;
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   height: calc(var(--nav-h) + var(--safe-b));
