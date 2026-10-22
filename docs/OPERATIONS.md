@@ -141,3 +141,30 @@ $ curl -s -o /dev/null -w "%{http_code}\n" https://<host>:8444/manifest.webmanif
 | チャットだけ失敗 | `node scripts/probe-bridge.mjs`（上流 9119 の生存も確認） |
 | 端末が `closed` | PTY 起動失敗。`audit.jsonl` の `term.error`、`spawn-helper` の権限 |
 | タスクが出ない | ボード slug と `~/.hermes/kanban/boards/<slug>/kanban.db` の存在 |
+
+## 端末の認証は再起動で切れない（2026-10-23 修正）
+
+端末セッションは `~/.hermes/mobile-pwa/sessions.json`（0600）に**永続化**している。
+ブリッジの再起動・launchd の kickstart・Mac の再起動ではログアウトしない。実測:
+
+```
+auth → 302（Cookie 発行）
+sessions.json: {sessions: 1, tokenFingerprint: 37f068f8781b5482}
+kill → launchd が自動復帰（pid 1877）
+同じ Cookie で GET /api/overview → 200
+もう一度 kill/復帰 → 200（維持）
+```
+
+**再認証が必要になるのは次の 4 つだけ**:
+
+1. トークンをローテーションした（`rm ~/.hermes/mobile-pwa/token` → 再起動）。`tokenFingerprint` が変わるので全端末が自動失効
+2. 30日間その端末を使っていない（最終利用からスライディング）
+3. `npm run revoke` で明示的に失効
+4. 端末側でサイトデータを消した / PWA を入れ直した（Cookie が消える）
+
+```bash
+npm run revoke -- --list   # 発行済み端末の一覧（Cookie の値は出さない）
+npm run revoke             # 全端末をログアウト（トークンはそのまま、再起動不要）
+```
+
+書き込みは 5 秒に 1 回までに抑えてある（`authorized()` のたびにディスクへ書かない）。

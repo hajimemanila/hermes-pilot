@@ -155,3 +155,48 @@ test('カンバン: 存在しないボード/タスクは 404', async () => {
   assert.throws(() => kb.tasks('nope'), (err) => err.statusCode === 404)
   assert.throws(() => kb.task('alpha', 'nope'), (err) => err.statusCode === 404)
 })
+
+test('認証: 発行したセッションは再起動（createAuth の作り直し）でも生きている', () => {
+  const dir = tmp('hm-a3-')
+  const cfg = cfgFor(dir)
+  const first = createAuth(cfg)
+  const value = first.exchange(first.token)
+  assert.ok(fs.existsSync(path.join(dir, 'sessions.json')))
+
+  const second = createAuth(cfg) // プロセス再起動相当
+  assert.equal(second.authorized({ url: '/api/x', headers: { cookie: `hm_session=${value}` }, method: 'GET' }), true)
+})
+
+test('認証: トークンをローテーションすると全セッションが失効する', () => {
+  const dir = tmp('hm-a4-')
+  const cfg = cfgFor(dir)
+  const first = createAuth(cfg)
+  const value = first.exchange(first.token)
+
+  fs.rmSync(path.join(dir, 'token'))
+  const rotated = createAuth(cfg) // 新しいトークンを生成
+  assert.notEqual(rotated.token, first.token)
+  assert.equal(rotated.authorized({ url: '/', headers: { cookie: `hm_session=${value}` }, method: 'GET' }), false)
+  assert.equal(rotated.sessions().length, 0)
+})
+
+test('認証: revokeAll で端末だけ失効（トークンは有効なまま）', () => {
+  const dir = tmp('hm-a5-')
+  const cfg = cfgFor(dir)
+  const auth = createAuth(cfg)
+  const value = auth.exchange(auth.token)
+  assert.equal(auth.sessions().length, 1)
+  assert.equal(auth.revokeAll(), 1)
+  assert.equal(auth.authorized({ url: '/', headers: { cookie: `hm_session=${value}` }, method: 'GET' }), false)
+  assert.equal(auth.exchange(auth.token) !== null, true)
+})
+
+test('認証: 期限切れは永続化ファイルからも消える', async () => {
+  const dir = tmp('hm-a6-')
+  const cfg = cfgFor(dir)
+  const auth = createAuth(cfg)
+  const value = auth.exchange(auth.token)
+  await new Promise((r) => setTimeout(r, 1100))
+  const again = createAuth({ ...cfg, sessionTtlMs: 500 })
+  assert.equal(again.authorized({ url: '/', headers: { cookie: `hm_session=${value}` }, method: 'GET' }), false)
+})

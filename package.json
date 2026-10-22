@@ -14,7 +14,8 @@
     "test": "node --test apps/bridge/test/*.test.js",
     "postinstall": "node scripts/postinstall.mjs",
     "start": "node apps/bridge/src/server.js",
-    "probe:bridge": "node scripts/probe-bridge.mjs"
+    "probe:bridge": "node scripts/probe-bridge.mjs",
+    "revoke": "node scripts/revoke.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",

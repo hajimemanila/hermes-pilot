@@ -6,7 +6,9 @@ import path from 'node:path'
  * アプリの入り口認証。
  *
  * - 端末には**アプリトークンだけ**を渡す（Hermes のセッショントークンは渡さない）
- * - 起動時に 1 回だけ `/auth?t=<token>` を踏ませて HttpOnly Cookie にする
+ * - 最初の 1 回だけ `/auth?t=<token>` を踏ませて HttpOnly Cookie にする
+ * - **発行済みセッションはディスクに永続化**する（ブリッジ再起動で端末がログアウトしない）
+ * - トークンをローテーションすると（ファイルを消して再生成）、過去のセッションは自動で全失効
  * - 書き込み系は `X-Client: mobile` 必須（CSRF の多層防御）
  * - 待受は 127.0.0.1。外部公開は Tailscale serve のみ
  *
@@ -27,8 +29,59 @@ export function createAuth(cfg) {
   }
 
   const hash = (v) => crypto.createHash('sha256').update(v).digest('hex')
-  /** @type {Map<string, number>} */
-  const sessions = new Map()
+  const fingerprint = hash(token).slice(0, 16)
+  const sessionsPath = path.join(cfg.dataDir, 'sessions.json')
+
+  /**
+   * 永続セッション。`{version, tokenFingerprint, sessions: {hash: {created, lastSeen}}}`
+   * @type {{version: number, tokenFingerprint: string, sessions: Record<string, {created: number, lastSeen: number}>}}
+   */
+  let store = { version: 1, tokenFingerprint: fingerprint, sessions: {} }
+  try {
+    const loaded = JSON.parse(fs.readFileSync(sessionsPath, 'utf8'))
+    if (loaded?.sessions && typeof loaded.sessions === 'object' && loaded.tokenFingerprint === fingerprint) {
+      store = { version: 1, tokenFingerprint: fingerprint, sessions: loaded.sessions }
+    }
+  } catch {
+    /* 初回・破損時は空から */
+  }
+
+  let dirty = false
+  let lastFlush = 0
+  const flush = (force = false) => {
+    if (!dirty && !force) return
+    const now = Date.now()
+    if (!force && now - lastFlush < 5000) return // ディスク書き込みは 5 秒に 1 回まで
+    lastFlush = now
+    dirty = false
+    try {
+      const tmp = `${sessionsPath}.tmp`
+      fs.writeFileSync(tmp, JSON.stringify({ version: 1, tokenFingerprint: fingerprint, sessions: store.sessions }, null, 2), {
+        mode: 0o600,
+      })
+      fs.renameSync(tmp, sessionsPath)
+    } catch {
+      /* 永続化に失敗しても認証は続ける */
+    }
+  }
+
+  /** 期限切れを落とす。 */
+  const prune = () => {
+    const now = Date.now()
+    let removed = 0
+    for (const [k, rec] of Object.entries(store.sessions)) {
+      if (now - (rec.lastSeen ?? rec.created ?? 0) > cfg.sessionTtlMs) {
+        delete store.sessions[k]
+        removed += 1
+      }
+    }
+    if (removed) {
+      dirty = true
+      flush(true)
+    }
+    return removed
+  }
+  prune()
 
   const parseCookies = (header) => {
     const out = {}
@@ -48,8 +101,12 @@ export function createAuth(cfg) {
     exchange(given) {
       if (!given || given.length !== token.length) return null
       if (!crypto.timingSafeEqual(Buffer.from(given), Buffer.from(token))) return null
+      prune()
       const value = crypto.randomBytes(24).toString('base64url')
-      sessions.set(hash(value), Date.now())
+      const now = Date.now()
+      store.sessions[hash(value)] = { created: now, lastSeen: now }
+      dirty = true
+      flush(true)
       return value
     },
 
@@ -59,18 +116,43 @@ export function createAuth(cfg) {
       if (url.searchParams.get('t') === token) return true
       const cookie = parseCookies(req.headers.cookie)[cfg.cookieName]
       if (!cookie) return false
-      const created = sessions.get(hash(cookie))
-      if (!created) return false
-      if (Date.now() - created > cfg.sessionTtlMs) {
-        sessions.delete(hash(cookie))
+      const key = hash(cookie)
+      const rec = store.sessions[key]
+      if (!rec) return false
+      const now = Date.now()
+      if (now - (rec.lastSeen ?? rec.created ?? 0) > cfg.sessionTtlMs) {
+        delete store.sessions[key]
+        dirty = true
+        flush(true)
         return false
       }
+      rec.lastSeen = now
+      dirty = true
+      flush()
       if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers['x-client'] !== 'mobile') return false
       return true
     },
 
     cookieHeader(value) {
       return `${cfg.cookieName}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${Math.floor(cfg.sessionTtlMs / 1000)}`
+    },
+
+    /** 端末セッション一覧（診断用。Cookie の値は返さない）。 */
+    sessions() {
+      return Object.entries(store.sessions).map(([k, v]) => ({
+        id: k.slice(0, 8),
+        created: new Date(v.created).toISOString(),
+        lastSeen: new Date(v.lastSeen ?? v.created).toISOString(),
+      }))
+    },
+
+    /** 全端末をログアウトさせる（トークンは変えない）。 */
+    revokeAll() {
+      const n = Object.keys(store.sessions).length
+      store.sessions = {}
+      dirty = true
+      flush(true)
+      return n
     },
 
     /** 監査ログ（追記のみ）。 */
