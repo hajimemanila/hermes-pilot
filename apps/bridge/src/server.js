@@ -14,6 +14,7 @@ import { createGitInfo } from './gitinfo.js'
 import { createDiscord } from './discord.js'
 import { createSearch } from './search.js'
 import { createTranscript } from './transcript.js'
+import { createCapture } from './capture.js'
 
 const require = createRequire(import.meta.url)
 const pty = safeRequire('node-pty')
@@ -40,6 +41,7 @@ const gitinfo = createGitInfo(cfg)
 const discord = createDiscord(cfg)
 const search = createSearch(cfg)
 const transcript = createTranscript(cfg)
+const capture = createCapture(cfg)
 // 起動時にコミットサマリを温める（初回のタスク一覧を待たせない）
 gitinfo.warm().catch(() => {})
 
@@ -214,6 +216,22 @@ async function handleApi(req, res, url) {
     // /api/boards/:slug/tasks/:id/diff                   … そのタスクのコミット差分
     // POST /api/boards/:slug/tasks/:id/abort             … 実行中タスクの中断
     if (!b) return sendJson(res, 200, { boards: kanban.boards() })
+    // クイック起票（POST /api/boards/:slug/tasks）
+    if (b && c === 'tasks' && !d && req.method === 'POST') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+      }
+      const body = await readJson(req)
+      const r = await capture.create({ ...body, board: b })
+      auth.audit({
+        kind: 'kanban.create',
+        board: b,
+        task: r.task?.id ?? null,
+        created: Boolean(r.created),
+        ok: Boolean(r.ok),
+      })
+      return sendJson(res, r.ok ? 201 : 400, r)
+    }
     if (b && c === 'tasks' && !d) {
       const list = kanban.tasks(b, { limit: Number(url.searchParams.get('limit') ?? 60) })
       // 履歴（kanban-sop）に記録があるタスクだけ git / Discord を添える

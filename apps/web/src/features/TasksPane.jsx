@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { HoldButton, Icon, Sheet, relTime } from '../components/Ui.jsx'
+import { CaptureSheet } from './CaptureSheet.jsx'
 
 const STATUS_LABEL = {
   running: '実行中',
@@ -27,6 +28,7 @@ export function TasksPane({ overview, refresh, notify }) {
   // Diff プレビュー（開いたときだけ取得）
   const [diff, setDiff] = useState(null)
   const [patch, setPatch] = useState(null)
+  const [captureOpen, setCaptureOpen] = useState(false)
 
   const loadBoards = useCallback(async () => {
     try {
@@ -177,9 +179,14 @@ export function TasksPane({ overview, refresh, notify }) {
 
       <div className="list-head">
         <span>タスク</span>
-        <button className="link" onClick={() => board && loadTasks(board)}>
-          更新
-        </button>
+        <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <button className="link" onClick={() => setCaptureOpen(true)}>
+            ＋ 起票
+          </button>
+          <button className="link" onClick={() => board && loadTasks(board)}>
+            更新
+          </button>
+        </span>
       </div>
 
       {loading ? <div className="empty">読み込み中…</div> : null}
@@ -250,6 +257,19 @@ export function TasksPane({ overview, refresh, notify }) {
             実行結果は設定タブの監査ログに残ります。
           </div>
         </Sheet>
+      ) : null}
+
+      {captureOpen ? (
+        <CaptureSheet
+          board={board}
+          boards={boards}
+          notify={notify}
+          onClose={() => setCaptureOpen(false)}
+          onCreated={(task) => {
+            if (board && task?.board === board) loadTasks(board)
+            else if (task?.board) setBoard(task.board)
+          }}
+        />
       ) : null}
 
       {detail ? (

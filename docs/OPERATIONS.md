@@ -400,3 +400,34 @@ Resuming it here would create a writer the Kanban board cannot observe or superv
 TUI 由来ヒットをタップ → 通常表示（16メッセージ・composer flex・storedSid 保存）
 タイトルも sessions.title から復元（「[M7.1] 障害実測で判明した欠陥2件の修正…」）
 ```
+
+## クイック起票（2026-10-23 追加 / PLAN-V3 の B）
+
+タスクタブの「＋ 起票」から、1行（または音声）でカンバンにタスクを作る。
+
+### サーバ
+
+- `POST /api/boards/:slug/tasks` → `{ok, created, task:{id,title,status,priority,assignee,board}}`
+- **DB へ直接書かない**。`hermes kanban --board <slug> create <title> --json …` を `execFile`（シェル不使用）で実行する
+- 検証: タイトル必須・200字まで、本文 4000字まで、priority は 0〜9 に丸め、assignee は `[\w.@-]{1,64}` のみ、ボード名は `[a-z0-9][a-z0-9._-]*`
+- 二重起票の防止: `idempotencyKey`（シートを開いたときの乱数）を10分キャッシュ。未指定なら内容＋10分窓の sha1
+- 書き込み扱い（レート制限 60/分）＋ 監査ログ `kanban.create`
+
+### UI
+
+- タスクタブの「＋ 起票」→ シート。ボードはチップで切替（**いま見ているボードが既定**）
+- 音声: `webkitSpeechRecognition`（lang=ja-JP, interimResults）。途中経過もタイトルに反映、確定で終了。非対応端末ではボタンを出さない
+- 「詳細」を開くと本文・優先度（なし/低/中/高）・担当
+- Enter で送信（IME 変換中は送らない）。成功でトースト＋一覧を再取得
+
+### 実測（390×844 / :8444）
+
+```
+POST /api/boards/hermes-mobile-pwa/tasks {"title":"API probe: 起票テスト",...}
+  → ok:true created:true task.id=t_3fddc454 priority:5
+同じ idempotencyKey で再送 → created:false / 同じ t_3fddc454（CLI は1回だけ）
+タイトル空 → 400
+UI: 一覧の「＋ 起票」→ マイク表示あり・ボードチップ4件 → 送信
+  → 「UI probe: 音声起票のテスト」が一覧先頭（待機）・シートは自動で閉じる
+検証用タスクは archive 済み（t_5a36bd3a / t_3fddc454）
+```

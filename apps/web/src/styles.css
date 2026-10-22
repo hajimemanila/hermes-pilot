@@ -752,6 +752,26 @@ body {
   outline-offset: 2px;
 }
 
+/* クイック起票のマイク */
+.mic {
+  flex: none;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 16px;
+  display: grid;
+  place-items: center;
+}
+
+.mic.on {
+  border-color: var(--bad);
+  background: rgba(249, 112, 102, 0.15);
+  color: #ffb4ad;
+}
+
 .snippet-chip.add {
   flex: none;
   width: 30px;
