@@ -296,3 +296,16 @@ conn=ready → kill → conn=closed (t=18.1s) → conn=ready (t=20.0s)   ← リ
 長押し「GW状態」→ "Gateway is supervised by launchd (PID 97432)" / nanokvm PID 68042
 レイアウト: action-bar 36px、term-host 614px（33行）、nav top 786、scrollY 0
 ```
+
+## シート内の項目は `.list-item`（2026-10-23 修正）
+
+`<button class="list-item">` にスタイルが無く、ブラウザ既定の**白背景・中央寄せ・アイコン改行**になっていた
+（Android のダークモードで白いカードが並ぶ）。`styles.css` に `.list-item` を追加:
+
+- `background: var(--surface)` / `border: 1px solid var(--line)` / `border-radius: 12px`
+- `display:flex; align-items:center; gap:10px; text-align:left`、`appearance:none` で既定の装飾を打ち消す
+- `:active` は `--surface-2` + `--line-strong`
+- `.list` の gap を 6px に
+
+対象: 定型スニペット / 添付 / 端末の定型コマンド / 会話。**シート内に装飾なしの `<button>` を置かない**のが原則。
+追加時は `.list-item` か `.row` を使う。

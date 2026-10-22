@@ -222,7 +222,53 @@ body {
 .list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 6px;
+}
+
+/* シート（ドロワー）内の選択肢。ブラウザ既定の白背景・中央寄せを打ち消すダークカード */
+.list-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.list-item:active {
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+}
+
+.list-item .row-title {
+  display: block;
+  font-size: 13.5px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-line-clamp: none;
+}
+
+.list-item > span {
+  min-width: 0;
+}
+
+.list-item svg {
+  flex: none;
+  color: var(--muted);
+}
+
+.list-item .link {
+  flex: none;
+  padding: 6px 8px;
 }
 
 .row {
