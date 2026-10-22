@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { HoldButton, Icon, Sheet, relTime } from '../components/Ui.jsx'
 import { CaptureSheet } from './CaptureSheet.jsx'
+import { UsageSheet } from './UsageSheet.jsx'
+import { fmtCost } from '../lib/format.js'
 
 const STATUS_LABEL = {
   running: '実行中',
@@ -29,6 +31,9 @@ export function TasksPane({ overview, refresh, notify }) {
   const [diff, setDiff] = useState(null)
   const [patch, setPatch] = useState(null)
   const [captureOpen, setCaptureOpen] = useState(false)
+  // 使用量（24h）
+  const [usageData, setUsageData] = useState(null)
+  const [usageOpen, setUsageOpen] = useState(false)
 
   const loadBoards = useCallback(async () => {
     try {
@@ -59,6 +64,21 @@ export function TasksPane({ overview, refresh, notify }) {
   useEffect(() => {
     loadBoards()
   }, [loadBoards])
+
+  // 使用量は60秒ごと（サーバ側も30秒キャッシュ）
+  useEffect(() => {
+    let alive = true
+    const load = () =>
+      api('/api/usage?hours=24')
+        .then((d) => alive && setUsageData(d))
+        .catch(() => {})
+    load()
+    const id = setInterval(() => document.visibilityState === 'visible' && load(), 60_000)
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [])
 
   useEffect(() => {
     if (!board) return
@@ -154,6 +174,10 @@ export function TasksPane({ overview, refresh, notify }) {
           <span className="stat-k">SystemOps</span>
           <span className="stat-v">{ops ? (ops.ok ? 'Clean' : 'Blocked') : '—'}</span>
         </div>
+        <button className="stat" onClick={() => setUsageOpen(true)} aria-label="使用量の内訳">
+          <span className="stat-k">24h</span>
+          <span className="stat-v">{usageData?.ok ? fmtCost(usageData.totals.cost) : '—'}</span>
+        </button>
         <div className="stat">
           <span className="stat-k">メモリ</span>
           <span className="stat-v">{mem ? `${mem.percent}%` : '—'}</span>
@@ -271,6 +295,8 @@ export function TasksPane({ overview, refresh, notify }) {
           }}
         />
       ) : null}
+
+      {usageOpen ? <UsageSheet data={usageData} hours={24} onClose={() => setUsageOpen(false)} /> : null}
 
       {detail ? (
         <Sheet

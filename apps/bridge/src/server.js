@@ -15,6 +15,7 @@ import { createDiscord } from './discord.js'
 import { createSearch } from './search.js'
 import { createTranscript } from './transcript.js'
 import { createCapture } from './capture.js'
+import { createUsage } from './usage.js'
 
 const require = createRequire(import.meta.url)
 const pty = safeRequire('node-pty')
@@ -42,6 +43,7 @@ const discord = createDiscord(cfg)
 const search = createSearch(cfg)
 const transcript = createTranscript(cfg)
 const capture = createCapture(cfg)
+const usage = createUsage(cfg)
 // 起動時にコミットサマリを温める（初回のタスク一覧を待たせない）
 gitinfo.warm().catch(() => {})
 
@@ -287,6 +289,13 @@ async function handleApi(req, res, url) {
       before: Number(url.searchParams.get('before') ?? 0),
     })
     return sendJson(res, r.ok ? 200 : 404, r)
+  }
+
+  // --- 使用量（コスト・トークン）----------------------------------------------
+  // /api/usage?hours=24  … 合計とモデル別・上位セッション
+  if (a === 'usage' && req.method === 'GET') {
+    const r = usage.summary({ hours: Number(url.searchParams.get('hours') ?? 24) })
+    return sendJson(res, r.ok ? 200 : 500, r)
   }
 
   // --- 横断検索 --------------------------------------------------------------
