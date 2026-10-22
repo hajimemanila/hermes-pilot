@@ -12,6 +12,52 @@ export function SettingsPane({ overview, notify, refresh }) {
   const [logName, setLogName] = useState('gateway')
   const [sessions, setSessions] = useState([])
 
+  // マイスニペット
+  const [custom, setCustom] = useState([])
+  const [customMax, setCustomMax] = useState(12)
+  const [draftLabel, setDraftLabel] = useState('')
+  const [draftText, setDraftText] = useState('')
+  const [draftHot, setDraftHot] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  const loadSnippets = useCallback(async () => {
+    try {
+      const d = await api('/api/snippets')
+      setCustom((d.snippets ?? []).filter((s) => s.custom).map((s) => ({ id: s.id, label: s.label, text: s.text, hot: s.hot })))
+      setCustomMax(d.customMax ?? 12)
+    } catch (e) {
+      notify(e.message)
+    }
+  }, [notify])
+
+  const saveSnippets = useCallback(
+    async (next) => {
+      setSaving(true)
+      try {
+        const d = await api('/api/snippets', { method: 'PUT', body: { custom: next } })
+        setCustom((d.custom ?? []).map((s) => ({ id: s.id, label: s.label, text: s.text, hot: s.hot })))
+        window.dispatchEvent(new Event('hm:snippets'))
+        notify('保存しました')
+      } catch (e) {
+        notify(e.message)
+      } finally {
+        setSaving(false)
+      }
+    },
+    [notify],
+  )
+
+  const addDraft = () => {
+    const label = draftLabel.trim()
+    const text = draftText.trim()
+    if (!label || !text) return notify('名前と文言を入れてください')
+    if (custom.length >= customMax) return notify(`マイスニペットは${customMax}個までです`)
+    saveSnippets([...custom, { label, text, hot: draftHot }])
+    setDraftLabel('')
+    setDraftText('')
+    setDraftHot(false)
+  }
+
   const loadAudit = useCallback(async () => {
     try {
       const d = await api('/api/audit?lines=80')
@@ -23,10 +69,11 @@ export function SettingsPane({ overview, notify, refresh }) {
 
   useEffect(() => {
     loadAudit()
+    loadSnippets()
     api('/api/sessions?limit=5')
       .then((d) => setSessions(d.sessions ?? []))
       .catch(() => {})
-  }, [loadAudit])
+  }, [loadAudit, loadSnippets])
 
   const openLog = async (name) => {
     try {
@@ -123,6 +170,59 @@ export function SettingsPane({ overview, notify, refresh }) {
           </div>
         ))}
         {!(audit ?? []).length ? <div className="empty">まだありません</div> : null}
+      </div>
+
+      <div className="list-head">
+        <span>マイスニペット（{custom.length}/{customMax}）</span>
+      </div>
+      <div className="list">
+        {custom.map((s) => (
+          <div key={s.id} className="row static">
+            <span className="row-main" style={{ minWidth: 0 }}>
+              <span className="row-title">
+                {s.label}
+                {s.hot ? <span className="pill" style={{ marginLeft: 8 }}>バー</span> : null}
+              </span>
+              <span className="row-sub" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {s.text.replace(/\n/g, ' ')}
+              </span>
+            </span>
+            <button
+              className="link"
+              disabled={saving}
+              onClick={() => saveSnippets(custom.filter((x) => x.id !== s.id))}
+            >
+              削除
+            </button>
+          </div>
+        ))}
+        {!custom.length ? <div className="empty">まだありません（下の欄から追加）</div> : null}
+      </div>
+
+      <div className="card" style={{ marginTop: 10 }}>
+        <input
+          className="inp"
+          placeholder="名前（例: 議事録）"
+          maxLength={20}
+          value={draftLabel}
+          onChange={(e) => setDraftLabel(e.target.value)}
+        />
+        <textarea
+          className="inp"
+          placeholder="入力欄に挿入する文言（{{ここ}} は選択状態で挿入）"
+          rows={3}
+          maxLength={400}
+          value={draftText}
+          onChange={(e) => setDraftText(e.target.value)}
+          style={{ marginTop: 8, resize: 'vertical', fontFamily: 'inherit' }}
+        />
+        <label className="row-sub" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
+          <input type="checkbox" checked={draftHot} onChange={(e) => setDraftHot(e.target.checked)} />
+          チャットのバーにも出す
+        </label>
+        <button className="btn" onClick={addDraft} disabled={saving || custom.length >= customMax} style={{ marginTop: 10 }}>
+          {saving ? '保存中…' : '追加して保存'}
+        </button>
       </div>
 
       <div className="card" style={{ marginTop: 16 }}>

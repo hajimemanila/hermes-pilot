@@ -609,6 +609,229 @@ body {
   background: rgba(6, 22, 26, 0.9);
 }
 
+/* ＋（添付） */
+.composer .plus {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--accent);
+  font-size: 22px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+}
+
+.composer .plus[disabled] {
+  opacity: 0.45;
+}
+
+/* ---------- 定型スニペットバー ---------- */
+.action-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px 0 8px;
+  background: rgba(6, 22, 26, 0.9);
+}
+
+.chips-scroll {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 1px;
+  mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent);
+}
+
+.chips-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.snippet-chip {
+  flex: none;
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 15px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.snippet-chip:active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.snippet-chip[disabled] {
+  opacity: 0.4;
+}
+
+.snippet-chip.add {
+  flex: none;
+  width: 30px;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--muted);
+}
+
+/* ---------- 添付レール ---------- */
+.attach-rail {
+  flex: none;
+  display: flex;
+  gap: 8px;
+  padding: 6px 10px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.attach-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.attach-item {
+  position: relative;
+  flex: none;
+  max-width: 190px;
+  height: 56px;
+  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  display: grid;
+  place-items: center;
+  overflow: visible;
+}
+
+.attach-item.img {
+  width: 56px;
+}
+
+.attach-item.img img {
+  width: 54px;
+  height: 54px;
+  object-fit: cover;
+  border-radius: 9px;
+}
+
+.attach-file {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  font-size: 11.5px;
+  color: var(--muted);
+  max-width: 180px;
+  overflow: hidden;
+}
+
+.attach-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attach-x {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: #0b2a2f;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+/* ---------- 吹き出し内の添付 ---------- */
+.bubble-imgs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.bubble-img img {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 9px;
+  border: 1px solid var(--line-strong);
+  display: block;
+}
+
+.bubble-files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.file-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-size {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 設定の入力欄・小さいピル */
+.inp {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.inp:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.pill {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 9px;
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+  font-size: 10.5px;
+  vertical-align: middle;
+}
+
+
+
 .composer textarea {
   flex: 1;
   min-height: 38px;

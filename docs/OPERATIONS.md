@@ -203,3 +203,48 @@ conn=ready → kill → conn=closed (t=18.1s) → conn=ready (t=20.0s)   ← リ
 - タブ内の描画エラーは **ErrorBoundary** で 1 画面に閉じ込める（ナビは残る）
 - 万一の原因調査用に、端末の例外を `~/.hermes/mobile-pwa/client-errors.log` に記録する
   （`POST /api/client-error`、30件/分まで）
+
+## 添付（画像・ファイル）と定型スニペット（2026-10-23 追加）
+
+### 画像・ファイルの送り方（Hermes 側の口を使う）
+
+自前のアップロード置き場は持たない。Hermes には**添付専用の WS メソッド**があり、
+ブラウザからブリッジ越しにそのまま呼べる（`~/.hermes/hermes-agent/tui_gateway/contracts/prompt_voice.py`）。
+
+| 種別 | メソッド | 実体の行き先 |
+| --- | --- | --- |
+| 画像 | `image.attach_bytes {session_id, content_base64, filename}` | `~/.hermes/attachments/`（次のターンに載る） |
+| ファイル | `file.attach {session_id, data_url, name}` | セッションのワークスペース。戻りの `ref_text` が `@file:` 参照 |
+| PDF | `pdf.attach` | 1ページずつ画像化（UI 未実装） |
+
+- 送信順序: `session.create` → attach を全部 → `prompt.submit`。添付はセッションに紐づくので、
+  **セッションを作り直した直後でも取りこぼさない**（従来は送信時に attach するところで失敗しうる）
+- ファイルは `ref_text` を本文末尾に `添付ファイル:` として足してから送る
+  （例: `- @file:~/.hermes/attachments/hm-note.txt`）。エージェントは普通に読める
+- 画像は送信前に**長辺1600pxへ縮小**（WebP 0.9）。縮小後が元より大きければ元を使う。GIF はそのまま
+- 上限: 1メッセージ **6個**まで、画像 10MB / ファイル 25MB（クライアント側で弾く）
+- 入力欄へのペーストでも画像を取り込める（`clipboardData.items`）。「クリップボードから」は `navigator.clipboard.read()` で、
+  Android Chrome は許可ダイアログが出るので補助経路に留める
+
+### 定型スニペット
+
+- `GET /api/snippets` … 組み込み14件 + マイ（`hot` がバーに出る）
+- `PUT /api/snippets {custom: [...]}` … マイ定義を保存（最大12件、名前20字・本文400字、`~/.hermes/mobile-pwa/snippets.json` 0600）
+- バーは**5個 + ＋**。タップで入力欄に挿入（送信しない）、**長押し550msで即送信**
+- 挿入時 `{{...}}` は選択状態にする（そのまま打ち替えられる）
+- 長押し送信では**書きかけの下書きを消さない**（`sendText(override)` は `override != null` のとき `setText('')` をしない）
+- マイスニペットは設定タブで追加・削除。保存後 `hm:snippets` イベントでチャット側のバーが即更新される
+
+### 実測（2026-10-23, 390×844 / :8444）
+
+```
+チップ: ['まとめ','別解','承認','git diff','git status','＋']
+画像+ファイル同時送信 → 16.4s
+  画像: 緑 64×64 → 応答「#00C85A（RGB 0,200,90）」  ← 実データ一致
+  ファイル: hm-note.txt（合言葉 ZX-9999）→ 応答「ZX-9999（~/.hermes/attachments/hm-note.txt 2行目）」
+  吹き出し内: サムネ1 + ファイルチップ1、空バブル0
+  使用量: in 20723 / out 1521
+タップ挿入 → 入力欄に文言が入りフォーカスは TEXTAREA
+長押し550ms → streaming=true、送信内容はスニペット文言、下書き「書きかけの下書き」は残存
+設定で「議事録」追加 → 件数 1/12、チャットのバーに即出現（hm:snippets）
+```

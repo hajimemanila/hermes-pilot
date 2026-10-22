@@ -8,6 +8,7 @@ import { createAuth } from './auth.js'
 import { createHermesClient } from './hermes.js'
 import { createKanban } from './kanban.js'
 import { createOps } from './ops.js'
+import { listSnippets, normalizeCustom, CUSTOM_MAX } from './snippets.js'
 
 const require = createRequire(import.meta.url)
 const pty = safeRequire('node-pty')
@@ -30,6 +31,25 @@ const auth = createAuth(cfg)
 const hermes = createHermesClient(cfg)
 const kanban = createKanban(cfg)
 const ops = createOps(cfg, hermes, auth)
+
+// スニペット（ユーザー定義は小さな JSON に保存する）
+const snippetsPath = path.join(cfg.dataDir, 'snippets.json')
+function readCustomSnippets() {
+  try {
+    const d = JSON.parse(fs.readFileSync(snippetsPath, 'utf8'))
+    return normalizeCustom(d?.custom ?? [])
+  } catch {
+    return []
+  }
+}
+function writeCustomSnippets(list) {
+  fs.mkdirSync(cfg.dataDir, { recursive: true })
+  const normalized = normalizeCustom(list)
+  const tmp = `${snippetsPath}.tmp`
+  fs.writeFileSync(tmp, JSON.stringify({ version: 1, custom: normalized }, null, 2), { mode: 0o600 })
+  fs.renameSync(tmp, snippetsPath)
+  return normalized
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -214,6 +234,22 @@ async function handleApi(req, res, url) {
       preview: s.preview ?? null,
     }))
     return sendJson(res, 200, { sessions })
+  }
+
+  // --- 定型スニペット ------------------------------------------------------
+  if (a === 'snippets') {
+    if (req.method === 'GET') {
+      return sendJson(res, 200, { snippets: listSnippets(readCustomSnippets()), customMax: CUSTOM_MAX })
+    }
+    if (req.method === 'PUT') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+      }
+      const body = await readJson(req)
+      const saved = writeCustomSnippets(body?.custom ?? [])
+      auth.audit({ kind: 'snippets.save', count: saved.length })
+      return sendJson(res, 200, { custom: saved, snippets: listSnippets(saved) })
+    }
   }
 
   // --- 端末側の例外を受け取る（下部ナビ消失などの原因調査用）-------------
