@@ -679,6 +679,12 @@ body {
   opacity: 0.4;
 }
 
+/* 端末用: 実行できない（挿入のみ）ものは点線で区別 */
+.snippet-chip.ro {
+  border-style: dashed;
+  color: var(--muted);
+}
+
 .snippet-chip.add {
   flex: none;
   width: 30px;

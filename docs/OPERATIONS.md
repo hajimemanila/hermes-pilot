@@ -248,3 +248,51 @@ conn=ready → kill → conn=closed (t=18.1s) → conn=ready (t=20.0s)   ← リ
 長押し550ms → streaming=true、送信内容はスニペット文言、下書き「書きかけの下書き」は残存
 設定で「議事録」追加 → 件数 1/12、チャットのバーに即出現（hm:snippets）
 ```
+
+## 端末タブの定型コマンド（2026-10-23 追加）
+
+`apps/bridge/src/term-snippets.js` の 21 件。`GET /api/snippets/term` で配る。
+
+- **タップ = 入力欄に挿入のみ**（Enter は送らない）。確認してから自分で Enter
+- **長押し550ms = 実行**。実行時は先に `Ctrl-U`（`\x15`）を送って**入力中の行を捨ててから**流す
+  → 打ちかけの文字にコマンドが連結される事故を防ぐ（実測で確認）
+- 破壊的コマンド（再帰削除・pkill・killall・sudo など）は**入れない**。
+  `test/term-snippets.test.js` が禁止パターンとマーカー文字列を機械的に検査する
+- 再起動系は端末 PTY（`ai.hermes.hermes-mobile`）が gateway と別プロセスなので、
+  **gateway を再起動しても端末と画面は切れない**
+
+### 収録（バー6件 + シート15件）
+
+| バー | 内容 |
+| --- | --- |
+| GW状態 | `hermes gateway status` |
+| ドレイン解除 | `rm -f ~/.hermes/.drain_request.json && echo ...` |
+| GW再起動 | `hermes gateway restart` |
+| 解除+再起動 | `rm -f <marker> && hermes gateway restart` |
+| DASH再起動 | `launchctl kickstart -k gui/$(id -u)/ai.hermes.dashboard` |
+| GWログ | `tail -n 80 ~/.hermes/logs/gateway.log` |
+
+シート: ドレイン状態 / launchd一覧 / エラーログ / GWエラー / 疎通3点 / ポート確認(9119・4097・8787) /
+プロセス / 負荷 / ディスク / PWA再起動 / DSH再起動 / カンバン状態 / git状態 / 版・モデル / drain API状態
+
+### ドレインで止まる現象の手順
+
+1. 「ドレイン状態」で `~/.hermes/.drain_request.json` の有無を見る（無ければ drain 起因ではない）
+2. あれば「ドレイン解除」→ マーカー削除のみ。gateway はそのまま動き続ける
+3. 解除しても戻らないときは「解除+再起動」
+4. それでも駄目なら「GWログ」「GWエラー」で原因を見る
+
+`hermes dashboard --status` は launchd 管理の実体を検出できず "No hermes dashboard or serve processes running." を返すため**スニペットにしていない**。
+代わりに HTTP 疎通（`curl` で 9119 / 4097 / 8787）を「疎通3点」として用意した。
+
+### 実測（390×844 / :8444）
+
+```
+バー: ['GW状態','ドレイン解除','GW再起動','解除+再起動','DASH再起動','GWログ']  シート 21 件
+タップ「GW状態」→ プロンプトに "hermes gateway status" が入るだけ（未実行）
+長押し「ドレイン解除」→ "drain marker を削除しました"（入力中の行は破棄される）
+シート「ポート確認」→ 9119(python3.1 68539) / 4097(node 9983) / 8787(node 95564) が LISTEN
+シート「疎通3点」→ dashboard 200 / mobile 200 / dsh 200
+長押し「GW状態」→ "Gateway is supervised by launchd (PID 97432)" / nanokvm PID 68042
+レイアウト: action-bar 36px、term-host 614px（33行）、nav top 786、scrollY 0
+```

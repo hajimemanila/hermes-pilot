@@ -9,6 +9,7 @@ import { createHermesClient } from './hermes.js'
 import { createKanban } from './kanban.js'
 import { createOps } from './ops.js'
 import { listSnippets, normalizeCustom, CUSTOM_MAX } from './snippets.js'
+import { listTermSnippets } from './term-snippets.js'
 
 const require = createRequire(import.meta.url)
 const pty = safeRequire('node-pty')
@@ -234,6 +235,11 @@ async function handleApi(req, res, url) {
       preview: s.preview ?? null,
     }))
     return sendJson(res, 200, { sessions })
+  }
+
+  // --- 端末の定型コマンド ---------------------------------------------------
+  if (a === 'snippets' && b === 'term' && req.method === 'GET') {
+    return sendJson(res, 200, { snippets: listTermSnippets() })
   }
 
   // --- 定型スニペット ------------------------------------------------------
