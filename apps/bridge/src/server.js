@@ -236,6 +236,24 @@ async function handleApi(req, res, url) {
   sendJson(res, 404, { error: { message: `unknown endpoint: ${url.pathname}` } })
 }
 
+/**
+ * 認証不要で配るパス（アプリの殻）。
+ *
+ * WebAPK の生成は **Google のサーバーが認証なしで** manifest / アイコン / start_url を
+ * 取得するため、ここを Cookie の内側に置くと Android で
+ * 「This app cannot be installed」になる（実測）。データ（/api, /ws）は必ず認証の内側。
+ * @param {string} pathname パス
+ * @returns {boolean} 公開してよいか
+ */
+function isPublicPath(pathname) {
+  if (pathname === '/' || pathname === '/index.html') return true
+  if (pathname === '/healthz' || pathname === '/auth') return true
+  if (pathname === '/manifest.webmanifest' || pathname === '/sw.js' || pathname === '/favicon.ico') return true
+  if (pathname.startsWith('/assets/')) return true
+  if (/^\/icon-[a-z0-9-]+\.(png|svg)$/i.test(pathname)) return true
+  return false
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`)
 
@@ -252,10 +270,15 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
-  if (!auth.authorized(req)) {
+  if (!isPublicPath(url.pathname) && !auth.authorized(req)) {
     if (url.pathname.startsWith('/api/')) return sendJson(res, 401, { error: { message: 'unauthorized', code: 'AUTH_REQUIRED' } })
     res.writeHead(401, { 'content-type': 'text/html; charset=utf-8' }).end(LOGIN_HTML)
     return
+  }
+
+  // 殻は公開、API は認証必須（殻の中の /api/* 呼び出しで 401 を受けたら UI がログインを出す）
+  if (url.pathname.startsWith('/api/') && !auth.authorized(req)) {
+    return sendJson(res, 401, { error: { message: 'unauthorized', code: 'AUTH_REQUIRED' } })
   }
 
   try {

@@ -17,6 +17,8 @@ export function App() {
   const [tab, setTab] = useState('tasks')
   const [overview, setOverview] = useState(null)
   const [conn, setConn] = useState('ok')
+  const [authNeeded, setAuthNeeded] = useState(false)
+  const [tokenInput, setTokenInput] = useState('')
   const [toast, setToast] = useState(null)
   const [booting, setBooting] = useState(true)
   const toastTimer = useRef(null)
@@ -32,8 +34,13 @@ export function App() {
       const data = await api('/api/overview')
       setOverview(data)
       setConn('ok')
+      setAuthNeeded(false)
       return data
     } catch (e) {
+      if (e.status === 401) {
+        setAuthNeeded(true)
+        return null
+      }
       setConn(e.code === 'OFFLINE' ? 'offline' : 'error')
       return null
     }
@@ -65,6 +72,33 @@ export function App() {
       /* 未対応 */
     }
   }, [overview?.runningTasks])
+
+  // 殻は公開・データは認証の内側なので、未ログインならここでトークンを入れる
+  if (authNeeded) {
+    return (
+      <div className="login">
+        <h1>Hermes Mobile</h1>
+        <p>アプリトークンを入力してください</p>
+        <input
+          value={tokenInput}
+          onChange={(e) => setTokenInput(e.target.value)}
+          placeholder="~/.hermes/mobile-pwa/token"
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
+        />
+        <button
+          onClick={() => {
+            const t = tokenInput.trim()
+            if (t) location.href = `/auth?t=${encodeURIComponent(t)}`
+          }}
+        >
+          入る
+        </button>
+        <p className="hint">トークンは ~/.hermes/mobile-pwa/token（0600）にあります。</p>
+      </div>
+    )
+  }
 
   return (
     <div className="app">

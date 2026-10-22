@@ -86,6 +86,21 @@ session.interrupt {session_id}
 - キャッシュ名は `hermes-mobile-v2`。破壊的変更時はここを上げる
 - 端末で古い画面が出たら、アプリを完全終了 → 再起動（Android）
 
+### インストールできないとき（重要）
+
+Android の WebAPK 生成は **Google のサーバーが認証なしで** `start_url` / `manifest` / アイコンを取得する。
+そのため殻（`/`, `/assets/*`, `/manifest.webmanifest`, `/sw.js`, `/icon-*`）は**公開**し、
+データ（`/api/*`, `/ws/*`）だけを認証の内側に置いている。
+
+```
+$ curl -s -o /dev/null -w "%{http_code}\n" https://<host>:8444/manifest.webmanifest
+200        # これが 401 だと「This app cannot be installed」になる
+```
+
+未ログインで開くとアプリ内にトークン入力画面が出る（旧: サーバー側の HTML ログイン）。
+`isPublicPath()` の判定を狭めるとインストールが壊れるので、触るときはこの節を確認する。
+
+
 ## 既知の制約
 
 - チャットは WS プロトコル依存。Hermes 更新で壊れたら `node scripts/probe-bridge.mjs` で即検知できる
