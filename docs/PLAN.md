@@ -132,6 +132,7 @@ DSH アプリの「4 タブ + 入力欄まわり」をそのまま持ってく�
 | 新規受付停止 | `POST /api/gateway/drain` | `{ok:true, draining:true}`。ターンは完走し、新規は受けない |
 | 再起動 | `POST /api/gateway/restart` | `{ok:true,pid}`。SIGUSR1 → **実行中ターンの完了を待って**再起動（最大 1800 秒） |
 | 強制停止 | `POST /api/gateway/stop?interrupt=true` | 実行中も含めて停止（Dial 中は 409 で拒否される仕様） |
+| カンバン中断 | `hermes kanban reclaim` → `block` | worker を終了して claim を解放し、再実行を止める（§11） |
 
 安全装置（必須）:
 - 1 タップでは実行しない。**長押し 1.5 秒 + 確認シート**（DSH の長押し実装を流用）
@@ -171,9 +172,9 @@ DSH アプリの「4 タブ + 入力欄まわり」をそのまま持ってく�
 | M3 | ターミナル（`/api/pty` + xterm） | 0.5 日 |
 | M4 | PWA 化（manifest / SW / アイコン / インストール検証） | 0.5 日 |
 | M5 | カンバン読み取り（board.json + tasks + task_events） | 1 日 |
-| M6 | SystemOps パネル + キルスイッチ（確認・監査・レート制限） | 1 日 |
+| M6 | SystemOps パネル + キルスイッチ（ゲートウェイ 3 種 + カンバン中断、確認・監査・レート制限） | 1.5 日 |
 | M7 | 障害系（401 再取得 / WS 切断 / DB ロック / 誤爆）と運用 docs | 1 日 |
-| 計 | | **約 6.5 日**（V1 4.0 日 / V2 2.5 日） |
+| 計 | | **約 7.0 日**（V1 4.0 日 / V2 3.0 日） |
 
 ## 9. 検証計画（実装時に必ず実測する）
 
@@ -185,9 +186,62 @@ DSH アプリの「4 タブ + 入力欄まわり」をそのまま持ってく�
 - 標準ダッシュボード（9119）が**無傷**であること（`/api/health` と画面表示）
 - 端末の DevTools で **Hermes のセッショントークンが見えない**こと
 
-## 10. 未決事項（承認時に決めたい）
+### 決定事項（2026-10-22 承認）
 
-1. 公開 URL: `https://<host>/m`（同一オリジンのパス）か `https://<host>:8443`（別オリジン）か
-2. V1 にチャットを含めるか（含めない場合は「ビューア + キルスイッチ」で 2.5 日）
-3. キルスイッチの到達範囲: ゲートウェイのみ / カンバンの実行中タスク中断も含めるか
-4. 通知: ポーリング（実装容易）か Web Push（鍵管理と SW の制約が重い）か
+| 論点 | 決定 |
+|---|---|
+| 公開 URL | **別オリジン `https://<host>:8444`**（8443 は DSH が使用中のため 8444 を新規に使う） |
+| V1 の範囲 | **チャットを含む**（V1 = 4 タブすべて） |
+| キルスイッチの範囲 | ゲートウェイ操作 **＋ カンバンの実行中タスク中断** まで |
+| 通知 | **5 秒ポーリング**（Web Push は使わない） |
+
+Tailscale serve の現状（実測）:
+
+```
+https://hajimemac-mini.tail975a79.ts.net        → 127.0.0.1:9120（既存ダッシュボード）
+                                          /dsh  → 127.0.0.1:8787（DSH Web UI）
+https://hajimemac-mini.tail975a79.ts.net:8443   → 127.0.0.1:8787（DSH の別オリジン）
+https://hajimemac-mini.tail975a79.ts.net:8444   → 127.0.0.1:4097（本案・新規）
+```
+
+別オリジンにする効果:
+- **PWA のアイデンティティが完全に分離**される（DSH / 既存ダッシュボードと WebAPK が衝突しない。DSH で踏んだ罠を回避）
+- `manifest` の `start_url` / `scope` を `https://<host>:8444/` に固定でき、Service Worker のキャッシュも混ざらない
+- 端末側のアイコン名は「Hermes Mobile」など別名にする（同名だと Android が既存 PWA と誤認する）
+
+## 10. 未決事項（決定済み）
+
+1. ~~公開 URL~~ → **`https://<host>:8444`（別オリジン）**。8443 は DSH が使用中のため 8444 を新規使用（上表）
+2. ~~V1 にチャットを含めるか~~ → **含める**（WS プロキシが V1 の中心。プロトコル探針で守る）
+3. ~~キルスイッチの到達範囲~~ → **カンバンの実行中タスク中断まで**（下記 5.4）
+4. ~~通知~~ → **5 秒ポーリング**。`navigator.setAppBadge()` で未読件数だけ出す
+
+## 11. 追加検討: カンバン実行中タスクの中断（5.4）
+
+カンバンに「中断」API は無いが、**worker を止めて claim を解放する正規コマンド**がある（実測）:
+
+```
+$ hermes kanban reclaim --help
+usage: hermes kanban reclaim [-h] [--reason REASON] task_id
+  --reason REASON  Human-readable reason (recorded on the reclaimed event)
+```
+
+`hermes_cli/kanban_db.py: reclaim_task()` が `_terminate_reclaimed_worker(worker_pid, ...)` を
+呼ぶため、**claim 解放と同時に worker プロセスを終了**し、`tasks.worker_pid` を NULL に戻す。
+生の `kill -9` を打つ必要はない（失敗カウンタやイベント記録も整合する）。
+
+ただし reclaim 後は `retry_status`（通常 ready）に戻るため、そのままだと**dispatcher が再実行**する。
+「止めたい」場合は 2 段階にする:
+
+```
+1) hermes kanban reclaim <task-id> --reason "mobile kill switch"
+2) hermes kanban block  <task-id> "モバイルから中断" --kind needs_input
+```
+
+ブリッジ側の実装（`POST /api/kanban/tasks/:id/abort`）:
+
+- 実行中でなければ 409（`status != running`）
+- 1) → 2) を順に実行し、`task_events` を 1 件読んで結果を返す
+- 監査ログに `{task_id, worker_pid, reason, at}` を残す
+- UI は長押し 1.5 秒 + 確認シート + 「実行中ターン/経過時間」の表示（ゲートウェイのキルスイッチと共通部品）
+
