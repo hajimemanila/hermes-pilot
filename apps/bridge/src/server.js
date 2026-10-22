@@ -429,7 +429,10 @@ function openTerm(ws) {
 
 server.on('error', (err) => {
   if (err?.code === 'EADDRINUSE') {
-    console.error(`[bridge] ポート ${cfg.port} は使用中です（別のブリッジが動いていませんか）`)
+    console.error(
+      `[bridge] ポート ${cfg.port} は使用中です。手動起動したプロセスが残っていませんか: ` +
+        `lsof -nP -iTCP:${cfg.port} -sTCP:LISTEN  →  launchctl kickstart -k gui/$(id -u)/ai.hermes.hermes-mobile`,
+    )
     process.exit(75)
   }
   console.error('[bridge] サーバエラー:', err)

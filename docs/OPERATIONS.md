@@ -18,6 +18,28 @@ launchctl bootout gui/$(id -u)/ai.hermes.hermes-mobile
 
 ログ: `~/.hermes/logs/hermes-mobile.log` / `.error.log`
 
+### `launchctl bootstrap` が `5: Input/output error` になる
+
+**すでに登録済み**のときに出る（二重 bootstrap はエラー 5）。まず状態を見る:
+
+```bash
+launchctl print gui/$(id -u)/ai.hermes.hermes-mobile | head -6   # state = running なら登録済み
+launchctl list | grep hermes-mobile                              # 2列目が直近の終了コード
+```
+
+- 2列目が **75**（EX_TEMPFAIL）= ポート 4097 が埋まっていて起動できていない。
+  手動起動したブリッジが残っているのが原因。`lsof -nP -iTCP:4097 -sTCP:LISTEN` で PID を確認して止める
+  （launchd は10秒間隔で自動再試行する）
+- 登録をやり直したいときは先に外す:
+
+```bash
+launchctl bootout gui/$(id -u)/ai.hermes.hermes-mobile
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.hermes.hermes-mobile.plist
+```
+
+- 反映したいだけなら `kickstart -k`（plist を書き換えた場合もこれで再読込される）
+
+
 ### 手動起動（動作確認）
 
 ```bash
