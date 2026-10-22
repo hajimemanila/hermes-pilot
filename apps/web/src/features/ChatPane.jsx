@@ -24,6 +24,7 @@ export function ChatPane({ notify }) {
   const [usage, setUsage] = useState(null)
   const [drawer, setDrawer] = useState(false)
   const [thinking, setThinking] = useState('')
+  const [dcLink, setDcLink] = useState(null)
 
   // 添付
   const [attached, setAttached] = useState([])
@@ -199,6 +200,22 @@ export function ChatPane({ notify }) {
     const el = listRef.current
     if (el && stickRef.current) el.scrollTop = el.scrollHeight
   }, [blocks, streaming])
+
+  // この会話が Discord 由来ならスレッドへのリンクを出す（sessions.json をブリッジが読む）
+  useEffect(() => {
+    const target = storedSid ?? sid
+    if (!target) {
+      setDcLink(null)
+      return
+    }
+    let alive = true
+    api(`/api/discord/session?session_id=${encodeURIComponent(target)}`)
+      .then((d) => alive && setDcLink(d.link ?? null))
+      .catch(() => alive && setDcLink(null))
+    return () => {
+      alive = false
+    }
+  }, [storedSid, sid])
 
   // --- 添付の取り込み ------------------------------------------------------
 
@@ -473,6 +490,16 @@ export function ChatPane({ notify }) {
           <Icon name="grid" size={18} />
         </button>
         <span className="chat-title">{title || 'チャット'}</span>
+        {dcLink?.url ? (
+          <button
+            className="icon-btn dc-icon"
+            title={`Discord: ${dcLink.chatName ?? ''}`}
+            aria-label="Discord のスレッドを開く"
+            onClick={() => window.open(dcLink.url, '_blank', 'noopener')}
+          >
+            <span aria-hidden="true">#</span>
+          </button>
+        ) : null}
         <button className="icon-btn" onClick={newSession} aria-label="新しい会話">
           <Icon name="plus" size={18} />
         </button>

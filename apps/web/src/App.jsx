@@ -9,7 +9,7 @@ import { Icon } from './components/Ui.jsx'
 const TABS = [
   { id: 'tasks', label: 'タスク', icon: 'grid' },
   { id: 'chat', label: 'チャット', icon: 'chat' },
-  { id: 'term', label: '端末', icon: 'term' },
+  { id: 'term', label: 'ターミナル', icon: 'term' },
   { id: 'settings', label: '設定', icon: 'gear' },
 ]
 

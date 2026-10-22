@@ -13,6 +13,7 @@ export function loadConfig() {
   const dataDir = process.env.HM_DATA ?? path.join(hermesHome, 'mobile-pwa')
   return {
     version: VERSION,
+    home,
     host: process.env.HM_HOST ?? '127.0.0.1',
     port: Number(process.env.HM_PORT ?? 4097),
     /** 変更しない既存サーバ */

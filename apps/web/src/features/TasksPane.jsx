@@ -24,6 +24,9 @@ export function TasksPane({ overview, refresh, notify }) {
   const [confirmText, setConfirmText] = useState('')
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
+  // Diff プレビュー（開いたときだけ取得）
+  const [diff, setDiff] = useState(null)
+  const [patch, setPatch] = useState(null)
 
   const loadBoards = useCallback(async () => {
     try {
@@ -64,12 +67,43 @@ export function TasksPane({ overview, refresh, notify }) {
 
   const openTask = async (t) => {
     setDetail({ loading: true, ...t })
+    setDiff(null)
+    setPatch(null)
     try {
       const d = await api(`/api/boards/${encodeURIComponent(board)}/tasks/${encodeURIComponent(t.id)}`)
       setDetail(d)
     } catch (e) {
       notify(e.message)
       setDetail(null)
+    }
+  }
+
+  /** 差分サマリ（アコーディオンを開いたときだけ取りに行く）。 */
+  const loadDiff = async (id) => {
+    if (diff?.files) return
+    setDiff({ loading: true })
+    try {
+      const d = await api(`/api/boards/${encodeURIComponent(board)}/tasks/${encodeURIComponent(id)}/diff`)
+      setDiff(d)
+    } catch (e) {
+      setDiff({ ok: false, reason: e.message })
+    }
+  }
+
+  /** 1ファイルのパッチ。 */
+  const loadPatch = async (id, file) => {
+    if (patch?.path === file) {
+      setPatch(null)
+      return
+    }
+    setPatch({ path: file, loading: true })
+    try {
+      const d = await api(
+        `/api/boards/${encodeURIComponent(board)}/tasks/${encodeURIComponent(id)}/diff?file=${encodeURIComponent(file)}`,
+      )
+      setPatch({ ...d, path: file })
+    } catch (e) {
+      setPatch({ path: file, ok: false, reason: e.message })
     }
   }
 
@@ -163,6 +197,33 @@ export function TasksPane({ overview, refresh, notify }) {
                 {t.failures ? ` ・ 失敗${t.failures}` : ''}
                 {t.completedAt ? ` ・ ${relTime(t.completedAt)}` : ''}
               </span>
+              {t.git?.head ? (
+                <span className="git-badge">
+                  <span className="git-sha">{t.git.head}</span>
+                  <span className="git-subject">{t.git.subject || '(メッセージなし)'}</span>
+                  {t.git.dirty ? <span className="git-dirty">未コミット</span> : null}
+                  {t.discord ? (
+                    <span
+                      className="git-dc"
+                      role="link"
+                      tabIndex={0}
+                      title="Discord で開く"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        window.open(t.discord.url, '_blank', 'noopener')
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.stopPropagation()
+                          window.open(t.discord.url, '_blank', 'noopener')
+                        }
+                      }}
+                    >
+                      Discord
+                    </span>
+                  ) : null}
+                </span>
+              ) : null}
             </span>
             <Icon name="chevron" size={16} />
           </button>
@@ -222,6 +283,100 @@ export function TasksPane({ overview, refresh, notify }) {
               ) : null}
               {detail.body ? <div className="body-text">{detail.body}</div> : null}
               {detail.result ? <div className="body-text result">{detail.result}</div> : null}
+
+              {detail.git?.head ? (
+                <>
+                  <div className="kv">
+                    <span>コミット</span>
+                    <b className="mono">
+                      {detail.git.head}
+                      {detail.git.branch ? ` (${detail.git.branch})` : ''}
+                    </b>
+                  </div>
+                  <div className="kv">
+                    <span>メッセージ</span>
+                    <b className="git-msg">{detail.git.subject || '—'}</b>
+                  </div>
+                  <button
+                    className="accordion"
+                    onClick={() => {
+                      if (diff?.loading) return
+                      if (diff) setDiff(null)
+                      else loadDiff(detail.id)
+                    }}
+                  >
+                    <span className="acc-title">
+                      変更ファイル
+                      {diff?.ok ? (
+                        <span className="diff-sum">
+                          <span className="add">+{diff.total.add}</span> <span className="del">−{diff.total.del}</span>
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="acc-caret">{diff ? '▾' : '▸'}</span>
+                  </button>
+                  {diff ? (
+                    diff.loading ? (
+                      <div className="row-sub" style={{ padding: '6px 4px' }}>
+                        読み込み中…
+                      </div>
+                    ) : diff.ok ? (
+                      <div className="diff-list">
+                        {(diff.files ?? []).map((f) => (
+                          <div key={f.path}>
+                            <button
+                              className={`diff-row${patch?.path === f.path ? ' on' : ''}`}
+                              onClick={() => loadPatch(detail.id, f.path)}
+                            >
+                              <span className="diff-path mono">{f.path}</span>
+                              <span className="diff-nums">
+                                {f.binary ? (
+                                  <span className="git-dirty">binary</span>
+                                ) : (
+                                  <>
+                                    <span className="add">+{f.add}</span> <span className="del">−{f.del}</span>
+                                  </>
+                                )}
+                              </span>
+                            </button>
+                            {patch?.path === f.path ? (
+                              patch.loading ? (
+                                <div className="row-sub" style={{ padding: '6px 10px' }}>
+                                  読み込み中…
+                                </div>
+                              ) : patch.ok ? (
+                                <pre className="patch">{patch.text}</pre>
+                              ) : (
+                                <div className="row-sub" style={{ padding: '6px 10px' }}>
+                                  {patch.reason}
+                                </div>
+                              )
+                            ) : null}
+                          </div>
+                        ))}
+                        {!(diff.files ?? []).length ? <div className="empty">差分なし</div> : null}
+                        {diff.truncated ? <div className="row-sub">（100ファイルまで表示）</div> : null}
+                        {diff.dirty ? (
+                          <div className="row-sub">未コミットの変更があります（表示はコミット分のみ）</div>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="row-sub" style={{ padding: '6px 4px' }}>
+                        {diff.reason}
+                      </div>
+                    )
+                  ) : null}
+                </>
+              ) : null}
+
+              {detail.discord?.url ? (
+                <button
+                  className="btn dc-btn"
+                  onClick={() => window.open(detail.discord.url, '_blank', 'noopener')}
+                >
+                  Discord スレッドで開く
+                </button>
+              ) : null}
 
               {detail.status === 'running' || detail.workerPid ? (
                 <div style={{ marginTop: 12 }}>

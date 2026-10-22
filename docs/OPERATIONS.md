@@ -249,7 +249,7 @@ conn=ready → kill → conn=closed (t=18.1s) → conn=ready (t=20.0s)   ← リ
 設定で「議事録」追加 → 件数 1/12、チャットのバーに即出現（hm:snippets）
 ```
 
-## 端末タブの定型コマンド（2026-10-23 追加）
+## ターミナルタブの定型コマンド（2026-10-23 追加）
 
 `apps/bridge/src/term-snippets.js` の 21 件。`GET /api/snippets/term` で配る。
 
@@ -307,5 +307,51 @@ conn=ready → kill → conn=closed (t=18.1s) → conn=ready (t=20.0s)   ← リ
 - `:active` は `--surface-2` + `--line-strong`
 - `.list` の gap を 6px に
 
-対象: 定型スニペット / 添付 / 端末の定型コマンド / 会話。**シート内に装飾なしの `<button>` を置かない**のが原則。
+対象: 定型スニペット / 添付 / ターミナルの定型コマンド / 会話。**シート内に装飾なしの `<button>` を置かない**のが原則。
 追加時は `.list-item` か `.row` を使う。
+
+## タスクの Git 可視化と Discord リンク（2026-10-23 追加）
+
+### データ源（新規収集はしていない）
+
+- コミット情報: `~/.hermes/state/kanban-sop/history.jsonl` の `done` エントリ
+  `metadata.git = {repo, branch, head, dirty, changed_count}` と `metadata.session_anchor = {chat_id, message_id, session_id, user}`
+- 差分: その `repo` と `head` に対して `git show --numstat`（`execFile`・シェル不使用）
+- Discord: `~/.hermes/sessions/sessions.json` の `origin`（`guild_id` / `thread_id` / `message_id`）
+
+### API
+
+| エンドポイント | 返すもの |
+| --- | --- |
+| `GET /api/boards/:slug/tasks` | 各タスクに `git{head,branch,subject,dirty}` と `discord{url,threadId,chatName}` を付加（履歴にあるタスクのみ） |
+| `GET /api/boards/:slug/tasks/:id` | 詳細 + 同じ `git` / `discord` |
+| `GET /api/boards/:slug/tasks/:id/diff` | `{files:[{path,add,del,binary}], total:{add,del}, subject, dirty, truncated}` |
+| `GET .../diff?file=<path>` | そのコミットの該当ファイルのパッチ（200行 / 60KB で打ち切り） |
+| `GET /api/discord/session?session_id=` | `{link:{url,threadId,guildId,chatName,messageId}}` または `null` |
+
+### 安全策
+
+- `git` は `execFile` で引数配列渡し。`repo` / `head` は履歴の値のみ（クライアント入力を使わない）
+- `file` パラメータは**そのコミットの numstat に含まれるパスだけ**許可（`../../etc/passwd` や `--upload-pack=...` は 404）
+- 履歴に無いタスクはバッジも差分も出さない（推測で埋めない）
+- 差分は**アコーディオンを開いたときだけ**取得（初回表示を待たせない）。`git show` のサマリは起動時に温める
+
+### UI
+
+- タスクカード: `222758b fix(ui): …` のバッジ、未コミットなら `未コミット`、Discord 由来なら `Discord` チップ
+- 詳細シート: コミット / メッセージ →「変更ファイル +1249 −26」→ ファイル行 → タップでパッチをインライン表示
+- チャット: Discord 由来の会話ではヘッダーに `#` ボタン（タップでスレッドを開く）
+- タブ名を「端末」→「ターミナル」に変更（`App.jsx` / TermPane の文言 / docs）
+
+### 実測（390×844 / :8444）
+
+```
+タブ: ['タスク','チャット','ターミナル','設定']
+タスク一覧の git バッジ 20 件（DSH ボード）。例: 575ed26 feat(chat): 画像・ファイル添付（＋が主経路・ペースト補助）
+詳細: コミット 575ed26 (main) / メッセージ表示 / 変更ファイル +1249 −26 / ファイル13行
+パッチ: uploads.js をタップ → 200行・truncated=false・背景 rgb(5,18,26)
+Discord: カードにチップ、詳細に「Discord スレッドで開く」、チャットヘッダーに # ボタン
+  古いスレッド 20261016_184630_559bc3cb を resume → タイトル「開発環境構築の準備」+ # ボタン表示
+API: /tasks/:id/diff → ok:true / files 2件 / total +60 −1
+     ?file=../../etc/passwd → 404
+```

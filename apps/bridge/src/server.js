@@ -10,6 +10,8 @@ import { createKanban } from './kanban.js'
 import { createOps } from './ops.js'
 import { listSnippets, normalizeCustom, CUSTOM_MAX } from './snippets.js'
 import { listTermSnippets } from './term-snippets.js'
+import { createGitInfo } from './gitinfo.js'
+import { createDiscord } from './discord.js'
 
 const require = createRequire(import.meta.url)
 const pty = safeRequire('node-pty')
@@ -32,6 +34,10 @@ const auth = createAuth(cfg)
 const hermes = createHermesClient(cfg)
 const kanban = createKanban(cfg)
 const ops = createOps(cfg, hermes, auth)
+const gitinfo = createGitInfo(cfg)
+const discord = createDiscord(cfg)
+// 起動時にコミットサマリを温める（初回のタスク一覧を待たせない）
+gitinfo.warm().catch(() => {})
 
 // スニペット（ユーザー定義は小さな JSON に保存する）
 const snippetsPath = path.join(cfg.dataDir, 'snippets.json')
@@ -189,12 +195,32 @@ async function handleApi(req, res, url) {
 
   if (a === 'boards') {
     // /api/boards                                        … ボード一覧
-    // /api/boards/:slug/tasks                            … タスク一覧
+    // /api/boards/:slug/tasks                            … タスク一覧（git / Discord 付き）
     // /api/boards/:slug/tasks/:id                        … タスク詳細
+    // /api/boards/:slug/tasks/:id/diff                   … そのタスクのコミット差分
     // POST /api/boards/:slug/tasks/:id/abort             … 実行中タスクの中断
     if (!b) return sendJson(res, 200, { boards: kanban.boards() })
     if (b && c === 'tasks' && !d) {
-      return sendJson(res, 200, { tasks: kanban.tasks(b, { limit: Number(url.searchParams.get('limit') ?? 60) }) })
+      const list = kanban.tasks(b, { limit: Number(url.searchParams.get('limit') ?? 60) })
+      // 履歴（kanban-sop）に記録があるタスクだけ git / Discord を添える
+      const enriched = await Promise.all(
+        list.map(async (t) => {
+          const entry = gitinfo.entryFor(t.id)
+          if (!entry) return t
+          const [g, dc] = await Promise.all([gitinfo.forTask(t.id), Promise.resolve(discord.forAnchor(entry.anchor))])
+          return { ...t, git: g, discord: dc }
+        }),
+      )
+      return sendJson(res, 200, { tasks: enriched })
+    }
+    if (b && c === 'tasks' && d && e === 'diff' && req.method === 'GET') {
+      const file = url.searchParams.get('file')
+      if (file) {
+        const patch = await gitinfo.filePatch(d, String(file).slice(0, 400))
+        return sendJson(res, patch.ok ? 200 : 404, patch)
+      }
+      const summary = await gitinfo.diffSummary(d)
+      return sendJson(res, summary.ok ? 200 : 404, summary)
     }
     if (b && c === 'tasks' && d && e === 'abort' && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
@@ -206,8 +232,24 @@ async function handleApi(req, res, url) {
       auth.audit({ kind: 'kanban.abort', board: b, task: d, reason, result: out })
       return sendJson(res, 200, out)
     }
-    if (b && c === 'tasks' && d) return sendJson(res, 200, kanban.task(b, d))
+    if (b && c === 'tasks' && d) {
+      const detail = kanban.task(b, d)
+      const entry = gitinfo.entryFor(d)
+      if (entry) {
+        detail.git = await gitinfo.forTask(d)
+        detail.discord = discord.forAnchor(entry.anchor)
+      }
+      return sendJson(res, 200, detail)
+    }
     return sendJson(res, 404, { error: { message: `unknown endpoint: ${url.pathname}` } })
+  }
+
+  // --- Discord ディープリンク ------------------------------------------------
+  // /api/discord/session?session_id=...  … そのセッションの Discord スレッド
+  if (a === 'discord' && b === 'session' && req.method === 'GET') {
+    const sid = url.searchParams.get('session_id')
+    const link = discord.forSession(sid)
+    return sendJson(res, link ? 200 : 404, link ? { link } : { link: null })
   }
 
   if (a === 'gateway' && b && req.method === 'POST') {

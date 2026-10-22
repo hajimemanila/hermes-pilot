@@ -6,7 +6,7 @@ import { api, openSocket } from '../api.js'
 import { Icon, Sheet } from '../components/Ui.jsx'
 
 /**
- * 端末タブ。ブリッジが持つ実 PTY（node-pty）に WebSocket で繋ぐ。
+ * ターミナルタブ。ブリッジが持つ実 PTY（node-pty）に WebSocket で繋ぐ。
  * メッセージ: サーバ→{t:'out',d} / 端末→{t:'in',d}・{t:'resize',c,r}
  *
  * 定型コマンド（`GET /api/snippets/term`）:
@@ -100,7 +100,7 @@ export function TermPane({ notify }) {
     }
   }, [])
 
-  // スニペットを読む（失敗しても端末は使える）
+  // スニペットを読む（失敗してもターミナルは使える）
   useEffect(() => {
     api('/api/snippets/term')
       .then((d) => setSnippets(d.snippets ?? []))
@@ -129,7 +129,7 @@ export function TermPane({ notify }) {
     (text, exec) => {
       const ws = wsRef.current
       if (ws?.readyState !== WebSocket.OPEN) {
-        notify('端末が未接続です。タブを切り替えて再接続してください')
+        notify('ターミナルが未接続です。タブを切り替えて再接続してください')
         return false
       }
       // 実行は「入力中の行を捨ててから流す」（前のコマンドに連結される事故を防ぐ）
@@ -159,7 +159,7 @@ export function TermPane({ notify }) {
     <div className="pane term">
       <div className="chat-head">
         <span className="chat-title">
-          端末 <span className={`term-state ${state}`}>{state}</span>
+          ターミナル <span className={`term-state ${state}`}>{state}</span>
         </span>
         <button className="link" onClick={() => setSheet(true)}>
           定型
@@ -205,7 +205,7 @@ export function TermPane({ notify }) {
       <div className="term-hint">タップで挿入 / 長押しで実行。ログインシェル（フルシェル）、操作は監査ログに残ります。</div>
 
       {sheet ? (
-        <Sheet title="端末の定型コマンド" onClose={() => setSheet(false)}>
+        <Sheet title="ターミナルの定型コマンド" onClose={() => setSheet(false)}>
           <div className="list">
             {snippets.map((s) => (
               <div
@@ -253,7 +253,7 @@ export function TermPane({ notify }) {
           </div>
           <div className="row-sub" style={{ padding: '12px 6px 18px', lineHeight: 1.7 }}>
             タップで入力欄に挿入（Enter は送らない）。長押し、または右の「実行」で Enter まで送ります。
-            再起動系は端末（ai.hermes.hermes-mobile）と別プロセスなので、この画面は切れません。
+            再起動系はターミナル（ai.hermes.hermes-mobile）と別プロセスなので、この画面は切れません。
           </div>
         </Sheet>
       ) : null}
