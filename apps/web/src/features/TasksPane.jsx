@@ -3,6 +3,7 @@ import { api } from '../api.js'
 import { HoldButton, Icon, Sheet, relTime } from '../components/Ui.jsx'
 import { CaptureSheet } from './CaptureSheet.jsx'
 import { UsageSheet } from './UsageSheet.jsx'
+import { LiveSheet } from './LiveSheet.jsx'
 import { fmtCost } from '../lib/format.js'
 
 const STATUS_LABEL = {
@@ -34,6 +35,8 @@ export function TasksPane({ overview, refresh, notify }) {
   // 使用量（24h）
   const [usageData, setUsageData] = useState(null)
   const [usageOpen, setUsageOpen] = useState(false)
+  const [liveOpen, setLiveOpen] = useState(false)
+  const [liveTurns, setLiveTurns] = useState(0)
 
   const loadBoards = useCallback(async () => {
     try {
@@ -74,6 +77,21 @@ export function TasksPane({ overview, refresh, notify }) {
         .catch(() => {})
     load()
     const id = setInterval(() => document.visibilityState === 'visible' && load(), 60_000)
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [])
+
+  // 実行中ターン数（タイルの点。10秒ごと）
+  useEffect(() => {
+    let alive = true
+    const load = () =>
+      api('/api/live')
+        .then((d) => alive && setLiveTurns(Number(d?.counts?.turns ?? 0)))
+        .catch(() => {})
+    load()
+    const id = setInterval(() => document.visibilityState === 'visible' && load(), 10_000)
     return () => {
       alive = false
       clearInterval(id)
@@ -224,10 +242,16 @@ export function TasksPane({ overview, refresh, notify }) {
           <span className="stat-k">ディスク</span>
           <span className="stat-v">{disk ? `${disk.percent}%` : '—'}</span>
         </div>
-        <div className={`stat ${running ? 'warn' : ''}`}>
-          <span className="stat-k">実行中</span>
-          <span className="stat-v">{running}</span>
-        </div>
+        <button
+          className={`stat ${running ? 'warn' : ''}`}
+          onClick={() => setLiveOpen(true)}
+          aria-label="いま動いているもの"
+        >
+          <span className="stat-k">
+            稼働{liveTurns ? <i className="live-dot" title={`ターン ${liveTurns} 件`} /> : null}
+          </span>
+          <span className="stat-v">{running + liveTurns}</span>
+        </button>
       </div>
 
       <div className="chips">
@@ -355,6 +379,14 @@ export function TasksPane({ overview, refresh, notify }) {
       ) : null}
 
       {usageOpen ? <UsageSheet data={usageData} hours={24} onClose={() => setUsageOpen(false)} /> : null}
+
+      {liveOpen ? (
+        <LiveSheet
+          notify={notify}
+          onClose={() => setLiveOpen(false)}
+          onAbortTask={() => board && loadTasks(board)}
+        />
+      ) : null}
 
       {detail ? (
         <Sheet

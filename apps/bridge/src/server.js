@@ -16,6 +16,7 @@ import { createSearch } from './search.js'
 import { createTranscript } from './transcript.js'
 import { createCapture } from './capture.js'
 import { createUsage } from './usage.js'
+import { createLive } from './live.js'
 
 const require = createRequire(import.meta.url)
 const pty = safeRequire('node-pty')
@@ -44,6 +45,7 @@ const search = createSearch(cfg)
 const transcript = createTranscript(cfg)
 const capture = createCapture(cfg)
 const usage = createUsage(cfg)
+const live = createLive(cfg, kanban)
 // 起動時にコミットサマリを温める（初回のタスク一覧を待たせない）
 gitinfo.warm().catch(() => {})
 
@@ -291,6 +293,21 @@ async function handleApi(req, res, url) {
       before: Number(url.searchParams.get('before') ?? 0),
     })
     return sendJson(res, r.ok ? 200 : 404, r)
+  }
+
+  // --- ライブ進捗（実行中ターンと実行中タスク）--------------------------------
+  // /api/live  … 5秒ポーリング前提。state.db のリースとカンバンを合成する
+  if (a === 'live' && req.method === 'GET') {
+    if (!readAllowed(cfg.rate.maxReads ?? 240, cfg.rate.windowMs)) {
+      return sendJson(res, 429, { error: { message: '読み取りが多すぎます' } })
+    }
+    const r = live.snapshot()
+    // Discord 由来のターンにはスレッドリンクを添える
+    for (const t of r.turns) {
+      const link = discord.forSession(t.sessionId)
+      if (link) t.discordUrl = link.url
+    }
+    return sendJson(res, 200, r)
   }
 
   // --- 使用量（コスト・トークン）----------------------------------------------

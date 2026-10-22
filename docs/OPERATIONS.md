@@ -509,3 +509,38 @@ resume → ok:true / state.engaged:false / ESTOP 消滅（ls で確認）
 UI: 長押し → バナー「一時停止中（新規の受付を止めています ・ mobile）」＋再開ボタン（45×25px・1行）
     シート内も「再開する（ESTOP 解除）」に切替 → 押下でバナー消滅・ESTOP 削除を確認
 ```
+
+## ライブ進捗（2026-10-23 追加 / PLAN-V3 の E）
+
+「Discord で投げた依頼が今どこまで進んだか」を1画面で見る。書き込みはしない。
+
+### サーバ
+
+- `GET /api/live` … 5秒ポーリング前提。読取レート枠（240/分）を共有
+- 実行中ターン: `state.db` の **`session_turn_leases`**（本体が張るリース）を読む。
+  列は `conversation_id / holder / acquired_at / expires_at`。`holder` から `platform=discord` を取り出す
+- 最後のツール: `messages` の直近 `tool_name`（そのセッション）
+- 実行中タスク: 既存 `kanban` モジュールで `status='running'` を横断収集
+- Discord 由来のターンにはスレッドURLを付加
+
+### UI
+
+- 状態ストリップの **「稼働」タイル**（= 実行中タスク + 実行中ターン）。実行中ターンがあると黄色の点が点滅
+- タップで **ライブシート**（5秒更新）。実行中ターン（platform・経過・最後のツール・リース残・Discordリンク）と実行中タスク（ボード・経過・pid）
+- 実行中タスクがあるときは「実行中タスク N 件を中断」を**長押し1.5秒**（reclaim → block）
+
+### 実測（390×844 / :8444）
+
+```
+GET /api/live:
+  turns[0] = { sessionId: 20261022_163552_3305cfe1, title: "DeepSeek Harness 向け Android Web UI 実装方針",
+               platform: "discord", elapsedSec: 60, expiresInSec: 300,
+               lastTool: { name: "terminal", at: … }, discordUrl: … }
+  counts = { turns: 1, tasks: 0 }
+
+UI: タイル「稼働=1」＋点滅ドット
+    シート: 実行中ターン 1 / 実行中タスク 0
+      "DeepSeek Harness 向け Android Web UI 実装方針" ・ discord ・ 1m38s ・ tool: terminal
+      最終ツール 12秒前 ・ リース残 4m22s ・ # リンク
+      タスク: 「実行中のタスクはありません」
+```
