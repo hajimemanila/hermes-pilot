@@ -21,6 +21,8 @@ export function loadConfig() {
     hermesHome,
     kanbanRoot: path.join(hermesHome, 'kanban'),
     kanbanDb: path.join(hermesHome, 'kanban.db'),
+    /** 会話ログ（セッション横断検索の対象。読取専用で開く） */
+    stateDb: process.env.HM_STATE_DB ?? path.join(hermesHome, 'state.db'),
     logDir: path.join(hermesHome, 'logs'),
     dataDir,
     tokenPath: path.join(dataDir, 'token'),

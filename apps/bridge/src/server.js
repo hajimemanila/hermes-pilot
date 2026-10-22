@@ -12,6 +12,8 @@ import { listSnippets, normalizeCustom, CUSTOM_MAX } from './snippets.js'
 import { listTermSnippets } from './term-snippets.js'
 import { createGitInfo } from './gitinfo.js'
 import { createDiscord } from './discord.js'
+import { createSearch } from './search.js'
+import { createTranscript } from './transcript.js'
 
 const require = createRequire(import.meta.url)
 const pty = safeRequire('node-pty')
@@ -36,6 +38,8 @@ const kanban = createKanban(cfg)
 const ops = createOps(cfg, hermes, auth)
 const gitinfo = createGitInfo(cfg)
 const discord = createDiscord(cfg)
+const search = createSearch(cfg)
+const transcript = createTranscript(cfg)
 // 起動時にコミットサマリを温める（初回のタスク一覧を待たせない）
 gitinfo.warm().catch(() => {})
 
@@ -116,6 +120,16 @@ function writeAllowed(max = 60, windowMs = 60_000) {
   while (writes.length && now - writes[0] > windowMs) writes.shift()
   if (writes.length >= max) return false
   writes.push(now)
+  return true
+}
+
+/** 読み取り系（検索）の簡易レート制限。書き込みとは枠を分ける。 */
+const reads = []
+function readAllowed(max = 240, windowMs = 60_000) {
+  const now = Date.now()
+  while (reads.length && now - reads[0] > windowMs) reads.shift()
+  if (reads.length >= max) return false
+  reads.push(now)
   return true
 }
 
@@ -242,6 +256,42 @@ async function handleApi(req, res, url) {
       return sendJson(res, 200, detail)
     }
     return sendJson(res, 404, { error: { message: `unknown endpoint: ${url.pathname}` } })
+  }
+
+  // --- 読み取り専用トランスクリプト ------------------------------------------
+  // /api/sessions/:id/transcript  … カンバン作業ログなど resume できない会話
+  if (a === 'sessions' && b && c === 'transcript' && req.method === 'GET') {
+    if (!readAllowed(cfg.rate.maxReads ?? 240, cfg.rate.windowMs)) {
+      return sendJson(res, 429, { error: { message: '読み取りが多すぎます' } })
+    }
+    const r = transcript.read(decodeURIComponent(b), {
+      limit: Number(url.searchParams.get('limit') ?? 80),
+      before: Number(url.searchParams.get('before') ?? 0),
+    })
+    return sendJson(res, r.ok ? 200 : 404, r)
+  }
+
+  // --- 横断検索 --------------------------------------------------------------
+  // /api/search?q=&limit=&hours=  … 全セッションの発言から抜粋を返す（読み取り専用）
+  if (a === 'search' && req.method === 'GET') {
+    const q = String(url.searchParams.get('q') ?? '')
+    if (!q.trim()) return sendJson(res, 400, { error: { message: 'q が必要です' } })
+    if (!readAllowed(cfg.rate.maxReads ?? 240, cfg.rate.windowMs)) {
+      return sendJson(res, 429, { error: { message: '検索が多すぎます' } })
+    }
+    const r = search.search({
+      q,
+      limit: Number(url.searchParams.get('limit') ?? 30),
+      hours: Number(url.searchParams.get('hours') ?? 0),
+    })
+    // 該当セッションが Discord 由来ならスレッドリンクも添える
+    if (r.ok) {
+      for (const h of r.hits) {
+        const link = discord.forSession(h.sessionId)
+        if (link) h.discordUrl = link.url
+      }
+    }
+    return sendJson(res, r.ok ? 200 : 400, r)
   }
 
   // --- Discord ディープリンク ------------------------------------------------

@@ -25,6 +25,8 @@ export function ChatPane({ notify }) {
   const [drawer, setDrawer] = useState(false)
   const [thinking, setThinking] = useState('')
   const [dcLink, setDcLink] = useState(null)
+  // resume できない会話（カンバン作業ログ等）は読み取り専用で表示する
+  const [readonly, setReadonly] = useState(null)
 
   // 添付
   const [attached, setAttached] = useState([])
@@ -80,7 +82,7 @@ export function ChatPane({ notify }) {
   const resumeInto = useCallback(async (rpc, target) => {
     const r = await rpc('session.resume', { session_id: target })
     const res = r?.result
-    if (!res?.session_id) return { ok: false, sid: null }
+    if (!res?.session_id) return { ok: false, sid: null, error: r?.error ?? null }
     setSid(res.session_id)
     setStoredSid(res.resumed ?? target)
     const msgs = Array.isArray(res.messages) ? res.messages : []
@@ -144,6 +146,9 @@ export function ChatPane({ notify }) {
   }, [])
 
   const sockRef = useRef(null)
+  const openRef = useRef(null)
+  const pendingOpenRef = useRef(null)
+  const connRef = useRef('idle')
 
   /** 接続が ready になったとき（初回・再接続の両方）。 */
   const onReady = useCallback(async () => {
@@ -154,6 +159,13 @@ export function ChatPane({ notify }) {
       notify('再接続しました')
     }
     await loadSessions(rpc)
+    // 検索結果などから「開く」を先に頼まれていたら、接続後にそれを優先する
+    const pending = pendingOpenRef.current
+    pendingOpenRef.current = null
+    if (pending) {
+      await openRef.current?.(pending.id, pending.focusId ?? null)
+      return
+    }
     const target = storedRef.current
     if (target) {
       const resumed = await resumeInto(rpc, target)
@@ -177,6 +189,7 @@ export function ChatPane({ notify }) {
   const sock = useChatSocket({ onEvent, onReady, onState })
   sockRef.current = sock
   const { rpc, showBanner, state: connState } = sock
+  connRef.current = connState
 
   // 直近の会話を端末に覚える
   useEffect(() => {
@@ -198,8 +211,32 @@ export function ChatPane({ notify }) {
 
   useEffect(() => {
     const el = listRef.current
-    if (el && stickRef.current) el.scrollTop = el.scrollHeight
-  }, [blocks, streaming])
+    if (!el) return
+    // 検索ヒット位置へ寄せるときは末尾スクロールをしない
+    if (readonly?.focusId) return
+    if (stickRef.current) el.scrollTop = el.scrollHeight
+  }, [blocks, streaming, readonly?.focusId])
+
+  /** ヒットした発言を画面の上寄りに出す（offsetTop ではなく実測差分で合わせる）。 */
+  const scrollToHit = useCallback((mid) => {
+    const sc = listRef.current
+    if (!sc || !mid) return
+    const el = sc.querySelector(`[data-mid="${mid}"]`)
+    if (!el) return
+    const delta = el.getBoundingClientRect().top - sc.getBoundingClientRect().top
+    sc.scrollTop = Math.max(0, sc.scrollTop + delta - 10)
+  }, [])
+
+  // ヒットした発言が見える位置までスクロール（レイアウト確定後に2回）
+  useEffect(() => {
+    if (!readonly?.focusId) return
+    const a = setTimeout(() => scrollToHit(readonly.focusId), 120)
+    const b = setTimeout(() => scrollToHit(readonly.focusId), 500)
+    return () => {
+      clearTimeout(a)
+      clearTimeout(b)
+    }
+  }, [readonly?.focusId, blocks.length, scrollToHit])
 
   // この会話が Discord 由来ならスレッドへのリンクを出す（sessions.json をブリッジが読む）
   useEffect(() => {
@@ -428,24 +465,79 @@ export function ChatPane({ notify }) {
     setTitle('')
     setBlocks([])
     setUsage(null)
+    setReadonly(null)
     setDrawer(false)
   }, [])
 
+  /** resume できない会話を読み取り専用で開く（カンバン作業ログなど）。 */
+  const loadTranscript = useCallback(
+    async (sessionId, focusId, title) => {
+      try {
+        const d = await api(`/api/sessions/${encodeURIComponent(sessionId)}/transcript?limit=80`)
+        if (!d.ok) {
+          notify(d.reason ?? 'この会話は開けません')
+          return
+        }
+        setSid(null)
+        setReadonly({ sessionId, focusId: focusId ?? null, title: d.title ?? title ?? '' })
+        setBlocks(
+          (d.messages ?? []).map((m) => ({
+            role: m.role === 'user' ? 'user' : 'assistant',
+            text: m.text,
+            mid: m.id,
+          })),
+        )
+        if (d.title || title) setTitle(d.title || title)
+        if (focusId) {
+          requestAnimationFrame(() => scrollToHit(focusId))
+        }
+      } catch (e) {
+        notify(e.message)
+      }
+    },
+    [notify, scrollToHit],
+  )
+
   const openSession = useCallback(
-    async (storedTarget) => {
+    async (storedTarget, focusId = null) => {
       setDrawer(false)
       setBlocks([])
       setUsage(null)
-      setTitle(sessions.find((s) => s.id === storedTarget)?.title ?? '')
+      setReadonly(null)
+      const foundTitle = sessions.find((s) => s.id === storedTarget)?.title ?? ''
+      setTitle(foundTitle)
       const resumed = await resumeInto(rpc, storedTarget)
       if (!resumed.ok) {
+        const err = resumed.error
+        // カンバン作業ログは Hermes が resume を拒否する（4132）。読むだけなら開ける
+        if (err?.code === 4132 || /Kanban worker transcript/i.test(err?.message ?? '')) {
+          await loadTranscript(storedTarget, focusId, foundTitle)
+          return
+        }
         setSid(null)
         setStoredSid(null)
-        notify('セッションを復元できませんでした')
+        notify(err?.message ? `開けませんでした: ${err.message}` : 'セッションを復元できませんでした')
       }
     },
-    [rpc, resumeInto, sessions, notify],
+    [rpc, resumeInto, sessions, notify, loadTranscript],
   )
+
+  // openSession の最新版を ref に持つ（onReady / イベントから使う）
+  openRef.current = openSession
+
+  /** 接続前なら予約して、ready になったら開く。 */
+  const openSessionSafe = useCallback((id, focusId = null) => {
+    if (!id) return
+    if (connRef.current === 'ready') openRef.current?.(id, focusId)
+    else pendingOpenRef.current = { id, focusId }
+  }, [])
+
+  // 検索結果など外側から「このセッションを開く」と指示された場合
+  useEffect(() => {
+    const onOpen = (e) => openSessionSafe(e?.detail?.id, e?.detail?.messageId ?? null)
+    window.addEventListener('hm:open-session', onOpen)
+    return () => window.removeEventListener('hm:open-session', onOpen)
+  }, [openSessionSafe])
 
   // --- スニペット ---------------------------------------------------------
 
@@ -507,6 +599,9 @@ export function ChatPane({ notify }) {
 
       {/* 切断直後（2秒未満）は出さない */}
       {showBanner ? <div className="banner">接続を回復しています…</div> : null}
+      {readonly ? (
+        <div className="banner ro">読み取り専用 ・ カンバンの作業ログはこのアプリから再開できません（ボードで操作）</div>
+      ) : null}
 
       <div
         className="chat-scroll"
@@ -519,7 +614,11 @@ export function ChatPane({ notify }) {
         {!blocks.length ? <div className="empty">メッセージを送って開始</div> : null}
         {blocks.map((b, i) =>
           b.role === 'user' ? (
-            <div key={i} className="msg user">
+            <div
+              key={i}
+              data-mid={b.mid}
+              className={`msg user${readonly?.focusId && b.mid === readonly.focusId ? ' hit' : ''}`}
+            >
               <div className="bubble">
                 {b.images?.length ? (
                   <div className="bubble-imgs">
@@ -546,7 +645,11 @@ export function ChatPane({ notify }) {
               </div>
             </div>
           ) : b.role === 'assistant' ? (
-            <div key={i} className="msg bot">
+            <div
+              key={i}
+              data-mid={b.mid}
+              className={`msg bot${readonly?.focusId && b.mid === readonly.focusId ? ' hit' : ''}`}
+            >
               <div className="bubble">{b.text || (b.open ? <span className="dots">…</span> : '')}</div>
             </div>
           ) : (
@@ -625,7 +728,8 @@ export function ChatPane({ notify }) {
         </div>
       ) : null}
 
-      <div className="composer">
+      {readonly ? <div className="composer-ro">読み取り専用 ・ 再開するにはボードで操作してください</div> : null}
+      <div className="composer" style={readonly ? { display: 'none' } : undefined}>
         <button
           className="plus"
           aria-label="画像・ファイルを添付"
@@ -807,7 +911,7 @@ export function ChatPane({ notify }) {
             <Icon name="plus" size={16} />
           </button>
           {sessions.map((s) => (
-            <button key={s.id} className={`row${s.id === storedSid ? ' on' : ''}`} onClick={() => openSession(s.id)}>
+            <button key={s.id} className={`row${s.id === storedSid ? ' on' : ''}`} onClick={() => openSessionSafe(s.id)}>
               <span className="row-main">
                 <span className="row-title">{s.title || s.id}</span>
                 <span className="row-sub">

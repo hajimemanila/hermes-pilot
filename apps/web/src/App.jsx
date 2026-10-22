@@ -4,6 +4,7 @@ import { TasksPane } from './features/TasksPane.jsx'
 import { ChatPane } from './features/ChatPane.jsx'
 import { TermPane } from './features/TermPane.jsx'
 import { SettingsPane } from './features/SettingsPane.jsx'
+import { SearchSheet } from './features/SearchSheet.jsx'
 import { Icon } from './components/Ui.jsx'
 
 const TABS = [
@@ -78,6 +79,7 @@ export function App() {
   const [tokenInput, setTokenInput] = useState('')
   const [toast, setToast] = useState(null)
   const [booting, setBooting] = useState(true)
+  const [searchOpen, setSearchOpen] = useState(false)
   const toastTimer = useRef(null)
 
   const notify = useCallback((msg) => {
@@ -161,8 +163,13 @@ export function App() {
     <div className="app">
       <header className="topbar">
         <span className="brand">Hermes<b>Mobile</b></span>
-        <span className={`conn ${conn}`} title={conn === 'ok' ? '接続中' : '接続できません'}>
-          {conn === 'ok' ? '●' : '○'}
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <button className="icon-btn" aria-label="検索" onClick={() => setSearchOpen(true)}>
+            <Icon name="search" size={18} />
+          </button>
+          <span className={`conn ${conn}`} title={conn === 'ok' ? '接続中' : '接続できません'}>
+            {conn === 'ok' ? '●' : '○'}
+          </span>
         </span>
       </header>
 
@@ -199,6 +206,22 @@ export function App() {
       </nav>
 
       {toast ? <div className="toast">{toast.msg}</div> : null}
+
+      {searchOpen ? (
+        <SearchSheet
+          notify={notify}
+          onClose={() => setSearchOpen(false)}
+          onOpenSession={(hit) => {
+            // チャットタブに切り替えてから、そのセッションを開くよう伝える
+            setTab('chat')
+            setTimeout(() => {
+              window.dispatchEvent(
+                new CustomEvent('hm:open-session', { detail: { id: hit.sessionId, messageId: hit.messageId } }),
+              )
+            }, 120)
+          }}
+        />
+      ) : null}
     </div>
   )
 }

@@ -355,3 +355,48 @@ Discord: カードにチップ、詳細に「Discord スレッドで開く」、
 API: /tasks/:id/diff → ok:true / files 2件 / total +60 −1
      ?file=../../etc/passwd → 404
 ```
+
+## 横断検索と読み取り専用トランスクリプト（2026-10-23 追加 / PLAN-V3 の A）
+
+### 検索
+
+- `GET /api/search?q=&limit=30&hours=` → `{ok, q, tookMs, total, hits[]}`
+- データ源: `~/.hermes/state.db` の `messages`（**読み取り専用**）。索引は FTS5 `messages_fts_trigram`
+- 3文字以上は trigram、2文字以下は `LIKE` に落とす（trigram は 3 文字未満を索引できない）
+- クエリは全体をフレーズ引用し `"` を `""` にエスケープ（`AND`/`NEAR(`/`-foo`/`*` でも構文エラーにしない）
+- 返すのは**抜粋のみ**（前後60文字）。`discordUrl` は該当セッションが Discord 由来なら付く
+- レート制限は書き込みと別枠（240回/分）。認証は `/api/*` の共通ゲート
+
+UI: ヘッダーの虫めがね → シートで入力（280ms デバウンス）→ 行タップでその会話を開く。
+検索シートは入力のたびに古い応答を捨てる（`seqRef`）ので、遅い応答が後から上書きしない。
+
+### カンバン作業ログ（`local-…`）は読み取り専用で開く
+
+`session.resume` は **Hermes が設計上拒否する**:
+
+```
+ERR 4132 ⛔ Session local-… is a Kanban worker transcript.
+Resuming it here would create a writer the Kanban board cannot observe or supervise …
+```
+
+そこでフォールバックを持つ:
+
+- `GET /api/sessions/:id/transcript?limit=80&before=` → `{ok, title, messages:[{id, role, text, at}], hasMore}`
+- `messages` から `role IN ('user','assistant')` かつ `active=1` かつ非空のみ、古い順に返す
+- UI は「読み取り専用」バナーを出し、**入力欄を隠す**（送れないことを明示）
+- 検索から来た場合は該当メッセージを枠で強調し、画面の上寄りまでスクロールする
+  - `scrollIntoView` は効かなかったため、`getBoundingClientRect` の差分で `scrollTop` を直接合わせる
+  - レイアウト確定後に2回（120ms / 500ms）補正する（長い本文で高さが変わるため）
+
+### 実測（390×844 / :8444）
+
+```
+検索「ドレイン」→ ok=true 4.7ms / 3件（discord由来は dc リンク付き）
+検索「欠陥2件」→ 4件
+2文字「検索」→ LIKE 経路 43.2ms（8,385件の全走査）
+空クエリ → 400
+カンバン由来ヒットをタップ → ROバナー表示 / composer display:none / 12メッセージ
+  ヒット位置 top=160px（ヘッダー下）・scrollTop 3779・強調1件
+TUI 由来ヒットをタップ → 通常表示（16メッセージ・composer flex・storedSid 保存）
+タイトルも sessions.title から復元（「[M7.1] 障害実測で判明した欠陥2件の修正…」）
+```
