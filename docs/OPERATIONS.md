@@ -544,3 +544,38 @@ UI: タイル「稼働=1」＋点滅ドット
       最終ツール 12秒前 ・ リース残 4m22s ・ # リンク
       タスク: 「実行中のタスクはありません」
 ```
+
+## 承認待ちインボックス（2026-10-23 追加 / PLAN-V3 の F）
+
+エージェントが「これ進めていい？」と止まっているタスクを、ボード横断で読んで**コメントで答える**画面。
+ステータスは変えない（再開・アサインは Discord / ダッシュボード）。
+
+### サーバ
+
+- `GET /api/inbox` → `{ok, at, items[], counts{kind: n}}`
+  - 対象: 全ボード（アーカイブ除く）の `status='blocked'`
+  - 1件ごとに `block_kind`（needs_input / failure / dependency / untyped）、`block_recurrences`、
+    `last_failure_error`、**直近の `blocked` イベントの payload.message** を理由として採用、
+    直近コメント（`task_comments`）
+- `POST /api/boards/:slug/tasks/:id/comment {body}` → `hermes kanban --board … comment <id> <body> --author mobile`
+  - 本文は 1〜2000 字（空は 400）、タスクIDは `t_[0-9a-z]+` のみ、書込レート枠、監査 `kanban.comment`
+
+### UI
+
+- 承認待ちが1件以上あるときだけ、タスクタブ上部に**黄色いバー**（`承認待ち N 件 / 回答する ›`）
+- シート: タスク名・ボード・種別・再発回数・経過・理由（質問文）・直前のコメント・返信欄
+- 返信は 2000 字まで。送信後は 15 秒ポーリングで一覧を取り直す
+
+### 実測（390×844 / :8444）
+
+```
+検証用に blocked タスクを作成（block --kind needs_input ＋ hermes からのコメント）
+GET /api/inbox → items 1 / counts {needs_input: 1}
+  reason: "本番デプロイの可否を確認してください" / lastComment: "検証: エージェントからの質問です"
+POST comment {"body":"モバイルから承認します。反映してください。"} → ok:true
+空コメント → 400 / 監査 kanban.comment {board, task, chars:21}
+UI: バー「承認待ち 1 件 / 回答する ›」→ シート
+  「inbox-probe: 本番反映の可否」「hermes-mobile-pwa ・ 回答待ち ・ 再発1 ・ 18秒前」
+  理由・直前コメント表示 → 返信「UIから: 承認します。反映OK。」送信 → 3秒前のコメントとして反映・入力欄クリア
+アーカイブ後 → items 0（バーも消える）。コメント4件は DB に残存
+```

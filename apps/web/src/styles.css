@@ -774,6 +774,27 @@ button.stat:active {
   border-bottom: 1px solid rgba(45, 212, 191, 0.25);
 }
 
+/* 承認待ちインボックスのバー */
+.inbox-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(245, 185, 66, 0.45);
+  background: rgba(245, 185, 66, 0.12);
+  color: var(--warn);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.inbox-bar-go {
+  font-size: 11.5px;
+  opacity: 0.9;
+}
+
 /* 一時停止（ESTOP）中 */
 .banner.paused {
   background: rgba(245, 185, 66, 0.12);

@@ -4,6 +4,7 @@ import { HoldButton, Icon, Sheet, relTime } from '../components/Ui.jsx'
 import { CaptureSheet } from './CaptureSheet.jsx'
 import { UsageSheet } from './UsageSheet.jsx'
 import { LiveSheet } from './LiveSheet.jsx'
+import { InboxSheet } from './InboxSheet.jsx'
 import { fmtCost } from '../lib/format.js'
 
 const STATUS_LABEL = {
@@ -37,6 +38,8 @@ export function TasksPane({ overview, refresh, notify }) {
   const [usageOpen, setUsageOpen] = useState(false)
   const [liveOpen, setLiveOpen] = useState(false)
   const [liveTurns, setLiveTurns] = useState(0)
+  const [inboxCount, setInboxCount] = useState(0)
+  const [inboxOpen, setInboxOpen] = useState(false)
 
   const loadBoards = useCallback(async () => {
     try {
@@ -97,6 +100,22 @@ export function TasksPane({ overview, refresh, notify }) {
       clearInterval(id)
     }
   }, [])
+
+  // 承認待ちの件数（15秒ごと）
+  const loadInbox = useCallback(async () => {
+    try {
+      const d = await api('/api/inbox')
+      setInboxCount((d?.items ?? []).length)
+    } catch {
+      /* 表示だけなので握る */
+    }
+  }, [])
+
+  useEffect(() => {
+    loadInbox()
+    const id = setInterval(() => document.visibilityState === 'visible' && loadInbox(), 15_000)
+    return () => clearInterval(id)
+  }, [loadInbox])
 
   useEffect(() => {
     if (!board) return
@@ -223,6 +242,13 @@ export function TasksPane({ overview, refresh, notify }) {
             再開
           </button>
         </div>
+      ) : null}
+
+      {inboxCount ? (
+        <button className="inbox-bar" onClick={() => setInboxOpen(true)}>
+          <span>承認待ち {inboxCount} 件</span>
+          <span className="inbox-bar-go">回答する ›</span>
+        </button>
       ) : null}
 
       <div className="strip">
@@ -379,6 +405,10 @@ export function TasksPane({ overview, refresh, notify }) {
       ) : null}
 
       {usageOpen ? <UsageSheet data={usageData} hours={24} onClose={() => setUsageOpen(false)} /> : null}
+
+      {inboxOpen ? (
+        <InboxSheet notify={notify} onClose={() => setInboxOpen(false)} onChanged={loadInbox} />
+      ) : null}
 
       {liveOpen ? (
         <LiveSheet

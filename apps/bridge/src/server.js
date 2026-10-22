@@ -17,6 +17,7 @@ import { createTranscript } from './transcript.js'
 import { createCapture } from './capture.js'
 import { createUsage } from './usage.js'
 import { createLive } from './live.js'
+import { createInbox } from './inbox.js'
 
 const require = createRequire(import.meta.url)
 const pty = safeRequire('node-pty')
@@ -46,6 +47,7 @@ const transcript = createTranscript(cfg)
 const capture = createCapture(cfg)
 const usage = createUsage(cfg)
 const live = createLive(cfg, kanban)
+const inbox = createInbox(cfg, kanban)
 // 起動時にコミットサマリを温める（初回のタスク一覧を待たせない）
 gitinfo.warm().catch(() => {})
 
@@ -260,6 +262,15 @@ async function handleApi(req, res, url) {
       const summary = await gitinfo.diffSummary(d)
       return sendJson(res, summary.ok ? 200 : 404, summary)
     }
+    if (b && c === 'tasks' && d && e === 'comment' && req.method === 'POST') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+      }
+      const body = await readJson(req)
+      const out = await inbox.comment(b, d, body?.body ?? body?.text, String(body?.by ?? 'mobile'))
+      auth.audit({ kind: 'kanban.comment', board: b, task: d, chars: String(body?.body ?? body?.text ?? '').length })
+      return sendJson(res, 200, out)
+    }
     if (b && c === 'tasks' && d && e === 'abort' && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
         return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
@@ -308,6 +319,15 @@ async function handleApi(req, res, url) {
       if (link) t.discordUrl = link.url
     }
     return sendJson(res, 200, r)
+  }
+
+  // --- 承認待ちインボックス --------------------------------------------------
+  // /api/inbox  … ボード横断の blocked タスク（読む＋コメントで答える）
+  if (a === 'inbox' && req.method === 'GET') {
+    if (!readAllowed(cfg.rate.maxReads ?? 240, cfg.rate.windowMs)) {
+      return sendJson(res, 429, { error: { message: '読み取りが多すぎます' } })
+    }
+    return sendJson(res, 200, inbox.list())
   }
 
   // --- 使用量（コスト・トークン）----------------------------------------------
