@@ -208,6 +208,8 @@ async function handleApi(req, res, url) {
     } catch {
       data.runningTasks = 0
     }
+    // 緊急停止（ESTOP）の状態
+    data.paused = ops.paused()
     return sendJson(res, 200, data)
   }
 
@@ -332,7 +334,16 @@ async function handleApi(req, res, url) {
   if (a === 'gateway' && b && req.method === 'POST') {
     if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
     const body = await readJson(req)
-    const out = await ops.gateway(b, body?.confirm, String(body?.by ?? 'mobile'))
+    const by = String(body?.by ?? 'mobile')
+    if (b === 'pause' || b === 'resume') {
+      const expected = b.toUpperCase()
+      if (String(body?.confirm ?? '').toUpperCase() !== expected) {
+        return sendJson(res, 400, { error: { message: `確認語が一致しません（${expected}）` } })
+      }
+      const out = b === 'pause' ? await ops.pause(String(body?.reason ?? 'mobile'), by) : await ops.resume(by)
+      return sendJson(res, 200, out)
+    }
+    const out = await ops.gateway(b, body?.confirm, by)
     return sendJson(res, 200, out)
   }
 

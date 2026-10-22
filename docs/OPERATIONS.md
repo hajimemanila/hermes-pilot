@@ -472,3 +472,40 @@ UI: 一覧の「＋ 起票」→ マイク表示あり・ボードチップ4件 
         コスト上位: discord $1.43 → kanban $0.122 → tui $0.098
 API: 16 セッション・$1.778・cache 99.2%・1285 calls（1回目）→ 292/1,382（再取得時）
 ```
+
+## ワンタップ一時停止（2026-10-23 追加 / PLAN-V3 の D）
+
+「まず止めたい」ための操作。既存の drain / restart / stop とは意味が違う。
+
+| 操作 | 実行中のターン | 主な用途 |
+| --- | --- | --- |
+| **pause（これ）** | **完走する** | 新規の受付だけ止めたい |
+| drain | 完走する | 新しいターンを止める（gateway は動かしたまま） |
+| restart | 完走を待ってから再起動 | 反映・再起動 |
+| stop | 途中でも切る | 強制停止 |
+
+### サーバ
+
+- `POST /api/gateway/pause {confirm:"PAUSE", reason}` → `hermes pause --reason …` を実行
+- `POST /api/gateway/resume {confirm:"RESUME"}` → `hermes resume`
+- センチネルは **`~/.hermes/ESTOP`**（JSON `{engaged_at, reason}`）。ブリッジは**読むだけ**で、書き込みは必ず CLI に任せる
+- `GET /api/overview` に `paused: {engaged, reason, engagedAt}` を同梱（全タブで状態が見える）
+- 確認語が無い/違う場合は 400。書き込みレート枠＋監査（`gateway.pause` / `gateway.resume`）
+
+### UI
+
+- 一時停止中は**タスクタブ上部に黄色のバナー**（理由つき）＋「再開」ボタン
+- 緊急操作シートの先頭に状態カード。未停止なら「一時停止（新規のみ）」を**長押し1.5秒**、停止中なら「再開する（ESTOP 解除）」の1タップ
+- 解除は安全方向なので確認語を要求しない（押し間違いの実害が「止め続ける」だけ）
+
+### 実測（390×844 / :8444）
+
+```
+誤った確認語 → 400
+pause → ok:true / state.engaged:true / reason:"mobile test"
+        ~/.hermes/ESTOP = {"engaged_at":"2026-10-22T19:52:46.768707+00:00","reason":"mobile test"}
+overview.paused → 同じ内容
+resume → ok:true / state.engaged:false / ESTOP 消滅（ls で確認）
+UI: 長押し → バナー「一時停止中（新規の受付を止めています ・ mobile）」＋再開ボタン（45×25px・1行）
+    シート内も「再開する（ESTOP 解除）」に切替 → 押下でバナー消滅・ESTOP 削除を確認
+```

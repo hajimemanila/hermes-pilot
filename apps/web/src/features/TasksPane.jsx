@@ -162,13 +162,51 @@ export function TasksPane({ overview, refresh, notify }) {
     }
   }
 
+  /** 緊急停止（新規作業のみ停止）。実行中は完走する。 */
+  const pauseAction = async () => {
+    setBusy(true)
+    try {
+      await api('/api/gateway/pause', { method: 'POST', body: { confirm: 'PAUSE', reason: 'mobile' } })
+      notify('一時停止しました（新規のみ）')
+      refresh?.()
+    } catch (e) {
+      notify(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** 緊急停止の解除（安全方向なので1タップ）。 */
+  const resumeAction = async () => {
+    setBusy(true)
+    try {
+      await api('/api/gateway/resume', { method: 'POST', body: { confirm: 'RESUME' } })
+      notify('再開しました')
+      refresh?.()
+    } catch (e) {
+      notify(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const ops = overview?.ops
   const mem = overview?.system?.memory
   const disk = overview?.system?.disk
   const running = tasks.filter((t) => t.status === 'running').length
+  const paused = overview?.paused ?? { engaged: false }
 
   return (
     <div className="pane">
+      {paused.engaged ? (
+        <div className="banner paused">
+          一時停止中（新規の受付を止めています{paused.reason ? ` ・ ${paused.reason}` : ''}）
+          <button onClick={resumeAction} disabled={busy}>
+            再開
+          </button>
+        </div>
+      ) : null}
+
       <div className="strip">
         <div className={`stat ${ops?.ok === false ? 'bad' : ops ? 'good' : ''}`}>
           <span className="stat-k">SystemOps</span>
@@ -271,6 +309,26 @@ export function TasksPane({ overview, refresh, notify }) {
           <div className="warn-card">
             実行中 {running} 件。restart は実行中ターンの完了を待ってから再起動します（最大30分）。
           </div>
+          <div className="warn-card" style={{ marginTop: 8 }}>
+            {paused.engaged
+              ? `一時停止中です（${paused.engagedAt ?? '時刻不明'}）。実行中のターンは完走しています。`
+              : '「一時停止」は新しい仕事だけを止めます。実行中のターンは完走し、再開は1タップです。'}
+          </div>
+          {paused.engaged ? (
+            <button className="btn" style={{ marginTop: 10, width: '100%' }} onClick={resumeAction} disabled={busy}>
+              再開する（ESTOP 解除）
+            </button>
+          ) : (
+            <div className="hold-grid" style={{ marginTop: 10 }}>
+              <HoldButton
+                label="一時停止（新規のみ）"
+                sub="長押し ・ hermes pause"
+                tone="safe"
+                disabled={busy}
+                onFire={pauseAction}
+              />
+            </div>
+          )}
           <div className="hold-grid">
             <HoldButton label="新規受付を停止" sub="drain（実行中は完走）" tone="safe" disabled={busy} onFire={() => gatewayAction('drain')} />
             <HoldButton label="ゲートウェイ再起動" sub="restart（Bot が数秒落ちる）" tone="danger" disabled={busy} onFire={() => gatewayAction('restart')} />

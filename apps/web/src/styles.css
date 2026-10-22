@@ -749,6 +749,26 @@ button.stat:active {
   border-bottom: 1px solid rgba(45, 212, 191, 0.25);
 }
 
+/* 一時停止（ESTOP）中 */
+.banner.paused {
+  background: rgba(245, 185, 66, 0.12);
+  color: var(--warn);
+  border-bottom: 1px solid rgba(245, 185, 66, 0.3);
+  justify-content: space-between;
+}
+
+.banner.paused button {
+  flex: none;
+  white-space: nowrap;
+  border: 1px solid rgba(245, 185, 66, 0.5);
+  background: transparent;
+  color: var(--warn);
+  border-radius: 8px;
+  padding: 3px 10px;
+  font: inherit;
+  font-size: 11.5px;
+}
+
 .composer-ro {
   flex: none;
   padding: 12px 12px calc(12px + var(--safe-b));

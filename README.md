@@ -18,6 +18,7 @@ Hermes Agent を Android（Tailscale 経由）から**見る・止める・話�
 - **タスクの Git 可視化**: カードに直近コミット（sha + 1行メッセージ）、詳細に変更ファイルの +add −del と差分プレビュー（開いたときだけ取得）
 - **Discord リンク**: Discord 由来の会話・タスクからスレッドを直接開く（guild/thread は sessions.json から解決）
 - **SystemOps**: Clean / Blocked バッジ、メモリ・ディスク、実行中タスク数
+- **一時停止**: `hermes pause` / `resume` をワンタップで（新規の受付だけ停止・実行中は完走）
 - **緊急操作**: 長押し1.5秒＋確認語で drain / restart / stop / start、実行中タスクの中断（reclaim→block）
 - **チャット**: Hermes の WS（JSON-RPC）をそのまま中継。ストリーミング、思考ログ、利用トークン、中断、会話一覧の復元、自動再接続
 - **横断検索**: ヘッダーの検索から全セッション（Discord/CLI/カンバン）の発言を FTS で引いて会話を開く。カンバン作業ログは読み取り専用で表示

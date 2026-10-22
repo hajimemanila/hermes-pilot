@@ -1,3 +1,7 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import { execFile } from 'node:child_process'
+
 /**
  * 運用系（SystemOps バッジ + キルスイッチ）。
  *
@@ -6,6 +10,8 @@
  *  - drain   … 新規ターンを止め、実行中は完走
  *  - restart … SIGUSR1 → 実行中ターンの完了を待って再起動（最大1800秒）
  *  - stop    … interrupt=true で実行中も停止
+ *
+ * 緊急停止（pause / resume）だけは CLI を使う（`~/.hermes/ESTOP` センチネルを本体が管理する）。
  *
  * @param {object} cfg 設定
  * @param {object} hermes Hermes クライアント
@@ -87,5 +93,76 @@ export function createOps(cfg, hermes, auth) {
     return { ok, action, result: res.data, at: Date.now() }
   }
 
-  return { overview, gateway }
+  /**
+   * 緊急停止（ESTOP）の状態。`~/.hermes/ESTOP` を読むだけ。
+   * @returns {{engaged: boolean, reason: string|null, engagedAt: string|null}} 状態
+   */
+  function paused() {
+    const p = path.join(cfg.hermesHome, 'ESTOP')
+    try {
+      if (!fs.existsSync(p)) return { engaged: false, reason: null, engagedAt: null }
+      let raw = {}
+      try {
+        raw = JSON.parse(fs.readFileSync(p, 'utf8').replace(/^\uFEFF/, ''))
+      } catch {
+        raw = {}
+      }
+      return {
+        engaged: true,
+        reason: typeof raw?.reason === 'string' ? raw.reason : null,
+        engagedAt: typeof raw?.engaged_at === 'string' ? raw.engaged_at : null,
+      }
+    } catch {
+      return { engaged: false, reason: null, engagedAt: null }
+    }
+  }
+
+  /**
+   * 緊急停止（新規作業のみ停止。実行中は完走）。
+   * CLI `hermes pause` を実行する（センチネルを自前で書かない）。
+   * @param {string} reason 理由
+   * @param {string} by 実行者
+   * @returns {Promise<object>} 結果
+   */
+  async function pause(reason = 'mobile', by = 'mobile') {
+    const res = await runHermes(['pause', '--reason', String(reason).slice(0, 200)])
+    const state = paused()
+    auth.audit({ kind: 'gateway.pause', ok: res.code === 0, by, reason, state })
+    if (res.code !== 0) {
+      throw Object.assign(new Error((res.out || 'pause に失敗しました').slice(0, 400)), { statusCode: 502 })
+    }
+    return { ok: true, action: 'pause', state, output: res.out.slice(0, 400), at: Date.now() }
+  }
+
+  /**
+   * 緊急停止を解除する。
+   * @param {string} by 実行者
+   * @returns {Promise<object>} 結果
+   */
+  async function resume(by = 'mobile') {
+    const res = await runHermes(['resume'])
+    const state = paused()
+    auth.audit({ kind: 'gateway.resume', ok: res.code === 0, by, state })
+    if (res.code !== 0) {
+      throw Object.assign(new Error((res.out || 'resume に失敗しました').slice(0, 400)), { statusCode: 502 })
+    }
+    return { ok: true, action: 'resume', state, output: res.out.slice(0, 400), at: Date.now() }
+  }
+
+  /** `hermes <args>` を実行する（シェルを介さない。テストでは runner を差し替え可）。 */
+  function runHermes(args) {
+    if (cfg.runner) return cfg.runner(args)
+    return new Promise((resolve) => {
+      execFile(
+        cfg.hermesBin ?? 'hermes',
+        args,
+        { timeout: 20_000, maxBuffer: 1_000_000, env: { ...process.env } },
+        (err, stdout, stderr) => {
+          resolve({ code: err ? (err.code ?? 1) : 0, out: `${stdout ?? ''}${stderr ?? ''}`.trim() })
+        },
+      )
+    })
+  }
+
+  return { overview, gateway, paused, pause, resume }
 }
