@@ -57,20 +57,35 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
 
   // シートは履歴に載せる（Android の戻るで閉じる／ディープリンクと実装を一本化）
   const INBOX_HASH = '#inbox'
+  // 自分で履歴を積んだかどうか。WebAPK は URL に #inbox:task を付けて開くことがあり、
+  // その場合は push しない → ✕ の history.back() が効かない。積んだ時だけ back() する。
+  const pushedInbox = useRef(false)
   const openInbox = useCallback((taskId = null) => {
     setInboxFocus(taskId ?? null)
     setInboxOpen(true)
     if (!window.location.hash.startsWith(INBOX_HASH)) {
       window.history.pushState({ hmSheet: 'inbox' }, '', taskId ? `${INBOX_HASH}:${taskId}` : INBOX_HASH)
+      pushedInbox.current = true
     }
   }, [])
   const closeInbox = useCallback(() => {
-    if (window.location.hash.startsWith(INBOX_HASH)) window.history.back()
-    else setInboxOpen(false)
+    setInboxOpen(false)
+    if (pushedInbox.current && window.location.hash.startsWith(INBOX_HASH)) {
+      pushedInbox.current = false
+      window.history.back()
+      return
+    }
+    // 自分で積んでいない（URL に最初からハッシュがある）場合は、ハッシュだけ消す
+    if (window.location.hash.startsWith(INBOX_HASH)) {
+      window.history.replaceState({}, '', window.location.pathname + window.location.search)
+    }
   }, [])
   useEffect(() => {
     const onPop = () => {
-      if (!window.location.hash.startsWith(INBOX_HASH)) setInboxOpen(false)
+      if (!window.location.hash.startsWith(INBOX_HASH)) {
+        pushedInbox.current = false
+        setInboxOpen(false)
+      }
     }
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
