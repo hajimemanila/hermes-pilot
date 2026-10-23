@@ -1,5 +1,5 @@
 {
-  "id": "/hermes-mobile",
+  "id": "/",
   "name": "Hermes Mobile",
   "short_name": "Hermes",
   "description": "Hermes Agent を外出先から見る・止める・話す（別オリジン PWA）",
@@ -22,12 +22,6 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
-    },
-    {
-      "src": "/icon-maskable-192-v4.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "maskable"
     },
     {
       "src": "/icon-maskable-512-v4.png",

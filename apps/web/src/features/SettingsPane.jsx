@@ -7,17 +7,13 @@ import { Sheet, fmtBytes, relTime } from '../components/Ui.jsx'
  * 破壊的操作はタスクタブの「緊急操作」に集約し、ここは読み取り中心。
  */
 
-/** インストール形態の判定（WebAPK なら document.referrer が android-app://…）。 */
+/** インストール形態の判定（WebAPK は referrer が android-app://…）。 */
 function launchSource() {
   try {
     const ref = document.referrer || ''
+    if (ref.startsWith('android-app://')) return 'WebAPK'
     const standalone = window.matchMedia?.('(display-mode: standalone)')?.matches
-    if (ref.startsWith('android-app://')) {
-      const pkg = ref.replace('android-app://', '').replace(/\/.*$/, '')
-      return `WebAPK（${pkg}）`
-    }
-    if (standalone) return 'スタンドアロン・referrer なし（WebAPK ではない可能性）'
-    return 'ブラウザ'
+    return standalone ? 'スタンドアロン' : 'ブラウザ'
   } catch {
     return '—'
   }

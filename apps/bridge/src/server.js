@@ -332,6 +332,19 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, r)
   }
 
+  // --- アイコン取得ログ（インストール時の実態確認）----------------------------
+  if (a === 'asset-log' && req.method === 'GET') {
+    const n = Math.min(Math.max(Number(url.searchParams.get('lines') ?? 40), 1), 200)
+    let lines = []
+    try {
+      const txt = fs.readFileSync(path.join(cfg.dataDir, 'asset-access.log'), 'utf8')
+      lines = txt.trim().split('\n').slice(-n)
+    } catch {
+      lines = []
+    }
+    return sendJson(res, 200, { lines })
+  }
+
   // --- 承認待ちインボックス --------------------------------------------------
   // /api/inbox  … ボード横断の blocked タスク（読む＋コメントで答える）
   if (a === 'inbox' && req.method === 'GET') {
@@ -490,8 +503,26 @@ function isPublicPath(pathname) {
   return false
 }
 
+/** アイコン/manifest の取得を記録する（インストール時に端末が何を取りに来たか確認するため）。 */
+function logAssetAccess(cfg, req, url) {
+  const p = url.pathname
+  if (!/^\/(icon|manifest\.webmanifest|sw\.js|favicon)/.test(p)) return
+  try {
+    const line = JSON.stringify({
+      at: new Date().toISOString(),
+      p,
+      ua: String(req.headers['user-agent'] ?? '').slice(0, 200),
+      ref: String(req.headers.referer ?? '').slice(0, 120),
+    })
+    fs.appendFile(path.join(cfg.dataDir, 'asset-access.log'), `${line}\n`, () => {})
+  } catch {
+    /* noop */
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`)
+  logAssetAccess(cfg, req, url)
 
   if (url.pathname === '/healthz') return sendJson(res, 200, { ok: true, version: VERSION })
 
