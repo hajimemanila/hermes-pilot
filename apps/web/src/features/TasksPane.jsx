@@ -54,14 +54,33 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
   const [inboxOpen, setInboxOpen] = useState(false)
   // ウィジェットからのディープリンク（?open=inbox&task=…）を1回だけ反映
   const [inboxFocus, setInboxFocus] = useState(null)
+
+  // シートは履歴に載せる（Android の戻るで閉じる／ディープリンクと実装を一本化）
+  const INBOX_HASH = '#inbox'
+  const openInbox = useCallback((taskId = null) => {
+    setInboxFocus(taskId ?? null)
+    setInboxOpen(true)
+    if (!window.location.hash.startsWith(INBOX_HASH)) {
+      window.history.pushState({ hmSheet: 'inbox' }, '', taskId ? `${INBOX_HASH}:${taskId}` : INBOX_HASH)
+    }
+  }, [])
+  const closeInbox = useCallback(() => {
+    if (window.location.hash.startsWith(INBOX_HASH)) window.history.back()
+    else setInboxOpen(false)
+  }, [])
+  useEffect(() => {
+    const onPop = () => {
+      if (!window.location.hash.startsWith(INBOX_HASH)) setInboxOpen(false)
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
   const initialInboxApplied = useRef(false)
 
   // App からのディープリンク要求（マウント後に届くので確実）
   useEffect(() => {
-    const onOpen = (e) => {
-      setInboxFocus(e?.detail?.task ?? null)
-      setInboxOpen(true)
-    }
+    const onOpen = (e) => openInbox(e?.detail?.task ?? null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     window.addEventListener('hm:open-inbox', onOpen)
     return () => window.removeEventListener('hm:open-inbox', onOpen)
   }, [])
@@ -70,9 +89,8 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
   useEffect(() => {
     if (!initialInbox || initialInboxApplied.current) return
     initialInboxApplied.current = true
-    setInboxFocus(initialInbox.task ?? null)
-    setInboxOpen(true)
-  }, [initialInbox])
+    openInbox(initialInbox.task ?? null)
+  }, [initialInbox, openInbox])
 
   const loadBoards = useCallback(async () => {
     try {
@@ -294,7 +312,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
       ) : null}
 
       {inboxCount ? (
-        <button className="inbox-bar" onClick={() => setInboxOpen(true)}>
+        <button className="inbox-bar" onClick={() => openInbox(null)}>
           <span>承認待ち {inboxCount} 件</span>
           <span className="inbox-bar-go">回答する ›</span>
         </button>
@@ -514,7 +532,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
       {inboxOpen ? (
         <InboxSheet
           notify={notify}
-          onClose={() => setInboxOpen(false)}
+          onClose={closeInbox}
           onChanged={loadInbox}
           focusTaskId={inboxFocus}
         />
