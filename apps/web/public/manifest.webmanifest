@@ -1,5 +1,5 @@
 {
-  "id": "/",
+  "id": "/app/hm4",
   "name": "Hermes Mobile",
   "short_name": "Hermes",
   "description": "Hermes Agent を外出先から見る・止める・話す（別オリジン PWA）",
@@ -12,27 +12,28 @@
   "lang": "ja",
   "icons": [
     {
-      "src": "/icon-192-v4.png",
+      "src": "/icon-192-v5.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icon-512-v4.png",
+      "src": "/icon-512-v5.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icon-maskable-512-v4.png",
+      "src": "/icon-maskable-512-v5.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
     },
     {
-      "src": "/icon.svg",
+      "src": "/icon-v5.svg",
       "sizes": "any",
-      "type": "image/svg+xml"
+      "type": "image/svg+xml",
+      "purpose": "any"
     }
   ],
   "display_override": [

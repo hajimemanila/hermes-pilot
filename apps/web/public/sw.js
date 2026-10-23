@@ -2,14 +2,14 @@
    - 画面遷移（index.html）は network-first（デプロイ後の更新が必ず届く）
    - ハッシュ付きアセットは cache-first
    - API / WS はネットワークのみ（失敗時は 503 の JSON） */
-const CACHE = 'hermes-mobile-v6'
+const CACHE = 'hermes-mobile-v7'
 const SHELL = [
   '/',
   '/manifest.webmanifest',
-  '/icon-192-v4.png',
-  '/icon-512-v4.png',
-  '/icon-maskable-512-v4.png',
-  '/icon.svg',
+  '/icon-192-v5.png',
+  '/icon-512-v5.png',
+  '/icon-maskable-512-v5.png',
+  '/icon-v5.svg',
 ]
 
 self.addEventListener('install', (e) => {

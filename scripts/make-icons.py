@@ -150,11 +150,11 @@ def write_png(path: Path, size: int, rgba: bytes) -> None:
 def main() -> None:
     # any(透明背景・ファビコン流) / maskable(不透明フルブリード) / apple-touch(不透明)
     jobs = [
-        ("icon-192-v4.png", 192, 1.15, False),
-        ("icon-512-v4.png", 512, 1.15, False),
-        ("icon-maskable-192-v4.png", 192, 0.92, True),
-        ("icon-maskable-512-v4.png", 512, 0.92, True),
-        ("icon-180-v4.png", 180, 0.98, True),
+        ("icon-192-v5.png", 192, 1.15, True),
+        ("icon-512-v5.png", 512, 1.15, True),
+        ("icon-maskable-192-v5.png", 192, 0.92, True),
+        ("icon-maskable-512-v5.png", 512, 0.92, True),
+        ("icon-180-v5.png", 180, 0.98, True),
     ]
     for name, size, scale, opaque in jobs:
         data = render(size, scale, opaque)
