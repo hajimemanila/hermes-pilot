@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { useInstallState, swState } from '../lib/useInstallState.js'
+import { diagnosePwa } from '../lib/pwaDiagnose.js'
 import { Sheet, fmtBytes, relTime } from '../components/Ui.jsx'
 
 /**
@@ -21,6 +22,8 @@ function launchSource() {
 }
 export function SettingsPane({ overview, notify, refresh }) {
   const install = useInstallState()
+  const [diag, setDiag] = useState(null)
+  const [diagBusy, setDiagBusy] = useState(false)
   const [audit, setAudit] = useState(null)
   const [log, setLog] = useState(null)
   const [logName, setLogName] = useState('gateway')
@@ -141,6 +144,48 @@ export function SettingsPane({ overview, notify, refresh }) {
           <span>Service Worker</span>
           <b>{swState()}</b>
         </div>
+        <button
+          className="btn"
+          style={{ marginTop: 8 }}
+          disabled={diagBusy}
+          onClick={async () => {
+            setDiagBusy(true)
+            try {
+              const rows = await diagnosePwa()
+              setDiag(rows)
+              // 端末の状態をホスト側でも読めるように送る（設定タブをスクショしなくて済む）
+              api('/api/client-error', {
+                method: 'POST',
+                body: {
+                  kind: 'pwa-diag',
+                  href: location.href,
+                  referrer: document.referrer || '',
+                  displayMode: ['standalone', 'minimal-ui', 'fullscreen', 'browser']
+                    .filter((m) => matchMedia(`(display-mode: ${m})`).matches)
+                    .join(','),
+                  rows,
+                },
+              }).catch(() => {})
+            } finally {
+              setDiagBusy(false)
+            }
+          }}
+        >
+          {diagBusy ? '診断中…' : 'PWA 診断を実行'}
+        </button>
+        {diag && (
+          <div className="diag" style={{ marginTop: 10, fontSize: 12, lineHeight: 1.5 }}>
+            {diag.map((r) => (
+              <div key={r.label} style={{ display: 'flex', gap: 8, padding: '2px 0' }}>
+                <span style={{ color: r.ok ? '#4ade80' : '#f87171', flex: '0 0 auto' }}>{r.ok ? '✓' : '✗'}</span>
+                <span style={{ flex: '1 1 auto', color: r.ok ? 'var(--text)' : '#fca5a5' }}>{r.label}</span>
+                <span style={{ flex: '1 1 50%', color: 'var(--muted)', wordBreak: 'break-all', textAlign: 'right' }}>
+                  {r.detail}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
         {install.available && (
           <button
             className="btn primary"
