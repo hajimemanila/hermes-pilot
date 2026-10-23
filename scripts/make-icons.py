@@ -20,7 +20,7 @@ from pathlib import Path
 
 OUT = Path(__file__).resolve().parents[1] / "apps" / "web" / "public"
 
-BG_TOP = (11, 47, 54)      # #0b2f36
+BG_TOP = (6, 22, 26)       # #06161a（単色ベタ: theme/background と一致させる）
 BG_BOTTOM = (6, 22, 26)    # #06161a
 GLYPH = (70, 224, 200)     # #46e0c8
 GLYPH_SHADOW = (18, 96, 92)
@@ -84,11 +84,8 @@ def render(size: int, scale: float, opaque_bg: bool = True) -> bytes:
             nx = (bx + 0.5) / big
             # 背景: 縦グラデーション + 中央の淡いグロー（透明指定なら塗らない）
             if opaque_bg:
-                g = lerp(1.0, 0.0, ny)
-                col = tuple(int(round(lerp(BG_TOP[i], BG_BOTTOM[i], 1.0 - g))) for i in range(3))
-                d = math.hypot(nx - 0.5, ny - 0.46)
-                glow = max(0.0, 1.0 - d / 0.55) ** 2 * 0.30
-                col = blend(col, (26, 120, 118), glow)
+                # 単色ベタ（グラデもグローも無し）。OS が前景/背景に分けても境目が出ない
+                col = BG_TOP
             else:
                 col = None
 
@@ -153,11 +150,11 @@ def write_png(path: Path, size: int, rgba: bytes) -> None:
 def main() -> None:
     # any(透明背景・ファビコン流) / maskable(不透明フルブリード) / apple-touch(不透明)
     jobs = [
-        ("icon-192-v3.png", 192, 1.30, False),
-        ("icon-512-v3.png", 512, 1.30, False),
-        ("icon-maskable-192-v3.png", 192, 1.02, True),
-        ("icon-maskable-512-v3.png", 512, 1.02, True),
-        ("icon-180-v3.png", 180, 1.30, True),
+        ("icon-192-v4.png", 192, 1.15, False),
+        ("icon-512-v4.png", 512, 1.15, False),
+        ("icon-maskable-192-v4.png", 192, 0.92, True),
+        ("icon-maskable-512-v4.png", 512, 0.92, True),
+        ("icon-180-v4.png", 180, 0.98, True),
     ]
     for name, size, scale, opaque in jobs:
         data = render(size, scale, opaque)

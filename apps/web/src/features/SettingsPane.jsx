@@ -11,12 +11,12 @@ import { Sheet, fmtBytes, relTime } from '../components/Ui.jsx'
 function launchSource() {
   try {
     const ref = document.referrer || ''
+    const standalone = window.matchMedia?.('(display-mode: standalone)')?.matches
     if (ref.startsWith('android-app://')) {
       const pkg = ref.replace('android-app://', '').replace(/\/.*$/, '')
-      return pkg.includes('webapk') ? `WebAPK（${pkg}）` : `アプリ（${pkg}）`
+      return `WebAPK（${pkg}）`
     }
-    const standalone = window.matchMedia?.('(display-mode: standalone)')?.matches
-    if (standalone) return 'スタンドアロン（referrer なし）'
+    if (standalone) return 'スタンドアロン・referrer なし（WebAPK ではない可能性）'
     return 'ブラウザ'
   } catch {
     return '—'
