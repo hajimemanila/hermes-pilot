@@ -956,3 +956,27 @@ WebAPK インストール基盤（Google Play Services 側）** にある。
   dsh / ダッシュボードと同じ見え方になる
 - WebAPK を復旧したい場合は端末再起動 → 再インストール、それでも駄目なら
   Android 設定 → アプリ に残存 WebAPK パッケージが無いか確認
+
+### 追記8: 解決と再発防止（2026-10-23）
+
+**端末を再起動したらインストールできるようになり、アイコンも白枠なしで確定した。**
+初回インストール直後はホーム画面にアイコンが出ず、Chrome を再読込してから PWA として
+認識された（WebAPK の生成完了が遅延するため）。
+
+再発防止として以下を追加した。
+
+| 追加物 | 内容 |
+| --- | --- |
+| `scripts/check-pwa.py` | manifest / アイコン / SW / 未認証公開を一括検査。`--self-test` 付き |
+| `npm run check:pwa` | ローカル `public/` を検査（0.08 秒） |
+| `npm run check:pwa:live` | 公開 URL を未認証で取得して検査 |
+| `npm run check:pwa:selftest` | 検出器が過去の白枠を拾えるか確認 |
+| `npm run verify` | `test` + `check:pwa` + `build`（デプロイ前の必須コマンド） |
+| `docs/PITFALLS.md` | P1〜P6 の症状・原因・検出・対策 |
+
+検査項目: manifest の必須項目 / start_url ⊂ scope / id 同一オリジン / display /
+**アイコンの実ピクセルと宣言サイズの一致** / any192・any512・maskable の存在 /
+**外周1pxの透明画素 0** / **SVG が全面ベタ** / **背景が単色** / **図柄半径 ≤0.40** /
+シェルが未認証で 200 / manifest が immutable でない / SW に fetch ハンドラ。
+
+実測: `--dir` 30 項目合格、`--url` 32 項目合格、`--self-test` 3 項目合格、`npm test` 81 pass。
