@@ -864,3 +864,41 @@ DSH の `icon.svg` は `<rect width="512" height="512" fill="#08161a"/>` の**�
 画素: 4枚すべて 四隅 (6,22,26,255)・外周透明画素 0・単色
 比較画像: docs/assets/icon-frame-compare.png（左=旧=白枠 / 右=新=枠なし）
 ```
+
+### 追記5: chrome://webapks で判明した本当の構造（2026-10-23）
+
+実機の `chrome://webapks` を読んだ結果:
+
+```
+Hermes Mobile
+  Package name: org.chromium.webapk.aa61a1e4a30ad803f_v2
+  Shell APK version: 194
+  URL / Scope / Start URL: https://<host>:8444/
+  Manifest Id: https://<host>:8444//          ← 旧 id「/」のまま
+  Display Mode: standalone
+  Last Update Check Time: 2026-10-23 12:56    ← チェックは走っている
+  Last Update Completion Time: 1970-01-01     ← 更新は一度も完了していない
+```
+
+つまり:
+
+1. **アプリは WebAPK として実在する**（ショートカットではない）
+2. **WebAPK の更新が一度も完了していない**（Completion=1970）。だからアイコンが永久に初回のまま
+3. インストール済みパッケージの Manifest Id は **`/`**。こちらが `id` を `/app/hm4` に変えたため
+   **id が食い違い、`This site cannot be installed` になった**
+
+#### 学び（重要）
+
+- **WebAPK の同一性は scope で決まる**。`id` を変えても別アプリにはならず、
+  既存 WebAPK と衝突してインストール不能になる。**`id` は触らない**
+- アイコンを更新する唯一の確実な方法は **WebAPK を完全に削除して作り直す**こと。
+  「アプリを削除 → chrome://webapks を再読込してエントリが消えたことを確認 → 再インストール」
+  までやらないと、古いパッケージが再利用されてアイコンは変わらない
+- `Last Update Completion Time` が 1970 のままなら、更新経路は機能していないと判断してよい
+
+#### 現在の manifest（確定）
+
+```
+id = / （start_url と同じ。変えない）
+icons = any192 / any512 / maskable512 / svg（すべて不透明・全面ベタ・v5）
+```
