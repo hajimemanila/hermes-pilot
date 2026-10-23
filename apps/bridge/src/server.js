@@ -486,7 +486,7 @@ function isPublicPath(pathname) {
   if (pathname === '/healthz' || pathname === '/auth') return true
   if (pathname === '/manifest.webmanifest' || pathname === '/sw.js' || pathname === '/favicon.ico') return true
   if (pathname.startsWith('/assets/')) return true
-  if (/^\/icon-[a-z0-9-]+\.(png|svg)$/i.test(pathname)) return true
+  if (/^\/icon(-[a-z0-9-]+)?\.(png|svg)$/i.test(pathname)) return true
   return false
 }
 

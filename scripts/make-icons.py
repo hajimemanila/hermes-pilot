@@ -72,44 +72,64 @@ def glyph_cov(x: float, y: float, s: float, scale: float) -> tuple[float, float]
     return (1.0 if hit else 0.0), (1.0 if shadow and not hit else 0.0)
 
 
-def render(size: int, scale: float) -> bytes:
-    """size x size の RGBA を返す（全面を背景で塗る）。"""
+def render(size: int, scale: float, opaque_bg: bool = True) -> bytes:
+    """size x size の RGBA を返す。opaque_bg=False なら背景を透明にする（any 用）。"""
     big = size * SS
     buf = bytearray(size * size * 4)
-    acc = [[[0.0, 0.0, 0.0] for _ in range(size)] for _ in range(size)]
+    acc = [[[0.0, 0.0, 0.0, 0.0] for _ in range(size)] for _ in range(size)]
 
     for by in range(big):
         ny = (by + 0.5) / big
         for bx in range(big):
             nx = (bx + 0.5) / big
-            # 背景: 縦グラデーション + 中央の淡いグロー
-            g = lerp(1.0, 0.0, ny)
-            col = tuple(int(round(lerp(BG_TOP[i], BG_BOTTOM[i], 1.0 - g))) for i in range(3))
-            d = math.hypot(nx - 0.5, ny - 0.46)
-            glow = max(0.0, 1.0 - d / 0.55) ** 2 * 0.30
-            col = blend(col, (26, 120, 118), glow)
+            # 背景: 縦グラデーション + 中央の淡いグロー（透明指定なら塗らない）
+            if opaque_bg:
+                g = lerp(1.0, 0.0, ny)
+                col = tuple(int(round(lerp(BG_TOP[i], BG_BOTTOM[i], 1.0 - g))) for i in range(3))
+                d = math.hypot(nx - 0.5, ny - 0.46)
+                glow = max(0.0, 1.0 - d / 0.55) ** 2 * 0.30
+                col = blend(col, (26, 120, 118), glow)
+            else:
+                col = None
 
             hit, shadow = glyph_cov(nx, ny, 1.0, scale)
-            if shadow:
-                col = blend(col, GLYPH_SHADOW, 0.55)
-            if hit:
-                col = GLYPH
+            if not opaque_bg:
+                alpha = 1.0 if hit else 0.0
+                if shadow and not hit:
+                    alpha = 0.55
+            else:
+                alpha = 1.0
+                if col is None:
+                    col = (0, 0, 0)
+                if shadow:
+                    col = blend(col, GLYPH_SHADOW, 0.55)
+                if hit:
+                    col = GLYPH
 
             px, py = bx // SS, by // SS
             cell = acc[py][px]
-            cell[0] += col[0]
-            cell[1] += col[1]
-            cell[2] += col[2]
+            cell[0] += (col[0] if col else GLYPH[0])
+            cell[1] += (col[1] if col else GLYPH[1])
+            cell[2] += (col[2] if col else GLYPH[2])
+            cell[3] += alpha if opaque_bg else alpha
 
     n = float(SS * SS)
     for y in range(size):
         for x in range(size):
-            r, g, b = acc[y][x]
+            r, g, b, a = acc[y][x]
             o = (y * size + x) * 4
-            buf[o] = int(round(r / n))
-            buf[o + 1] = int(round(g / n))
-            buf[o + 2] = int(round(b / n))
-            buf[o + 3] = 255  # 四隅まで不透明（透明だと白枠に見える）
+            if opaque_bg:
+                buf[o] = int(round(r / n))
+                buf[o + 1] = int(round(g / n))
+                buf[o + 2] = int(round(b / n))
+                buf[o + 3] = 255
+            else:
+                # 透明背景: 図柄は単色、被覆率だけをアルファにする
+                alpha = min(1.0, a / n)
+                buf[o] = GLYPH[0]
+                buf[o + 1] = GLYPH[1]
+                buf[o + 2] = GLYPH[2]
+                buf[o + 3] = int(round(alpha * 255))
     return bytes(buf)
 
 
@@ -131,15 +151,16 @@ def write_png(path: Path, size: int, rgba: bytes) -> None:
 
 
 def main() -> None:
+    # any(透明背景・ファビコン流) / maskable(不透明フルブリード) / apple-touch(不透明)
     jobs = [
-        ("icon-192-v2.png", 192, 1.24),
-        ("icon-512-v2.png", 512, 1.24),
-        ("icon-maskable-192-v2.png", 192, 1.02),
-        ("icon-maskable-512-v2.png", 512, 1.02),
-        ("icon-180-v2.png", 180, 1.26),
+        ("icon-192-v3.png", 192, 1.30, False),
+        ("icon-512-v3.png", 512, 1.30, False),
+        ("icon-maskable-192-v3.png", 192, 1.02, True),
+        ("icon-maskable-512-v3.png", 512, 1.02, True),
+        ("icon-180-v3.png", 180, 1.30, True),
     ]
-    for name, size, scale in jobs:
-        data = render(size, scale)
+    for name, size, scale, opaque in jobs:
+        data = render(size, scale, opaque)
         write_png(OUT / name, size, data)
         print(f"{name}: {size}x{size} scale={scale} {len(data)} bytes")
 

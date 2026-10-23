@@ -6,6 +6,22 @@ import { Sheet, fmtBytes, relTime } from '../components/Ui.jsx'
  * 設定タブ。状態の参照・ログ末尾・監査ログ（キルスイッチの履歴）を置く。
  * 破壊的操作はタスクタブの「緊急操作」に集約し、ここは読み取り中心。
  */
+
+/** インストール形態の判定（WebAPK なら document.referrer が android-app://…）。 */
+function launchSource() {
+  try {
+    const ref = document.referrer || ''
+    if (ref.startsWith('android-app://')) {
+      const pkg = ref.replace('android-app://', '').replace(/\/.*$/, '')
+      return pkg.includes('webapk') ? `WebAPK（${pkg}）` : `アプリ（${pkg}）`
+    }
+    const standalone = window.matchMedia?.('(display-mode: standalone)')?.matches
+    if (standalone) return 'スタンドアロン（referrer なし）'
+    return 'ブラウザ'
+  } catch {
+    return '—'
+  }
+}
 export function SettingsPane({ overview, notify, refresh }) {
   const [audit, setAudit] = useState(null)
   const [log, setLog] = useState(null)
@@ -114,6 +130,10 @@ export function SettingsPane({ overview, notify, refresh }) {
         <div className="kv">
           <span>最終確認</span>
           <b>{relTime(overview?.checkedAt)}</b>
+        </div>
+        <div className="kv">
+          <span>起動元</span>
+          <b>{launchSource()}</b>
         </div>
         <button className="btn" onClick={() => refresh?.()} style={{ marginTop: 10 }}>
           再取得

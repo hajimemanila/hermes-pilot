@@ -685,3 +685,55 @@ icons 解釈: /icon-192-v2.png(any) /icon-512-v2.png(any)
             /icon-maskable-192-v2.png(any maskable) /icon-maskable-512-v2.png(any maskable)
 SW: caches.keys() = ['hermes-mobile-v4']
 ```
+
+### 追記2: 根治（DSH との仕様差を合わせる / 2026-10-23）
+
+再インストールしても白枠が残る件を、公式ドキュメントの記述から特定した。
+
+> Android では、マスカブル形式に**対応していないアイコンは白い背景の上に配置される**
+> （web.dev "Adaptive icon support in PWAs with maskable icons" / MDN "Define app icons"）
+
+つまり白枠＝**Chrome がこのアイコンを「マスカブルでない」と判定した**結果であり、
+画像の見た目やキャッシュの問題ではなかった。
+
+#### DSH（正常）との差
+
+| | DSH | 旧 Hermes Mobile |
+| --- | --- | --- |
+| maskable の purpose | `"maskable"`（単独） | **`"any maskable"`（併記）** |
+| `any` アイコン | 不透明フルブリード | 不透明フルブリード |
+| SVG アイコン | manifest に記載 | 記載なし |
+| `display_override` | あり | なし |
+| `theme_color` / `background_color` | 同一色 | 別色 |
+
+web.dev は「`any maskable` の併記は非推奨（同じビットマップが両用途に使われ、余白が過剰/不足になる）」と明記しており、
+DSH と同じ**単独 `maskable` + 別ファイル**に揃えた。
+
+#### 併せて見つけた不具合
+
+`/icon.svg` が認証必須のままで **401** を返していた（`isPublicPath` の正規表現が `icon-*.svg` しか許可していなかった）。
+manifest に載っているアイコンが 401 を返す状態だったので、`/icon.svg` も公開に修正。
+
+#### 変更内容
+
+1. `purpose` を **`"maskable"` 単独**に（192 / 512）。`any` は別エントリ（192 / 512）
+2. **`any` アイコンは透明背景のグリフ**に変更（ファビコン流）。万一マスカブルが使われなくても
+   「暗いタイル＋白枠」にはならず、白背景に図柄だけが載る
+3. maskable は**不透明フルブリード**（図柄は中心半径 0.293 < 安全域 0.400）
+4. manifest に SVG アイコン・`display_override` を追加、`theme_color = background_color = #06161a`
+5. **`id` を `/` → `/hermes-mobile` に変更**。WebAPK の識別子が変わるため、
+   ランチャー側のアイコンキャッシュを確実に迂回して新規生成させる（今回の1回限りの措置）
+6. アイコンは `-v3` に、SW は `v5` に更新
+7. **設定タブに「起動元」を追加**: `WebAPK（org.chromium.webapk.…）` か `ブラウザ` かを表示。
+   WebAPK でなくショートカットとして追加されている場合は、そもそもアイコン生成経路が違う
+
+#### 実測（:8444）
+
+```
+manifest: id=/hermes-mobile / errors:[] / installabilityErrors:[]
+icons: /icon-192-v3.png(any) /icon-512-v3.png(any)
+       /icon-maskable-192-v3.png(maskable) /icon-maskable-512-v3.png(maskable) /icon.svg(none)
+認証なしでも全て 200（icon.svg の 401 を修正）
+画素: any = 四隅 alpha 0（透明グリフ 60%）/ maskable = 四隅 rgba(11,47,54,255)・alpha 最小 255
+SW: caches.keys() = ['hermes-mobile-v5']
+```
