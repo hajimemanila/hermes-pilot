@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useRef, useCallback, useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { HoldButton, Icon, Sheet, relTime } from '../components/Ui.jsx'
 import { CaptureSheet } from './CaptureSheet.jsx'
@@ -31,7 +31,7 @@ function readStoredBoard() {
   }
 }
 
-export function TasksPane({ overview, refresh, notify }) {
+export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
   const [boards, setBoards] = useState([])
   const [board, setBoard] = useState(null)
   const [tasks, setTasks] = useState([])
@@ -52,6 +52,27 @@ export function TasksPane({ overview, refresh, notify }) {
   const [liveTurns, setLiveTurns] = useState(0)
   const [inboxCount, setInboxCount] = useState(0)
   const [inboxOpen, setInboxOpen] = useState(false)
+  // ウィジェットからのディープリンク（?open=inbox&task=…）を1回だけ反映
+  const [inboxFocus, setInboxFocus] = useState(null)
+  const initialInboxApplied = useRef(false)
+
+  // App からのディープリンク要求（マウント後に届くので確実）
+  useEffect(() => {
+    const onOpen = (e) => {
+      setInboxFocus(e?.detail?.task ?? null)
+      setInboxOpen(true)
+    }
+    window.addEventListener('hm:open-inbox', onOpen)
+    return () => window.removeEventListener('hm:open-inbox', onOpen)
+  }, [])
+
+  // ウィジェットの行タップ（?open=inbox&task=…）でシートを開く。1回だけ。
+  useEffect(() => {
+    if (!initialInbox || initialInboxApplied.current) return
+    initialInboxApplied.current = true
+    setInboxFocus(initialInbox.task ?? null)
+    setInboxOpen(true)
+  }, [initialInbox])
 
   const loadBoards = useCallback(async () => {
     try {
@@ -491,7 +512,12 @@ export function TasksPane({ overview, refresh, notify }) {
       {usageOpen ? <UsageSheet data={usageData} hours={24} onClose={() => setUsageOpen(false)} /> : null}
 
       {inboxOpen ? (
-        <InboxSheet notify={notify} onClose={() => setInboxOpen(false)} onChanged={loadInbox} />
+        <InboxSheet
+          notify={notify}
+          onClose={() => setInboxOpen(false)}
+          onChanged={loadInbox}
+          focusTaskId={inboxFocus}
+        />
       ) : null}
 
       {liveOpen ? (

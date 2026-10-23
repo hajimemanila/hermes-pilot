@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { readDeepLink } from './lib/deeplink.js'
+
 import { api } from './api.js'
 import { TasksPane } from './features/TasksPane.jsx'
 import { ChatPane } from './features/ChatPane.jsx'
@@ -72,7 +74,11 @@ class ErrorBoundary extends React.Component {
 }
 
 export function App() {
-  const [tab, setTab] = useState('tasks')
+  const [deepLink] = useState(() => readDeepLink())
+
+  const [tab, setTab] = useState(
+    deepLink?.open === 'inbox' || deepLink?.open === 'tasks' ? 'tasks' : deepLink?.open === 'chat' ? 'chat' : 'tasks',
+  )
   const [overview, setOverview] = useState(null)
   const [conn, setConn] = useState('ok')
   const [authNeeded, setAuthNeeded] = useState(false)
@@ -80,6 +86,29 @@ export function App() {
   const [toast, setToast] = useState(null)
   const [booting, setBooting] = useState(true)
   const [searchOpen, setSearchOpen] = useState(false)
+
+  // ディープリンクのシートは「マウント済みの pane に届くイベント」で開く。
+  // 既存の hm:open-session（検索→チャット）と同じ経路で、WebAPK の復元挙動に左右されない。
+  useEffect(() => {
+    if (booting || deepLink?.open !== 'inbox') return undefined
+    const id = setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('hm:open-inbox', { detail: { task: deepLink.task } }))
+    }, 200)
+    return () => clearTimeout(id)
+  }, [booting, deepLink])
+
+  // ハッシュでの要求（#inbox[:task]）は同一ドキュメント遷移なので取りこぼさない
+  useEffect(() => {
+    const onHash = () => {
+      const hash = window.location.hash.replace(/^#/, '')
+      if (!hash.startsWith('inbox')) return
+      const task = hash.includes(':') ? hash.split(':')[1] : null
+      window.dispatchEvent(new CustomEvent('hm:open-inbox', { detail: { task } }))
+    }
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
+
   const toastTimer = useRef(null)
 
   const notify = useCallback((msg) => {
@@ -185,7 +214,12 @@ export function App() {
           {booting ? (
             <div className="empty">読み込み中…</div>
           ) : tab === 'tasks' ? (
-            <TasksPane overview={overview} refresh={refresh} notify={notify} />
+            <TasksPane
+              overview={overview}
+              refresh={refresh}
+              notify={notify}
+              initialInbox={deepLink?.open === 'inbox' ? deepLink : null}
+            />
           ) : tab === 'chat' ? (
             <ChatPane notify={notify} />
           ) : tab === 'term' ? (

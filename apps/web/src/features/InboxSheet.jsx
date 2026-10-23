@@ -15,7 +15,7 @@ const KIND_LABEL = {
  * blocked（needs_input など）のタスクをボード横断で並べ、**エージェントの質問を読んで
  * コメントで答える**だけ。ステータスは変えない（再開は Discord / ダッシュボード）。
  */
-export function InboxSheet({ onClose, notify, onChanged }) {
+export function InboxSheet({ onClose, notify, onChanged, focusTaskId = null }) {
   const [data, setData] = useState(null)
   const [drafts, setDrafts] = useState({})
   const [busyId, setBusyId] = useState(null)
@@ -57,12 +57,18 @@ export function InboxSheet({ onClose, notify, onChanged }) {
     }
   }
 
-  const items = data?.items ?? []
+  const allItems = data?.items ?? []
+  // ディープリンクで指定されたタスクを先頭に寄せる（並び以外は変えない）
+  const items = focusTaskId
+    ? [...allItems].sort((a, b) => (a.id === focusTaskId ? -1 : b.id === focusTaskId ? 1 : 0))
+    : allItems
+  const focused = focusTaskId && allItems.some((it) => it.id === focusTaskId)
 
   return (
     <Sheet title={`承認待ち${items.length ? `（${items.length}）` : ''}`} onClose={onClose}>
       {data && !data.ok ? <div className="empty">{data.reason ?? '取得できませんでした'}</div> : null}
       {!items.length && data?.ok ? <div className="empty">承認待ちはありません</div> : null}
+      {focused ? <div className="row-sub" style={{ marginBottom: 8 }}>ウィジェットから開いたタスクを先頭に表示しています</div> : null}
 
       {items.map((it) => (
         <div className="card" key={`${it.board}:${it.id}`} style={{ marginBottom: 10 }}>
