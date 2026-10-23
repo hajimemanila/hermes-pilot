@@ -44,8 +44,11 @@ export function createKanban(cfg) {
       }
       const db = path.join(dir, 'kanban.db')
       let counts = {}
+      let lastActivityAt = null
       if (fs.existsSync(db)) {
-        counts = countsFor(db)
+        const info = countsFor(db)
+        counts = info.counts
+        lastActivityAt = info.lastActivityAt
       }
       out.push({
         slug,
@@ -55,18 +58,25 @@ export function createKanban(cfg) {
         workdir: meta.default_workdir ?? null,
         current: slug === current,
         counts,
+        lastActivityAt,
       })
     }
+    // 並び順: アーカイブでない → **最終活動が新しい順** → 実行中 → 現在のボード → 名前
+    // 「current」を先頭に固定すると並び順の規則が見えなくなるので、同着時の優先に留める
     return out.sort(
       (a, b) =>
-        Number(b.current) - Number(a.current) ||
         Number(a.archived) - Number(b.archived) ||
+        Number(b.lastActivityAt ?? 0) - Number(a.lastActivityAt ?? 0) ||
         Number(b.counts?.running ?? 0) - Number(a.counts?.running ?? 0) ||
+        Number(b.current) - Number(a.current) ||
         a.name.localeCompare(b.name),
     )
   }
 
-  /** ステータス別件数。 */
+  /**
+   * ステータス別件数と最終活動時刻。
+   * 最終活動は tasks の completed_at / started_at / created_at の最大（epoch 秒）。
+   */
   function countsFor(dbPath) {
     let db
     try {
@@ -75,9 +85,18 @@ export function createKanban(cfg) {
       /** @type {Record<string, number>} */
       const counts = {}
       for (const r of rows) counts[String(r.status)] = Number(r.n)
-      return counts
+      let lastActivityAt = null
+      try {
+        const t = db
+          .prepare('SELECT MAX(COALESCE(completed_at, started_at, created_at)) AS t FROM tasks')
+          .get()
+        if (t && t.t != null) lastActivityAt = Number(t.t)
+      } catch {
+        /* tasks が無い板 */
+      }
+      return { counts, lastActivityAt }
     } catch {
-      return {}
+      return { counts: {}, lastActivityAt: null }
     } finally {
       try {
         db?.close()

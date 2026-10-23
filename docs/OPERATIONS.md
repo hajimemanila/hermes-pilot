@@ -980,3 +980,21 @@ WebAPK インストール基盤（Google Play Services 側）** にある。
 シェルが未認証で 200 / manifest が immutable でない / SW に fetch ハンドラ。
 
 実測: `--dir` 30 項目合格、`--url` 32 項目合格、`--self-test` 3 項目合格、`npm test` 81 pass。
+
+### 追記9: ボードチップの並び順と選択の保持（2026-10-23）
+
+**並び順**: 旧実装は「current ボード → 非アーカイブ → 実行中 → 名前順」で、規則が見えなかった。
+**最終活動の新しい順**（`tasks` の `COALESCE(completed_at, started_at, created_at)` の最大）に変更。
+`current` は同着時の優先に降格（先頭固定だと並び順の意味が消えるため）。
+アーカイブは常に末尾。`lastActivityAt`（epoch 秒）を `/api/boards` が返す。
+
+**選択の保持**: TasksPane はタブ切替でアンマウントされるため、毎回 `~/.hermes/kanban/current`
+のボードに戻っていた（実測で確認）。`localStorage['hm.board']` に保存し、再読込・アプリ再起動でも
+直前に見ていたボードを復元する。保存値が消えた板なら current → 非アーカイブ → 先頭の順に落とす。
+
+実測（390×844）:
+```
+並び: hermes-mobile-pwa(13:49) → dsh-web-ui(03:44) → nanokvm-dev-env → … → git-ops
+選択: NanoKVM 開発環境構築 → チャット → タスク → 復元、再読込後も復元（localStorage=nanokvm-dev-env）
+npm test 82 pass（boards-order.test.js 追加）
+```

@@ -20,6 +20,17 @@ const STATUS_LABEL = {
 /**
  * タスクタブ（ホーム）。SystemOps の状態 + カンバン + キルスイッチ。
  */
+const BOARD_KEY = 'hm.board'
+
+/** 直前に選んでいたボードの slug。 */
+function readStoredBoard() {
+  try {
+    return localStorage.getItem(BOARD_KEY)
+  } catch {
+    return null
+  }
+}
+
 export function TasksPane({ overview, refresh, notify }) {
   const [boards, setBoards] = useState([])
   const [board, setBoard] = useState(null)
@@ -44,14 +55,30 @@ export function TasksPane({ overview, refresh, notify }) {
   const loadBoards = useCallback(async () => {
     try {
       const d = await api('/api/boards')
-      setBoards(d.boards ?? [])
-      setBoard((cur) => cur ?? d.boards?.find((b) => b.current)?.slug ?? d.boards?.find((b) => !b.archived)?.slug ?? d.boards?.[0]?.slug ?? null)
+      const list = d.boards ?? []
+      setBoards(list)
+      setBoard((cur) => {
+        if (cur) return cur
+        // 直前に見ていたボードを優先（タブ往復・再読み込みで選択が飛ばないように）
+        const saved = readStoredBoard()
+        if (saved && list.some((b) => b.slug === saved)) return saved
+        return list.find((b) => b.current)?.slug ?? list.find((b) => !b.archived)?.slug ?? list[0]?.slug ?? null
+      })
     } catch (e) {
       notify(e.message)
     } finally {
       setLoading(false)
     }
   }, [notify])
+
+  // 選択したボードを覚える（TasksPane はタブ切替でアンマウントされるため）
+  useEffect(() => {
+    try {
+      if (board) localStorage.setItem(BOARD_KEY, board)
+    } catch {
+      /* 保存できなくても動作に影響なし */
+    }
+  }, [board])
 
   const loadTasks = useCallback(
     async (slug) => {
