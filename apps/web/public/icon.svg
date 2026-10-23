@@ -1,9 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect x="24" y="24" width="464" height="464" rx="96" fill="#0a262c"/>
-  <rect x="24" y="300" width="464" height="188" rx="96" fill="#0d5a57"/>
-  <g fill="#5eead4">
-    <rect x="140" y="132" width="56" height="248" rx="24"/>
-    <rect x="316" y="132" width="56" height="248" rx="24"/>
-    <rect x="140" y="232" width="232" height="56" rx="24"/>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b2f36"/>
+      <stop offset="1" stop-color="#06161a"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.46" r="0.55">
+      <stop offset="0" stop-color="#1a7876" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#1a7876" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <!-- 四隅まで塗り切る（マスクされても白い枠が出ない） -->
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <rect width="512" height="512" fill="url(#glow)"/>
+  <g fill="#46e0c8">
+    <rect x="155" y="120" width="66" height="272" rx="33"/>
+    <rect x="323" y="120" width="66" height="272" rx="33"/>
+    <rect x="155" y="226" width="234" height="60" rx="30"/>
   </g>
 </svg>
