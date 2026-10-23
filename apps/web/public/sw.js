@@ -5,7 +5,6 @@
 const CACHE = 'hermes-mobile-v7'
 const SHELL = [
   '/',
-  '/manifest.webmanifest',
   '/icon-192-v5.png',
   '/icon-512-v5.png',
   '/icon-maskable-512-v5.png',
