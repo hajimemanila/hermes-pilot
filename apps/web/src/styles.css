@@ -214,6 +214,52 @@ button.stat:active {
   display: none;
 }
 
+/* ボード選択: チップ列の左に固定の▾ を置く（帯の高さは増やさない）
+   旧 .chips は 30px + padding-bottom 8px = 38px。wrapper も 38px に揃える。 */
+.chip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding-bottom: 8px;
+  box-sizing: border-box;
+}
+
+.chip-row .chips {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-bottom: 0;
+}
+
+.chip-more {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  appearance: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.chip-more svg {
+  transform: rotate(90deg); /* chevron を下向きに */
+}
+
+.chip-more:active {
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+}
+
+/* シート内の選択中ボード */
+.list-item.on {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
 .chip {
   flex: none;
   height: 30px;

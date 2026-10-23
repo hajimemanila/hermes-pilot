@@ -44,6 +44,7 @@ export function TasksPane({ overview, refresh, notify }) {
   const [diff, setDiff] = useState(null)
   const [patch, setPatch] = useState(null)
   const [captureOpen, setCaptureOpen] = useState(false)
+  const [boardSheetOpen, setBoardSheetOpen] = useState(false)
   // 使用量（24h）
   const [usageData, setUsageData] = useState(null)
   const [usageOpen, setUsageOpen] = useState(false)
@@ -307,14 +308,70 @@ export function TasksPane({ overview, refresh, notify }) {
         </button>
       </div>
 
-      <div className="chips">
-        {boards.map((b) => (
-          <button key={b.slug} className={`chip${board === b.slug ? ' on' : ''}`} onClick={() => setBoard(b.slug)}>
-            <span>{b.icon}</span>
-            {b.name}
-          </button>
-        ))}
+      <div className="chip-row">
+        <button
+          className="chip-more"
+          onClick={() => setBoardSheetOpen(true)}
+          aria-label="ボード一覧を開く"
+          title="ボード一覧"
+        >
+          <Icon name="chevron" size={16} />
+        </button>
+        <div className="chips">
+          {boards.map((b) => (
+            <button
+              key={b.slug}
+              className={`chip${board === b.slug ? ' on' : ''}`}
+              onClick={() => setBoard(b.slug)}
+            >
+              <span>{b.icon}</span>
+              {b.name}
+            </button>
+          ))}
+        </div>
       </div>
+
+      {boardSheetOpen && (
+        <Sheet title="ボード" onClose={() => setBoardSheetOpen(false)}>
+          <div className="list">
+            {boards.map((b) => (
+              <button
+                key={b.slug}
+                className={`list-item${board === b.slug ? ' on' : ''}`}
+                onClick={() => {
+                  setBoard(b.slug)
+                  setBoardSheetOpen(false)
+                }}
+              >
+                <span style={{ flex: '0 0 auto' }}>{b.icon}</span>
+                <span
+                  style={{
+                    flex: '1 1 auto',
+                    minWidth: 0,
+                    fontWeight: 600,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {b.name}
+                </span>
+                <span style={{ flex: '0 0 auto', color: 'var(--muted)', fontSize: 11, whiteSpace: 'nowrap' }}>
+                  {[
+                    b.counts?.running ? `実行中 ${b.counts.running}` : null,
+                    b.counts?.blocked ? `停止 ${b.counts.blocked}` : null,
+                    b.archived ? '保管' : null,
+                    b.lastActivityAt ? relTime(b.lastActivityAt * 1000) : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </span>
+                {board === b.slug ? <span style={{ color: 'var(--accent)', flex: '0 0 auto' }}>✓</span> : null}
+              </button>
+            ))}
+          </div>
+        </Sheet>
+      )}
 
       <div className="list-head">
         <span>タスク</span>
