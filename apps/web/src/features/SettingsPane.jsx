@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { api } from '../api.js'
+import { useInstallState, swState } from '../lib/useInstallState.js'
 import { Sheet, fmtBytes, relTime } from '../components/Ui.jsx'
 
 /**
@@ -19,6 +20,7 @@ function launchSource() {
   }
 }
 export function SettingsPane({ overview, notify, refresh }) {
+  const install = useInstallState()
   const [audit, setAudit] = useState(null)
   const [log, setLog] = useState(null)
   const [logName, setLogName] = useState('gateway')
@@ -131,6 +133,26 @@ export function SettingsPane({ overview, notify, refresh }) {
           <span>起動元</span>
           <b>{launchSource()}</b>
         </div>
+        <div className="kv">
+          <span>インストール可否</span>
+          <b>{install.available ? '可能（ボタンで実行）' : install.installed ? 'インストール済み' : '不可（要件未達）'}</b>
+        </div>
+        <div className="kv">
+          <span>Service Worker</span>
+          <b>{swState()}</b>
+        </div>
+        {install.available && (
+          <button
+            className="btn primary"
+            style={{ marginTop: 8 }}
+            onClick={async () => {
+              const r = await install.prompt()
+              notify?.(r === 'accepted' ? 'インストールを開始しました' : 'キャンセルしました')
+            }}
+          >
+            アプリとしてインストール
+          </button>
+        )}
         <button className="btn" onClick={() => refresh?.()} style={{ marginTop: 10 }}>
           再取得
         </button>

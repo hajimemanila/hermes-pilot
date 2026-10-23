@@ -902,3 +902,24 @@ Hermes Mobile
 id = / （start_url と同じ。変えない）
 icons = any192 / any512 / maskable512 / svg（すべて不透明・全面ベタ・v5）
 ```
+
+### 追記6: 端末側でインストール可否を可視化（2026-10-23）
+
+`This site cannot be installed` の切り分けのため、`beforeinstallprompt` を拾って
+設定タブに **インストール可否 / Service Worker の状態 / 実行ボタン** を出すようにした。
+
+- Chrome は「インストール可能」と判断したときだけ `beforeinstallprompt` を発火する。
+  発火しなければ manifest・アイコン・SW のどれかが要件を満たしていない
+- 発火していれば **「アプリとしてインストール」ボタンから直接 `prompt()` を呼べる**
+  （メニュー経由の失敗を回避できる）
+- **`/favicon.ico` を用意した**（404 を1つ減らす。32px を ICO に包んだだけ）
+
+#### 端末のアクセスログから分かったこと
+
+`05:03` / `05:08` に Android から **`/icon-192.png`・`/icon-maskable-512.png`・`/favicon.ico`** への
+リクエストがあった。これらは**削除済みの旧ファイル名**（現在 404）。
+つまり Chrome は**どこかに古い manifest を保持したまま**アイコンを取りに来ている。
+（`manifest.webmanifest` 自体は `no-cache` で返しており、SW の SHELL からも外した）
+
+インストールは Chrome が保持している manifest で判定されるため、
+**キャッシュ削除 → タブを閉じる → 開き直す → 設定タブで「インストール可否」を確認**が最短の切り分け。
