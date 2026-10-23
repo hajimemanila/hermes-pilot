@@ -923,3 +923,36 @@ icons = any192 / any512 / maskable512 / svg（すべて不透明・全面ベタ�
 
 インストールは Chrome が保持している manifest で判定されるため、
 **キャッシュ削除 → タブを閉じる → 開き直す → 設定タブで「インストール可否」を確認**が最短の切り分け。
+
+### 追記7: 端末側の診断結果 — ページ要件は全項目クリア（2026-10-23）
+
+設定タブの「PWA 診断」を実機（Android Chrome）で実行し、結果を `client-errors.log` に受信した。
+
+```
+✓ manifest の link / 取得 (200 application/manifest+json) / JSON
+✓ name / short_name
+✓ start_url = https://<host>:8444/
+✓ scope     = https://<host>:8444/
+✓ id        = https://<host>:8444/
+✓ start_url が scope 内 / id が同一オリジン
+✓ display = standalone
+✓ icons 4件 — icon-192-v5(192x192) / icon-512-v5(512x512) / icon-maskable-512-v5(512x512 maskable) / icon-v5.svg
+✓ 192px 以上の any / 512px 以上の any / maskable あり
+✓ Service Worker 制御 / scope カバー
+```
+
+**端末上でも Chrome のインストール要件はすべて満たしている。**
+それでも `beforeinstallprompt` が発火せず（＝インストール不可）、メニューからは
+`This site cannot be installed` になる。したがって原因は **ページ側ではなく Chrome の
+WebAPK インストール基盤（Google Play Services 側）** にある。
+
+傍証: 以前の WebAPK は `Last Update Completion Time = 1970-01-01`（更新が一度も成功していない）。
+
+#### 実務的な結論
+
+- アイコンの白枠は**画像側で解決済み**（全面ベタ・不透明・透明画素0）
+- WebAPK として入れる経路が壊れているので、**「ホーム画面に追加」（ショートカット）**で入れる。
+  ショートカットのアイコンは favicon（= 全面ベタの `/icon-v5.svg`）なので白枠は出ない。
+  dsh / ダッシュボードと同じ見え方になる
+- WebAPK を復旧したい場合は端末再起動 → 再インストール、それでも駄目なら
+  Android 設定 → アプリ に残存 WebAPK パッケージが無いか確認
