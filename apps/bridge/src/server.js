@@ -44,6 +44,26 @@ const gitinfo = createGitInfo(cfg)
 const discord = createDiscord(cfg)
 const search = createSearch(cfg)
 const transcript = createTranscript(cfg)
+
+/**
+ * プロファイル一覧（name と state.db の在処）。30秒キャッシュ。
+ * チャット一覧をプロジェクト横断にするために使う。
+ */
+let profilesCache = { at: 0, list: [] }
+async function listProfiles() {
+  if (Date.now() - profilesCache.at < 30_000 && profilesCache.list.length) return profilesCache.list
+  const r = await hermes.call('/api/profiles', { timeoutMs: 8000 })
+  const list = r.status === 200 ? (r.data?.profiles ?? []) : []
+  if (list.length) profilesCache = { at: Date.now(), list }
+  return list
+}
+
+/** プロファイル名 → state.db のパス（不明なら既定）。 */
+function stateDbFor(profiles, name) {
+  const hit = profiles.find((p) => p.name === name)
+  if (!hit?.path) return cfg.stateDb
+  return path.join(hit.path, 'state.db')
+}
 const capture = createCapture(cfg)
 const usage = createUsage(cfg)
 const live = createLive(cfg, kanban)
@@ -310,9 +330,12 @@ async function handleApi(req, res, url) {
     if (!readAllowed(cfg.rate.maxReads ?? 240, cfg.rate.windowMs)) {
       return sendJson(res, 429, { error: { message: '読み取りが多すぎます' } })
     }
+    const profileName = url.searchParams.get('profile')
+    const profiles = profileName ? await listProfiles() : []
     const r = transcript.read(decodeURIComponent(b), {
       limit: Number(url.searchParams.get('limit') ?? 80),
       before: Number(url.searchParams.get('before') ?? 0),
+      dbPath: profileName ? stateDbFor(profiles, profileName) : undefined,
     })
     return sendJson(res, r.ok ? 200 : 404, r)
   }
@@ -410,22 +433,37 @@ async function handleApi(req, res, url) {
 
   if (a === 'sessions') {
     const limit = Number(url.searchParams.get('limit') ?? 20)
-    const r = await hermes.call('/api/sessions', { timeoutMs: 10000 })
-    if (r.status !== 200) return sendJson(res, 502, { error: { message: `Hermes: HTTP ${r.status}` } })
-    const sessions = (r.data?.sessions ?? []).slice(0, limit).map((s) => ({
-      id: s.id,
-      title: s.title ?? s.display_name ?? s.session_key ?? s.id,
-      source: s.source,
-      model: s.model,
-      active: Boolean(s.is_active),
-      lastActivity: s.last_activity_description ?? null,
-      lastActive: s.last_active ? Number(s.last_active) * 1000 : null,
-      messages: s.message_count ?? 0,
-      tools: s.tool_call_count ?? 0,
-      cost: s.estimated_cost_usd ?? null,
-      preview: s.preview ?? null,
-    }))
-    return sendJson(res, 200, { sessions })
+    // タスクタブは全ボード横断なので、チャットも全プロファイル横断にする。
+    // ダッシュボード API は ?profile= を受けるので、列挙して合成する。
+    const profiles = await listProfiles()
+    const names = profiles.length ? profiles.map((p) => p.name) : [null]
+    const perProfile = await Promise.all(
+      names.map(async (name) => {
+        const qs = new URLSearchParams({ limit: String(limit) })
+        if (name) qs.set('profile', name)
+        const r = await hermes.call(`/api/sessions?${qs}`, { timeoutMs: 10000 })
+        if (r.status !== 200) return []
+        return (r.data?.sessions ?? []).map((s) => ({
+          id: s.id,
+          title: s.title ?? s.display_name ?? s.session_key ?? s.id,
+          source: s.source,
+          model: s.model,
+          profile: name ?? 'default',
+          active: Boolean(s.is_active),
+          lastActivity: s.last_activity_description ?? null,
+          lastActive: s.last_active ? Number(s.last_active) * 1000 : null,
+          messages: s.message_count ?? 0,
+          tools: s.tool_call_count ?? 0,
+          cost: s.estimated_cost_usd ?? null,
+          preview: s.preview ?? null,
+        }))
+      }),
+    )
+    const sessions = perProfile
+      .flat()
+      .sort((x, y) => (y.lastActive ?? 0) - (x.lastActive ?? 0))
+      .slice(0, limit)
+    return sendJson(res, 200, { sessions, profiles: names.filter(Boolean) })
   }
 
   // --- 端末の定型コマンド ---------------------------------------------------

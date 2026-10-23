@@ -21,13 +21,15 @@ export function createTranscript(cfg) {
   function read(sessionId, opts = {}) {
     const id = String(sessionId ?? '').slice(0, 128)
     if (!id) return { ok: false, sessionId: id, messages: [], reason: 'session_id が必要です' }
-    if (!fs.existsSync(dbPath)) return { ok: false, sessionId: id, messages: [], reason: 'state.db が見つかりません' }
+    // プロファイル横断表示のため、呼び出し側が対象 DB を指定できる
+    const effectivePath = opts.dbPath || dbPath
+    if (!fs.existsSync(effectivePath)) return { ok: false, sessionId: id, messages: [], reason: 'state.db が見つかりません' }
     const limit = Math.min(Math.max(Number(opts.limit ?? 80), 1), 300)
     const before = Number(opts.before ?? 0)
 
     let db
     try {
-      db = new DatabaseSync(dbPath, { readOnly: true })
+      db = new DatabaseSync(effectivePath, { readOnly: true })
       let title = ''
       try {
         const t = db.prepare('SELECT title, display_name FROM sessions WHERE id = ?').get(id)

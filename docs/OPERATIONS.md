@@ -1016,3 +1016,10 @@ npm test 82 pass（boards-order.test.js 追加）
 phone : chipRow 38px / task list 670px / ▾ 30px / 横スクロールなし / シート9件 fits=True (body 514px)
 tablet: chipRow 38px / チップ表示幅 760px（スマホは366px） / 横スクロールなし
 ```
+
+## チャット一覧のプロファイル横断（2026-10-24）
+
+- 背景: タスクタブは全ボード横断だが、チャットタブは `session.list`（WS/JSON-RPC）が既定プロファイル固定のため、Default の会話しか出ていなかった。
+- 対応: ブリッジの `GET /api/sessions` が `/api/profiles` で列挙し、各プロファイルへ `?profile=<name>` を付けて取得して合成（`profile` タグ付き・lastActive 降順）。トランスクリプトは `GET /api/sessions/:id/transcript?profile=<name>` でそのプロファイルの `state.db` を読む。
+- PWA: ドロワーは `/api/sessions` を優先（失敗時のみ従来の RPC）。Default 以外の会話は読み取り専用で開き、バナーにプロファイル名を出す。
+- 制限: 他プロファイルへの返信は未対応。必要になったら、そのプロファイル用の WS 経路をブリッジに足す（`/ws/chat?profile=` 相当）。

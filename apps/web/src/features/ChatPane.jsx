@@ -52,8 +52,33 @@ export function ChatPane({ notify }) {
   sidRef.current = sid
   storedRef.current = storedSid
 
-  /** セッション一覧を取り直す。 */
+  /**
+   * セッション一覧を取り直す。
+   *
+   * `session.list`（WS/JSON-RPC）は既定プロファイルのゲートウェイにしか届かないため、
+   * タスクタブ同様に**全プロファイル横断**へ。ブリッジの `/api/sessions` が profile 付きで
+   * 合成済みなので、そちらを優先し、失敗時だけ従来の RPC にフォールバックする。
+   */
   const loadSessions = useCallback(async (rpc) => {
+    try {
+      const d = await api('/api/sessions?limit=40')
+      const list = (d.sessions ?? []).map((x) => ({
+        id: x.id,
+        title: x.title,
+        source: x.source,
+        profile: x.profile ?? 'default',
+        message_count: x.messages ?? 0,
+        is_active: x.active,
+        started_at: x.lastActive ? Math.floor(x.lastActive / 1000) : null,
+      }))
+      if (list.length) {
+        sessionsRef.current = list
+        setSessions(list)
+        return list
+      }
+    } catch {
+      /* ブリッジが落ちている時は RPC に任せる */
+    }
     const r = await rpc('session.list', {})
     const list = r?.result?.sessions ?? []
     sessionsRef.current = list
@@ -471,15 +496,23 @@ export function ChatPane({ notify }) {
 
   /** resume できない会話を読み取り専用で開く（カンバン作業ログなど）。 */
   const loadTranscript = useCallback(
-    async (sessionId, focusId, title) => {
+    async (sessionId, focusId, title, profile = null) => {
       try {
-        const d = await api(`/api/sessions/${encodeURIComponent(sessionId)}/transcript?limit=80`)
+        const q = new URLSearchParams({ limit: '80' })
+        // 他プロファイルの会話は state.db が別なので profile を渡す（読み取り専用で開く）
+        if (profile && profile !== 'default') q.set('profile', profile)
+        const d = await api(`/api/sessions/${encodeURIComponent(sessionId)}/transcript?${q}`)
         if (!d.ok) {
           notify(d.reason ?? 'この会話は開けません')
           return
         }
         setSid(null)
-        setReadonly({ sessionId, focusId: focusId ?? null, title: d.title ?? title ?? '' })
+        setReadonly({
+          sessionId,
+          focusId: focusId ?? null,
+          title: d.title ?? title ?? '',
+          profile: profile && profile !== 'default' ? profile : null,
+        })
         setBlocks(
           (d.messages ?? []).map((m) => ({
             role: m.role === 'user' ? 'user' : 'assistant',
@@ -600,7 +633,10 @@ export function ChatPane({ notify }) {
       {/* 切断直後（2秒未満）は出さない */}
       {showBanner ? <div className="banner">接続を回復しています…</div> : null}
       {readonly ? (
-        <div className="banner ro">読み取り専用 ・ カンバンの作業ログはこのアプリから再開できません（ボードで操作）</div>
+        <div className="banner ro">
+          読み取り専用
+          {readonly.profile ? ` ・ ${readonly.profile} プロファイルの会話（返信はそのプロファイルの Hermes から）` : ' ・ カンバンの作業ログはこのアプリから再開できません（ボードで操作）'}
+        </div>
       ) : null}
 
       <div
@@ -910,18 +946,26 @@ export function ChatPane({ notify }) {
             </span>
             <Icon name="plus" size={16} />
           </button>
-          {sessions.map((s) => (
-            <button key={s.id} className={`row${s.id === storedSid ? ' on' : ''}`} onClick={() => openSessionSafe(s.id)}>
-              <span className="row-main">
-                <span className="row-title">{s.title || s.id}</span>
-                <span className="row-sub">
-                  {s.source ?? 'cli'} ・ {s.message_count ?? 0} msg ・ {relTime((s.started_at ?? 0) * 1000)}
-                  {s.is_active ? ' ・ 稼働中' : ''}
+          {sessions.map((s) => {
+            const foreign = s.profile && s.profile !== 'default'
+            return (
+              <button
+                key={`${s.profile ?? 'default'}:${s.id}`}
+                className={`row${s.id === storedSid ? ' on' : ''}`}
+                onClick={() => (foreign ? loadTranscript(s.id, null, s.title, s.profile) : openSessionSafe(s.id))}
+              >
+                <span className="row-main">
+                  <span className="row-title">{s.title || s.id}</span>
+                  <span className="row-sub">
+                    {foreign ? `${s.profile} ・ ` : ''}
+                    {s.source ?? 'cli'} ・ {s.message_count ?? 0} msg ・ {relTime((s.started_at ?? 0) * 1000)}
+                    {s.is_active ? ' ・ 稼働中' : ''}
+                  </span>
                 </span>
-              </span>
-              <Icon name="chevron" size={16} />
-            </button>
-          ))}
+                <Icon name="chevron" size={16} />
+              </button>
+            )
+          })}
         </Sheet>
       ) : null}
     </div>
