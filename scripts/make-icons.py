@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """PWA アイコンの生成（外部依存なし）。
 
+ファイル名は**キャッシュ無効化のためバージョン付き**（-v2）。差し替えるときは名前も上げる。
+
 HyperOS / Android のスキール（角丸）マスクで白い枠が出ないように、
 **キャンバスの四隅まで背景色で塗り切る**フルブリードで描く。
 
@@ -130,11 +132,11 @@ def write_png(path: Path, size: int, rgba: bytes) -> None:
 
 def main() -> None:
     jobs = [
-        ("icon-192.png", 192, 1.24),
-        ("icon-512.png", 512, 1.24),
-        ("icon-maskable-192.png", 192, 1.02),
-        ("icon-maskable-512.png", 512, 1.02),
-        ("icon-180.png", 180, 1.26),
+        ("icon-192-v2.png", 192, 1.24),
+        ("icon-512-v2.png", 512, 1.24),
+        ("icon-maskable-192-v2.png", 192, 1.02),
+        ("icon-maskable-512-v2.png", 512, 1.02),
+        ("icon-180-v2.png", 180, 1.26),
     ]
     for name, size, scale in jobs:
         data = render(size, scale)

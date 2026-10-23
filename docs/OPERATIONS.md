@@ -640,3 +640,48 @@ icons 解釈: any(192,512) + "any maskable"(192,512)
 
 ホーム画面のアイコンは**インストール時に WebAPK へ焼き込まれる**。差し替えを反映するには
 一度アンインストールして追加し直す（アプリ内のキャッシュだけでは変わらない）。
+
+### 追記: 再インストールしても白枠が残った原因（2026-10-23 修正）
+
+前項のアイコン差し替え後も端末に白枠が残った。原因は**配信ヘッダとキャッシュ**。
+
+正常に動いていた DSH アプリとの違い:
+
+| | DSH（正常） | Hermes Mobile（旧・不具合） |
+| --- | --- | --- |
+| `manifest.webmanifest` | `cache-control: no-cache` | **`public, max-age=604800, immutable`** |
+| アイコンのURL | 固定名 | 固定名（**同じ**） |
+| アイコンのヘッダ | `max-age=31536000, immutable` | `max-age=604800, immutable` |
+
+つまり**マニフェストまで7日 immutable で返していた**ため、再インストール時も Chrome は
+キャッシュ済みの古いマニフェスト＋古いアイコン（＝白枠つきの絵）を使い続けていた。
+
+### 修正内容
+
+1. **アイコンのファイル名をバージョン付きに変更**（`icon-512.png` → `icon-512-v2.png` 等 5 種）
+   → URL が変わるので HTTP キャッシュ・WebAPK のアイコン記録のどちらも一致しない。旧URLは 404
+2. **キャッシュ方針を DSH と同じに**（`apps/bridge/src/server.js`）
+   - `.webmanifest` / `.json` / `.html` → `no-cache`
+   - 固定名アセット（アイコン・SVG 等） → `public, max-age=3600, must-revalidate`
+   - `/assets/`（ハッシュ付き）だけ `max-age=31536000, immutable`
+3. `index.html` の `apple-touch-icon` も `icon-180-v2.png` に更新
+4. Service Worker: `CACHE` を `v3 → v4`、SHELL を新URLに
+
+### 今後のルール
+
+- **`manifest.webmanifest` は絶対に immutable で返さない**（インストール時のアイコン解決に使われる）
+- アイコンを差し替えたら **ファイル名のバージョンを上げる**（`-v3`, `-v4`…）。ヘッダだけでは
+  端末側の WebAPK キャッシュを確実には更新できない
+- `sw.js` の `CACHE` も同時に上げる
+
+### 実測（:8444）
+
+```
+manifest: cache-control: no-cache / content-type: application/manifest+json
+icons  : cache-control: public, max-age=3600, must-revalidate
+配信バイト: 5ファイルすべて sha256 がディスクと一致（旧パスは 404）
+Chrome パーサ: errors: [] / installabilityErrors: []
+icons 解釈: /icon-192-v2.png(any) /icon-512-v2.png(any)
+            /icon-maskable-192-v2.png(any maskable) /icon-maskable-512-v2.png(any maskable)
+SW: caches.keys() = ['hermes-mobile-v4']
+```

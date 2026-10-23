@@ -178,9 +178,20 @@ function serveStatic(req, res, pathname) {
       return
     }
     const ext = path.extname(file)
+    // キャッシュ方針:
+    //  - manifest は no-cache（インストール時のアイコン解決に使われるため、必ず取り直させる）
+    //  - アイコン等の固定名アセットは短命（名前を変えずに差し替えたときに古い画像が残らないように）
+    //  - ハッシュ付きの /assets/ だけ長期キャッシュ
+    const noCache = ext === '.html' || ext === '.webmanifest' || ext === '.json'
+    const hashed = file.includes(`${path.sep}assets${path.sep}`)
+    const cacheControl = noCache
+      ? 'no-cache'
+      : hashed
+        ? 'public, max-age=31536000, immutable'
+        : 'public, max-age=3600, must-revalidate'
     res.writeHead(200, {
       'content-type': MIME[ext] ?? 'application/octet-stream',
-      'cache-control': ext === '.html' ? 'no-cache' : 'public, max-age=604800, immutable',
+      'cache-control': cacheControl,
     })
     res.end(buf)
   })
