@@ -660,6 +660,35 @@ button.stat:active {
   text-overflow: ellipsis;
 }
 
+/* 会話のプロファイル表示（SPEC-PROFILE-CHAT D3/D4）。押せない小さな札 */
+.prof-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  max-width: 96px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+.chat-head > .prof-chip { margin-left: -2px; }
+.prof-chip.on {
+  border-color: rgba(45, 212, 191, 0.45);
+  color: var(--accent);
+}
+.prof-chip.worker {
+  border-color: rgba(245, 185, 66, 0.5);
+  color: var(--warn);
+}
+.row-sub .prof-chip { margin-right: 6px; }
+.row-title .prof-chip { margin-left: 6px; }
+
 .chat-scroll {
   flex: 1;
   min-height: 0;

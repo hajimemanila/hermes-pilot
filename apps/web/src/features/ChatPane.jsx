@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useChatSocket } from '../lib/useChatSocket.js'
 import { api } from '../api.js'
 import { Icon, Sheet, relTime, fmtBytes } from '../components/Ui.jsx'
@@ -27,6 +27,12 @@ export function ChatPane({ notify }) {
   const [dcLink, setDcLink] = useState(null)
   // resume できない会話（カンバン作業ログ等）は読み取り専用で表示する
   const [readonly, setReadonly] = useState(null)
+  // いま話しているプロファイル（SPEC-PROFILE-CHAT）。既定は default
+  const [profile, setProfile] = useState('default')
+  // 直近の会話のプロファイル（起動時の復元に使う）
+  const [storedProfile, setStoredProfile] = useState('default')
+  const [profiles, setProfiles] = useState([])
+  const [profileSheet, setProfileSheet] = useState(false)
 
   // 添付
   const [attached, setAttached] = useState([])
@@ -43,6 +49,7 @@ export function ChatPane({ notify }) {
 
   const sidRef = useRef(null)
   const storedRef = useRef(null)
+  const storedProfileRef = useRef('default')
   const sessionsRef = useRef([])
   const listRef = useRef(null)
   const taRef = useRef(null)
@@ -51,6 +58,7 @@ export function ChatPane({ notify }) {
 
   sidRef.current = sid
   storedRef.current = storedSid
+  storedProfileRef.current = storedProfile
 
   /**
    * セッション一覧を取り直す。
@@ -71,6 +79,7 @@ export function ChatPane({ notify }) {
         is_active: x.active,
         started_at: x.lastActive ? Math.floor(x.lastActive / 1000) : null,
       }))
+      if (Array.isArray(d.profiles) && d.profiles.length) setProfiles(d.profiles)
       if (list.length) {
         sessionsRef.current = list
         setSessions(list)
@@ -103,13 +112,17 @@ export function ChatPane({ notify }) {
     return () => window.removeEventListener('hm:snippets', onUpdate)
   }, [loadSnippets])
 
-  /** サーバのセッションに繋ぎ直す（履歴も置き換える）。 */
-  const resumeInto = useCallback(async (rpc, target) => {
-    const r = await rpc('session.resume', { session_id: target })
+  /** サーバのセッションに繋ぎ直す（履歴も置き換える）。`prof` は他プロファイルの時だけ渡す。 */
+  const resumeInto = useCallback(async (rpc, target, prof = 'default') => {
+    const r = await rpc('session.resume', {
+      session_id: target,
+      ...(prof && prof !== 'default' ? { profile: prof } : {}),
+    })
     const res = r?.result
     if (!res?.session_id) return { ok: false, sid: null, error: r?.error ?? null }
     setSid(res.session_id)
     setStoredSid(res.resumed ?? target)
+    setProfile(prof || 'default')
     const msgs = Array.isArray(res.messages) ? res.messages : []
     setBlocks(
       msgs
@@ -188,12 +201,12 @@ export function ChatPane({ notify }) {
     const pending = pendingOpenRef.current
     pendingOpenRef.current = null
     if (pending) {
-      await openRef.current?.(pending.id, pending.focusId ?? null)
+      await openRef.current?.(pending.id, pending.focusId ?? null, pending.profile ?? 'default')
       return
     }
     const target = storedRef.current
     if (target) {
-      const resumed = await resumeInto(rpc, target)
+      const resumed = await resumeInto(rpc, target, storedProfileRef.current)
       if (!resumed.ok) {
         setSid(null)
         setStoredSid(null)
@@ -216,11 +229,13 @@ export function ChatPane({ notify }) {
   const { rpc, showBanner, state: connState } = sock
   connRef.current = connState
 
-  // 直近の会話を端末に覚える
+  // 直近の会話を端末に覚える（プロファイルもセットで。他プロファイルの resume に要る）
   useEffect(() => {
     try {
       const saved = localStorage.getItem('hm.storedSid')
       if (saved && !storedRef.current) setStoredSid(saved)
+      const savedProfile = localStorage.getItem('hm.storedProfile')
+      if (savedProfile) setStoredProfile(savedProfile)
     } catch {
       /* noop */
     }
@@ -229,10 +244,11 @@ export function ChatPane({ notify }) {
     try {
       if (storedSid) localStorage.setItem('hm.storedSid', storedSid)
       else localStorage.removeItem('hm.storedSid')
+      localStorage.setItem('hm.storedProfile', storedProfile || 'default')
     } catch {
       /* noop */
     }
-  }, [storedSid])
+  }, [storedSid, storedProfile])
 
   useEffect(() => {
     const el = listRef.current
@@ -425,9 +441,13 @@ export function ChatPane({ notify }) {
 
       let target = sid
       if (!target) {
-        const r = await rpc('session.create', { title: shown.slice(0, 24) })
+        const r = await rpc('session.create', {
+          title: shown.slice(0, 24),
+          ...(profile && profile !== 'default' ? { profile } : {}),
+        })
         target = r?.result?.session_id
         setStoredSid(r?.result?.stored_session_id ?? null)
+        setStoredProfile(profile || 'default')
         if (!target) return failed('セッションを作成できませんでした')
         setSid(target)
         setTitle(shown.slice(0, 24))
@@ -453,7 +473,7 @@ export function ChatPane({ notify }) {
       if (r?.error && /session not found/i.test(r.error.message ?? '')) {
         const stored = storedRef.current
         if (stored) {
-          const resumed = await resumeInto(rpc, stored)
+          const resumed = await resumeInto(rpc, stored, storedProfileRef.current)
           if (resumed.ok && resumed.sid) {
             target = resumed.sid
             let refs2 = refs
@@ -471,7 +491,7 @@ export function ChatPane({ notify }) {
       if (r?.error) failed(`送信に失敗: ${r.error.message}`)
       navigator.vibrate?.(8)
     },
-    [text, attached, streaming, sid, rpc, notify, stageAttachments, resumeInto],
+    [text, attached, streaming, sid, rpc, notify, stageAttachments, resumeInto, profile],
   )
 
   const send = useCallback(() => sendText(), [sendText])
@@ -484,14 +504,18 @@ export function ChatPane({ notify }) {
     notify('中断しました')
   }, [sid, rpc, notify])
 
-  const newSession = useCallback(() => {
+  const newSession = useCallback((prof = 'default') => {
+    const next = prof || 'default'
     setSid(null)
     setStoredSid(null)
     setTitle('')
     setBlocks([])
     setUsage(null)
     setReadonly(null)
+    setProfile(next)
+    setStoredProfile(next)
     setDrawer(false)
+    setProfileSheet(false)
   }, [])
 
   /** resume できない会話を読み取り専用で開く（カンバン作業ログなど）。 */
@@ -532,19 +556,21 @@ export function ChatPane({ notify }) {
   )
 
   const openSession = useCallback(
-    async (storedTarget, focusId = null) => {
+    async (storedTarget, focusId = null, prof = 'default') => {
       setDrawer(false)
       setBlocks([])
       setUsage(null)
       setReadonly(null)
-      const foundTitle = sessions.find((s) => s.id === storedTarget)?.title ?? ''
+      setProfile(prof || 'default')
+      const found = sessions.find((s) => s.id === storedTarget && (s.profile ?? 'default') === (prof || 'default'))
+      const foundTitle = found?.title ?? sessions.find((s) => s.id === storedTarget)?.title ?? ''
       setTitle(foundTitle)
-      const resumed = await resumeInto(rpc, storedTarget)
+      const resumed = await resumeInto(rpc, storedTarget, prof)
       if (!resumed.ok) {
         const err = resumed.error
         // カンバン作業ログは Hermes が resume を拒否する（4132）。読むだけなら開ける
         if (err?.code === 4132 || /Kanban worker transcript/i.test(err?.message ?? '')) {
-          await loadTranscript(storedTarget, focusId, foundTitle)
+          await loadTranscript(storedTarget, focusId, foundTitle, prof)
           return
         }
         setSid(null)
@@ -559,10 +585,10 @@ export function ChatPane({ notify }) {
   openRef.current = openSession
 
   /** 接続前なら予約して、ready になったら開く。 */
-  const openSessionSafe = useCallback((id, focusId = null) => {
+  const openSessionSafe = useCallback((id, focusId = null, prof = 'default') => {
     if (!id) return
-    if (connRef.current === 'ready') openRef.current?.(id, focusId)
-    else pendingOpenRef.current = { id, focusId }
+    if (connRef.current === 'ready') openRef.current?.(id, focusId, prof)
+    else pendingOpenRef.current = { id, focusId, profile: prof }
   }, [])
 
   // 検索結果など外側から「このセッションを開く」と指示された場合
@@ -606,7 +632,19 @@ export function ChatPane({ notify }) {
     [text, sendText],
   )
 
+  const openProfileSheet = useCallback(() => {
+    setDrawer(false)
+    setProfileSheet(true)
+  }, [])
+
   const hotSnippets = snippets.filter((s) => s.hot).slice(0, 8)
+
+  /** 新しい会話で選べるプロファイル（default 先頭・毎回同じ順）。 */
+  const orderedProfiles = useMemo(() => {
+    const list = profiles.length ? profiles : ['default']
+    const rank = (p) => (p === 'default' ? 0 : p === 'mobile' ? 1 : p === 'nanokvm' ? 2 : 3)
+    return [...new Set(list)].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
+  }, [profiles])
 
   return (
     <div className="pane chat" data-conn={connState}>
@@ -615,6 +653,12 @@ export function ChatPane({ notify }) {
           <Icon name="grid" size={18} />
         </button>
         <span className="chat-title">{title || 'チャット'}</span>
+        <span
+          className={`prof-chip${profile !== 'default' ? ' on' : ''}${profile === 'mobile' ? ' worker' : ''}`}
+          title={`この会話のプロファイル: ${profile}`}
+        >
+          {profile}
+        </span>
         {dcLink?.url ? (
           <button
             className="icon-btn dc-icon"
@@ -625,7 +669,7 @@ export function ChatPane({ notify }) {
             <span aria-hidden="true">#</span>
           </button>
         ) : null}
-        <button className="icon-btn" onClick={newSession} aria-label="新しい会話">
+        <button className="icon-btn" onClick={openProfileSheet} aria-label="新しい会話（プロファイルを選ぶ）">
           <Icon name="plus" size={18} />
         </button>
       </div>
@@ -635,7 +679,9 @@ export function ChatPane({ notify }) {
       {readonly ? (
         <div className="banner ro">
           読み取り専用
-          {readonly.profile ? ` ・ ${readonly.profile} プロファイルの会話（返信はそのプロファイルの Hermes から）` : ' ・ カンバンの作業ログはこのアプリから再開できません（ボードで操作）'}
+          {readonly.profile
+            ? ` ・ ${readonly.profile} プロファイルの会話（resume できないため記録を表示中）`
+            : ' ・ カンバンの作業ログはこのアプリから再開できません（ボードで操作）'}
         </div>
       ) : null}
 
@@ -937,12 +983,41 @@ export function ChatPane({ notify }) {
         </Sheet>
       ) : null}
 
+      {profileSheet ? (
+        <Sheet title="新しい会話のプロファイル" onClose={() => setProfileSheet(false)}>
+          {orderedProfiles.map((p) => (
+            <button key={p} className="row" onClick={() => newSession(p)}>
+              <span className="row-main">
+                <span className="row-title">
+                  {p}
+                  {p === 'default' ? <span className="prof-chip">既定</span> : null}
+                  {p === 'mobile' ? <span className="prof-chip worker">worker</span> : null}
+                </span>
+                <span className="row-sub">
+                  {p === 'default'
+                    ? '普段の作業（Discord と同じプロファイル）'
+                    : p === 'mobile'
+                      ? 'カンバン worker の実行プロファイル'
+                      : p === 'nanokvm'
+                        ? '実機・nanoKVM 系の隔離プロファイル'
+                        : `${p} プロファイル`}
+                </span>
+              </span>
+              <Icon name="chevron" size={16} />
+            </button>
+          ))}
+          <div className="row-sub" style={{ padding: '10px 6px 18px', lineHeight: 1.7 }}>
+            選んだプロファイルで新しい会話を作ります。既存の会話は一覧から開けば、そのプロファイルのまま続けられます。
+          </div>
+        </Sheet>
+      ) : null}
+
       {drawer ? (
         <Sheet title="会話" onClose={() => setDrawer(false)}>
-          <button className="row" onClick={newSession}>
+          <button className="row" onClick={openProfileSheet}>
             <span className="row-main">
               <span className="row-title">新しい会話</span>
-              <span className="row-sub">空のセッションを作る</span>
+              <span className="row-sub">プロファイルを選んで作る</span>
             </span>
             <Icon name="plus" size={16} />
           </button>
@@ -952,12 +1027,14 @@ export function ChatPane({ notify }) {
               <button
                 key={`${s.profile ?? 'default'}:${s.id}`}
                 className={`row${s.id === storedSid ? ' on' : ''}`}
-                onClick={() => (foreign ? loadTranscript(s.id, null, s.title, s.profile) : openSessionSafe(s.id))}
+                onClick={() => openSessionSafe(s.id, null, s.profile ?? 'default')}
               >
                 <span className="row-main">
                   <span className="row-title">{s.title || s.id}</span>
                   <span className="row-sub">
-                    {foreign ? `${s.profile} ・ ` : ''}
+                    {foreign ? (
+                      <span className={`prof-chip on${s.profile === 'mobile' ? ' worker' : ''}`}>{s.profile}</span>
+                    ) : null}
                     {s.source ?? 'cli'} ・ {s.message_count ?? 0} msg ・ {relTime((s.started_at ?? 0) * 1000)}
                     {s.is_active ? ' ・ 稼働中' : ''}
                   </span>
