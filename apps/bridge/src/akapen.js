@@ -822,5 +822,5 @@ export function createAkapen(cfg, opts = {}) {
     }
   }
 
-  return { board, workdir, list, sheetHtml, sheetData, answer, reopen, sessionId, image, annotation, saveAnnotation, library, libraryFile, createFromImage, targets }
+  return { board, workdir, list, sheetHtml, sheetData, answer, reopen, sessionId, image, annotation, saveAnnotation, thumb, library, libraryFile, createFromImage, targets }
 }
