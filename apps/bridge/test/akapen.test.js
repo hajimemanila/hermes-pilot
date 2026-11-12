@@ -245,3 +245,38 @@ test('answer は text だけでも受け付ける（シート直送）', async (
   assert.equal(r.moved, 'ready')
   assert.deepEqual(calls[0].slice(0, 1), ['comment'])
 })
+
+test('parseAkapenLine は annotation の image を返す', () => {
+  const ak = parseAkapenLine('[akapen] label=demo round=1 mode=annotation image=shots/demo-1.png')
+  assert.equal(ak.mode, 'annotation')
+  assert.equal(ak.image, 'shots/demo-1.png')
+})
+
+test('saveAnnotation は画像を保存して unblock を呼ぶ（冪等）', async () => {
+  const { root, workdir } = tempBoard()
+  // 下地画像と annotation 用のタスク本文に差し替える
+  const dbPath = path.join(root, 'kanban', 'boards', 'mobile', 'kanban.db')
+  const db = new DatabaseSync(dbPath)
+  db.prepare("UPDATE tasks SET body=? WHERE id='t_test1'").run(
+    '[akapen] label=demo round=1 mode=annotation image=shots/demo.png',
+  )
+  db.close()
+  fs.mkdirSync(path.join(workdir, 'shots'), { recursive: true })
+  fs.writeFileSync(path.join(workdir, 'shots', 'demo.png'), 'PNGDATA')
+  const calls = []
+  const api = createAkapen(
+    { kanbanRoot: path.join(root, 'kanban') },
+    { runKanban: async (a) => { calls.push(a); return { code: 0, out: 'ok' } } },
+  )
+  const png = 'data:image/png;base64,' + Buffer.from('annotated-bytes').toString('base64')
+  const r = await api.saveAnnotation('t_test1', { annotated_image: png, note: 'ここを詰める', marks: [{ tool: 'pen', points: [[0.1, 0.2], [0.3, 0.4]] }] })
+  assert.equal(r.ok, true)
+  assert.equal(r.marks, 1)
+  assert.equal(r.moved, 'ready')
+  assert.deepEqual(calls[1].slice(0, 1), ['unblock'])
+  const saved = JSON.parse(fs.readFileSync(path.join(workdir, 'shots/demo.annotation.json'), 'utf8'))
+  assert.equal(saved.marks[0].tool, 'pen')
+  assert.equal(saved.note, 'ここを詰める')
+  const again = await api.saveAnnotation('t_test1', { annotated_image: png })
+  assert.equal(again.duplicate, true)
+})

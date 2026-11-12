@@ -418,6 +418,32 @@ async function handleApi(req, res, url) {
       })
       return sendJson(res, 200, { taskId: b, status: info.status, sessionId: info.sessionId, feed })
     }
+    if (c === 'image' && req.method === 'GET') {
+      const r = akapen.image(b)
+      if (!r.ok) return sendJson(res, 404, { error: { code: r.code, message: r.message } })
+      res.writeHead(200, { 'content-type': r.type, 'cache-control': 'private, max-age=120' })
+      return res.end(r.data)
+    }
+    if (c === 'annotation' && req.method === 'GET') {
+      const r = akapen.annotation(b)
+      return sendJson(res, r.ok ? 200 : 404, r.ok ? r : { error: { code: r.code, message: r.message } })
+    }
+    if (c === 'annotation' && req.method === 'POST') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+      }
+      // 画像は base64 で来るので、この経路だけ上限を上げる（既定は 1MB）
+      const body = await readJson(req, 12_000_000)
+      const r = await akapen.saveAnnotation(b, body || {})
+      auth.audit({
+        kind: 'akapen.annotation',
+        task: b,
+        duplicate: Boolean(r.duplicate),
+        marks: r.marks ?? 0,
+        ok: Boolean(r.ok),
+      })
+      return sendJson(res, r.ok ? 200 : 400, r)
+    }
     if (c === 'sheet' && req.method === 'GET') {
       const r = akapen.sheetHtml(b)
       if (!r.ok) return sendJson(res, r.code === 'NOT_FOUND' ? 404 : 409, { error: { code: r.code, message: r.message } })

@@ -284,8 +284,9 @@ export function createAkapen(cfg, opts = {}) {
         },
         akapen: {
           label: ak.label ?? null,
-          round: Number(ak.round ?? 1),
+          image: ak.image ?? null,
           mode: ak.mode ?? 'standard',
+          round: Number(ak.round ?? 1),
           sheet: ak.sheet ?? null,
           exists: Boolean(sheetAbs),
           title: sheet?.title ?? null,
@@ -458,5 +459,114 @@ export function createAkapen(cfg, opts = {}) {
     return { ok: true, data: fs.readFileSync(abs), type }
   }
 
-  return { board, workdir, list, sheetHtml, sheetData, answer, reopen, sessionId }
+
+  /** 注釈の下地画像（image= で指定された shots/… の PNG/JPEG）。 */
+  function image(id) {
+    const b = bodyOf(id)
+    if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
+    const ak = parseAkapenLine(b.body)
+    if (!ak?.image) return { ok: false, code: 'NO_IMAGE', message: 'このタスクには下地画像がありません' }
+    const abs = resolveInside(ak.image)
+    if (!abs) return { ok: false, code: 'IMAGE_MISSING', message: '下地画像が見つかりません' }
+    const ext = path.extname(abs).toLowerCase()
+    const type = ext === '.png' ? 'image/png' : 'image/jpeg'
+    return { ok: true, data: fs.readFileSync(abs), type, path: abs }
+  }
+
+  /** 送信済みの注釈（無ければ null）。 */
+  function annotation(id) {
+    const b = bodyOf(id)
+    if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
+    const ak = parseAkapenLine(b.body)
+    if (!ak?.image) return { ok: false, code: 'NO_IMAGE', message: '注釈タスクではありません' }
+    const rel = ak.image.replace(/\.(png|jpe?g)$/i, '.annotation.json')
+    const abs = resolveInside(rel)
+    const data = abs ? readJsonIfExists(abs) : null
+    if (!data) return { ok: false, code: 'NO_ANNOTATION', message: 'まだ注釈はありません' }
+    return { ok: true, data, status: b.status }
+  }
+
+  /**
+   * 注釈の送信。annotated_image は data URL（JPEG/PNG）。
+   * 冪等: 同じ画像（sha256）の再送は duplicate を返し、遷移だけ補完する。
+   */
+  async function saveAnnotation(id, payload) {
+    const b = bodyOf(id)
+    if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
+    const ak = parseAkapenLine(b.body)
+    if (!ak?.image) return { ok: false, code: 'NO_IMAGE', message: 'このタスクには下地画像がありません' }
+    if (b.status !== 'blocked') {
+      return { ok: false, code: 'NOT_WAITING', status: b.status, message: `注釈待ちではありません（現在: ${b.status}）` }
+    }
+
+    const raw = String(payload?.annotated_image || '')
+    const m = /^data:(image\/(?:png|jpeg));base64,([A-Za-z0-9+/=]+)$/.exec(raw)
+    if (!m) return { ok: false, code: 'BAD_IMAGE', message: 'annotated_image は data:image/(png|jpeg);base64,… で送ってください' }
+    const buf = Buffer.from(m[2], 'base64')
+    const MAX = 12 * 1024 * 1024
+    if (buf.length > MAX) return { ok: false, code: 'TOO_LARGE', message: `画像が大きすぎます（${Math.round(buf.length / 1024)}KB > 12MB）` }
+
+    const baseAbs = resolveInside(ak.image)
+    if (!baseAbs) return { ok: false, code: 'IMAGE_MISSING', message: '下地画像が見つかりません' }
+    const sha = crypto.createHash('sha256').update(buf).digest('hex')
+    const baseSha = crypto.createHash('sha256').update(fs.readFileSync(baseAbs)).digest('hex')
+    const ext = m[1] === 'image/png' ? '.png' : '.jpg'
+    const relAnnotated = ak.image.replace(/\.(png|jpe?g)$/i, `.annotated${ext}`)
+    const relJson = ak.image.replace(/\.(png|jpe?g)$/i, '.annotation.json')
+    const annotatedAbs = path.join(path.resolve(workdir(), relAnnotated))
+    const jsonAbs = path.join(path.resolve(workdir(), relJson))
+
+    const existing = readJsonIfExists(jsonAbs)
+    if (existing && existing.image_sha256 === sha) {
+      let moved = { code: 0, out: '' }
+      let status = b.status
+      if (b.status === 'blocked') {
+        moved = await runKanban(['unblock', id, '--reason', '注釈を受領（再送）'])
+        if (moved.code === 0) status = 'ready'
+      }
+      return { ok: moved.code === 0, duplicate: true, status, moved: status, sha256: sha }
+    }
+
+    const marks = Array.isArray(payload?.marks) ? payload.marks.slice(0, 200) : []
+    const note = String(payload?.note ?? '').slice(0, 2000)
+    fs.mkdirSync(path.dirname(annotatedAbs), { recursive: true })
+    fs.writeFileSync(annotatedAbs, buf)
+    const record = {
+      task_id: id,
+      label: ak.label ?? null,
+      round: Number(ak.round ?? 1),
+      note,
+      marks: marks.map((k) => ({
+        tool: String(k?.tool ?? 'pen'),
+        points: Array.isArray(k?.points) ? k.points.slice(0, 400) : [],
+      })),
+      base_image: ak.image,
+      annotated_image: relAnnotated,
+      base_sha256: baseSha,
+      image_sha256: sha,
+      annotated_at: new Date().toISOString(),
+    }
+    fs.writeFileSync(jsonAbs, JSON.stringify(record, null, 2), 'utf8')
+
+    const summary = `注釈: ${marks.length} ストローク${note ? ` / メモ: ${note.slice(0, 60)}` : ''} — ${relAnnotated}`
+    const comment = await runKanban(['comment', id, summary, '--author', String(payload?.by ?? 'mobile')])
+    let moved = { code: 0, out: '' }
+    let status = b.status
+    if (b.status === 'blocked') {
+      moved = await runKanban(['unblock', id, '--reason', '注釈を受領'])
+      if (moved.code === 0) status = 'ready'
+    }
+    return {
+      ok: comment.code === 0 && moved.code === 0,
+      duplicate: false,
+      sha256: sha,
+      files: { annotated: relAnnotated, json: relJson },
+      marks: marks.length,
+      status,
+      moved: status,
+      output: `${comment.out}\n${moved.out}`.trim().slice(0, 600),
+    }
+  }
+
+  return { board, workdir, list, sheetHtml, sheetData, answer, reopen, sessionId, image, annotation, saveAnnotation }
 }

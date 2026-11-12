@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api.js'
 import { Sheet, relTime } from '../components/Ui.jsx'
+import { AnnotationEditor } from './AnnotationEditor.jsx'
 import { doneHint, groupItems, isWaiting, nextWaiting } from '../lib/akapenView.js'
 
 /**
@@ -540,7 +541,19 @@ export function AkapenPane({ notify }) {
         </>
       ) : null}
 
-      {open ? (
+      {open && open.akapen?.mode === 'annotation' ? (
+        <AnnotationEditor
+          item={open}
+          notify={notify}
+          onClose={() => setOpen(null)}
+          onSubmitted={() => {
+            load()
+            setTimeout(() => setOpen(null), 600)
+          }}
+        />
+      ) : null}
+
+      {open && open.akapen?.mode !== 'annotation' ? (
         <Sheet title={(open.akapen?.title || open.title) + ''} onClose={closeSheet}>
           {isWaiting(open) ? (
             <>
