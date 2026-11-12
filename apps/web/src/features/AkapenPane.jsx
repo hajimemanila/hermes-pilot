@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from '../api.js'
 import { CloseActions } from '../components/CloseActions.jsx'
@@ -584,6 +584,9 @@ export function AkapenPane({ notify }) {
   const [data, setData] = useState(null)
   const [dataError, setDataError] = useState(null)
   const [closeNote, setCloseNote] = useState('')
+  // 作業フィード（監視 cron が書く 1 行ログ）。完了・停止を端末で気づくために出す。
+  const [feed, setFeed] = useState([])
+  const feedNotifiedRef = useRef(0)
 
   const load = useCallback(async () => {
     try {
@@ -638,6 +641,44 @@ export function AkapenPane({ notify }) {
   }
 
   /**
+   * 作業フィードを読み、開いている間は既読にする（ナビの緑の点を消す）。
+   * 新しい「完了」があればトーストで 1 回だけ知らせる（同じ行で二度は出さない）。
+   */
+  const loadFeed = useCallback(async () => {
+    try {
+      const r = await api('/api/akapen/feed?limit=6')
+      const items = Array.isArray(r.items) ? r.items : []
+      setFeed(items)
+      const at = Date.now()
+      try {
+        localStorage.setItem('hm.akapenSeenAt', String(at))
+      } catch {
+        /* noop */
+      }
+      try {
+        window.dispatchEvent(new CustomEvent('hm:akapen-seen', { detail: { at } }))
+      } catch {
+        /* noop */
+      }
+      const done = items.filter((n) => /完了/.test(n.text || ''))
+      const latest = done[done.length - 1]
+      if (latest && latest.at > feedNotifiedRef.current) {
+        // 初回読み込みでは出さない（過去の完了を今の通知として見せない）
+        if (feedNotifiedRef.current) notify?.(`赤ペン: ${String(latest.text).replace(/^✅\s*/, '')}`)
+        feedNotifiedRef.current = latest.at
+      }
+    } catch {
+      /* フィードは補助情報 */
+    }
+  }, [notify])
+
+  useEffect(() => {
+    loadFeed()
+    const id = setInterval(() => document.visibilityState === 'visible' && loadFeed(), 15000)
+    return () => clearInterval(id)
+  }, [loadFeed])
+
+  /**
    * 送信後（赤ペン回答 Q2-B）: 閉じずに次の判断待ちを開く。
    * 残りが無いときだけ閉じる。送れた実感はトーストで補う。
    */
@@ -675,6 +716,20 @@ export function AkapenPane({ notify }) {
           </button>
         </span>
       </div>
+
+      {/* 作業フィード: 完了・停止を「開いた瞬間」に読めるようにする（Discord と同じ 1 行） */}
+      {feed.length ? (
+        <div className="ak-feed" aria-live="polite">
+          {feed.slice(-3).map((n, i) => (
+            <div className="ak-feed-row" key={`${n.at}-${i}`}>
+              <span className="ak-feed-at">
+                {new Date(n.at).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+              </span>
+              <span className="ak-feed-text">{n.text}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       <div className="chips ak-tabs" role="tablist">
         {TABS.map((t) => (

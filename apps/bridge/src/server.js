@@ -379,6 +379,15 @@ async function handleApi(req, res, url) {
         items: akapen.list(Number(url.searchParams.get('limit') ?? 80)),
       })
     }
+    // /api/akapen/feed?limit=&since= … 作業フィード（監視 cron が書く 1 行ログ）
+    if (b === 'feed' && req.method === 'GET') {
+      return sendJson(res, 200, {
+        items: akapen.feed(
+          Number(url.searchParams.get('limit') ?? 20),
+          Number(url.searchParams.get('since') ?? 0),
+        ),
+      })
+    }
     if (c === 'worker' && req.method === 'GET') {
       // worker（profile mobile）の進行を読む。session.resume は通らないので state.db を直接読む
       const info = akapen.sessionId(b)

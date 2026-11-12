@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { capturedLabel, DONE_LIMIT, doneHint, groupItems, isWaiting, nextWaiting, pendingCount, repoLabel, thumbCaption, waitingCount } from '../src/lib/akapenView.js'
+import { capturedLabel, DONE_LIMIT, doneHint, groupItems, isWaiting, navBadgeState, nextWaiting, pendingCount, repoLabel, runningCount, thumbCaption, unseenNotices, waitingCount } from '../src/lib/akapenView.js'
 
 /** 赤ペン待ち（blocked + label）。 */
 const waitingItem = (id) => ({ id, status: 'blocked', akapen: { label: 'akapen-view-01', round: 1 } })
@@ -110,4 +110,32 @@ test('pendingCount はナビのタスクタブに出す承認待ち件数', () =
   // 赤ペン待ちは /api/inbox 側で除かれるので、ここに来る items は承認待ちだけ
   assert.equal(pendingCount([{ id: 'x1', board: 'ffp' }, { id: 'x2', board: 'mobile' }]), 2)
   assert.equal(pendingCount([null, { id: 'x2' }]), 1)
+})
+
+// 完了の見える化（作業フィード）: 進行中は点、未読の完了は点、判断待ちだけ数字
+test('runningCount は反映待ちと生成中を数える', () => {
+  assert.equal(runningCount([]), 0)
+  assert.equal(runningCount(undefined), 0)
+  assert.equal(runningCount([{ status: 'running' }, { status: 'ready' }, doneItem('d1')]), 2)
+  assert.equal(runningCount([waitingItem('w1')]), 0)
+})
+
+test('unseenNotices は lastSeen より新しい行だけ返す', () => {
+  const feed = [
+    { at: 1000, text: '✅ 完了 1' },
+    { at: 2000, text: '✅ 完了 2' },
+    { at: 3000, text: '⚠ 心拍停止' },
+  ]
+  assert.equal(unseenNotices(feed, 0).length, 3)
+  assert.equal(unseenNotices(feed, 1000).length, 2)
+  assert.equal(unseenNotices(feed, 3000).length, 0, '境界は既読扱い')
+  assert.deepEqual(unseenNotices(undefined, 0), [])
+})
+
+test('navBadgeState は 判断待ち > 未読完了 > 進行中 の順で 1 つだけ返す', () => {
+  assert.equal(navBadgeState({ waiting: 1, unseen: 2, running: 3 }), 'waiting')
+  assert.equal(navBadgeState({ waiting: 0, unseen: 1, running: 2 }), 'done')
+  assert.equal(navBadgeState({ waiting: 0, unseen: 0, running: 1 }), 'running')
+  assert.equal(navBadgeState({}), null)
+  assert.equal(navBadgeState(), null)
 })

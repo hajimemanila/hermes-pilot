@@ -84,6 +84,49 @@ export function pendingCount(items) {
   return list.length
 }
 
+/**
+ * 下部ナビの赤ペンタブに出す「進行中」の件数（反映待ち＋生成中）。
+ *
+ * 完了の可視化と合わせて「押すまで分からない」を減らす。件数は丸バッジではなく
+ * 青い点で出す（数字は「判断待ち＝あなたの番」にだけ使う。2 つの数字を混ぜない）。
+ *
+ * @param {Array} items `/api/akapen` の items
+ * @returns {number} 進行中の件数
+ */
+export function runningCount(items) {
+  const list = Array.isArray(items) ? items : []
+  return list.filter((i) => i && (i.status === 'running' || i.status === 'ready')).length
+}
+
+/**
+ * 未読の作業フィード（監視 cron が書いた 1 行ログ）。
+ *
+ * @param {Array<{at: number, text: string}>} feed `/api/akapen/feed` の items
+ * @param {number} lastSeen 端末が最後に赤ペンタブを開いた時刻（epoch ms）
+ * @returns {Array} 未読だけ（古い順）
+ */
+export function unseenNotices(feed, lastSeen) {
+  const list = Array.isArray(feed) ? feed : []
+  const since = Number(lastSeen) || 0
+  return list.filter((n) => n && Number.isFinite(Number(n.at)) && Number(n.at) > since)
+}
+
+/**
+ * 赤ペンタブの丸/点の状態（優先度: 判断待ち > 未読の完了 > 進行中）。
+ *
+ * 判断待ちだけ数字を出し、それ以外は点にする（「あなたの番」と「進んでいる」を
+ * 同じ見た目にしない）。
+ *
+ * @param {{waiting?: number, unseen?: number, running?: number}} s 件数
+ * @returns {'waiting'|'done'|'running'|null}
+ */
+export function navBadgeState({ waiting = 0, unseen = 0, running = 0 } = {}) {
+  if (Number(waiting) > 0) return 'waiting'
+  if (Number(unseen) > 0) return 'done'
+  if (Number(running) > 0) return 'running'
+  return null
+}
+
 /** 完了タブの見出し（件数を偽らない: 直近 N 件、とだけ言う）。 */
 export function doneHint(doneTotal) {
   const n = Number(doneTotal) || 0

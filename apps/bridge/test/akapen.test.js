@@ -403,3 +403,40 @@ test('library は取得日時とリポジトリ名を返す（画像にリポジ
     '取得日時はソートに使う数値のまま返す（整形は PWA）',
   )
 })
+
+test('feed は監視 cron の 1 行ログを末尾から読み、since で絞る', () => {
+  const { root } = tempBoard()
+  // kanbanRoot = <root>/kanban なので home = <root>
+  const dir = path.join(root, 'plugin-data', 'akapen')
+  fs.mkdirSync(dir, { recursive: true })
+  const lines = [
+    { at: '2026-11-12T22:26:38+08:00', text: '✅ 完了 22:26 タスクA' },
+    { at: '2026-11-12T22:27:09+08:00', text: '✅ verify: npm run verify → exit 0' },
+  ]
+  fs.writeFileSync(path.join(dir, 'feed.jsonl'), lines.map((l) => JSON.stringify(l)).join('\n') + '\n')
+
+  const api = createAkapen({ kanbanRoot: path.join(root, 'kanban') })
+  const all = api.feed(10)
+  assert.equal(all.length, 2)
+  assert.match(all[0].text, /完了/)
+  assert.ok(all[0].at > 1_700_000_000_000, 'ISO 文字列は epoch ms に直す')
+
+  const newer = api.feed(10, Date.parse('2026-11-12T22:27:00+08:00'))
+  assert.equal(newer.length, 1, 'since より新しい行だけ')
+  assert.match(newer[0].text, /verify/)
+
+  assert.equal(api.feed(1).length, 1, 'limit は末尾 N 行')
+})
+
+test('feed はファイルが無い/壊れていても空で返る（補助情報で画面を壊さない）', () => {
+  const { root } = tempBoard()
+  const api = createAkapen({ kanbanRoot: path.join(root, 'kanban') })
+  assert.deepEqual(api.feed(5), [])
+
+  const dir = path.join(root, 'plugin-data', 'akapen')
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, 'feed.jsonl'), 'not json\n{"at":"bad"}\n{"at":"2026-11-12T22:00:00+08:00","text":"ok"}\n')
+  const r = api.feed(5)
+  assert.equal(r.length, 1, '壊れた行は捨てる')
+  assert.equal(r[0].text, 'ok')
+})

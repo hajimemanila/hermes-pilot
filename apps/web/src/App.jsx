@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { readDeepLink } from './lib/deeplink.js'
 
 import { api } from './api.js'
-import { pendingCount, waitingCount } from './lib/akapenView.js'
+import { navBadgeState, pendingCount, runningCount, unseenNotices, waitingCount } from './lib/akapenView.js'
 import { TasksPane } from './features/TasksPane.jsx'
 import { ChatPane } from './features/ChatPane.jsx'
 import { TermPane } from './features/TermPane.jsx'
@@ -94,6 +94,18 @@ export function App() {
   const [akapenWaiting, setAkapenWaiting] = useState(0)
   // 下部ナビのタスクタブに出す承認待ち件数（同じ赤の指示。承認待ちは全ボード横断）。
   const [inboxPending, setInboxPending] = useState(0)
+  // 赤ペンの進行中件数と、作業フィード（完了・停止の 1 行ログ）の未読数。
+  // 「押すまで分からない」を無くすため、判断待ちの数字とは別に 点 で出す。
+  const [akapenRunning, setAkapenRunning] = useState(0)
+  const [akapenUnseen, setAkapenUnseen] = useState(0)
+  const lastSeenRef = useRef(0)
+  useEffect(() => {
+    try {
+      lastSeenRef.current = Number(localStorage.getItem('hm.akapenSeenAt')) || 0
+    } catch {
+      lastSeenRef.current = 0
+    }
+  }, [])
 
   // ディープリンクのシートは「マウント済みの pane に届くイベント」で開く。
   // 既存の hm:open-session（検索→チャット）と同じ経路で、WebAPK の復元挙動に左右されない。
@@ -202,6 +214,45 @@ export function App() {
     }
   }, [])
 
+  // 赤ペンの進行中件数と作業フィードの未読。判断待ちの件数（上の effect）と同じ 15 秒で回す。
+  useEffect(() => {
+    let alive = true
+    const sync = async () => {
+      try {
+        const r = await api('/api/akapen/feed?limit=20')
+        if (alive) setAkapenUnseen(unseenNotices(r.items, lastSeenRef.current).length)
+      } catch {
+        /* フィードは補助情報。取れなくても画面は壊さない */
+      }
+    }
+    const onItems = (e) => {
+      if (alive) setAkapenRunning(runningCount(e.detail?.items))
+    }
+    // 赤ペンタブを開いている間は「見ている＝既読」。開いた時点を端末に残す
+    const onSeen = (e) => {
+      const at = Number(e.detail?.at) || Date.now()
+      lastSeenRef.current = at
+      setAkapenUnseen(0)
+      try {
+        localStorage.setItem('hm.akapenSeenAt', String(at))
+      } catch {
+        /* 保存できなくても表示は続ける */
+      }
+    }
+    sync()
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') sync()
+    }, 15000)
+    window.addEventListener('hm:akapen-items', onItems)
+    window.addEventListener('hm:akapen-seen', onSeen)
+    return () => {
+      alive = false
+      clearInterval(id)
+      window.removeEventListener('hm:akapen-items', onItems)
+      window.removeEventListener('hm:akapen-seen', onSeen)
+    }
+  }, [])
+
   // 承認待ちの件数をタスクタブのバッジに出す。TasksPane が一覧を取り直したら
   // `hm:inbox-items` で同じ items を流してくるので、15 秒待たずに同期する。
   useEffect(() => {
@@ -304,12 +355,22 @@ export function App() {
           // タブ内の表示とは別物で、ここは下部ナビのアイコン右上の小さな丸。
           const badge = t.id === 'akapen' ? akapenWaiting : t.id === 'tasks' ? inboxPending : 0
           const badgeLabel = t.id === 'akapen' ? '判断待ち' : '承認待ち'
+          // 赤ペンタブは「判断待ち（数字） > 未読の完了（緑の点） > 反映中（青の点）」の順で 1 つだけ出す
+          const state = t.id === 'akapen' ? navBadgeState({ waiting: akapenWaiting, unseen: akapenUnseen, running: akapenRunning }) : null
+          const dot = !badge && state === 'done' ? 'done' : !badge && state === 'running' ? 'running' : null
+          const aria = badge
+            ? `${t.label}（${badgeLabel} ${badge} 件）`
+            : dot === 'done'
+              ? `${t.label}（完了の報告あり）`
+              : dot === 'running'
+                ? `${t.label}（反映中）`
+                : undefined
           return (
             <button
               key={t.id}
               className={`nav-item${tab === t.id ? ' on' : ''}`}
               aria-current={tab === t.id ? 'page' : undefined}
-              aria-label={badge ? `${t.label}（${badgeLabel} ${badge} 件）` : undefined}
+              aria-label={aria}
               onClick={() => setTab(t.id)}
             >
               <span className="nav-icon">
@@ -319,6 +380,7 @@ export function App() {
                     {badge}
                   </span>
                 ) : null}
+                {dot ? <span className={`nav-dot ${dot}`} aria-hidden="true" /> : null}
               </span>
               <span>{t.label}</span>
             </button>

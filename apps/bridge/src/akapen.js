@@ -827,6 +827,42 @@ export function createAkapen(cfg, opts = {}) {
     return items.slice(0, limit)
   }
 
+  /**
+   * 作業フィード（監視 cron `mobile-akapen-watch` が書く 1 行ログ）。
+   *
+   * 完了は Discord にしか流れておらず、PWA（と TUI セッション）には届かなかった
+   * （実測: 完了 22:26:38 の報告が 22:27:09 に Discord だけへ）。同じ行を
+   * `<home>/plugin-data/akapen/feed.jsonl` にも追記し、ここから読んで端末に出す。
+   *
+   * @param {number} [limit] 末尾から何行読むか（1..200）
+   * @param {number} [since] この epoch ms より新しい行だけ返す（0 なら全部）
+   * @returns {Array<{at: number, text: string}>} 古い順
+   */
+  function feed(limit = 20, since = 0) {
+    const home = path.dirname(cfg.kanbanRoot || path.join(os.homedir(), '.hermes', 'kanban'))
+    const file = path.join(home, 'plugin-data', 'akapen', 'feed.jsonl')
+    let raw = ''
+    try {
+      raw = fs.readFileSync(file, 'utf8')
+    } catch {
+      return [] // まだ 1 行も無い（cron が走っていない）だけなので空でよい
+    }
+    const tail = raw.split('\n').filter((l) => l.trim()).slice(-Math.min(200, Math.max(1, Number(limit) || 20)))
+    const out = []
+    for (const line of tail) {
+      try {
+        const j = JSON.parse(line)
+        const at = Date.parse(String(j.at ?? ''))
+        if (!Number.isFinite(at)) continue
+        if (since && at <= Number(since)) continue
+        out.push({ at, text: String(j.text ?? '') })
+      } catch {
+        // 書きかけ・壊れた行は捨てる（フィードは補助情報）
+      }
+    }
+    return out
+  }
+
   /** library の画像を返す（allowlist 内のみ）。 */
   function libraryFile(rel) {
     if (!isSafeRel(rel)) return { ok: false, code: 'BAD_PATH', message: 'パスが不正です' }
@@ -919,5 +955,5 @@ export function createAkapen(cfg, opts = {}) {
     }
   }
 
-  return { board, workdir, list, sheetHtml, sheetData, answer, reopen, sessionId, image, annotation, saveAnnotation, thumb, library, libraryFile, createFromImage, targets }
+  return { board, workdir, list, sheetHtml, sheetData, answer, reopen, sessionId, image, annotation, saveAnnotation, thumb, library, libraryFile, createFromImage, targets, feed }
 }

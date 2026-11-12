@@ -1454,6 +1454,21 @@ button.stat:active {
   box-shadow: 0 0 0 2px rgba(6, 22, 26, 0.96);
 }
 
+/* 進行中（青）と未読の完了（緑）は数字ではなく点で出す。
+   数字は「判断待ち＝あなたの番」にだけ使う（2 つの数字を混ぜない） */
+.nav-dot {
+  position: absolute;
+  top: 1px;
+  right: -3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  box-shadow: 0 0 0 2px rgba(6, 22, 26, 0.96);
+}
+
+.nav-dot.running { background: var(--accent); }
+.nav-dot.done { background: var(--good); }
+
 .toast {
   position: fixed;
   left: 50%;
@@ -1527,6 +1542,20 @@ button.stat:active {
 .ak-head .btn { width: auto; flex: 0 0 auto; padding: 6px 14px; }
 .ak-title { font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: .02em; }
 .ak-sub { font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.45; }
+
+/* 作業フィード（監視 cron の 1 行）: 完了・停止を赤ペンタブの上端に出す。
+   3 行まで。長い本文は 2 行で畳む（一覧を押し下げない） */
+.ak-feed {
+  display: flex; flex-direction: column; gap: 3px; margin: 2px 0 6px;
+  padding: 7px 10px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--bg-2);
+}
+.ak-feed-row { display: flex; gap: 8px; align-items: baseline; font-size: 11.5px; line-height: 1.5; }
+.ak-feed-at { flex: 0 0 auto; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.ak-feed-text {
+  flex: 1 1 auto; min-width: 0; color: var(--text-dim, #9fb3b0);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
 .ak-group { margin-top: 10px; }
 .ak-group-title { font-size: 11px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; padding: 6px 2px; }
 .ak-row {
