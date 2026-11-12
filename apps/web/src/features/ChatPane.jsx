@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useChatSocket } from '../lib/useChatSocket.js'
 import { DEFAULT_PROFILE, STORED_PROFILE_KEY, applyDefaultProfile } from '../lib/profile.js'
+import { pickResumeTarget, recentSessions } from '../lib/chatResume.js'
 import { api } from '../api.js'
 import { Icon, Sheet, relTime, fmtBytes } from '../components/Ui.jsx'
 
@@ -205,14 +206,22 @@ export function ChatPane({ notify }) {
       await openRef.current?.(pending.id, pending.focusId ?? null, pending.profile ?? 'default')
       return
     }
-    const target = storedRef.current
-    if (target) {
-      const resumed = await resumeInto(rpc, target, storedProfileRef.current)
+    // stored が空でも、同じプロファイルの直近セッションへ戻る（空画面の再発防止）
+    const pick = pickResumeTarget({
+      storedSid: storedRef.current,
+      sessions: sessionsRef.current,
+      profile: storedProfileRef.current,
+    })
+    if (pick) {
+      if (pick.from === 'recent') setStoredSid(pick.sid)
+      const resumed = await resumeInto(rpc, pick.sid, storedProfileRef.current)
       if (!resumed.ok) {
+        // **捨てない**: 一時的な失敗（実行中で resume 不可など）で会話への導線を失うと
+        // 以後ずっと空画面になる（実測）。残して次の ready で再試行する。
         setSid(null)
-        setStoredSid(null)
+        notify('直前の会話を開けませんでした（もう一度お試しください）')
       } else {
-        const found = sessionsRef.current.find((x) => x.id === target)
+        const found = sessionsRef.current.find((x) => x.id === pick.sid)
         if (found?.title) setTitle(found.title)
       }
     }
@@ -696,7 +705,28 @@ export function ChatPane({ notify }) {
           if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
         }}
       >
-        {!blocks.length ? <div className="empty">メッセージを送って開始</div> : null}
+        {!blocks.length ? (
+          <div className="empty">
+            <div>メッセージを送って開始</div>
+            {recentSessions(sessions, profile, 2).length ? (
+              <div className="empty-recent">
+                {recentSessions(sessions, profile, 2).map((x) => (
+                  <button
+                    key={x.id}
+                    type="button"
+                    className="btn"
+                    onClick={async () => {
+                      const ok = await resumeInto(sockRef.current?.rpc, x.id, x.profile || profile)
+                      if (ok?.ok) setStoredSid(x.id)
+                    }}
+                  >
+                    直前の会話を開く: {(x.title || x.id).slice(0, 18)}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         {blocks.map((b, i) =>
           b.role === 'user' ? (
             <div

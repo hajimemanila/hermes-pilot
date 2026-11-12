@@ -834,10 +834,32 @@ async function proxyChat(client) {
     }
     forward(text)
   })
+  // 上流は無音で切ることがある（実測: code=1005 が散発）。25秒ごとに ping して
+  // 「応答が来ないまま画面が止まる」を防ぐ。pong が90秒来なければ張り直す。
+  let ka = null
+  let lastPong = Date.now()
+
   upstream.on('open', () => {
     for (const q of queue.splice(0)) upstream.send(q)
     client.send(JSON.stringify({ jsonrpc: '2.0', method: 'event', params: { type: 'bridge.ready', payload: {} } }))
     console.log(`[chat] upstream open (${Date.now() - started}ms)`)
+    lastPong = Date.now()
+    ka = setInterval(() => {
+      if (upstream?.readyState !== WebSocket.OPEN) return
+      if (Date.now() - lastPong > 90_000) {
+        console.log('[chat] upstream silent 90s → close')
+        try {
+          upstream.terminate()
+        } catch {}
+        return
+      }
+      try {
+        upstream.ping()
+      } catch {}
+    }, 25_000)
+  })
+  upstream.on('pong', () => {
+    lastPong = Date.now()
   })
   upstream.on('message', (raw) => {
     if (client.readyState === WebSocket.OPEN) client.send(raw.toString())
@@ -855,6 +877,7 @@ async function proxyChat(client) {
     }
   }
   upstream.on('close', (code) => {
+    if (ka) clearInterval(ka)
     console.log(`[chat] upstream closed code=${code} after ${Date.now() - started}ms`)
     closeBoth(code === 1000 ? 1000 : 1011, `upstream ${code}`)
   })
