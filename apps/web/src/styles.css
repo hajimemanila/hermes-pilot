@@ -1522,9 +1522,34 @@ button.stat:active {
 .ak-opt-head b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent-2); }
 .ak-opt-detail { font-size: 11.5px; color: var(--muted); line-height: 1.45; }
 .ak-opt-thumb {
-  display: inline-block; height: 72px; width: auto; max-width: 46%;
-  object-fit: contain; object-position: left center; vertical-align: middle;
-  margin: 6px 0 0 8px; border: 1px solid var(--line); border-radius: 6px; background: #0a1417;
+  display: block; height: 72px; width: auto; max-width: 100%;
+  vertical-align: middle; border: 1px solid var(--line); border-radius: 6px; background: #0a1417;
+}
+/* 挿絵はタップで拡大（72px 固定では案の違いが判断できない） */
+.ak-thumb-btn {
+  position: relative; display: inline-block; max-width: 46%; margin: 6px 0 0 8px;
+  cursor: zoom-in; border-radius: 6px;
+}
+.ak-thumb-btn::after {
+  content: '拡大'; position: absolute; right: 3px; bottom: 3px;
+  font-size: 9px; line-height: 1.4; padding: 0 4px; border-radius: 4px;
+  background: rgba(6, 22, 26, .78); color: var(--accent-2); pointer-events: none;
+}
+.ak-thumb-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ak-zoom {
+  position: fixed; inset: 0; z-index: 90; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 10px; padding: 14px;
+  background: rgba(2, 10, 12, .94);
+}
+.ak-zoom figure { margin: 0; max-width: 100%; max-height: 100%; display: flex; flex-direction: column; gap: 8px; }
+.ak-zoom img {
+  max-width: 100%; max-height: 78dvh; width: auto; margin: 0 auto;
+  border: 1px solid var(--line-strong); border-radius: 10px; background: #0a1417;
+}
+.ak-zoom figcaption { font-size: 12px; color: var(--muted); text-align: center; }
+.ak-zoom-close {
+  flex: none; padding: 9px 26px; border-radius: 999px; border: 1px solid var(--line-strong);
+  background: var(--surface-2); color: var(--text); font: inherit; font-size: 13px;
 }
 .ak-note, .ak-global {
   width: 100%; margin-top: 8px; background: var(--bg-2); color: var(--text);
@@ -1552,6 +1577,21 @@ button.stat:active {
 .close-actions > .btn { width: 100%; }
 .ak-row-phase { margin-top: 3px; font-size: 11px; color: var(--accent); opacity: .9; }
 .ak-row-phase + .ak-row-sub { margin-top: 2px; }
+/* 判断待ち 0 件の空状態（赤ペン akapen-empty-01: 枠付きカード / 塗りボタン / 件数行を残す） */
+.ak-empty-card {
+  margin-top: 14px; padding: 20px 16px 16px; text-align: center;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+}
+.ak-empty-title { font-size: 15px; font-weight: 700; line-height: 1.5; }
+.ak-empty-body { margin: 6px 0 14px; font-size: 13px; color: var(--muted); line-height: 1.7; }
+.ak-empty-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 44px; padding: 0 22px; border-radius: 10px;
+  background: var(--accent); border: 1px solid var(--accent); color: #04191c;
+  font: inherit; font-size: 14px; font-weight: 700; cursor: pointer;
+}
+.ak-empty-note { margin: 10px 0 0; font-size: 11px; color: var(--muted); line-height: 1.6; }
+.ak-empty-meta { margin-top: 14px; font-size: 11px; color: var(--muted); }
 .ak-worker { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
 .ak-worker summary { font-size: 12px; color: var(--muted); cursor: pointer; }
 .ak-worker-log {

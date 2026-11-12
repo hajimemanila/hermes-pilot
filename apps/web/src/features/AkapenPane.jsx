@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { api } from '../api.js'
 import { CloseActions } from '../components/CloseActions.jsx'
 import { Sheet, relTime } from '../components/Ui.jsx'
@@ -195,6 +196,8 @@ function StandardForm({ item, data, onSubmitted }) {
   const [global, setGlobal] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  // 挿絵は 72px 固定だと判断できない（赤ペン回答の全体メモ）。タップで原寸表示する。
+  const [zoom, setZoom] = useState(null)
 
   const setChoice = (qid, value) =>
     setAnswers((prev) => ({ ...prev, [qid]: { ...prev[qid], choice: value } }))
@@ -248,7 +251,27 @@ function StandardForm({ item, data, onSubmitted }) {
                     <span className="ak-opt-check" aria-hidden="true">✓</span>
                   </span>
                   {o.detail ? <span className="ak-opt-detail">{o.detail}</span> : null}
-                  {o.thumb ? <img className="ak-opt-thumb" src={`/api/akapen/${item.id}/thumb/${o.thumb}`} alt="" /> : null}
+                  {o.thumb ? (
+                    <span
+                      className="ak-thumb-btn"
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`${o.id} の挿絵を拡大`}
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        setZoom({ src: `/api/akapen/${item.id}/thumb/${o.thumb}`, label: `${o.id}. ${o.label}` })
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key !== 'Enter' && e.key !== ' ') return
+                        e.preventDefault()
+                        e.stopPropagation()
+                        setZoom({ src: `/api/akapen/${item.id}/thumb/${o.thumb}`, label: `${o.id}. ${o.label}` })
+                      }}
+                    >
+                      <img className="ak-opt-thumb" src={`/api/akapen/${item.id}/thumb/${o.thumb}`} alt="" />
+                    </span>
+                  ) : null}
                 </button>
               )
             })}
@@ -284,6 +307,26 @@ function StandardForm({ item, data, onSubmitted }) {
         </a>
       </div>
       <p className="ak-hint">未選択は推奨案で確定します。送信するとカンバンが ready に戻り、agent が反映します。</p>
+      {zoom
+        ? createPortal(
+            <div
+              className="ak-zoom"
+              role="dialog"
+              aria-modal="true"
+              aria-label={`${zoom.label} の挿絵`}
+              onClick={() => setZoom(null)}
+            >
+              <figure onClick={(e) => e.stopPropagation()}>
+                <img src={zoom.src} alt="" />
+                <figcaption>{zoom.label}</figcaption>
+              </figure>
+              <button className="ak-zoom-close" type="button" onClick={() => setZoom(null)}>
+                閉じる
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   )
 }
@@ -641,10 +684,16 @@ export function AkapenPane({ notify }) {
             ))}
           </section>
         ) : (
-          <div className="empty">
-            判断待ちはありません。
-            <br />
-            進行中 {counts.active} 件 / 完了 {groups.doneTotal} 件
+          <div className="ak-empty-card">
+            <div className="ak-empty-title">判断待ちはありません</div>
+            <p className="ak-empty-body">次の仕様はチャットから投げてください。</p>
+            <button className="ak-empty-btn" type="button" onClick={() => setShowNew(true)}>
+              ＋ 注釈を作る
+            </button>
+            <p className="ak-empty-note">ライブラリの画像に赤を入れて送ることもできます</p>
+            <div className="ak-empty-meta">
+              進行中 {counts.active} 件 ・ 完了 {groups.doneTotal} 件
+            </div>
           </div>
         )
       ) : null}

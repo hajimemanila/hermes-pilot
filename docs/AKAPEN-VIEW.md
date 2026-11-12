@@ -88,3 +88,30 @@ npm test          # node --test apps/bridge/test/*.test.js apps/web/test/*.test.
 
 - 完了タブの「もっと見る」（8 件超の閲覧手段。現状は API の `LIMIT 80` までしか辿れない）
 - 送信後の自動再取得間隔（現状 15 秒ポーリング。送信直後は明示 `load()`）
+
+## 判断待ち 0 件の空状態（2026-11-12 追加: akapen-empty-01）
+
+赤ペン（`~/Projects/akapen/sheets/akapen-empty-01-1.html`、回答は q1=A / q2=A / q3=A）で
+決めた 3 点。実装は `AkapenPane.jsx` の判断待ちタブの分岐（`groups.waiting.length` が 0 のとき）。
+
+| # | 論点 | 決定 | 中身 |
+|---|---|---|---|
+| 1 | 枠の有無 | **枠付きカード** | `.ak-empty-card`（`--surface` 面 + 枠 + 12px 丸め） |
+| 2 | 導線の形 | **塗りのボタン** | `.ak-empty-btn`（44px、`setShowNew(true)` = ヘッダの「＋ 注釈」と同じ） |
+| 3 | 件数行 | **残す** | `.ak-empty-meta` に `進行中 n 件 ・ 完了 n 件` |
+
+- 文言は「次の仕様はチャットから投げてください。」＋注記「ライブラリの画像に赤を入れて送ることもできます」。
+- **総件数 0 件**（`!hasItems`）のときは従来の `.empty` のまま。移行直後に「チャットから投げて」だけ出ると
+  カンバンの存在が伝わらないため、2 つの空状態は分けて持つ。
+- 空状態のボタンは `NewAnnotationSheet` を開くだけ。タスクを作るかは利用者が選ぶ。
+
+## 挿絵の拡大（同日追加: 赤ペン回答の全体メモ）
+
+回答フォームの挿絵は `.ak-opt-thumb`（高さ 72px 固定）だと案の違いが読めない、という指摘への対応。
+
+- 挿絵を `.ak-thumb-btn`（`role="button"`）で包み、タップ / Enter で `createPortal` の
+  `.ak-zoom`（`position: fixed`、`z-index: 90`）に原寸表示する。`stopPropagation` で
+  **選択は切り替えない**（選択は行全体のタップ）。
+- 幅の制約は `.ak-opt-thumb` から `.ak-thumb-btn`（`max-width: 46%`）へ移した。img 側に
+  `max-width: 46%` を残すと、横長画像が `object-fit: contain` で右側に黒帯を出す。
+- 背景タップと「閉じる」で閉じる。シートは閉じない。
