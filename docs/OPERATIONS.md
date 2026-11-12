@@ -1078,3 +1078,16 @@ tablet: chipRow 38px / チップ表示幅 760px（スマホは366px） / 横ス�
 - 一覧は Git Ops の `repos.json`（`/api/repos`）。板の作成は `POST /api/repos/:id/board` → `hermes kanban boards create`（監査 `repos.board.create`）
 - 実測（:4098 = 同じ dist / 同じ `~/.hermes`）: `session.create {cwd}` の応答 `info.cwd` が repo のパス、repo 選択後のタスクタブが `hermes-mobile-pwa`。**ボード作成の往復だけは本番の板を増やさないため未検証**
 - 落とし穴: 端末の `HERMES_HOME` が profile を指していると、2 つ目のブリッジは別の token/kanban を見る（401 になる）。検証用に別ポートで立てるときは `env -u HERMES_HOME`
+
+## 無停止デプロイ（改修中に PWA を落とさない）
+
+`npm run build` は `apps/web/dist` を直接作り替えるため、ビルド中やビルド失敗時に
+PWA が「ブリッジに接続できません」になる（実測）。**配信中の更新は `npm run deploy`** を使う:
+
+```sh
+npm run deploy     # ビルド → index.html と /assets/ 参照の検証 → dist と入れ替え
+```
+
+- 新しいビルドが検証を通ったときだけ `dist` を置き換える（直前の正常ビルドは `dist.prev`）
+- ブリッジは `dist` が無い／欠けているとき `dist.prev` を配るので、画面は落ちない
+- 検証だけなら `node scripts/deploy.mjs --check`
