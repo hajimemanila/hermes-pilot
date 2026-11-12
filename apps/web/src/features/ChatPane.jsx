@@ -23,6 +23,9 @@ export function ChatPane({ notify }) {
   const [blocks, setBlocks] = useState([])
   const [text, setText] = useState('')
   const [streaming, setStreaming] = useState(false)
+  // ターンの経過時間（長いターンで「動いている」ことが分かるように）
+  const [runStartedAt, setRunStartedAt] = useState(null)
+  const [nowTick, setNowTick] = useState(Date.now())
   const [usage, setUsage] = useState(null)
   const [drawer, setDrawer] = useState(false)
   const [thinking, setThinking] = useState('')
@@ -144,6 +147,7 @@ export function ChatPane({ notify }) {
 
     if (type === 'message.start') {
       setStreaming(true)
+      setRunStartedAt(Date.now())
       setThinking('')
       setBlocks((prev) => {
         const last = prev[prev.length - 1]
@@ -169,6 +173,7 @@ export function ChatPane({ notify }) {
       return
     }
     if (type === 'message.complete') {
+      setRunStartedAt(null)
       setStreaming(false)
       setThinking('')
       setUsage(p.usage ?? null)
@@ -226,6 +231,12 @@ export function ChatPane({ notify }) {
       }
     }
   }, [loadSessions, notify, resumeInto])
+
+  useEffect(() => {
+    if (!streaming) return undefined
+    const id = setInterval(() => setNowTick(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [streaming])
 
   const onState = useCallback((s) => {
     if (s === 'closed' || s === 'error') {
@@ -773,7 +784,22 @@ export function ChatPane({ notify }) {
             </div>
           ),
         )}
-        {streaming && thinking ? <div className="thinking">{thinking}</div> : null}
+        {streaming ? (
+          <div className="thinking">
+            {(() => {
+              const sec = runStartedAt ? Math.max(0, Math.floor((nowTick - runStartedAt) / 1000)) : 0
+              const mm = String(Math.floor(sec / 60)).padStart(2, '0')
+              const ss = String(sec % 60).padStart(2, '0')
+              return (
+                <>
+                  <b>実行中 {mm}:{ss}</b>
+                  <span className="m"> ・ツールを動かしています（結果はこの下に出ます）</span>
+                  {thinking ? <div className="thinking-text">{thinking}</div> : null}
+                </>
+              )
+            })()}
+          </div>
+        ) : null}
         {usage ? (
           <div className="usage">
             in {usage.input ?? 0} / out {usage.output ?? 0}
