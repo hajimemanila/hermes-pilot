@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { readDeepLink } from './lib/deeplink.js'
 
 import { api } from './api.js'
-import { waitingCount } from './lib/akapenView.js'
+import { pendingCount, waitingCount } from './lib/akapenView.js'
 import { TasksPane } from './features/TasksPane.jsx'
 import { ChatPane } from './features/ChatPane.jsx'
 import { TermPane } from './features/TermPane.jsx'
@@ -92,6 +92,8 @@ export function App() {
   // 下部ナビの赤ペンタブに出す判断待ち件数（注釈 1377.jpg の赤 = 小さい丸に数字）。
   // タブ内の表示は AkapenPane の持ち物なので、ここでは数えるだけ。
   const [akapenWaiting, setAkapenWaiting] = useState(0)
+  // 下部ナビのタスクタブに出す承認待ち件数（同じ赤の指示。承認待ちは全ボード横断）。
+  const [inboxPending, setInboxPending] = useState(0)
 
   // ディープリンクのシートは「マウント済みの pane に届くイベント」で開く。
   // 既存の hm:open-session（検索→チャット）と同じ経路で、WebAPK の復元挙動に左右されない。
@@ -200,6 +202,31 @@ export function App() {
     }
   }, [])
 
+  // 承認待ちの件数をタスクタブのバッジに出す。TasksPane が一覧を取り直したら
+  // `hm:inbox-items` で同じ items を流してくるので、15 秒待たずに同期する。
+  useEffect(() => {
+    let alive = true
+    const sync = async () => {
+      try {
+        const r = await api('/api/inbox')
+        if (alive) setInboxPending(pendingCount(r.items))
+      } catch {
+        /* 取れないときは前の値を保つ（バッジは補助情報なので画面を壊さない） */
+      }
+    }
+    const onItems = (e) => setInboxPending(pendingCount(e.detail?.items))
+    sync()
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') sync()
+    }, 15000)
+    window.addEventListener('hm:inbox-items', onItems)
+    return () => {
+      alive = false
+      clearInterval(id)
+      window.removeEventListener('hm:inbox-items', onItems)
+    }
+  }, [])
+
   // 殻は公開・データは認証の内側なので、未ログインならここでトークンを入れる
   if (authNeeded) {
     return (
@@ -273,14 +300,16 @@ export function App() {
 
       <nav className="nav" ref={navRef}>
         {TABS.map((t) => {
-          // 判断待ちの件数は赤ペンタブだけに出す（タブ内の表示とは別物）
-          const badge = t.id === 'akapen' ? akapenWaiting : 0
+          // 丸バッジはタスクタブ（承認待ち）と赤ペンタブ（判断待ち）にだけ出す。
+          // タブ内の表示とは別物で、ここは下部ナビのアイコン右上の小さな丸。
+          const badge = t.id === 'akapen' ? akapenWaiting : t.id === 'tasks' ? inboxPending : 0
+          const badgeLabel = t.id === 'akapen' ? '判断待ち' : '承認待ち'
           return (
             <button
               key={t.id}
               className={`nav-item${tab === t.id ? ' on' : ''}`}
               aria-current={tab === t.id ? 'page' : undefined}
-              aria-label={badge ? `${t.label}（判断待ち ${badge} 件）` : undefined}
+              aria-label={badge ? `${t.label}（${badgeLabel} ${badge} 件）` : undefined}
               onClick={() => setTab(t.id)}
             >
               <span className="nav-icon">

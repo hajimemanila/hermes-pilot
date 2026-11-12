@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { capturedLabel, DONE_LIMIT, doneHint, groupItems, isWaiting, nextWaiting, repoLabel, thumbCaption, waitingCount } from '../src/lib/akapenView.js'
+import { capturedLabel, DONE_LIMIT, doneHint, groupItems, isWaiting, nextWaiting, pendingCount, repoLabel, thumbCaption, waitingCount } from '../src/lib/akapenView.js'
 
 /** 赤ペン待ち（blocked + label）。 */
 const waitingItem = (id) => ({ id, status: 'blocked', akapen: { label: 'akapen-view-01', round: 1 } })
@@ -101,4 +101,13 @@ test('waitingCount はナビのバッジに出す赤ペン待ち件数（0 な�
   assert.equal(waitingCount([{ id: 'b1', status: 'blocked', akapen: {} }]), 0)
   assert.equal(waitingCount([waitingItem('w1'), doneItem('d1'), activeItem('a1', 'review')]), 1)
   assert.equal(waitingCount([null, waitingItem('w9')]), 1)
+})
+
+test('pendingCount はナビのタスクタブに出す承認待ち件数（赤ペン待ちも含む）', () => {
+  assert.equal(pendingCount([]), 0)
+  assert.equal(pendingCount(undefined), 0)
+  assert.equal(pendingCount([{ id: 'x1', board: 'nanokvm' }]), 1)
+  // 承認待ちは全ボード横断なので、赤ペン待ちも 1 件として数える（重複は仕様）
+  assert.equal(pendingCount([{ id: 'x1', board: 'ffp' }, waitingItem('w1')]), 2)
+  assert.equal(pendingCount([null, { id: 'x2' }]), 1)
 })

@@ -187,7 +187,14 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
   const loadInbox = useCallback(async () => {
     try {
       const d = await api('/api/inbox')
-      setInboxCount((d?.items ?? []).length)
+      const items = d?.items ?? []
+      setInboxCount(items.length)
+      // 下部ナビのタスクタブの丸バッジ（注釈 1377.jpg の赤）を、この一覧と同じデータで同期する
+      try {
+        window.dispatchEvent(new CustomEvent('hm:inbox-items', { detail: { items } }))
+      } catch {
+        /* noop */
+      }
     } catch {
       /* 表示だけなので握る */
     }

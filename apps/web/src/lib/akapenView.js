@@ -69,6 +69,21 @@ export function waitingCount(items) {
   return list.filter(isWaiting).length
 }
 
+/**
+ * ナビのタスクタブに出す「小さな丸の数字」（承認待ち）。
+ *
+ * 注釈（`1377.jpg` の赤）で決まったこと: 「ティッカー」は下部ナビの丸バッジのこと。
+ * 承認待ちはボード横断（`/api/inbox`）なので、赤ペンタブの判断待ちとは別に数える。
+ * 赤ペン待ちも承認待ちの一部なので、同じ件が両方の丸に数えられる。
+ *
+ * @param {Array} items `/api/inbox` の items
+ * @returns {number} 承認待ちの件数（0 以上）
+ */
+export function pendingCount(items) {
+  const list = Array.isArray(items) ? items.filter(Boolean) : []
+  return list.length
+}
+
 /** 完了タブの見出し（件数を偽らない: 直近 N 件、とだけ言う）。 */
 export function doneHint(doneTotal) {
   const n = Number(doneTotal) || 0
