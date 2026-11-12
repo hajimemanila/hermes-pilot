@@ -13,7 +13,15 @@ import {
 import { pickResumeTarget, recentSessions } from '../lib/chatResume.js'
 import { mergeProgress } from '../lib/toolProgress.js'
 import { api } from '../api.js'
+import { composerHeight } from '../lib/composerSize.js'
 import { Icon, Sheet, relTime, fmtBytes } from '../components/Ui.jsx'
+
+/** 入力欄を内容に合わせて伸ばす（枠の分を足さないと 2px 溢れて縦棒が出る）。 */
+function fitComposer(el, cap = 120) {
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = `${composerHeight({ scrollHeight: el.scrollHeight, clientHeight: el.clientHeight, offsetHeight: el.offsetHeight, cap })}px`
+}
 
 /**
  * チャットタブ。ブリッジの /ws/chat 経由で Hermes の JSON-RPC（/api/ws）を話す。
@@ -478,7 +486,11 @@ export function ChatPane({ notify }) {
       const shown = body || (items.length ? '添付を確認して。' : '')
 
       // スニペットの長押し送信では、書きかけの下書きを消さない
-      if (override == null) setText('')
+      if (override == null) {
+        setText('')
+        // 送信後に入力欄が伸びたまま残らないように高さを戻す（空なのに縦棒が出る原因）
+        if (taRef.current) taRef.current.style.height = ''
+      }
       setAttached([])
       setStreaming(true)
       setBlocks((prev) => [
@@ -708,7 +720,7 @@ export function ChatPane({ notify }) {
         if (m) el.setSelectionRange(base + m.index, base + m.index + m[0].length)
         else el.setSelectionRange(base + s.text.length, base + s.text.length)
         el.style.height = 'auto'
-        el.style.height = `${Math.min(140, el.scrollHeight)}px`
+        fitComposer(el)
       })
       navigator.vibrate?.(6)
     },
@@ -1029,9 +1041,7 @@ export function ChatPane({ notify }) {
           placeholder="Hermes に送る…"
           onChange={(e) => {
             setText(e.target.value)
-            const el = e.target
-            el.style.height = 'auto'
-            el.style.height = `${Math.min(120, el.scrollHeight)}px`
+            fitComposer(e.target)
           }}
           onPaste={(e) => {
             const files = [...(e.clipboardData?.items ?? [])]

@@ -1103,7 +1103,9 @@ button.stat:active {
 
 .composer textarea {
   flex: 1;
-  min-height: 38px;
+  /* 1行 = 行間19.6 + 余白18 + 枠2 = 39.6。38px だと常に 1.6px 溢れて
+     全高のスクロールバー（グレーの縦棒）が出る（実測: clientHeight 36 / scrollHeight 38） */
+  min-height: 40px;
   max-height: 120px;
   resize: none;
   padding: 9px 11px;
@@ -1114,6 +1116,15 @@ button.stat:active {
   font: inherit;
   font-size: 14px;
   line-height: 1.4;
+  /* 縦棒は出さない（伸びきるまで自動で高さが増えるので、収まっているときの
+     スクロールバーは無意味。増えきった後も指・キャレットで送れる） */
+  scrollbar-width: none;
+  overflow-y: auto;
+}
+
+.composer textarea::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .composer textarea:focus {
