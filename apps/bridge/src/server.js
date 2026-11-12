@@ -418,6 +418,27 @@ async function handleApi(req, res, url) {
       })
       return sendJson(res, 200, { taskId: b, status: info.status, sessionId: info.sessionId, feed })
     }
+    // /api/akapen/library            … 注釈の下地にできる画像（library + shots）
+    // /api/akapen/library/file?path= … その画像
+    // /api/akapen/from-image         … 画像から注釈タスクを1件作る
+    if (b === 'library' && !c) {
+      return sendJson(res, 200, { items: akapen.library(Number(url.searchParams.get('limit') ?? 60)) })
+    }
+    if (b === 'library' && c === 'file' && req.method === 'GET') {
+      const r = akapen.libraryFile(String(url.searchParams.get('path') || ''))
+      if (!r.ok) return sendJson(res, 404, { error: { code: r.code, message: r.message } })
+      res.writeHead(200, { 'content-type': r.type, 'cache-control': 'private, max-age=600' })
+      return res.end(r.data)
+    }
+    if (b === 'from-image' && req.method === 'POST') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+      }
+      const body = await readJson(req, 12_000_000)
+      const r = await akapen.createFromImage(body || {})
+      auth.audit({ kind: 'akapen.from_image', task: r.taskId ?? null, source: body?.source ?? 'upload', ok: Boolean(r.ok) })
+      return sendJson(res, r.ok ? 201 : 400, r)
+    }
     if (c === 'image' && req.method === 'GET') {
       const r = akapen.image(b)
       if (!r.ok) return sendJson(res, 404, { error: { code: r.code, message: r.message } })

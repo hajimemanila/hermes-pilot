@@ -568,5 +568,127 @@ export function createAkapen(cfg, opts = {}) {
     }
   }
 
-  return { board, workdir, list, sheetHtml, sheetData, answer, reopen, sessionId, image, annotation, saveAnnotation }
+
+  /** 注釈の下地にできる画像（library/** と shots/*.png|jpg、注釈済みは除く）。 */
+  function library(limit = 60) {
+    const root = workdir()
+    const items = []
+    const exts = new Set(['.png', '.jpg', '.jpeg', '.webp'])
+    const walk = (dir, source) => {
+      let ents = []
+      try {
+        ents = fs.readdirSync(dir, { withFileTypes: true })
+      } catch {
+        return
+      }
+      for (const e of ents) {
+        const abs = path.join(dir, e.name)
+        if (e.isDirectory()) {
+          walk(abs, source || e.name)
+          continue
+        }
+        const ext = path.extname(e.name).toLowerCase()
+        if (!exts.has(ext) || /\.(annotated|answer)\./.test(e.name)) continue
+        let st
+        try {
+          st = fs.statSync(abs)
+        } catch {
+          continue
+        }
+        items.push({
+          path: path.relative(root, abs),
+          source: source || (path.relative(root, abs).startsWith('shots') ? 'capture' : 'library'),
+          name: e.name,
+          bytes: st.size,
+          mtime: Math.round(st.mtimeMs),
+        })
+      }
+    }
+    walk(path.join(root, 'library'), '')
+    walk(path.join(root, 'shots'), 'capture')
+    items.sort((a, b) => b.mtime - a.mtime)
+    return items.slice(0, limit)
+  }
+
+  /** library の画像を返す（allowlist 内のみ）。 */
+  function libraryFile(rel) {
+    if (!isSafeRel(rel)) return { ok: false, code: 'BAD_PATH', message: 'パスが不正です' }
+    const lower = String(rel).toLowerCase()
+    if (!(lower.startsWith('library/') || lower.startsWith('shots/'))) {
+      return { ok: false, code: 'OUTSIDE', message: 'library / shots 配下のみ配信します' }
+    }
+    if (!/\.(png|jpe?g|webp)$/.test(lower)) return { ok: false, code: 'BAD_EXT', message: '画像ではありません' }
+    const abs = resolveInside(rel)
+    if (!abs) return { ok: false, code: 'NOT_FOUND', message: 'ファイルがありません' }
+    const ext = path.extname(abs).toLowerCase()
+    const type = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
+    return { ok: true, data: fs.readFileSync(abs), type }
+  }
+
+  const slugOf = (s) =>
+    String(s || 'anno')
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 40) || 'anno'
+
+  /**
+   * 画像から注釈タスクを1件作る（upload の dataURL / library・shots の既存ファイル）。
+   * 成功したら taskId を返すので、PWA はそのまま注釈エディタを開ける。
+   */
+  async function createFromImage(payload) {
+    const source = String(payload?.source || 'upload')
+    const title = String(payload?.title || '').slice(0, 120) || '注釈（画像から作成）'
+    let buf = null
+    let ext = '.png'
+
+    if (source === 'upload') {
+      const m = /^data:(image\/(?:png|jpeg));base64,([A-Za-z0-9+/=]+)$/.exec(String(payload?.image || ''))
+      if (!m) return { ok: false, code: 'BAD_IMAGE', message: 'image は data:image/(png|jpeg);base64,… で送ってください' }
+      buf = Buffer.from(m[2], 'base64')
+      ext = m[1] === 'image/png' ? '.png' : '.jpg'
+      if (buf.length > 12 * 1024 * 1024) return { ok: false, code: 'TOO_LARGE', message: '画像が大きすぎます（12MB 上限）' }
+    } else {
+      const rel = String(payload?.path || '')
+      if (!isSafeRel(rel)) return { ok: false, code: 'BAD_PATH', message: 'path が不正です' }
+      if (!(rel.toLowerCase().startsWith('library/') || rel.toLowerCase().startsWith('shots/'))) {
+        return { ok: false, code: 'OUTSIDE', message: 'library / shots 配下の画像だけ使えます' }
+      }
+      const abs = resolveInside(rel)
+      if (!abs) return { ok: false, code: 'NOT_FOUND', message: '画像が見つかりません' }
+      buf = fs.readFileSync(abs)
+      const e = path.extname(abs).toLowerCase()
+      ext = e === '.jpg' || e === '.jpeg' ? '.jpg' : e === '.webp' ? '.webp' : '.png'
+    }
+
+    const stamp = new Date()
+      .toISOString()
+      .slice(0, 16)
+      .replace(/[-:T]/g, '')
+      .slice(0, 12)
+    const label = `${slugOf(payload?.slug || title)}-${stamp}`
+    const relShot = `shots/${label}-1${ext}`
+    const shotAbs = path.join(path.resolve(workdir(), relShot))
+    fs.mkdirSync(path.dirname(shotAbs), { recursive: true })
+    fs.writeFileSync(shotAbs, buf)
+
+    const body = `[akapen] label=${label} round=1 mode=annotation image=${relShot}`
+    const created = await runKanban(['create', title, '--body', body])
+    const m = /t_[0-9a-f]{8}/.exec(created.out || '')
+    if (created.code !== 0 || !m) {
+      return { ok: false, code: 'CREATE_FAILED', message: created.out.slice(0, 300) }
+    }
+    const taskId = m[0]
+    const blocked = await runKanban(['block', taskId, '注釈待ち（画像から作成）', '--kind', 'needs_input'])
+    return {
+      ok: blocked.code === 0,
+      taskId,
+      image: relShot,
+      label,
+      blocked: blocked.code === 0,
+      output: blocked.out.slice(0, 300),
+    }
+  }
+
+  return { board, workdir, list, sheetHtml, sheetData, answer, reopen, sessionId, image, annotation, saveAnnotation, library, libraryFile, createFromImage }
 }

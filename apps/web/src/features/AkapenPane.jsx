@@ -387,10 +387,115 @@ function ReadOnlyDetail({ item }) {
   )
 }
 
+
+/** 端末画像を長辺1600px / JPEG 0.85 に縮小して dataURL にする。 */
+function downscaleFile(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => {
+      const long = Math.max(img.naturalWidth, img.naturalHeight)
+      const scale = Math.min(1, 1600 / long)
+      const w = Math.round(img.naturalWidth * scale)
+      const h = Math.round(img.naturalHeight * scale)
+      const c = document.createElement('canvas')
+      c.width = w
+      c.height = h
+      c.getContext('2d').drawImage(img, 0, 0, w, h)
+      URL.revokeObjectURL(url)
+      resolve(c.toDataURL('image/jpeg', 0.85))
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(url)
+      reject(new Error('画像を読み込めませんでした'))
+    }
+    img.src = url
+  })
+}
+
+/** 「＋ 注釈」: 端末の画像 / library・直近スクショ から注釈タスクを作る。 */
+function NewAnnotationSheet({ onCreated, onClose, notify }) {
+  const [items, setItems] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+  const fileRef = React.useRef(null)
+
+  useEffect(() => {
+    api('/api/akapen/library?limit=36')
+      .then((r) => setItems(r.items || []))
+      .catch((e) => {
+        setItems([])
+        setError(e?.message || '一覧を取得できません')
+      })
+  }, [])
+
+  async function create(body) {
+    setBusy(true)
+    setError(null)
+    try {
+      const r = await api('/api/akapen/from-image', { method: 'POST', body })
+      if (!r?.ok) throw new Error(r?.message || '作成できませんでした')
+      notify?.(`注釈タスクを作りました（${r.image}）`)
+      onCreated?.(r)
+    } catch (e) {
+      setError(e?.message || '作成できませんでした')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function onPick(ev) {
+    const f = ev.target.files?.[0]
+    if (!f) return
+    setBusy(true)
+    setError(null)
+    try {
+      const dataUrl = await downscaleFile(f)
+      await create({ source: 'upload', image: dataUrl, title: f.name.replace(/\.[a-z]+$/i, ''), slug: f.name })
+    } catch (e) {
+      setError(e?.message || '取り込めませんでした')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Sheet title="注釈の下地を選ぶ" onClose={onClose}>
+      <div className="ak-new">
+        <button className="btn primary" type="button" disabled={busy} onClick={() => fileRef.current?.click()}>
+          端末の画像（ギャラリー / カメラ）
+        </button>
+        <input ref={fileRef} type="file" accept="image/*" hidden onChange={onPick} />
+        {error ? <div className="ak-error">{error}</div> : null}
+        <div className="ak-new-sub">library と直近のスクショ（{items ? items.length : '…'} 件）</div>
+        {items && !items.length ? <div className="ak-worker-empty">まだ画像がありません</div> : null}
+        <div className="ak-new-grid">
+          {(items || []).map((it) => (
+            <button
+              key={it.path}
+              type="button"
+              className="ak-new-item"
+              disabled={busy}
+              onClick={() => create({ source: it.source === 'capture' ? 'capture' : 'library', path: it.path, title: it.name.replace(/^\d{8}-\d{4}-/, '').replace(/\.[a-z]+$/i, '') })}
+            >
+              <img src={`/api/akapen/library/file?path=${encodeURIComponent(it.path)}`} alt="" loading="lazy" />
+              <span className="ak-new-tag">{it.source}</span>
+            </button>
+          ))}
+        </div>
+        <p className="ak-hint">
+          端末の画像は長辺1600px / JPEG 0.85 に縮小して送ります。チャットに貼った画像は
+          agent が <code>library/chat/</code> へ取り込んだものがここに出ます。
+        </p>
+      </div>
+    </Sheet>
+  )
+}
+
 export function AkapenPane({ notify }) {
   const [state, setState] = useState({ loading: true, items: [], error: null })
   const [tab, setTab] = useState('waiting')
   const [open, setOpen] = useState(null)
+  const [showNew, setShowNew] = useState(false)
   const [data, setData] = useState(null)
   const [dataError, setDataError] = useState(null)
 
@@ -468,9 +573,14 @@ export function AkapenPane({ notify }) {
             {counts.waiting ? `${counts.waiting} 件の判断待ち` : '判断待ちはありません'}
           </div>
         </div>
-        <button className="btn" type="button" onClick={load}>
-          更新
-        </button>
+        <span className="ak-head-actions">
+          <button className="btn ak-new-btn" type="button" onClick={() => setShowNew(true)}>
+            ＋ 注釈
+          </button>
+          <button className="btn" type="button" onClick={load}>
+            更新
+          </button>
+        </span>
       </div>
 
       <div className="chips ak-tabs" role="tablist">
@@ -539,6 +649,18 @@ export function AkapenPane({ notify }) {
             </section>
           ) : null}
         </>
+      ) : null}
+
+      {showNew ? (
+        <NewAnnotationSheet
+          notify={notify}
+          onClose={() => setShowNew(false)}
+          onCreated={async (r) => {
+            setShowNew(false)
+            await load()
+            setOpen({ id: r.taskId, title: r.label, status: 'blocked', akapen: { mode: 'annotation', label: r.label } })
+          }}
+        />
       ) : null}
 
       {open && open.akapen?.mode === 'annotation' ? (
