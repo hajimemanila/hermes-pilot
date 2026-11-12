@@ -7,6 +7,7 @@ import { loadConfig, VERSION } from './config.js'
 import { createAuth } from './auth.js'
 import { createHermesClient } from './hermes.js'
 import { createKanban } from './kanban.js'
+import { createAkapen } from './akapen.js'
 import { createOps } from './ops.js'
 import { listSnippets, normalizeCustom, CUSTOM_MAX } from './snippets.js'
 import { listTermSnippets } from './term-snippets.js'
@@ -39,6 +40,7 @@ const cfg = loadConfig()
 const auth = createAuth(cfg)
 const hermes = createHermesClient(cfg)
 const kanban = createKanban(cfg)
+const akapen = createAkapen(cfg)
 const ops = createOps(cfg, hermes, auth)
 const gitinfo = createGitInfo(cfg)
 const discord = createDiscord(cfg)
@@ -320,6 +322,72 @@ async function handleApi(req, res, url) {
         detail.discord = discord.forAnchor(entry.anchor)
       }
       return sendJson(res, 200, detail)
+    }
+    return sendJson(res, 404, { error: { message: `unknown endpoint: ${url.pathname}` } })
+  }
+
+
+  // --- 赤ペン（akapen）------------------------------------------------------
+  // /api/akapen                     … 一覧（review / ready / done）
+  // /api/akapen/:id/sheet           … シート HTML（sandbox・生成物）
+  // /api/akapen/:id/data            … sheet.json（PWA のネイティブフォーム用）
+  // POST /api/akapen/:id/answer     … 回答を保存 → comment → unblock（冪等）
+  // POST /api/akapen/:id/reopen     … 反映が違うとき review に戻す
+  if (a === 'akapen') {
+    if (!b) {
+      return sendJson(res, 200, {
+        board: akapen.board,
+        workdir: akapen.workdir(),
+        items: akapen.list(Number(url.searchParams.get('limit') ?? 80)),
+      })
+    }
+    if (c === 'sheet' && req.method === 'GET') {
+      const r = akapen.sheetHtml(b)
+      if (!r.ok) return sendJson(res, r.code === 'NOT_FOUND' ? 404 : 409, { error: { code: r.code, message: r.message } })
+      res.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'content-security-policy':
+          "sandbox allow-scripts allow-forms; default-src 'none'; style-src 'unsafe-inline'; " +
+          "img-src data: blob:; script-src 'unsafe-inline'; font-src data:",
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+      })
+      return res.end(r.html)
+    }
+    if (c === 'thumb' && req.method === 'GET') {
+      const rel = url.pathname.split('/').slice(5).join('/')
+      const r = akapen.thumb(decodeURIComponent(rel))
+      if (!r.ok) return sendJson(res, 404, { error: { code: r.code, message: r.message } })
+      res.writeHead(200, { 'content-type': r.type, 'cache-control': 'private, max-age=600' })
+      return res.end(r.data)
+    }
+    if (c === 'data' && req.method === 'GET') {
+      const r = akapen.sheetData(b)
+      return sendJson(res, r.ok ? 200 : 409, r.ok ? r : { error: { code: r.code, message: r.message } })
+    }
+    if (c === 'answer' && req.method === 'POST') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+      }
+      const body = await readJson(req)
+      const r = await akapen.answer(b, body || {})
+      auth.audit({
+        kind: 'akapen.answer',
+        task: b,
+        duplicate: Boolean(r.duplicate),
+        choiceCount: Array.isArray(body?.answers) ? body.answers.length : 0,
+        ok: Boolean(r.ok),
+      })
+      return sendJson(res, r.ok ? 200 : 400, r)
+    }
+    if (c === 'reopen' && req.method === 'POST') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+      }
+      const body = await readJson(req)
+      const r = await akapen.reopen(b, body?.reason)
+      auth.audit({ kind: 'akapen.reopen', task: b, ok: Boolean(r.ok) })
+      return sendJson(res, r.ok ? 200 : 400, r)
     }
     return sendJson(res, 404, { error: { message: `unknown endpoint: ${url.pathname}` } })
   }

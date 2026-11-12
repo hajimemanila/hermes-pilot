@@ -28,6 +28,7 @@ export function Icon({ name, size = 20 }) {
     plus: <path d="M12 5v14M5 12h14" />,
     bolt: <path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z" />,
     check: <path d="m4 12 5 5L20 6" />,
+    pen: <><path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z" /><path d="m14 6 4 4" /></>,
   }
   return <svg {...common}>{paths[name] ?? paths.grid}</svg>
 }

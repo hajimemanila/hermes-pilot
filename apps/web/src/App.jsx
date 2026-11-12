@@ -6,11 +6,13 @@ import { TasksPane } from './features/TasksPane.jsx'
 import { ChatPane } from './features/ChatPane.jsx'
 import { TermPane } from './features/TermPane.jsx'
 import { SettingsPane } from './features/SettingsPane.jsx'
+import { AkapenPane } from './features/AkapenPane.jsx'
 import { SearchSheet } from './features/SearchSheet.jsx'
 import { Icon } from './components/Ui.jsx'
 
 const TABS = [
   { id: 'tasks', label: 'タスク', icon: 'grid' },
+  { id: 'akapen', label: '赤ペン', icon: 'pen' },
   { id: 'chat', label: 'チャット', icon: 'chat' },
   { id: 'term', label: 'ターミナル', icon: 'term' },
   { id: 'settings', label: '設定', icon: 'gear' },
@@ -220,6 +222,8 @@ export function App() {
               notify={notify}
               initialInbox={deepLink?.open === 'inbox' ? deepLink : null}
             />
+          ) : tab === 'akapen' ? (
+            <AkapenPane notify={notify} />
           ) : tab === 'chat' ? (
             <ChatPane notify={notify} />
           ) : tab === 'term' ? (

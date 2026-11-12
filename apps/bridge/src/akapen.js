@@ -1,0 +1,347 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import os from 'node:os'
+import crypto from 'node:crypto'
+import { execFile } from 'node:child_process'
+import { DatabaseSync } from 'node:sqlite'
+
+/**
+ * 赤ペン（akapen）パイプラインのブリッジ側。
+ *
+ * 契約は `~/Projects/akapen/CONTRACT.md`。カンバン（board `mobile`）が唯一の真実で、
+ * シートはボードの default_workdir 配下に置かれる。ここは**読み取り + 回答の書き込み**だけを行い、
+ * 実装判断はしない（生成も反映も worker の仕事）。
+ *
+ * パスの解決規則:
+ *  - シートの場所はタスク本文の `[akapen] ... sheet=...` 行から取る（リクエストのパスは使わない）
+ *  - 解決後 realpath が workdir 配下でなければ拒否する（allowlist）
+ */
+
+const LINE_RE = /^\[akapen\]\s+(.+)$/m
+const LABEL_RE = /^[a-z0-9][a-z0-9._-]{0,40}$/i
+
+/** タスク本文から `[akapen] label=... round=... mode=... sheet=...` を取り出す。 */
+export function parseAkapenLine(body) {
+  const m = LINE_RE.exec(String(body || ''))
+  if (!m) return null
+  const out = {}
+  for (const token of m[1].trim().split(/\s+/)) {
+    const idx = token.indexOf('=')
+    if (idx > 0) out[token.slice(0, idx)] = token.slice(idx + 1)
+  }
+  if (!out.sheet && !out.label) return null
+  if (out.sheet && !isSafeRel(out.sheet)) return null
+  return out
+}
+
+/** 相対パスとして妥当か（親ディレクトリ・絶対パスを弾く）。 */
+export function isSafeRel(rel) {
+  const s = String(rel || '')
+  if (!s || s.startsWith('/') || s.includes('..') || s.includes('\0')) return false
+  return /^[A-Za-z0-9._/-]+$/.test(s)
+}
+
+/** 回答の安定ハッシュ（キー順を固定して二重投稿を検出する）。 */
+export function answerHash({ answers = [], global = '', annotations = [] }) {
+  const norm = {
+    answers: [...answers]
+      .map((a) => ({ id: String(a.id ?? ''), choice: a.choice ?? null, note: String(a.note ?? '') }))
+      .sort((x, y) => x.id.localeCompare(y.id)),
+    global: String(global ?? ''),
+    annotations: [...annotations].map((a) => ({ region: a.region ?? null, note: String(a.note ?? '') })),
+  }
+  return crypto.createHash('sha256').update(JSON.stringify(norm)).digest('hex')
+}
+
+/** 回答を【赤ペン回答】互換テキストにする（貼り戻し経路と同じ形）。 */
+export function toReplyText(label, answers, global, questions = []) {
+  const title = new Map(questions.map((q) => [String(q.id), String(q.text ?? '')]))
+  const lines = [`【赤ペン回答】${label}`]
+  for (const a of answers) {
+    const q = title.get(String(a.id)) || String(a.id)
+    const choice = a.choice === null || a.choice === undefined ? '(未選択 = お任せ)' : String(a.choice)
+    const note = a.note ? ` / 補足: ${String(a.note).replace(/\n/g, ' ')}` : ''
+    lines.push(`Q${String(a.id).replace(/^q/i, '')}. ${q}: ${choice}${note}`)
+  }
+  lines.push(`全体への赤ペン: ${String(global ?? '').replace(/\r/g, '')}`)
+  lines.push('---')
+  lines.push('上の回答を反映して作業を続けてください。お任せの項目は推奨案で確定してください。')
+  return `${lines.join('\n')}\n`
+}
+
+/**
+ * @param {object} cfg ブリッジ設定（kanbanRoot を使う）
+ * @param {{board?: string, root?: string}} [opts]
+ */
+export function createAkapen(cfg, opts = {}) {
+  const board = opts.board || process.env.AKAPEN_BOARD || 'mobile'
+  const boardDir = path.join(cfg.kanbanRoot, 'boards', board)
+  const dbPath = path.join(boardDir, 'kanban.db')
+
+  /** ボードの default_workdir（シート置き場のルート）。 */
+  function workdir() {
+    if (opts.root) return path.resolve(opts.root.replace(/^~/, os.homedir()))
+    try {
+      const meta = JSON.parse(fs.readFileSync(path.join(boardDir, 'board.json'), 'utf8'))
+      if (meta.default_workdir) return path.resolve(String(meta.default_workdir).replace(/^~/, os.homedir()))
+    } catch {
+      /* fall through */
+    }
+    return path.join(os.homedir(), 'Projects', 'akapen')
+  }
+
+  function openDb() {
+    return new DatabaseSync(dbPath, { readOnly: true })
+  }
+
+  function rows(limit = 80) {
+    let db
+    try {
+      db = openDb()
+    } catch {
+      return []
+    }
+    try {
+      return db
+        .prepare(
+          `SELECT id, title, body, status, assignee, priority,
+                  created_at, started_at, completed_at, result
+             FROM tasks
+            WHERE status IN ('review','ready','running','blocked','done')
+            ORDER BY CASE status WHEN 'review' THEN 0 WHEN 'ready' THEN 1 WHEN 'running' THEN 2
+                                 WHEN 'blocked' THEN 3 ELSE 4 END,
+                     COALESCE(completed_at, started_at, created_at) DESC
+            LIMIT ?`,
+        )
+        .all(limit)
+    } catch {
+      return []
+    } finally {
+      db.close()
+    }
+  }
+
+  function bodyOf(id) {
+    let db
+    try {
+      db = openDb()
+    } catch {
+      return null
+    }
+    try {
+      return db.prepare('SELECT body, status, title FROM tasks WHERE id = ?').get(id) || null
+    } catch {
+      return null
+    } finally {
+      db.close()
+    }
+  }
+
+  /** workdir 配下に収まることを realpath で確かめて絶対パスを返す。 */
+  function resolveInside(rel) {
+    if (!isSafeRel(rel)) return null
+    const root = workdir()
+    const abs = path.resolve(root, rel)
+    const relToRoot = path.relative(root, abs)
+    if (relToRoot.startsWith('..') || path.isAbsolute(relToRoot)) return null
+    try {
+      return fs.realpathSync(abs)
+    } catch {
+      return null
+    }
+  }
+
+  function readJsonIfExists(abs) {
+    try {
+      return JSON.parse(fs.readFileSync(abs, 'utf8'))
+    } catch {
+      return null
+    }
+  }
+
+  /** 一覧（PWA の赤ペンタブ）。 */
+  function list(limit = 80) {
+    const out = []
+    for (const r of rows(limit)) {
+      const ak = parseAkapenLine(r.body)
+      if (!ak) continue
+      const sheetAbs = ak.sheet ? resolveInside(ak.sheet) : null
+      const dataRel = ak.sheet ? ak.sheet.replace(/\.html$/, '.json') : null
+      const dataAbs = dataRel ? resolveInside(dataRel) : null
+      const sheet = dataAbs ? readJsonIfExists(dataAbs) : null
+      const answerRel = ak.sheet ? ak.sheet.replace(/\.html$/, '.answer.json') : null
+      const answered = answerRel ? readJsonIfExists(resolveInside(answerRel) || '\0') : null
+      out.push({
+        id: r.id,
+        title: r.title,
+        status: r.status,
+        assignee: r.assignee,
+        createdAt: Number(r.created_at ?? 0) * 1000,
+        completedAt: r.completed_at ? Number(r.completed_at) * 1000 : null,
+        result: r.result ? String(r.result).slice(0, 400) : null,
+        akapen: {
+          label: ak.label ?? null,
+          round: Number(ak.round ?? 1),
+          mode: ak.mode ?? 'standard',
+          sheet: ak.sheet ?? null,
+          exists: Boolean(sheetAbs),
+          title: sheet?.title ?? null,
+          topic: sheet?.topic ?? null,
+          questions: Array.isArray(sheet?.questions) ? sheet.questions.length : 0,
+          answeredAt: answered?.answered_at ?? null,
+        },
+      })
+    }
+    return out
+  }
+
+  /** シート HTML（認可は呼び出し側）。 */
+  function sheetHtml(id) {
+    const b = bodyOf(id)
+    if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
+    const ak = parseAkapenLine(b.body)
+    if (!ak?.sheet) return { ok: false, code: 'NO_SHEET', message: 'このタスクにはシートがありません' }
+    const abs = resolveInside(ak.sheet)
+    if (!abs) return { ok: false, code: 'SHEET_MISSING', message: 'シートが見つかりません' }
+    return { ok: true, html: fs.readFileSync(abs, 'utf8'), path: abs }
+  }
+
+  /** シートの構造化データ（PWA のネイティブフォーム用）。 */
+  function sheetData(id) {
+    const b = bodyOf(id)
+    if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
+    const ak = parseAkapenLine(b.body)
+    if (!ak?.sheet) return { ok: false, code: 'NO_SHEET', message: 'このタスクにはシートがありません' }
+    const abs = resolveInside(ak.sheet.replace(/\.html$/, '.json'))
+    const data = abs ? readJsonIfExists(abs) : null
+    if (!data) return { ok: false, code: 'DATA_MISSING', message: 'sheet.json がありません' }
+    return { ok: true, data, taskId: id, status: b.status }
+  }
+
+  /** テストから差し替えられるように注入可能にしておく。 */
+  const runKanban = opts.runKanban || function runKanbanReal(args) {
+    return new Promise((resolve) => {
+      execFile(
+        'hermes',
+        ['kanban', '--board', board, ...args],
+        { timeout: 30000, maxBuffer: 1_000_000, env: { ...process.env } },
+        (err, stdout, stderr) => {
+          resolve({ code: err ? (err.code ?? 1) : 0, out: `${stdout ?? ''}${stderr ?? ''}`.trim() })
+        },
+      )
+    })
+  }
+
+  /**
+   * 回答を保存して状態を進める（冪等）。
+   *
+   * @param {string} id タスク ID
+   * @param {{answers: Array, global?: string, annotations?: Array, by?: string}} payload
+   */
+  async function answer(id, payload) {
+    const b = bodyOf(id)
+    if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
+    const ak = parseAkapenLine(b.body)
+    if (!ak?.sheet) return { ok: false, code: 'NO_SHEET', message: 'このタスクにはシートがありません' }
+
+    const sheetAbs = resolveInside(ak.sheet)
+    const dataAbs = resolveInside(ak.sheet.replace(/\.html$/, '.json'))
+    const data = dataAbs ? readJsonIfExists(dataAbs) : null
+    const questions = Array.isArray(data?.questions) ? data.questions : []
+
+    const answers = Array.isArray(payload?.answers) ? payload.answers : []
+    const global = String(payload?.global ?? '')
+    const annotations = Array.isArray(payload?.annotations) ? payload.annotations : []
+    const hash = answerHash({ answers, global, annotations })
+
+    const answerRel = ak.sheet.replace(/\.html$/, '.answer.json')
+    const answerDir = path.dirname(path.resolve(workdir(), answerRel))
+    const answerFile = path.join(answerDir, path.basename(answerRel))
+    const textFile = answerFile.replace(/\.answer\.json$/, '.answer.txt')
+
+    const existing = readJsonIfExists(answerFile)
+    if (existing && existing.sha256 === hash) {
+      // 回答は保存済み。遷移だけ未了なら（再送で）ここで進める — 冪等の本体はこの分岐
+      let moved = { code: 0, out: '' }
+      let status = b.status
+      if (b.status === 'blocked') {
+        moved = await runKanban(['unblock', id, '--reason', '赤ペン回答を受領（再送）'])
+        if (moved.code === 0) status = 'ready'
+      }
+      return {
+        ok: moved.code === 0,
+        duplicate: true,
+        sha256: hash,
+        status,
+        moved: status,
+        message: '同じ回答が既に保存されています',
+        output: moved.out.slice(0, 400),
+      }
+    }
+    if (b.status === 'done') {
+      return { ok: false, code: 'ALREADY_DONE', message: 'このタスクは完了済みです' }
+    }
+
+    const record = {
+      label: ak.label ?? null,
+      round: Number(ak.round ?? 1),
+      task_id: id,
+      answered_at: new Date().toISOString(),
+      answers: answers.map((a) => ({
+        id: String(a?.id ?? ''),
+        choice: a?.choice ?? null,
+        note: String(a?.note ?? ''),
+      })),
+      global,
+      annotations,
+      sha256: hash,
+    }
+    fs.mkdirSync(answerDir, { recursive: true })
+    fs.writeFileSync(answerFile, JSON.stringify(record, null, 2), 'utf8')
+    fs.writeFileSync(textFile, toReplyText(ak.label ?? id, record.answers, global, questions), 'utf8')
+
+    const summary = `赤ペン回答: ${questions.length || answers.length}問 ` +
+      `(選択 ${answers.filter((a) => a?.choice).length} / お任せ ${answers.filter((a) => !a?.choice).length}) ` +
+      `— ${path.relative(workdir(), answerFile)}`
+    const comment = await runKanban(['comment', id, summary, '--author', String(payload?.by ?? 'mobile')])
+    let moved = { code: 0, out: '' }
+    let status = b.status
+    if (b.status === 'blocked') {
+      moved = await runKanban(['unblock', id, '--reason', '赤ペン回答を受領'])
+      if (moved.code === 0) status = 'ready'
+    }
+    return {
+      ok: comment.code === 0 && moved.code === 0,
+      duplicate: false,
+      sha256: hash,
+      files: { answer: path.relative(workdir(), answerFile), text: path.relative(workdir(), textFile) },
+      status,
+      moved: status,
+      output: `${comment.out}\n${moved.out}`.trim().slice(0, 800),
+    }
+  }
+
+  /** 反映が違うとき review に戻す。 */
+  async function reopen(id, reason) {
+    const b = bodyOf(id)
+    if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
+    const out = await runKanban(['request-changes', id, String(reason || '赤ペンの再確認をお願いします')])
+    return { ok: out.code === 0, status: b.status, output: out.out.slice(0, 800) }
+  }
+
+
+  /** 挿絵（workdir/thumbs/... の PNG/JPEG/WebP のみ）。 */
+  function thumb(rel) {
+    const s = String(rel || '')
+    if (!s.startsWith('thumbs/') || !/\.(png|jpe?g|webp)$/i.test(s)) {
+      return { ok: false, code: 'BAD_THUMB', message: '挿絵のパスが不正です' }
+    }
+    const abs = resolveInside(s)
+    if (!abs) return { ok: false, code: 'THUMB_MISSING', message: '挿絵が見つかりません' }
+    const ext = path.extname(abs).toLowerCase()
+    const type = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
+    return { ok: true, data: fs.readFileSync(abs), type }
+  }
+
+  return { board, workdir, list, sheetHtml, sheetData, answer, reopen }
+}
