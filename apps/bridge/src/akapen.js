@@ -867,6 +867,46 @@ export function createAkapen(cfg, opts = {}) {
   }
 
   /**
+   * 赤ペンの完了報告の生データ（監視 cron `mobile-akapen-watch` が書く 1 行/タスク）。
+   *
+   * 1 会話だけを見る `chatReport` と、全会話を見る `chatReports` の共通読み取り。
+   * ファイルが無い（＝宛先つきのタスクがまだ完了していない）のは正常なので空で返す。
+   *
+   * @returns {Array<{at: number, sessionId: string, taskId: string, label: string|null, text: string}>} 古い順
+   */
+  function readChatReportRows() {
+    const home = path.dirname(cfg.kanbanRoot || path.join(os.homedir(), '.hermes', 'kanban'))
+    const file = path.join(home, 'plugin-data', 'akapen', 'chat-reports.jsonl')
+    let raw = ''
+    try {
+      raw = fs.readFileSync(file, 'utf8')
+    } catch {
+      return []
+    }
+    const out = []
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue
+      try {
+        const j = JSON.parse(line)
+        const at = Date.parse(String(j.at ?? ''))
+        if (!Number.isFinite(at)) continue
+        const sessionId = String(j.session_id ?? '')
+        if (!sessionId) continue
+        out.push({
+          at,
+          sessionId,
+          taskId: String(j.task_id ?? ''),
+          label: j.label ?? null,
+          text: String(j.text ?? ''),
+        })
+      } catch {
+        // 書きかけ・壊れた行は捨てる（補助情報）
+      }
+    }
+    return out
+  }
+
+  /**
    * ある会話に流す赤ペンの完了報告（監視 cron `mobile-akapen-watch` が書く）。
    *
    * 完了報告は Discord と作業フィードにしか出ておらず、**起票した会話**には戻らなかった
@@ -880,30 +920,29 @@ export function createAkapen(cfg, opts = {}) {
   function chatReport(sessionId, opts = {}) {
     const id = String(sessionId ?? '').slice(0, 128)
     if (!id) return []
-    const home = path.dirname(cfg.kanbanRoot || path.join(os.homedir(), '.hermes', 'kanban'))
-    const file = path.join(home, 'plugin-data', 'akapen', 'chat-reports.jsonl')
-    let raw = ''
-    try {
-      raw = fs.readFileSync(file, 'utf8')
-    } catch {
-      return [] // まだ 1 行も無い（宛先の会話が無いタスクしか走っていない）
-    }
     const limit = Math.min(Math.max(Number(opts.limit) || 3, 1), 50)
     const since = Number(opts.since) || 0
-    const out = []
-    for (const line of raw.split('\n')) {
-      if (!line.trim()) continue
-      try {
-        const j = JSON.parse(line)
-        if (String(j.session_id ?? '') !== id) continue
-        const at = Date.parse(String(j.at ?? ''))
-        if (!Number.isFinite(at)) continue
-        if (since && at <= since) continue
-        out.push({ at, taskId: String(j.task_id ?? ''), label: j.label ?? null, text: String(j.text ?? '') })
-      } catch {
-        // 書きかけ・壊れた行は捨てる（補助情報）
-      }
-    }
+    const out = readChatReportRows()
+      .filter((r) => r.sessionId === id)
+      .filter((r) => !since || r.at > since)
+      .map(({ sessionId: _sid, ...rest }) => rest)
+    return out.slice(-limit)
+  }
+
+  /**
+   * 全会話ぶんの完了報告（未読の点を出すため）。
+   *
+   * 下部ナビのチャットタブと「会話」一覧の行に点を出すには「どの会話に新着があるか」を
+   * 1 回で知る必要がある。会話ごとに問い合わせると N 回になるので、絞らずに返して
+   * 端末側で既読時刻（localStorage）と突き合わせる。
+   *
+   * @param {{limit?: number, since?: number}} [opts] 末尾何件（既定 200）・この epoch ms より新しい行だけ
+   * @returns {Array<{at: number, sessionId: string, taskId: string, label: string|null, text: string}>} 古い順
+   */
+  function chatReports(opts = {}) {
+    const limit = Math.min(Math.max(Number(opts.limit) || 200, 1), 500)
+    const since = Number(opts.since) || 0
+    const out = readChatReportRows().filter((r) => !since || r.at > since)
     return out.slice(-limit)
   }
 
@@ -980,7 +1019,15 @@ export function createAkapen(cfg, opts = {}) {
       }
     }
     const target = picked.path
-    const body = `[akapen] label=${label} round=1 mode=annotation image=${relShot} target=${target}`
+    // 起票した会話へ完了報告を返す宛先（赤ペン chat-badge-01 q1=A の「紐づけ」）。
+    // 注釈タスクは bridge が本文を組み立てるので、端末が渡さないと `chat=` が付かず
+    // 完了が会話に戻らない（従来の宛先つきは赤ペンシート経由だけだった）。
+    const chat = String(payload?.chat ?? '')
+      .trim()
+      .replace(/[^A-Za-z0-9_-]/g, '')
+      .slice(0, 128)
+    const body =
+      `[akapen] label=${label} round=1 mode=annotation image=${relShot} target=${target}` + (chat ? ` chat=${chat}` : '')
     // assignee が無いと dispatcher が拾わない（実測: ready のまま止まる）
     const created = await runKanban(['create', title, '--body', body, '--assignee', 'mobile'])
     const m = /t_[0-9a-f]{8}/.exec(created.out || '')
@@ -999,5 +1046,5 @@ export function createAkapen(cfg, opts = {}) {
     }
   }
 
-  return { board, workdir, list, sheetHtml, sheetData, answer, reopen, sessionId, image, annotation, saveAnnotation, thumb, library, libraryFile, createFromImage, targets, feed, chatReport }
+  return { board, workdir, list, sheetHtml, sheetData, answer, reopen, sessionId, image, annotation, saveAnnotation, thumb, library, libraryFile, createFromImage, targets, feed, chatReport, chatReports }
 }

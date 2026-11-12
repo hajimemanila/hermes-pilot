@@ -480,3 +480,75 @@ test('chatReport はファイルが無い/壊れていても空で返る', () =>
   assert.equal(r.length, 1, '壊れた行は捨てる')
   assert.equal(r[0].text, 'ok')
 })
+
+test('chatReports は全会話ぶんを返す（未読の点は 1 回の取得で出す）', () => {
+  const { root } = tempBoard()
+  const dir = path.join(root, 'plugin-data', 'akapen')
+  fs.mkdirSync(dir, { recursive: true })
+  const rows = [
+    { at: '2026-11-13T02:10:00+08:00', session_id: 'chat-a', task_id: 't_1', label: 'x-01', text: '完了 A' },
+    { at: '2026-11-13T02:12:00+08:00', session_id: 'chat-b', task_id: 't_2', label: 'y-01', text: '完了 B' },
+    { at: '2026-11-13T02:14:00+08:00', session_id: 'chat-a', task_id: 't_3', label: 'x-02', text: '完了 C' },
+    { at: '2026-11-13T02:15:00+08:00', task_id: 't_4', text: '宛先なし' },
+    'not json',
+  ]
+  fs.writeFileSync(
+    path.join(dir, 'chat-reports.jsonl'),
+    rows.map((r) => (typeof r === 'string' ? r : JSON.stringify(r))).join('\n') + '\n',
+  )
+  const api = createAkapen({ kanbanRoot: path.join(root, 'kanban') })
+
+  const all = api.chatReports()
+  assert.equal(all.length, 3, '会話が分かる行だけ（宛先なし・壊れた行は捨てる）')
+  assert.deepEqual(all.map((r) => r.sessionId), ['chat-a', 'chat-b', 'chat-a'], '古い順・別会話も混ぜて返す')
+  assert.equal(all[0].taskId, 't_1')
+
+  assert.equal(api.chatReports({ limit: 2 }).length, 2, 'limit は末尾 N 件')
+  assert.equal(api.chatReports({ limit: 2 })[1].taskId, 't_3')
+  assert.equal(api.chatReports({ since: Date.parse('2026-11-13T02:13:00+08:00') }).length, 1, 'since で絞る')
+  assert.deepEqual(api.chatReports({ limit: 0 }), all, 'limit 0 は既定（末尾 200 件）')
+})
+
+test('chatReports はファイルが無ければ空（補助情報なので落とさない）', () => {
+  const { root } = tempBoard()
+  const api = createAkapen({ kanbanRoot: path.join(root, 'kanban') })
+  assert.deepEqual(api.chatReports(), [])
+})
+
+test('createFromImage は chat= を本文に付ける（注釈タスクの完了も会話に戻す）', async () => {
+  const { root } = tempBoard()
+  const repoA = path.join(root, 'repo-a')
+  fs.mkdirSync(path.join(repoA, '.git'), { recursive: true })
+  fs.mkdirSync(path.join(root, 'plugins', 'git-ops', 'config'), { recursive: true })
+  fs.writeFileSync(
+    path.join(root, 'plugins', 'git-ops', 'config', 'repos.json'),
+    JSON.stringify({ repos: [{ id: 'hermes-mobile-pwa', label: 'Mobile', path: repoA }] }),
+  )
+  const calls = []
+  const api = createAkapen(
+    { kanbanRoot: path.join(root, 'kanban') },
+    {
+      runKanban: async (a) => {
+        calls.push(a)
+        if (a[0] === 'create') return { code: 0, out: 'Created t_abcdef12  (ready, assignee=mobile)' }
+        return { code: 0, out: 'ok' }
+      },
+    },
+  )
+  const png = 'data:image/png;base64,' + Buffer.from('x').toString('base64')
+
+  const r = await api.createFromImage({ source: 'upload', image: png, target: repoA, chat: '20261113_011804_9597b4' })
+  assert.equal(r.ok, true)
+  const line = calls.find((a) => a[0] === 'create').join(' ')
+  assert.ok(line.includes('chat=20261113_011804_9597b4'), '端末が渡した会話 ID が本文に入る')
+
+  // 記号は落とす（本文の機械可読行が壊れないように）
+  calls.length = 0
+  await api.createFromImage({ source: 'upload', image: png, target: repoA, chat: ' ab c/../d ' })
+  assert.ok(calls.find((a) => a[0] === 'create').join(' ').includes('chat=abcd'))
+
+  // 宛先が無ければ付けない（従来どおり）
+  calls.length = 0
+  await api.createFromImage({ source: 'upload', image: png, target: repoA })
+  assert.equal(calls.find((a) => a[0] === 'create').join(' ').includes('chat='), false)
+})

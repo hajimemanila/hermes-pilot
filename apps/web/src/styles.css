@@ -1510,6 +1510,20 @@ button.stat:active {
 .nav-dot.running { background: var(--accent); }
 .nav-dot.done { background: var(--good); }
 
+/*
+ * 会話一覧の行に出す「赤ペンの完了報告が届いている」の点（赤ペン chat-badge-01 q2=A）。
+ * 数字は出さない（q3=B）: 数字は判断待ち専用で、同じ数字を 2 つの意味に使わない。
+ */
+.row-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  margin: 0 2px 0 6px;
+  background: var(--muted);
+}
+.row-dot.done { background: var(--good); }
+
 .toast {
   position: fixed;
   left: 50%;

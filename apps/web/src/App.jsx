@@ -3,6 +3,7 @@ import { readDeepLink } from './lib/deeplink.js'
 
 import { api } from './api.js'
 import { navBadgeState, pendingCount, runningCount, unseenNotices, waitingCount } from './lib/akapenView.js'
+import { SEEN_NAV_KEY, newerThan } from './lib/chatReports.js'
 import { TasksPane } from './features/TasksPane.jsx'
 import { ChatPane } from './features/ChatPane.jsx'
 import { TermPane } from './features/TermPane.jsx'
@@ -107,6 +108,66 @@ export function App() {
   const [akapenRunning, setAkapenRunning] = useState(0)
   const [akapenUnseen, setAkapenUnseen] = useState(0)
   const lastSeenRef = useRef(0)
+  /*
+   * チャットの新着（赤ペンの完了報告が起票した会話に戻る 1 行。赤ペン chat-badge-01）。
+   * q1=A で「紐づけと新着バッジの両方」、q2=A で「チャットタブと会話一覧の行の両方」、
+   * q3=B で「点だけ（数字を出さない）」。数字は判断待ち専用のままにする。
+   */
+  const [chatReportItems, setChatReportItems] = useState([])
+  const [chatUnread, setChatUnread] = useState(0)
+  const chatSeenRef = useRef(0)
+  const tabRef = useRef(tab)
+  tabRef.current = tab
+  useEffect(() => {
+    try {
+      chatSeenRef.current = Number(localStorage.getItem(SEEN_NAV_KEY)) || 0
+    } catch {
+      chatSeenRef.current = 0
+    }
+  }, [])
+
+  /** チャットタブを開いた時刻を「見た」として端末に残す（ナビの点を消す）。 */
+  const markChatSeen = useCallback(() => {
+    const at = Date.now()
+    chatSeenRef.current = at
+    setChatUnread(0)
+    try {
+      localStorage.setItem(SEEN_NAV_KEY, String(at))
+    } catch {
+      /* 保存できなくても表示は続ける */
+    }
+  }, [])
+
+  // チャットタブへ移ったら既読（開いている＝見ている）。タブを離れている間に届いた分だけ点になる。
+  useEffect(() => {
+    if (tab === 'chat') markChatSeen()
+  }, [tab, markChatSeen])
+
+  useEffect(() => {
+    let alive = true
+    const sync = async () => {
+      try {
+        const r = await api('/api/akapen/chat-reports?limit=200')
+        if (!alive) return
+        const items = Array.isArray(r.items) ? r.items : []
+        // チャットタブを開いている間は常に既読（点が出ても意味がない）
+        if (tabRef.current === 'chat') markChatSeen()
+        setChatReportItems(items)
+        setChatUnread(newerThan(items, chatSeenRef.current).length)
+      } catch {
+        /* 完了報告は補助情報。取れなくても画面は壊さない */
+      }
+    }
+    sync()
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') sync()
+    }, 15000)
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [markChatSeen])
+
   useEffect(() => {
     try {
       lastSeenRef.current = Number(localStorage.getItem('hm.akapenSeenAt')) || 0
@@ -381,7 +442,7 @@ export function App() {
               aria-hidden={tab === 'chat' ? undefined : 'true'}
             >
               <ErrorBoundary tab="chat">
-                <ChatPane notify={notify} />
+                <ChatPane notify={notify} chatReports={chatReportItems} active={tab === 'chat'} />
               </ErrorBoundary>
             </div>
           ) : null}
@@ -394,8 +455,14 @@ export function App() {
           // タブ内の表示とは別物で、ここは下部ナビのアイコン右上の小さな丸。
           const badge = t.id === 'akapen' ? akapenWaiting : t.id === 'tasks' ? inboxPending : 0
           const badgeLabel = t.id === 'akapen' ? '判断待ち' : '承認待ち'
-          // 赤ペンタブは「判断待ち（数字） > 未読の完了（緑の点） > 反映中（青の点）」の順で 1 つだけ出す
-          const state = t.id === 'akapen' ? navBadgeState({ waiting: akapenWaiting, unseen: akapenUnseen, running: akapenRunning }) : null
+          // 赤ペンタブは「判断待ち（数字） > 未読の完了（緑の点） > 反映中（青の点）」の順で 1 つだけ出す。
+          // チャットタブは赤ペンの完了報告の新着（q2=A）を**点だけ**で出す（q3=B・数字は判断待ち専用）。
+          const state =
+            t.id === 'akapen'
+              ? navBadgeState({ waiting: akapenWaiting, unseen: akapenUnseen, running: akapenRunning })
+              : t.id === 'chat'
+                ? navBadgeState({ unseen: chatUnread })
+                : null
           const dot = !badge && state === 'done' ? 'done' : !badge && state === 'running' ? 'running' : null
           const aria = badge
             ? `${t.label}（${badgeLabel} ${badge} 件）`

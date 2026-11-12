@@ -403,6 +403,16 @@ async function handleApi(req, res, url) {
         ),
       })
     }
+    // /api/akapen/chat-reports?limit=&since= … 全会話ぶんの完了報告（未読の点を出すため）
+    // 会話一覧の行と下部ナビのチャットタブは「どの会話に新着があるか」を 1 回で要る。
+    if (b === 'chat-reports' && req.method === 'GET') {
+      return sendJson(res, 200, {
+        items: akapen.chatReports({
+          limit: Number(url.searchParams.get('limit') ?? 200),
+          since: Number(url.searchParams.get('since') ?? 0),
+        }),
+      })
+    }
     // /api/akapen/chat-report?session_id=&limit=&since= … その会話に流す完了報告
     // （監視 cron が起票元の会話へ返す 1 行。端末はチャットタブが 15 秒ごとに読む）
     if (b === 'chat-report' && req.method === 'GET') {

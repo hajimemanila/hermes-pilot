@@ -529,7 +529,15 @@ function NewAnnotationSheet({ onCreated, onClose, notify }) {
     setBusy(true)
     setError(null)
     try {
-      const r = await api('/api/akapen/from-image', { method: 'POST', body })
+      // 起票元の会話（完了報告を戻す宛先 `chat=`）。端末に残っている会話 ID を使う。
+      // これが無いと、この画面から作った注釈タスクの完了が会話に戻らない（赤ペン chat-badge-01 q1=A）。
+      let chat = ''
+      try {
+        chat = String(localStorage.getItem('hm.storedSid') || '')
+      } catch {
+        chat = ''
+      }
+      const r = await api('/api/akapen/from-image', { method: 'POST', body: { ...body, chat } })
       if (!r?.ok) throw new Error(r?.message || '作成できませんでした')
       notify?.(`注釈タスクを作りました（${r.image}）`)
       onCreated?.(r)

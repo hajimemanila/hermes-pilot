@@ -15,6 +15,7 @@ import { mergeProgress } from '../lib/toolProgress.js'
 import { api } from '../api.js'
 import { composerHeight } from '../lib/composerSize.js'
 import { shouldSendOnEnter } from '../lib/composerKey.js'
+import { SEEN_MAP_KEY, readSeenMap, reportLines, setSeen, unreadSessions } from '../lib/chatReports.js'
 import { Icon, Sheet, relTime, fmtBytes } from '../components/Ui.jsx'
 
 /** 入力欄を内容に合わせて伸ばす（枠の分を足さないと 2px 溢れて縦棒が出る）。 */
@@ -34,7 +35,7 @@ function fitComposer(el, cap = 120) {
  *
  * 定型スニペットは `GET /api/snippets`（組み込み + マイ）。タップで挿入、長押しで即送信。
  */
-export function ChatPane({ notify }) {
+export function ChatPane({ notify, chatReports = [], active = false }) {
   const [sessions, setSessions] = useState([])
   const [sid, setSid] = useState(null)
   const [storedSid, setStoredSid] = useState(null)
@@ -51,8 +52,9 @@ export function ChatPane({ notify }) {
   const [drawer, setDrawer] = useState(false)
   const [thinking, setThinking] = useState('')
   const [dcLink, setDcLink] = useState(null)
-  // 赤ペンの完了報告（起票した会話にだけ流れる 1 行。bridge が chat-reports.jsonl から返す）
-  const [reports, setReports] = useState([])
+  // 赤ペンの完了報告（起票した会話にだけ流れる 1 行。行の取得は App が 1 回だけ行う）
+  // と、会話一覧の行に出す「新着の点」の既読（端末に残す）。
+  const [seenMap, setSeenMap] = useState({})
   // resume できない会話（カンバン作業ログ等）は読み取り専用で表示する
   const [readonly, setReadonly] = useState(null)
   // いま話しているプロファイル（SPEC-PROFILE-CHAT）。既定は DEFAULT_PROFILE（mobile）
@@ -366,36 +368,48 @@ export function ChatPane({ notify }) {
   }, [storedSid, sid])
 
   /**
-   * 赤ペンの完了報告をこの会話に流す（赤ペン chat-report-01: q1=A）。
+   * 赤ペンの完了報告をこの会話に流す（赤ペン chat-report-01: q1=A / chat-badge-01）。
    *
    * 起票したタスクの本文に `chat=<session_id>` があるものだけ、監視 cron が
-   * 完了の 1 行（完了・所要・検証）を `chat-reports.jsonl` に書く。ここは 15 秒ごとに
-   * 末尾 3 行を読み、**会話の末尾に**出す（履歴の途中に差し込まない = 順序を偽らない）。
+   * 完了の 1 行（完了・所要・検証）を `chat-reports.jsonl` に書く。行の取得は App が
+   * 15 秒ごとに 1 回だけ行い（`chatReports` prop）、ここは**自分の会話ぶんに絞って**
+   * 末尾 3 行を出す（会話の途中に差し込まない = 順序を偽らない）。
    */
+  const reportTarget = storedSid ?? sid ?? readonly?.sessionId
+  const reports = useMemo(() => reportLines(chatReports, reportTarget), [chatReports, reportTarget])
+
+  // 会話ごとの既読（会話一覧の行の点。赤ペン chat-badge-01 q2=A の「行の点」）。
   useEffect(() => {
-    const target = storedSid ?? sid ?? readonly?.sessionId
-    setReports([])
-    if (!target) return
-    let alive = true
-    const tick = () => {
-      if (document.visibilityState !== 'visible') return
-      api(`/api/akapen/chat-report?session_id=${encodeURIComponent(target)}&limit=3`)
-        .then((d) => {
-          if (!alive) return
-          const items = Array.isArray(d.items) ? d.items : []
-          setReports(items.map((i) => ({ key: `${i.taskId}:${i.at}`, text: i.text, at: i.at })))
-        })
-        .catch(() => {
-          /* 補助情報（無くても会話は成立する）ので黙って諦める */
-        })
+    try {
+      setSeenMap(readSeenMap(localStorage.getItem(SEEN_MAP_KEY)))
+    } catch {
+      setSeenMap({})
     }
-    tick()
-    const id = setInterval(tick, 15000)
-    return () => {
-      alive = false
-      clearInterval(id)
-    }
-  }, [storedSid, sid, readonly?.sessionId])
+  }, [])
+
+  /** その会話の新着を既読にする（行の点を消す）。 */
+  const markReportsSeen = useCallback((id) => {
+    if (!id) return
+    setSeenMap((prev) => {
+      const next = setSeen(prev, id, Date.now())
+      try {
+        localStorage.setItem(SEEN_MAP_KEY, JSON.stringify(next))
+      } catch {
+        /* 保存できなくても表示は続ける */
+      }
+      return next
+    })
+  }, [])
+
+  const unreadIds = useMemo(() => unreadSessions(chatReports, seenMap), [chatReports, seenMap])
+
+  // 開いている会話の新着は末尾に出ている＝見えている。既読にして点を残さない
+  // （タブを離れている間に届いた分だけが点になる）。
+  useEffect(() => {
+    if (!active || !reportTarget) return
+    if (!unreadIds.includes(String(reportTarget))) return
+    markReportsSeen(reportTarget)
+  }, [active, reportTarget, unreadIds, markReportsSeen])
 
   // --- 添付の取り込み ------------------------------------------------------
 
@@ -715,11 +729,16 @@ export function ChatPane({ notify }) {
   openRef.current = openSession
 
   /** 接続前なら予約して、ready になったら開く。 */
-  const openSessionSafe = useCallback((id, focusId = null, prof = 'default') => {
-    if (!id) return
-    if (connRef.current === 'ready') openRef.current?.(id, focusId, prof)
-    else pendingOpenRef.current = { id, focusId, profile: prof }
-  }, [])
+  const openSessionSafe = useCallback(
+    (id, focusId = null, prof = 'default') => {
+      if (!id) return
+      // 開いた会話の新着（赤ペンの完了報告）は見た扱いにする（行の点を消す）
+      markReportsSeen(id)
+      if (connRef.current === 'ready') openRef.current?.(id, focusId, prof)
+      else pendingOpenRef.current = { id, focusId, profile: prof }
+    },
+    [markReportsSeen],
+  )
 
   // 検索結果など外側から「このセッションを開く」と指示された場合
   useEffect(() => {
@@ -1403,10 +1422,13 @@ export function ChatPane({ notify }) {
           </button>
           {sessions.map((s) => {
             const foreign = s.profile && s.profile !== DEFAULT_PROFILE
+            // その会話に未読の赤ペン完了報告があるか（行の点。q2=A）
+            const unread = unreadIds.includes(String(s.id))
             return (
               <button
                 key={`${s.profile ?? 'default'}:${s.id}`}
                 className={`row${s.id === storedSid ? ' on' : ''}`}
+                title={unread ? '赤ペンの完了報告が届いています' : undefined}
                 onClick={() => openSessionSafe(s.id, null, s.profile ?? 'default')}
               >
                 <span className="row-main">
@@ -1419,6 +1441,7 @@ export function ChatPane({ notify }) {
                     {s.is_active ? ' ・ 稼働中' : ''}
                   </span>
                 </span>
+                {unread ? <span className="row-dot done" aria-label="赤ペンの完了報告あり" /> : null}
                 <Icon name="chevron" size={16} />
               </button>
             )
