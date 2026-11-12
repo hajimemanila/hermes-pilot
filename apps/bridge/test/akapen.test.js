@@ -280,3 +280,26 @@ test('saveAnnotation は画像を保存して unblock を呼ぶ（冪等）', as
   const again = await api.saveAnnotation('t_test1', { annotated_image: png })
   assert.equal(again.duplicate, true)
 })
+
+test('createFromImage は assignee と target を付けて起票し、blocked にする', async () => {
+  const { root } = tempBoard()
+  const calls = []
+  const api = createAkapen(
+    { kanbanRoot: path.join(root, 'kanban') },
+    {
+      runKanban: async (a) => {
+        calls.push(a)
+        if (a[0] === 'create') return { code: 0, out: 'Created t_abcdef12  (ready, assignee=mobile)' }
+        return { code: 0, out: 'ok' }
+      },
+    },
+  )
+  const png = 'data:image/png;base64,' + Buffer.from('x').toString('base64')
+  const r = await api.createFromImage({ source: 'upload', image: png, title: 'gap test', target: '/tmp/repo' })
+  assert.equal(r.ok, true)
+  assert.equal(r.taskId, 't_abcdef12')
+  const createArgs = calls.find((a) => a[0] === 'create')
+  assert.ok(createArgs.includes('--assignee'), 'assignee が無いと dispatcher が拾わない')
+  assert.ok(createArgs.join(' ').includes('target=/tmp/repo'))
+  assert.deepEqual(calls.find((a) => a[0] === 'block').slice(0, 3), ['block', 't_abcdef12', '注釈待ち（画像から作成）'])
+})

@@ -1601,3 +1601,7 @@ button.stat:active {
   position: absolute; left: 4px; bottom: 4px; font-size: 9px; padding: 1px 6px; border-radius: 999px;
   background: rgba(6,22,26,.8); color: var(--accent-2); border: 1px solid var(--line-strong);
 }
+.ak-new-target {
+  width: 100%; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--line);
+  background: var(--bg-2); color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+}

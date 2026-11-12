@@ -672,8 +672,11 @@ export function createAkapen(cfg, opts = {}) {
     fs.mkdirSync(path.dirname(shotAbs), { recursive: true })
     fs.writeFileSync(shotAbs, buf)
 
-    const body = `[akapen] label=${label} round=1 mode=annotation image=${relShot}`
-    const created = await runKanban(['create', title, '--body', body])
+    // 注釈の反映先。既定はこの PWA（画面のスクショを注釈する用途が最も多い）
+    const target = String(payload?.target || process.env.AKAPEN_DEFAULT_TARGET || path.join(os.homedir(), 'Projects', 'hermes-mobile-pwa'))
+    const body = `[akapen] label=${label} round=1 mode=annotation image=${relShot} target=${target}`
+    // assignee が無いと dispatcher が拾わない（実測: ready のまま止まる）
+    const created = await runKanban(['create', title, '--body', body, '--assignee', 'mobile'])
     const m = /t_[0-9a-f]{8}/.exec(created.out || '')
     if (created.code !== 0 || !m) {
       return { ok: false, code: 'CREATE_FAILED', message: created.out.slice(0, 300) }

@@ -416,6 +416,7 @@ function downscaleFile(file) {
 /** 「＋ 注釈」: 端末の画像 / library・直近スクショ から注釈タスクを作る。 */
 function NewAnnotationSheet({ onCreated, onClose, notify }) {
   const [items, setItems] = useState(null)
+  const [target, setTarget] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const fileRef = React.useRef(null)
@@ -451,7 +452,7 @@ function NewAnnotationSheet({ onCreated, onClose, notify }) {
     setError(null)
     try {
       const dataUrl = await downscaleFile(f)
-      await create({ source: 'upload', image: dataUrl, title: f.name.replace(/\.[a-z]+$/i, ''), slug: f.name })
+      await create({ source: 'upload', image: dataUrl, title: f.name.replace(/\.[a-z]+$/i, ''), slug: f.name, target })
     } catch (e) {
       setError(e?.message || '取り込めませんでした')
       setBusy(false)
@@ -465,6 +466,15 @@ function NewAnnotationSheet({ onCreated, onClose, notify }) {
           端末の画像（ギャラリー / カメラ）
         </button>
         <input ref={fileRef} type="file" accept="image/*" hidden onChange={onPick} />
+        <input
+          className="ak-new-target"
+          value={target}
+          onChange={(e) => setTarget(e.target.value)}
+          placeholder="対象リポジトリ（既定: ~/Projects/hermes-mobile-pwa）"
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
+        />
         {error ? <div className="ak-error">{error}</div> : null}
         <div className="ak-new-sub">library と直近のスクショ（{items ? items.length : '…'} 件）</div>
         {items && !items.length ? <div className="ak-worker-empty">まだ画像がありません</div> : null}
@@ -475,7 +485,7 @@ function NewAnnotationSheet({ onCreated, onClose, notify }) {
               type="button"
               className="ak-new-item"
               disabled={busy}
-              onClick={() => create({ source: it.source === 'capture' ? 'capture' : 'library', path: it.path, title: it.name.replace(/^\d{8}-\d{4}-/, '').replace(/\.[a-z]+$/i, '') })}
+              onClick={() => create({ source: it.source === 'capture' ? 'capture' : 'library', path: it.path, title: it.name.replace(/^\d{8}-\d{4}-/, '').replace(/\.[a-z]+$/i, ''), target })}
             >
               <img src={`/api/akapen/library/file?path=${encodeURIComponent(it.path)}`} alt="" loading="lazy" />
               <span className="ak-new-tag">{it.source}</span>
