@@ -1,6 +1,7 @@
 import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
+import os from 'node:os'
 import { WebSocketServer, WebSocket } from 'ws'
 import { createRequire } from 'node:module'
 import { loadConfig, VERSION } from './config.js'
@@ -340,6 +341,20 @@ async function handleApi(req, res, url) {
         workdir: akapen.workdir(),
         items: akapen.list(Number(url.searchParams.get('limit') ?? 80)),
       })
+    }
+    if (c === 'worker' && req.method === 'GET') {
+      // worker（profile mobile）の進行を読む。session.resume は通らないので state.db を直接読む
+      const info = akapen.sessionId(b)
+      if (!info) return sendJson(res, 404, { error: { code: 'NO_SESSION', message: 'このタスクに worker セッションがありません' } })
+      // セッションの DB はイベントが記録した実パスを優先（無ければ profiles/mobile）
+      const profileDb =
+        info.db || path.join(path.dirname(cfg.kanbanRoot || path.join(os.homedir(), '.hermes', 'kanban')), 'profiles', 'mobile', 'state.db')
+      const feed = transcript.read(info.sessionId, {
+        dbPath: profileDb,
+        limit: Number(url.searchParams.get('limit') ?? 40),
+        includeTools: true,
+      })
+      return sendJson(res, 200, { taskId: b, status: info.status, sessionId: info.sessionId, feed })
     }
     if (c === 'sheet' && req.method === 'GET') {
       const r = akapen.sheetHtml(b)

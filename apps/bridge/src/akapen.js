@@ -164,6 +164,41 @@ export function createAkapen(cfg, opts = {}) {
     }
   }
 
+  /** このタスクを実行している worker のセッション ID（無ければ null）。 */
+  function sessionId(id) {
+    let db
+    try {
+      db = openDb()
+    } catch {
+      return null
+    }
+    try {
+      const r = db.prepare('SELECT session_id, status FROM tasks WHERE id = ?').get(id)
+      if (r?.session_id) return { sessionId: String(r.session_id), status: r.status }
+      // complete --force などで tasks.session_id が空になる。イベントの payload から拾う
+      const evs = db
+        .prepare(
+          "SELECT payload FROM task_events WHERE task_id = ? AND kind IN ('owner_admitted','worker_bound','spawned') ORDER BY id DESC LIMIT 6",
+        )
+        .all(id)
+      for (const ev of evs) {
+        try {
+          const p = JSON.parse(ev.payload || '{}')
+          if (p.session_id) {
+            return { sessionId: String(p.session_id), status: r?.status ?? null, db: p.db || null }
+          }
+        } catch {
+          /* 壊れた payload は無視 */
+        }
+      }
+      return null
+    } catch {
+      return null
+    } finally {
+      db.close()
+    }
+  }
+
   /** workdir 配下に収まることを realpath で確かめて絶対パスを返す。 */
   function resolveInside(rel) {
     if (!isSafeRel(rel)) return null
@@ -385,5 +420,5 @@ export function createAkapen(cfg, opts = {}) {
     return { ok: true, data: fs.readFileSync(abs), type }
   }
 
-  return { board, workdir, list, sheetHtml, sheetData, answer, reopen }
+  return { board, workdir, list, sheetHtml, sheetData, answer, reopen, sessionId }
 }

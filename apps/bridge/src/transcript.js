@@ -37,13 +37,24 @@ export function createTranscript(cfg) {
       } catch {
         title = ''
       }
+      const roles = opts.includeTools ? "('user', 'assistant', 'tool')" : "('user', 'assistant')"
+      // 古い state.db には tool_name 列が無い。列の有無を見てから SELECT を組む
+      let hasToolName = true
+      try {
+        hasToolName = db
+          .prepare("SELECT COUNT(*) AS n FROM pragma_table_info('messages') WHERE name = 'tool_name'")
+          .get().n > 0
+      } catch {
+        hasToolName = false
+      }
+      const cols = hasToolName ? 'id, role, content, timestamp, tool_name' : 'id, role, content, timestamp, NULL AS tool_name'
       const rows = db
         .prepare(
-          `SELECT id, role, content, timestamp
+          `SELECT ${cols}
              FROM messages
             WHERE session_id = ?
-              AND role IN ('user', 'assistant')
-              AND COALESCE(active, 1) = 1
+              AND role IN ${roles}
+              ${opts.includeTools ? '' : 'AND COALESCE(active, 1) = 1'}
               AND length(COALESCE(content, '')) > 0
               ${before ? 'AND id < ?' : ''}
             ORDER BY id DESC
@@ -54,7 +65,8 @@ export function createTranscript(cfg) {
         .map((r) => ({
           id: Number(r.id),
           role: r.role,
-          text: String(r.content ?? '').slice(0, 8000),
+          toolName: r.tool_name || null,
+          text: String(r.content ?? '').slice(0, r.role === 'tool' ? 400 : 8000),
           at: Math.round(Number(r.timestamp ?? 0) * 1000),
         }))
         .reverse()

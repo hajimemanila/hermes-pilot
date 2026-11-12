@@ -1491,3 +1491,16 @@ button.stat:active {
 .ak-paste .btn { margin-top: 8px; }
 .ak-row-phase { margin-top: 3px; font-size: 11px; color: var(--accent); opacity: .9; }
 .ak-row-phase + .ak-row-sub { margin-top: 2px; }
+.ak-worker { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+.ak-worker summary { font-size: 12px; color: var(--muted); cursor: pointer; }
+.ak-worker-log {
+  max-height: 220px; overflow-y: auto; margin-top: 8px; display: flex; flex-direction: column; gap: 4px;
+}
+.ak-worker-row {
+  display: grid; grid-template-columns: 40px 62px 1fr; gap: 6px; font-size: 11px; line-height: 1.45;
+}
+.ak-worker-time { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.ak-worker-tag { color: var(--accent-2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.ak-worker-row.tool .ak-worker-tag { color: var(--warn); }
+.ak-worker-text { color: var(--text); opacity: .88; overflow-wrap: anywhere; }
+.ak-worker-empty { font-size: 11px; color: var(--muted); padding: 6px 0; }

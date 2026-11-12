@@ -118,6 +118,71 @@ export function parsePastedReply(text) {
   return out
 }
 
+
+/** worker（profile mobile）の進行。反映中でも「何をしているか」が見えるようにする。 */
+function WorkerFeed({ taskId, open }) {
+  const [feed, setFeed] = useState(null)
+  const [error, setError] = useState(null)
+  const boxRef = React.useRef(null)
+
+  useEffect(() => {
+    let alive = true
+    const load = async () => {
+      try {
+        const r = await api(`/api/akapen/${taskId}/worker?limit=30`)
+        if (!alive) return
+        setFeed(r)
+        setError(null)
+      } catch (e) {
+        if (alive) setError(e?.message || '取得できません')
+      }
+    }
+    load()
+    // 進行中だけライブ更新。完了後は開いたときの1回で足りる
+    const id = open
+      ? setInterval(() => {
+          if (document.visibilityState === 'visible') load()
+        }, 5000)
+      : null
+    return () => {
+      alive = false
+      if (id) clearInterval(id)
+    }
+  }, [open, taskId])
+
+  useEffect(() => {
+    const el = boxRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [feed])
+
+  const msgs = (feed?.feed?.messages || []).filter((m) => m.role !== 'user')
+  return (
+    <details className="ak-worker" open={open}>
+      <summary>
+        worker の進行
+        {feed?.status ? `（${feed.status === 'running' ? '実行中' : feed.status}）` : ''}
+        {msgs.length ? ` ・ ${msgs.length} ステップ` : ''}
+      </summary>
+      {error ? <div className="ak-error">{error}</div> : null}
+      {!error && !msgs.length ? <div className="ak-worker-empty">まだ出力がありません</div> : null}
+      <div className="ak-worker-log" ref={boxRef}>
+        {msgs.map((m) => {
+          const time = new Date(m.at).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+          const label = m.role === 'tool' ? m.toolName || 'tool' : 'agent'
+          const text = String(m.text || '').replace(/\s+/g, ' ').slice(0, 220)
+          return (
+            <div className={`ak-worker-row ${m.role}`} key={m.id}>
+              <span className="ak-worker-time">{time}</span>
+              <span className="ak-worker-tag">{label}</span>
+              <span className="ak-worker-text">{text}</span>
+            </div>
+          )
+        })}
+      </div>
+    </details>
+  )
+}
+
 function StandardForm({ item, data, onSubmitted }) {
   const questions = data.questions || []
   const [answers, setAnswers] = useState(() => {
@@ -467,6 +532,7 @@ export function AkapenPane({ notify }) {
           ) : (
             <ReadOnlyDetail item={open} />
           )}
+          <WorkerFeed taskId={open.id} open={['running', 'ready'].includes(open.status)} />
         </Sheet>
       ) : null}
     </div>
