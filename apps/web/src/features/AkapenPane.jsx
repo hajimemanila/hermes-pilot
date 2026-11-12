@@ -286,10 +286,32 @@ function StandardForm({ item, data, onSubmitted }) {
   )
 }
 
-function IframeForm({ item, onSubmitted }) {
+function IframeForm({ item, onSubmitted, notify }) {
   const [pasted, setPasted] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+
+  // シート自身の [貼り付ける文章を作る] が postMessage で回答を送ってくる
+  useEffect(() => {
+    const onMessage = async (ev) => {
+      const d = ev.data
+      if (!d || d.type !== 'akapen:reply' || String(d.taskId) !== String(item.id)) return
+      setBusy(true)
+      setError(null)
+      try {
+        const parsed = parsePastedReply(d.text)
+        const r = await api(`/api/akapen/${item.id}/answer`, { method: 'POST', body: { ...parsed, by: 'mobile' } })
+        notify?.(r?.duplicate ? '同じ回答が既に保存されています' : 'シートから回答を受け取りました')
+        onSubmitted?.(r)
+      } catch (e) {
+        setError(e?.message || '送信できませんでした')
+      } finally {
+        setBusy(false)
+      }
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [item.id])
 
   async function submitPasted() {
     if (!pasted.trim()) return

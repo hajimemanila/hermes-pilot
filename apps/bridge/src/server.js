@@ -230,6 +230,58 @@ function tailLog(name, lines = 200) {
 }
 
 /** API のルーティング。 */
+
+/** シート HTML に「回答をアプリへ送る」小さなブリッジを注入する（保存物は書き換えない）。 */
+function injectAkapenBridge(html, taskId) {
+  const script = `
+<script>
+(function () {
+  var TASK = ${JSON.stringify(String(taskId))};
+  function replyText() { var o = document.getElementById('out'); return o ? o.value : ''; }
+  function report(ok, msg) {
+    var el = document.getElementById('akBridgeStatus');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'akBridgeStatus';
+      el.style.cssText = 'margin:12px 0;padding:10px 12px;border-radius:10px;font:inherit;font-size:13px;line-height:1.6';
+      (document.getElementById('akForm') || document.body).appendChild(el);
+    }
+    el.style.background = ok ? '#e7f8f1' : '#fdecea';
+    el.style.color = ok ? '#0b5f45' : '#8a1f17';
+    el.textContent = msg;
+  }
+  function submit() {
+    var text = replyText();
+    if (!text || text.indexOf('【赤ペン回答】') === -1) return;
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ type: 'akapen:reply', taskId: TASK, text: text }, '*');
+      report(true, 'アプリに回答を送りました（この画面は閉じてOK）');
+      return;
+    }
+    fetch('/api/akapen/' + TASK + '/answer', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'content-type': 'application/json', 'x-client': 'mobile' },
+      body: JSON.stringify({ text: text })
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        var ok = res.ok && res.j && res.j.ok;
+        report(ok, ok ? '回答を送信しました（タスクは ' + (res.j.moved || '') + '）'
+                      : '送信できませんでした: ' + ((res.j && ((res.j.error && res.j.error.message) || res.j.message)) || 'unknown'));
+      })
+      .catch(function (e) { report(false, '送信エラー: ' + e.message); });
+  }
+  document.addEventListener('click', function (ev) {
+    var t = ev.target;
+    if (t && (t.id === 'genBtn' || (t.closest && t.closest('#genBtn')))) setTimeout(submit, 80);
+  }, true);
+  window.__akapenSubmit = submit;
+})();
+</script>
+`
+  return html.includes('</body>') ? html.replace('</body>', `${script}
+</body>`) : html + script
+}
+
 async function handleApi(req, res, url) {
   const seg = url.pathname.split('/').filter(Boolean) // ['api', ...]
   const [, a, b, c, d, e] = seg
@@ -359,15 +411,21 @@ async function handleApi(req, res, url) {
     if (c === 'sheet' && req.method === 'GET') {
       const r = akapen.sheetHtml(b)
       if (!r.ok) return sendJson(res, r.code === 'NOT_FOUND' ? 404 : 409, { error: { code: r.code, message: r.message } })
+      // iframe で埋め込む時は sandbox（別オリジン）で隔離し、回答は postMessage で親へ。
+      // 単体タブで開いた時は same-origin を許可して自分で API に POST できるようにする。
+      const framed = String(req.headers['sec-fetch-dest'] || '') === 'iframe'
+      const csp = framed
+        ? "sandbox allow-scripts allow-forms; default-src 'none'; style-src 'unsafe-inline'; " +
+          "img-src data: blob:; script-src 'unsafe-inline'; font-src data:"
+        : "default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:; script-src 'unsafe-inline'; " +
+          "connect-src 'self'; font-src data:"
       res.writeHead(200, {
         'content-type': 'text/html; charset=utf-8',
-        'content-security-policy':
-          "sandbox allow-scripts allow-forms; default-src 'none'; style-src 'unsafe-inline'; " +
-          "img-src data: blob:; script-src 'unsafe-inline'; font-src data:",
+        'content-security-policy': csp,
         'cache-control': 'no-store',
         'x-content-type-options': 'nosniff',
       })
-      return res.end(r.html)
+      return res.end(injectAkapenBridge(r.html, b))
     }
     if (c === 'thumb' && req.method === 'GET') {
       const rel = url.pathname.split('/').slice(5).join('/')

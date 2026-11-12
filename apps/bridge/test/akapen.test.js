@@ -214,3 +214,34 @@ test('answer は赤ペン待ち（blocked）以外を拒否し、answer.json を
   assert.equal(third.status, 'done')
   assert.equal(calls.length, callsAfterFirst)
 })
+
+test('parseReplyText はシートが送る【赤ペン回答】を構造化する', async () => {
+  const { parseReplyText } = await import('../src/akapen.js')
+  const text = [
+    '【赤ペン回答】cockpit-03',
+    'Q1. 既定位置は？: A / 補足: 映像を隠さない',
+    'Q2. 表示は？: (未選択 = お任せ)',
+    '全体への赤ペン: 全体OK',
+    '---',
+    '上の回答を反映して作業を続けてください。',
+  ].join('\n')
+  const r = parseReplyText(text)
+  assert.equal(r.answers.length, 2)
+  assert.equal(r.answers[0].choice, 'A')
+  assert.equal(r.answers[0].note, '映像を隠さない')
+  assert.equal(r.answers[1].choice, null)
+  assert.equal(r.global, '全体OK')
+})
+
+test('answer は text だけでも受け付ける（シート直送）', async () => {
+  const { root } = tempBoard()
+  const calls = []
+  const api = createAkapen(
+    { kanbanRoot: path.join(root, 'kanban') },
+    { runKanban: async (a) => { calls.push(a); return { code: 0, out: 'ok' } } },
+  )
+  const r = await api.answer('t_test1', { text: '【赤ペン回答】x\nQ1. 問: B / 補足: n\n全体への赤ペン: g\n---\n' })
+  assert.equal(r.ok, true)
+  assert.equal(r.moved, 'ready')
+  assert.deepEqual(calls[0].slice(0, 1), ['comment'])
+})

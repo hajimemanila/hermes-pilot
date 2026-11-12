@@ -54,6 +54,39 @@ export function answerHash({ answers = [], global = '', annotations = [] }) {
 }
 
 /** 回答を【赤ペン回答】互換テキストにする（貼り戻し経路と同じ形）。 */
+
+/** 【赤ペン回答】テキストを構造化する（シートが直接送ってきた場合に使う）。 */
+export function parseReplyText(text) {
+  const out = { answers: [], global: '' }
+  const lines = String(text || '').split(/\r?\n/)
+  let inGlobal = false
+  for (const line of lines) {
+    if (line.trim() === '---') break
+    const q = /^Q(\d+)\.\s*(.*?):\s*(.*)$/.exec(line)
+    if (q) {
+      const rest = q[3]
+      const m = /^(.*?)(?:\s*\/\s*補足:\s*(.*))?$/.exec(rest)
+      const choice = (m?.[1] || '').trim()
+      out.answers.push({
+        id: `q${q[1]}`,
+        choice: choice.startsWith('(未選択') ? null : choice,
+        note: (m?.[2] || '').trim(),
+      })
+      inGlobal = false
+      continue
+    }
+    const g = /^全体への赤ペン:\s*(.*)$/.exec(line)
+    if (g) {
+      out.global = g[1] || ''
+      inGlobal = true
+      continue
+    }
+    if (inGlobal) out.global += `\n${line}`
+  }
+  out.global = out.global.trim()
+  return out
+}
+
 export function toReplyText(label, answers, global, questions = []) {
   const title = new Map(questions.map((q) => [String(q.id), String(q.text ?? '')]))
   const lines = [`【赤ペン回答】${label}`]
@@ -319,8 +352,13 @@ export function createAkapen(cfg, opts = {}) {
     const data = dataAbs ? readJsonIfExists(dataAbs) : null
     const questions = Array.isArray(data?.questions) ? data.questions : []
 
-    const answers = Array.isArray(payload?.answers) ? payload.answers : []
-    const global = String(payload?.global ?? '')
+    // シート HTML がそのまま送ってきた【赤ペン回答】も受ける
+    const fromText =
+      payload?.text && !(Array.isArray(payload?.answers) && payload.answers.length)
+        ? parseReplyText(payload.text)
+        : null
+    const answers = fromText ? fromText.answers : Array.isArray(payload?.answers) ? payload.answers : []
+    const global = fromText ? fromText.global : String(payload?.global ?? '')
     const annotations = Array.isArray(payload?.annotations) ? payload.annotations : []
     const hash = answerHash({ answers, global, annotations })
 
