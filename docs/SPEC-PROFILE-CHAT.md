@@ -1,7 +1,8 @@
 # SPEC: PWA チャットの全プロファイル対応（送信可 + プロファイル可視化）
 
-状態: **確定（2026-11-12 すり合わせ完了）** / 起票 `t_7674a165` / 実装は別タスク
+状態: **実装済み（2026-11-12）** / 起票 `t_7674a165`（仕様）`t_6b527899`（bridge）`t_64aeb243`（UI）
 対象: Hermes Mobile PWA（bridge 4097 / UI /ws/chat）
+実装: `apps/bridge/src/chat-profile.js`（profile 検証）/ `apps/web/src/features/ChatPane.jsx`（札・ヘッダー・選択シート）
 
 ## 1. なぜ今は default だけ書けるのか（忘れていた理由）
 

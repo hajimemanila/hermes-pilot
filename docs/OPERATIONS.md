@@ -1046,8 +1046,23 @@ tablet: chipRow 38px / チップ表示幅 760px（スマホは366px） / 横ス�
 - 背景: タスクタブは全ボード横断だが、チャットタブは `session.list`（WS/JSON-RPC）が既定プロファイル固定のため、Default の会話しか出ていなかった。
 - 対応: ブリッジの `GET /api/sessions` が `/api/profiles` で列挙し、各プロファイルへ `?profile=<name>` を付けて取得して合成（`profile` タグ付き・lastActive 降順）。トランスクリプトは `GET /api/sessions/:id/transcript?profile=<name>` でそのプロファイルの `state.db` を読む。
 - PWA: ドロワーは `/api/sessions` を優先（失敗時のみ従来の RPC）。Default 以外の会話は読み取り専用で開き、バナーにプロファイル名を出す。
-- **方針（決定 2026-10-24 / 2026-11-12 に改定）**: 旧「閲覧は全プロファイル／返信は既定プロファイルのみ」は
+- **方針（決定 2026-10-24 / 2026-11-12 に改定・実装済み）**: 旧「閲覧は全プロファイル／返信は既定プロファイルのみ」は
   **廃止**。`docs/SPEC-PROFILE-CHAT.md` の決定により **3 プロファイルすべてで送信可**（新規は「＋」→ プロファイル選択、
   一覧チップ＋ヘッダー常設で見分ける）。旧決定の理由は「PWA を複雑化させない」で、技術的制約ではなかった
   （実測: `/api/ws` の `session.list/create/resume` は `profile` を受ける）。
+
+### 実装（2026-11-12）
+
+- bridge: `apps/bridge/src/chat-profile.js` が `/ws/chat` の `session.create` / `session.resume` の
+  `params.profile` を `/api/profiles` の served 名だけで許可（未知・注入は `-32602` を端末へ返し上流に流さない）。
+  `profile` 省略は従来どおり。監査 `chat.profile`。**listener を付ける前に await しない**
+  （実測: 接続直後の最初のフレームが listener 不在で捨てられ 20 秒タイムアウトした。解決までは hold に溜める）
+- UI: 一覧行に `.prof-chip`（`default` は無印 / `mobile` は worker 色）、チャットヘッダーに現在のプロファイルを常設。
+  「＋」は**プロファイル選択シート**（default 先頭・前回選択は記憶しない）。他プロファイルの会話は
+  `session.resume {profile}` で開いてそのまま送信でき、**resume できたときだけ**読み取り専用を解除する
+  （`local-…` のカンバン作業ログは従来どおり読み取り専用）。
+- 永続化: `hm.storedSid` と `hm.storedProfile` を**セットで**保存（片方だけだと再起動時に default へ落ちる）。
+- 実測（390×844 / 本番 :4097）: nanokvm の会話を開く → 読み取り専用バナー無し・composer 表示・72 msg。
+  ＋→ nanokvm で新規会話 → 送信 → **nanokvm の state.db にだけ** セッション `20261112_190156_346016`
+  （`profile_name=nanokvm`）とメッセージが増え、default は不変。ヘッダー高 49px・行高 60-63px（変化なし）。
 
