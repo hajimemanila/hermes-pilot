@@ -47,6 +47,21 @@
 - 旧実装は `<details>` で畳んでいたが、タブに統合した（判断待ちを見る既定画面から
   完了を消すほうが効くため）。「畳む」という決定自体は変えていない。
 
+### 4. 判断待ちは**閉じられる**（2026-11-12 追加）
+
+放置された判断待ちが一覧から消えない問題への対処。赤ペン待ち（`blocked`）のシートと
+注釈エディタの末尾に `CloseActions`（`apps/web/src/components/CloseActions.jsx`）を出す。
+
+| 操作 | 実体 | 一覧 | 履歴 |
+|---|---|---|---|
+| 完了にする | `hermes kanban complete <id> --result <理由>` | 判断待ち→完了タブ | result に理由が残る |
+| 取消（アーカイブ） | `hermes kanban comment` ＋ `hermes kanban archive <id>` | どのタブにも出ない | コメントとタスク行は DB に残る |
+
+- 破壊的寄りなので**開く→長押し1.5秒**の 2 段階（`HoldButton`）。誤タップで閉じない
+- 連打は bridge 側が **noop** で吸収する（既に done/archived なら CLI を呼ばない）
+- 取り消し線の案（`promote` で戻す）は採らない: 判断待ちに戻すとまた一覧に居座るため
+
+
 ## 進行状況の 1 行
 
 行ごとに `progressText()` を出す。`running` は `開始 X / 心拍 Y`、赤ペン待ちは

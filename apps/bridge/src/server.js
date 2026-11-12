@@ -306,6 +306,22 @@ async function handleApi(req, res, url) {
       auth.audit({ kind: 'kanban.comment', board: b, task: d, chars: String(body?.body ?? body?.text ?? '').length })
       return sendJson(res, 200, out)
     }
+    if (b && c === 'tasks' && d && e === 'close' && req.method === 'POST') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+      }
+      const body = await readJson(req)
+      const out = await inbox.close(b, d, body?.action, body?.note ?? body?.reason ?? '', String(body?.by ?? 'mobile'))
+      auth.audit({
+        kind: 'kanban.close',
+        board: b,
+        task: d,
+        action: body?.action ?? null,
+        status: out.status,
+        noop: Boolean(out.noop),
+      })
+      return sendJson(res, 200, out)
+    }
     if (b && c === 'tasks' && d && e === 'abort' && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
         return sendJson(res, 429, { error: { message: '操作が多すぎます' } })

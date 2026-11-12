@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { api } from '../api.js'
+import { CloseActions } from '../components/CloseActions.jsx'
 import { Sheet, relTime } from '../components/Ui.jsx'
 
 const KIND_LABEL = {
@@ -128,6 +129,18 @@ export function InboxSheet({ onClose, notify, onChanged, focusTaskId = null }) {
       >
         {busyId === it.id ? '送信中…' : 'コメントして送る'}
       </button>
+
+      <CloseActions
+        board={it.board}
+        taskId={it.id}
+        note={drafts[it.id] ?? ''}
+        notify={notify}
+        onClosed={async () => {
+          setDrafts((d) => ({ ...d, [it.id]: '' }))
+          await load()
+          onChanged?.()
+        }}
+      />
     </div>
   )
 
@@ -159,8 +172,8 @@ export function InboxSheet({ onClose, notify, onChanged, focusTaskId = null }) {
       {answeredVisible ? answered.map((it) => card(it, true)) : null}
 
       <div className="row-sub" style={{ padding: '6px 2px 18px', lineHeight: 1.7 }}>
-        hermes kanban comment で記録します。ステータスは変えません（再開・アサインは Discord かダッシュボードから）。
-        15秒ごとに更新します。
+        コメントは hermes kanban comment で記録します。不要になった項目は「片付ける」から完了・取消で一覧から外せます
+        （どちらも履歴はボードに残ります）。15秒ごとに更新します。
       </div>
     </Sheet>
   )

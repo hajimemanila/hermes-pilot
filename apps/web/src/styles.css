@@ -1514,6 +1514,9 @@ button.stat:active {
   border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; font: inherit; font-size: 12.5px;
 }
 .ak-paste .btn { margin-top: 8px; }
+/* 判断待ち・承認待ちを閉じる（完了 / 取消）。カードでもシートでも同じ見た目にする */
+.close-actions { margin-top: 10px; }
+.close-actions > .btn { width: 100%; }
 .ak-row-phase { margin-top: 3px; font-size: 11px; color: var(--accent); opacity: .9; }
 .ak-row-phase + .ak-row-sub { margin-top: 2px; }
 .ak-worker { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }

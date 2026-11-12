@@ -351,6 +351,7 @@ export function createAkapen(cfg, opts = {}) {
       const answered = answerRel ? readJsonIfExists(resolveInside(answerRel) || '\0') : null
       out.push({
         id: r.id,
+        board,
         title: r.title,
         status: r.status,
         assignee: r.assignee,

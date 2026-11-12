@@ -122,3 +122,76 @@ test('comment は不正なIDと CLI 失敗を弾く', async () => {
   await assert.rejects(() => inbox.comment('b1', '../../etc', 'x'), (e) => e.statusCode === 400)
   await assert.rejects(() => inbox.comment('b1', 't_a1', 'x'), (e) => e.statusCode === 502)
 })
+
+test('close(done) は complete を理由つきで呼び、status を読み戻す', async () => {
+  const { root } = fixture()
+  const calls = []
+  const inbox = createInbox(
+    {
+      kanbanRoot: path.join(root, 'kanban'),
+      runner: async (args) => {
+        calls.push(args)
+        return { code: 0, out: 'Completed t_a1' }
+      },
+    },
+    fakeKanban,
+  )
+  const r = await inbox.close('b1', 't_a1', 'done', 'もう不要', 'mobile')
+  assert.equal(r.ok, true)
+  assert.equal(r.action, 'done')
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0][3], 'complete')
+  assert.equal(calls[0][4], 't_a1')
+  assert.ok(calls[0].includes('もう不要'))
+  const meta = JSON.parse(calls[0][calls[0].indexOf('--metadata') + 1])
+  assert.equal(meta.closed_from, 'mobile')
+})
+
+test('close(cancel) は理由をコメントしてから archive する', async () => {
+  const { root } = fixture()
+  const calls = []
+  const inbox = createInbox(
+    {
+      kanbanRoot: path.join(root, 'kanban'),
+      runner: async (args) => {
+        calls.push(args)
+        return { code: 0, out: 'ok' }
+      },
+    },
+    fakeKanban,
+  )
+  const r = await inbox.close('b1', 't_a3', 'cancel', '別Issueで扱う', 'mobile')
+  assert.equal(r.ok, true)
+  assert.equal(r.action, 'cancel')
+  assert.equal(calls.length, 2)
+  assert.equal(calls[0][3], 'comment')
+  assert.match(calls[0][5], /取消（アーカイブ）: 別Issueで扱う/)
+  assert.deepEqual(calls[1], ['kanban', '--board', 'b1', 'archive', 't_a3'])
+})
+
+test('close は閉じ済みなら CLI を呼ばず noop を返す（連打の吸収）', async () => {
+  const { root } = fixture()
+  const calls = []
+  const inbox = createInbox(
+    { kanbanRoot: path.join(root, 'kanban'), runner: async (args) => (calls.push(args), { code: 0, out: 'ok' }) },
+    fakeKanban,
+  )
+  const r = await inbox.close('b1', 't_a2', 'done', '', 'mobile') // t_a2 は done
+  assert.equal(r.ok, true)
+  assert.equal(r.noop, true)
+  assert.equal(calls.length, 0)
+})
+
+test('close は不正な入力・存在しないタスク・CLI 失敗を弾く', async () => {
+  const { root } = fixture()
+  const inbox = createInbox(
+    { kanbanRoot: path.join(root, 'kanban'), runner: async () => ({ code: 1, out: 'boom' }) },
+    fakeKanban,
+  )
+  await assert.rejects(() => inbox.close('../etc', 't_a1', 'done'), (e) => e.statusCode === 400)
+  await assert.rejects(() => inbox.close('b1', '../../etc', 'done'), (e) => e.statusCode === 400)
+  await assert.rejects(() => inbox.close('b1', 't_a1', 'delete'), (e) => e.statusCode === 400)
+  await assert.rejects(() => inbox.close('b1', 't_ffff', 'done'), (e) => e.statusCode === 404)
+  await assert.rejects(() => inbox.close('b1', 't_a1', 'cancel'), (e) => e.statusCode === 502)
+})
+

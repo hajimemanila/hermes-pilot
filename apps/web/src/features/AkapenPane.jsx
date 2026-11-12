@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api.js'
+import { CloseActions } from '../components/CloseActions.jsx'
 import { Sheet, relTime } from '../components/Ui.jsx'
 import { AnnotationEditor } from './AnnotationEditor.jsx'
 import { doneHint, groupItems, isWaiting, nextWaiting } from '../lib/akapenView.js'
@@ -518,6 +519,7 @@ export function AkapenPane({ notify }) {
   const [showNew, setShowNew] = useState(false)
   const [data, setData] = useState(null)
   const [dataError, setDataError] = useState(null)
+  const [closeNote, setCloseNote] = useState('')
 
   const load = useCallback(async () => {
     try {
@@ -546,6 +548,7 @@ export function AkapenPane({ notify }) {
     setOpen(item)
     setData(null)
     setDataError(null)
+    setCloseNote('')
     // 進行中・完了は読むだけ（bridge の answer() も赤ペン待ち以外は 409 で拒否する）
     if (!isWaiting(item)) return
     const ak = item.akapen || {}
@@ -709,6 +712,30 @@ export function AkapenPane({ notify }) {
           ) : (
             <ReadOnlyDetail item={open} />
           )}
+          {isWaiting(open) ? (
+            <div className="ak-form">
+              <div className="row-sub">片付ける理由（任意・記録に残ります）</div>
+              <textarea
+                className="inp"
+                rows={2}
+                style={{ marginTop: 6 }}
+                value={closeNote}
+                onChange={(e) => setCloseNote(e.target.value.slice(0, 400))}
+                placeholder="例: 不要になった / 別の Issue で扱う"
+              />
+              <CloseActions
+                board={open.board || 'mobile'}
+                taskId={open.id}
+                note={closeNote}
+                notify={notify}
+                onClosed={() => {
+                  setCloseNote('')
+                  load()
+                  setTimeout(() => setOpen(null), 600)
+                }}
+              />
+            </div>
+          ) : null}
           <WorkerFeed taskId={open.id} open={['running', 'ready'].includes(open.status)} />
         </Sheet>
       ) : null}

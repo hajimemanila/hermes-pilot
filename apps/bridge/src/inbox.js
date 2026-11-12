@@ -14,6 +14,35 @@ import { execFile } from 'node:child_process'
 
 const TEXT_MAX = 2000
 
+/** 閉じる操作。done=完了 / cancel=アーカイブ（一覧から外す）。 */
+const CLOSE_ACTIONS = new Set(['done', 'cancel'])
+
+/**
+ * ボードスラッグを検証する（DB パスに混ぜるので厳しめ）。
+ * @param {unknown} board 入力
+ * @returns {string} 検証済みスラッグ
+ */
+function assertBoard(board) {
+  const slug = String(board ?? '')
+  if (!/^[a-z0-9][a-z0-9_-]{0,40}$/i.test(slug)) {
+    throw Object.assign(new Error('ボード名が不正です'), { statusCode: 400 })
+  }
+  return slug
+}
+
+/**
+ * タスクIDを検証する。
+ * @param {unknown} id 入力
+ * @returns {string} 検証済みID
+ */
+function assertTaskId(id) {
+  const tid = String(id ?? '')
+  if (!/^t_[0-9a-z]+$/i.test(tid)) {
+    throw Object.assign(new Error('タスクIDが不正です'), { statusCode: 400 })
+  }
+  return tid
+}
+
 /**
  * コメント本文を検証する。
  * @param {unknown} raw 入力
@@ -166,5 +195,94 @@ export function createInbox(cfg, kanban) {
     })
   }
 
-  return { list, comment }
+  /** 1タスクの現在の status（読めなければ null）。 */
+  function statusOf(board, id) {
+    let db
+    try {
+      db = new DatabaseSync(path.join(boardsRoot, board, 'kanban.db'), { readOnly: true })
+    } catch {
+      return null
+    }
+    try {
+      const r = db.prepare('SELECT status FROM tasks WHERE id = ?').get(id)
+      return r?.status ?? null
+    } catch {
+      return null
+    } finally {
+      try {
+        db.close()
+      } catch {
+        /* noop */
+      }
+    }
+  }
+
+  /**
+   * 判断待ちを閉じる。
+   *
+   * `done` = 完了（result に理由を残す）/ `cancel` = アーカイブ（一覧から消える）。
+   * 既に閉じている場合は CLI を呼ばず `noop` を返す（連打しても二重に閉じない）。
+   *
+   * @param {string} board ボード
+   * @param {string} id タスクID
+   * @param {'done'|'cancel'} action 閉じ方
+   * @param {string} [note] 理由・結果（400字まで）
+   * @param {string} [by] 実行者
+   * @returns {Promise<object>} 結果
+   */
+  async function close(board, id, action, note = '', by = 'mobile') {
+    const b = assertBoard(board)
+    const tid = assertTaskId(id)
+    const act = String(action ?? '')
+    if (!CLOSE_ACTIONS.has(act)) {
+      throw Object.assign(new Error('action は done か cancel を指定してください'), { statusCode: 400 })
+    }
+    const before = statusOf(b, tid)
+    if (before == null) {
+      throw Object.assign(new Error('タスクが見つかりません'), { statusCode: 404 })
+    }
+    const actor = String(by ?? 'mobile').slice(0, 40)
+    const text = String(note ?? '').trim().slice(0, 400)
+    if (act === 'done' && before === 'done') {
+      return { ok: true, board: b, id: tid, action: act, status: before, noop: true, at: Date.now() }
+    }
+    if (act === 'cancel' && before === 'archived') {
+      return { ok: true, board: b, id: tid, action: act, status: before, noop: true, at: Date.now() }
+    }
+
+    // 取消は理由の欄が無いので、先にコメントで残す（失敗しても取消は続ける）
+    if (act === 'cancel') {
+      await run(cfg, [
+        'kanban', '--board', b, 'comment', tid,
+        `PWAから取消（アーカイブ）${text ? `: ${text}` : ''}`,
+        '--author', actor,
+      ])
+    }
+
+    const args =
+      act === 'done'
+        ? [
+            'kanban', '--board', b, 'complete', tid,
+            '--result', text || 'PWAから完了（追加作業なし）',
+            '--metadata', JSON.stringify({ closed_from: 'mobile', closed_by: actor, closed_at: new Date().toISOString() }),
+          ]
+        : ['kanban', '--board', b, 'archive', tid]
+    const res = await run(cfg, args)
+    if (res.code !== 0) {
+      throw Object.assign(new Error((res.out || '操作に失敗しました').slice(0, 400)), { statusCode: 502 })
+    }
+    const after = statusOf(b, tid)
+    return {
+      ok: true,
+      board: b,
+      id: tid,
+      action: act,
+      status: after ?? null,
+      changed: after !== before,
+      output: res.out.slice(0, 400),
+      at: Date.now(),
+    }
+  }
+
+  return { list, comment, close }
 }

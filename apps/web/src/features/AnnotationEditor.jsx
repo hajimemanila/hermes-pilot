@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
+import { CloseActions } from '../components/CloseActions.jsx'
 
 /**
  * 注釈エディタ（Gemini アプリのペン入れ相当・最小セット）。
@@ -248,6 +249,17 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
           maxLength={200}
         />
       </div>
+
+      {item.status === 'blocked' ? (
+        <div className="close-actions" style={{ padding: '0 12px 10px' }}>
+          <CloseActions
+            board={item.board || 'mobile'}
+            taskId={item.id}
+            notify={notify}
+            onClosed={() => onSubmitted?.({ closed: true })}
+          />
+        </div>
+      ) : null}
     </div>
   )
 }

@@ -548,7 +548,8 @@ UI: タイル「稼働=1」＋点滅ドット
 ## 承認待ちインボックス（2026-10-23 追加 / PLAN-V3 の F）
 
 エージェントが「これ進めていい？」と止まっているタスクを、ボード横断で読んで**コメントで答える**画面。
-ステータスは変えない（再開・アサインは Discord / ダッシュボード）。
+2026-11-12 から **不要な項目は「片付ける」で閉じられる**（完了 / 取消）。再開・アサインは従来どおり
+Discord / ダッシュボード。
 
 ### サーバ
 
@@ -559,12 +560,20 @@ UI: タイル「稼働=1」＋点滅ドット
     直近コメント（`task_comments`）
 - `POST /api/boards/:slug/tasks/:id/comment {body}` → `hermes kanban --board … comment <id> <body> --author mobile`
   - 本文は 1〜2000 字（空は 400）、タスクIDは `t_[0-9a-z]+` のみ、書込レート枠、監査 `kanban.comment`
+- `POST /api/boards/:slug/tasks/:id/close {action, note}` — **判断待ちを閉じる**（2026-11-12 追加）
+  - `action: "done"` → `hermes kanban complete <id> --result <note|既定文言> --metadata {"closed_from":"mobile",…}`
+  - `action: "cancel"` → `hermes kanban comment <id> "PWAから取消（アーカイブ）: <note>" --author mobile` → `hermes kanban archive <id>`
+  - 既に `done` / `archived` なら **CLI を呼ばず `noop:true`**（連打しても二重に閉じない）
+  - `action` は done/cancel のみ（他は 400）、存在しないタスクは 404、CLI 失敗は 502、監査 `kanban.close`
 
 ### UI
 
 - 承認待ちが1件以上あるときだけ、タスクタブ上部に**黄色いバー**（`承認待ち N 件 / 回答する ›`）
 - シート: タスク名・ボード・種別・再発回数・経過・理由（質問文）・直前のコメント・返信欄
 - 返信は 2000 字まで。送信後は 15 秒ポーリングで一覧を取り直す
+- 各カードの下に**「この判断待ちを片付ける」**。押すと `完了にする` / `取消（アーカイブ）` が出る。
+  どちらも**長押し1.5秒で確定**（`HoldButton`）。理由は上の返信欄に書いた文がそのまま使われる
+- 同じ `CloseActions` を赤ペンタブの判断待ちシート・注釈エディタの末尾にも置く
 
 ### 実測（390×844 / :8444）
 
@@ -578,6 +587,21 @@ UI: バー「承認待ち 1 件 / 回答する ›」→ シート
   「inbox-probe: 本番反映の可否」「hermes-mobile-pwa ・ 回答待ち ・ 再発1 ・ 18秒前」
   理由・直前コメント表示 → 返信「UIから: 承認します。反映OK。」送信 → 3秒前のコメントとして反映・入力欄クリア
 アーカイブ後 → items 0（バーも消える）。コメント4件は DB に残存
+```
+
+### 実測: 片付け（2026-11-12・本番ブリッジ :4097）
+
+```
+POST /api/boards/hermes-mobile-pwa/tasks/<probe>/close {"action":"cancel","note":"endpoint probe"}
+  → {ok:true, action:"cancel", status:"archived", changed:true}
+再送（同じ action） → {ok:true, status:"archived", noop:true}   # CLI は呼ばれない
+{"action":"delete"} → 400「action は done か cancel を指定してください」
+tasks/..%2F..%2Fetc/close → 400「タスクIDが不正です」
+{"action":"done"} → status:"done" / task.result = "判断不要だった"
+UI（390×844）: 承認待ちシートのカード下「この判断待ちを片付ける」→ 完了にする / 取消（アーカイブ）
+  長押し1.5秒 → トースト「取消（アーカイブ）しました」→ カードが一覧から消える
+  赤ペンタブの注釈エディタ末尾でも同じ操作 → 「完了にしました」→ 判断待ち 0 件
+監査: ~/.hermes/mobile-pwa/audit.jsonl に kanban.close {board, task, action, status, noop}
 ```
 
 ## アイコン（マスカブル対応 / 2026-10-23 修正）
