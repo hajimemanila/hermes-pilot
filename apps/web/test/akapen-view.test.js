@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { capturedLabel, DONE_LIMIT, doneHint, groupItems, isWaiting, navBadgeState, nextWaiting, pendingCount, repoLabel, runningCount, thumbCaption, unseenNotices, waitingCount } from '../src/lib/akapenView.js'
+import { answerRows, capturedLabel, DONE_LIMIT, doneHint, groupItems, isWaiting, navBadgeState, nextWaiting, pendingCount, repoLabel, runningCount, thumbCaption, unseenNotices, waitingCount } from '../src/lib/akapenView.js'
 
 /** 赤ペン待ち（blocked + label）。 */
 const waitingItem = (id) => ({ id, status: 'blocked', akapen: { label: 'akapen-view-01', round: 1 } })
@@ -138,4 +138,25 @@ test('navBadgeState は 判断待ち > 未読完了 > 進行中 の順で 1 つ�
   assert.equal(navBadgeState({ waiting: 0, unseen: 0, running: 1 }), 'running')
   assert.equal(navBadgeState({}), null)
   assert.equal(navBadgeState(), null)
+})
+
+test('answerRows は回答を履歴の行にする（未回答は捏造せず choice=null）', () => {
+  const data = {
+    questions: [
+      { id: 'q1', text: '完了報告を流すか', options: [{ id: 'A', label: 'チャットにも 1 行流す' }, { id: 'B', label: 'フィードだけ' }] },
+      { id: 'q2', text: '紐づけをどちらで作るか', options: [{ id: 'A', label: 'タスクに会話 ID' }, { id: 'B', label: '監視役に宛先' }] },
+    ],
+  }
+  const answer = { answers: [{ id: 'q1', choice: 'A', note: '短く' }], global: '履歴が見たい' }
+  const { rows, global } = answerRows(data, answer)
+
+  assert.equal(rows.length, 2)
+  assert.deepEqual(rows[0], { id: 'q1', question: '完了報告を流すか', choice: 'A', label: 'チャットにも 1 行流す', note: '短く' })
+  assert.equal(rows[1].choice, null, '未回答の問はお任せ（既定）として扱う')
+  assert.equal(rows[1].label, '', '選ばれていない選択肢のラベルは出さない')
+  assert.equal(global, '履歴が見たい')
+
+  const empty = answerRows(null, null)
+  assert.deepEqual(empty.rows, [], 'データが無ければ空（画面を壊さない）')
+  assert.equal(empty.global, '')
 })

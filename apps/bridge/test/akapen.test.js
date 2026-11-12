@@ -440,3 +440,43 @@ test('feed はファイルが無い/壊れていても空で返る（補助情�
   assert.equal(r.length, 1, '壊れた行は捨てる')
   assert.equal(r[0].text, 'ok')
 })
+
+test('chatReport は会話ごとの完了報告だけを返す（起票したチャットへ流す 1 行）', () => {
+  const { root } = tempBoard()
+  const dir = path.join(root, 'plugin-data', 'akapen')
+  fs.mkdirSync(dir, { recursive: true })
+  const lines = [
+    { at: '2026-11-13T02:10:00+08:00', session_id: 'chat-a', task_id: 't_1', label: 'x-01', text: '完了 A' },
+    { at: '2026-11-13T02:12:00+08:00', session_id: 'chat-b', task_id: 't_2', label: 'y-01', text: '完了 B' },
+    { at: '2026-11-13T02:14:00+08:00', session_id: 'chat-a', task_id: 't_3', label: 'x-02', text: '完了 C' },
+  ]
+  fs.writeFileSync(path.join(dir, 'chat-reports.jsonl'), lines.map((l) => JSON.stringify(l)).join('\n') + '\n')
+
+  const api = createAkapen({ kanbanRoot: path.join(root, 'kanban') })
+  const mine = api.chatReport('chat-a', { limit: 5 })
+  assert.equal(mine.length, 2, '別の会話の報告は混ぜない')
+  assert.deepEqual(mine.map((m) => m.taskId), ['t_1', 't_3'], '古い順')
+  assert.equal(mine[1].label, 'x-02')
+  assert.ok(mine[0].at > 1_700_000_000_000, 'ISO 文字列は epoch ms に直す')
+
+  assert.equal(api.chatReport('chat-a', { limit: 1 }).length, 1, 'limit は末尾 N 件')
+  assert.equal(api.chatReport('chat-a', { since: Date.parse('2026-11-13T02:13:00+08:00') }).length, 1, 'since で絞る')
+  assert.deepEqual(api.chatReport(''), [], 'session_id が無ければ空')
+  assert.deepEqual(api.chatReport('chat-z'), [], '知らない会話は空')
+})
+
+test('chatReport はファイルが無い/壊れていても空で返る', () => {
+  const { root } = tempBoard()
+  const api = createAkapen({ kanbanRoot: path.join(root, 'kanban') })
+  assert.deepEqual(api.chatReport('chat-a'), [])
+
+  const dir = path.join(root, 'plugin-data', 'akapen')
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(
+    path.join(dir, 'chat-reports.jsonl'),
+    'not json\n{"at":"bad","session_id":"chat-a"}\n{"at":"2026-11-13T02:00:00+08:00","session_id":"chat-a","task_id":"t_9","text":"ok"}\n',
+  )
+  const r = api.chatReport('chat-a')
+  assert.equal(r.length, 1, '壊れた行は捨てる')
+  assert.equal(r[0].text, 'ok')
+})

@@ -51,6 +51,8 @@ export function ChatPane({ notify }) {
   const [drawer, setDrawer] = useState(false)
   const [thinking, setThinking] = useState('')
   const [dcLink, setDcLink] = useState(null)
+  // 赤ペンの完了報告（起票した会話にだけ流れる 1 行。bridge が chat-reports.jsonl から返す）
+  const [reports, setReports] = useState([])
   // resume できない会話（カンバン作業ログ等）は読み取り専用で表示する
   const [readonly, setReadonly] = useState(null)
   // いま話しているプロファイル（SPEC-PROFILE-CHAT）。既定は DEFAULT_PROFILE（mobile）
@@ -362,6 +364,38 @@ export function ChatPane({ notify }) {
       alive = false
     }
   }, [storedSid, sid])
+
+  /**
+   * 赤ペンの完了報告をこの会話に流す（赤ペン chat-report-01: q1=A）。
+   *
+   * 起票したタスクの本文に `chat=<session_id>` があるものだけ、監視 cron が
+   * 完了の 1 行（完了・所要・検証）を `chat-reports.jsonl` に書く。ここは 15 秒ごとに
+   * 末尾 3 行を読み、**会話の末尾に**出す（履歴の途中に差し込まない = 順序を偽らない）。
+   */
+  useEffect(() => {
+    const target = storedSid ?? sid ?? readonly?.sessionId
+    setReports([])
+    if (!target) return
+    let alive = true
+    const tick = () => {
+      if (document.visibilityState !== 'visible') return
+      api(`/api/akapen/chat-report?session_id=${encodeURIComponent(target)}&limit=3`)
+        .then((d) => {
+          if (!alive) return
+          const items = Array.isArray(d.items) ? d.items : []
+          setReports(items.map((i) => ({ key: `${i.taskId}:${i.at}`, text: i.text, at: i.at })))
+        })
+        .catch(() => {
+          /* 補助情報（無くても会話は成立する）ので黙って諦める */
+        })
+    }
+    tick()
+    const id = setInterval(tick, 15000)
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [storedSid, sid, readonly?.sessionId])
 
   // --- 添付の取り込み ------------------------------------------------------
 
@@ -929,6 +963,11 @@ export function ChatPane({ notify }) {
             </div>
           ),
         )}
+        {reports.map((r) => (
+          <div key={r.key} className="msg report" title={new Date(r.at).toLocaleString()}>
+            🖊 {r.text}
+          </div>
+        ))}
         {streaming ? (
           <div className="thinking">
             {(() => {

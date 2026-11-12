@@ -4,7 +4,7 @@ import { api } from '../api.js'
 import { CloseActions } from '../components/CloseActions.jsx'
 import { Sheet, relTime } from '../components/Ui.jsx'
 import { AnnotationEditor } from './AnnotationEditor.jsx'
-import { capturedLabel, doneHint, groupItems, isWaiting, nextWaiting, repoLabel, thumbCaption } from '../lib/akapenView.js'
+import { answerRows, capturedLabel, doneHint, groupItems, isWaiting, nextWaiting, repoLabel, thumbCaption } from '../lib/akapenView.js'
 
 /**
  * 挿絵の拡大用データ。キャプションは「Q2 A. 塗りのボタン」＋問いの文。
@@ -426,10 +426,13 @@ function SheetLink({ item }) {
 }
 
 /** 赤ペン待ち以外（進行中・完了）の読み取り専用ビュー。回答フォームは出さない。 */
-function ReadOnlyDetail({ item }) {
+function ReadOnlyDetail({ item, data, answer }) {
   const ak = item.akapen || {}
   const label = STATUS_LABEL[item.status] || item.status
   const answered = ak.answeredAt ? relTime(Date.parse(ak.answeredAt)) : null
+  // 回答の履歴（グローバル注記: 完了した赤ペン項目から回答内容を参照したい）
+  const history = answerRows(data, answer)
+  const hasHistory = history.rows.some((r) => r.choice || r.note) || Boolean(history.global)
   return (
     <div className="ak-form">
       <div className="ak-readonly">
@@ -449,6 +452,23 @@ function ReadOnlyDetail({ item }) {
           </>
         ) : null}
       </p>
+      {hasHistory ? (
+        <details className="ak-answers">
+          <summary>赤ペン回答（履歴）</summary>
+          <ol className="ak-answer-list">
+            {history.rows.map((r, i) => (
+              <li key={r.id || i}>
+                <div className="ak-answer-q">{r.question || r.id}</div>
+                <div className="ak-answer-a">
+                  {r.choice ? `${r.choice}. ${r.label}` : 'お任せ（既定の案で反映）'}
+                </div>
+                {r.note ? <div className="ak-answer-note">{r.note}</div> : null}
+              </li>
+            ))}
+          </ol>
+          {history.global ? <div className="ak-answer-global">全体メモ: {history.global}</div> : null}
+        </details>
+      ) : null}
     </div>
   )
 }
@@ -592,6 +612,7 @@ export function AkapenPane({ notify }) {
   const [open, setOpen] = useState(null)
   const [showNew, setShowNew] = useState(false)
   const [data, setData] = useState(null)
+  const [answer, setAnswer] = useState(null)
   const [dataError, setDataError] = useState(null)
   const [closeNote, setCloseNote] = useState('')
   // 作業フィード（監視 cron が書く 1 行ログ）。完了・停止を端末で気づくために出す。
@@ -630,23 +651,27 @@ export function AkapenPane({ notify }) {
   async function openItem(item) {
     setOpen(item)
     setData(null)
+    setAnswer(null)
     setDataError(null)
     setCloseNote('')
-    // 進行中・完了は読むだけ（bridge の answer() も赤ペン待ち以外は 409 で拒否する）
-    if (!isWaiting(item)) return
     const ak = item.akapen || {}
     if (ak.mode && ak.mode !== 'standard') return
+    // 進行中・完了も読むだけ開く（bridge の answer() は赤ペン待ち以外を 409 で拒否する）。
+    // 完了した項目は「赤ペン回答（履歴）」を出すため sheet.json と answer.json を取る。
     try {
       const r = await api(`/api/akapen/${item.id}/data`)
       setData(r.data)
+      setAnswer(r.answer ?? null)
     } catch (e) {
-      setDataError(e?.message || 'sheet.json がありません')
+      // 赤ペン待ちなら理由を出す。読むだけの項目はシートが無いこともあるので黙る
+      if (isWaiting(item)) setDataError(e?.message || 'sheet.json がありません')
     }
   }
 
   function closeSheet() {
     setOpen(null)
     setData(null)
+    setAnswer(null)
     setDataError(null)
   }
 
@@ -852,7 +877,7 @@ export function AkapenPane({ notify }) {
               )}
             </>
           ) : (
-            <ReadOnlyDetail item={open} />
+            <ReadOnlyDetail item={open} data={data} answer={answer} />
           )}
           {isWaiting(open) ? (
             <div className="ak-form">

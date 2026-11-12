@@ -404,7 +404,10 @@ export function createAkapen(cfg, opts = {}) {
     const abs = resolveInside(ak.sheet.replace(/\.html$/, '.json'))
     const data = abs ? readJsonIfExists(abs) : null
     if (!data) return { ok: false, code: 'DATA_MISSING', message: 'sheet.json がありません' }
-    return { ok: true, data, taskId: id, status: b.status }
+    // 回答の履歴（完了した項目を「なぜこの設計か」まで辿れるようにする）。
+    // 回答は無いことがある（回答前に片付けた等）ので、無ければ null。
+    const answer = readJsonIfExists(resolveInside(ak.sheet.replace(/\.html$/, '.answer.json')) || '\0')
+    return { ok: true, data, answer: answer || null, taskId: id, status: b.status }
   }
 
   /** テストから差し替えられるように注入可能にしておく。 */
@@ -863,6 +866,47 @@ export function createAkapen(cfg, opts = {}) {
     return out
   }
 
+  /**
+   * ある会話に流す赤ペンの完了報告（監視 cron `mobile-akapen-watch` が書く）。
+   *
+   * 完了報告は Discord と作業フィードにしか出ておらず、**起票した会話**には戻らなかった
+   * （実測: 回答 22:19 → 完了 22:26 の報告を、会話を開いても読めない）。起票時に本文へ
+   * `chat=<session_id>` を書いたタスクだけ、完了の 1 行をその会話へ返す。
+   *
+   * @param {string} sessionId 会話のセッション ID
+   * @param {{limit?: number, since?: number}} [opts] 末尾何件・この epoch ms より新しい行だけ
+   * @returns {Array<{at: number, taskId: string, label: string|null, text: string}>} 古い順
+   */
+  function chatReport(sessionId, opts = {}) {
+    const id = String(sessionId ?? '').slice(0, 128)
+    if (!id) return []
+    const home = path.dirname(cfg.kanbanRoot || path.join(os.homedir(), '.hermes', 'kanban'))
+    const file = path.join(home, 'plugin-data', 'akapen', 'chat-reports.jsonl')
+    let raw = ''
+    try {
+      raw = fs.readFileSync(file, 'utf8')
+    } catch {
+      return [] // まだ 1 行も無い（宛先の会話が無いタスクしか走っていない）
+    }
+    const limit = Math.min(Math.max(Number(opts.limit) || 3, 1), 50)
+    const since = Number(opts.since) || 0
+    const out = []
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue
+      try {
+        const j = JSON.parse(line)
+        if (String(j.session_id ?? '') !== id) continue
+        const at = Date.parse(String(j.at ?? ''))
+        if (!Number.isFinite(at)) continue
+        if (since && at <= since) continue
+        out.push({ at, taskId: String(j.task_id ?? ''), label: j.label ?? null, text: String(j.text ?? '') })
+      } catch {
+        // 書きかけ・壊れた行は捨てる（補助情報）
+      }
+    }
+    return out.slice(-limit)
+  }
+
   /** library の画像を返す（allowlist 内のみ）。 */
   function libraryFile(rel) {
     if (!isSafeRel(rel)) return { ok: false, code: 'BAD_PATH', message: 'パスが不正です' }
@@ -955,5 +999,5 @@ export function createAkapen(cfg, opts = {}) {
     }
   }
 
-  return { board, workdir, list, sheetHtml, sheetData, answer, reopen, sessionId, image, annotation, saveAnnotation, thumb, library, libraryFile, createFromImage, targets, feed }
+  return { board, workdir, list, sheetHtml, sheetData, answer, reopen, sessionId, image, annotation, saveAnnotation, thumb, library, libraryFile, createFromImage, targets, feed, chatReport }
 }

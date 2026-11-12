@@ -157,6 +157,34 @@ export function thumbCaption(qno, option, questionText) {
 }
 
 /**
+ * 赤ペンの回答を「履歴」として読むための行（完了した項目の詳細で使う）。
+ *
+ * 回答が無い問（未回答のまま片付けた等）は `choice: null` で返し、UI 側が
+ * 「お任せ（既定）」と書けるようにする — 回答を捏造しない。
+ *
+ * @param {object|null} data `/api/akapen/:id/data` の `data`（sheet.json）
+ * @param {object|null} answer `/api/akapen/:id/data` の `answer`（answer.json）
+ * @returns {{rows: Array<{id: string, question: string, choice: string|null, label: string, note: string}>, global: string}}
+ */
+export function answerRows(data, answer) {
+  const questions = Array.isArray(data?.questions) ? data.questions : []
+  const picked = Array.isArray(answer?.answers) ? answer.answers : []
+  const rows = questions.map((q) => {
+    const a = picked.find((x) => String(x?.id ?? '') === String(q?.id ?? '')) || null
+    const options = Array.isArray(q?.options) ? q.options : []
+    const opt = a?.choice ? options.find((o) => String(o?.id ?? '') === String(a.choice)) : null
+    return {
+      id: String(q?.id ?? ''),
+      question: String(q?.text ?? ''),
+      choice: a?.choice ? String(a.choice) : null,
+      label: opt ? String(opt.label ?? '') : '',
+      note: String(a?.note ?? ''),
+    }
+  })
+  return { rows, global: String(answer?.global ?? '') }
+}
+
+/**
  * 画像一覧に出す「取得日時」。
  *
  * 3 列に並ぶので秒は出さない（分まで）。端末のローカル時刻で出す — UTC にすると

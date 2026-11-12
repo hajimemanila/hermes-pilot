@@ -403,6 +403,19 @@ async function handleApi(req, res, url) {
         ),
       })
     }
+    // /api/akapen/chat-report?session_id=&limit=&since= … その会話に流す完了報告
+    // （監視 cron が起票元の会話へ返す 1 行。端末はチャットタブが 15 秒ごとに読む）
+    if (b === 'chat-report' && req.method === 'GET') {
+      const sessionId = String(url.searchParams.get('session_id') || '')
+      if (!sessionId) return sendJson(res, 400, { error: { code: 'SESSION_REQUIRED', message: 'session_id が必要です' } })
+      return sendJson(res, 200, {
+        sessionId,
+        items: akapen.chatReport(sessionId, {
+          limit: Number(url.searchParams.get('limit') ?? 3),
+          since: Number(url.searchParams.get('since') ?? 0),
+        }),
+      })
+    }
     if (c === 'worker' && req.method === 'GET') {
       // worker（profile mobile）の進行を読む。session.resume は通らないので state.db を直接読む
       const info = akapen.sessionId(b)
