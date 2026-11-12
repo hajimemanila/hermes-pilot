@@ -20,6 +20,7 @@ import { createCapture } from './capture.js'
 import { createUsage } from './usage.js'
 import { createLive } from './live.js'
 import { createInbox } from './inbox.js'
+import { checkFrame, rejectionFrame } from './chat-profile.js'
 
 const require = createRequire(import.meta.url)
 const pty = safeRequire('node-pty')
@@ -785,6 +786,39 @@ server.on('upgrade', (req, socket, head) => {
 async function proxyChat(client) {
   let upstream
   const started = Date.now()
+  // この接続で送ってよいプロファイル名（serve 済み）。取れなければ default のみ。
+  // **listener より先に await しない**: 待つ間に届いた端末フレームは listener が無いと捨てられる
+  // （実測: 最初の session.list が消えて 20 秒タイムアウトした）。解決までは hold に溜める。
+  let allowed = []
+  let allowedReady = false
+  const hold = []
+  /** @type {string[]} */
+  const queue = []
+  listProfiles()
+    .then((list) => {
+      allowed = (list ?? []).map((p) => p.name).filter(Boolean)
+    })
+    .catch(() => {})
+    .finally(() => {
+      allowedReady = true
+      for (const t of hold.splice(0)) forward(t)
+    })
+
+  /** 1 フレームを検証して上流へ流す（プロファイル検証はここだけ）。 */
+  function forward(text) {
+    const checked = checkFrame(text, allowed)
+    if (!checked.ok) {
+      // 上流には流さない。端末には JSON-RPC エラーとして返す（SPEC-PROFILE-CHAT 決定 D1）
+      if (client.readyState === WebSocket.OPEN) client.send(rejectionFrame(checked.id, checked.message))
+      auth.audit({ kind: 'chat.profile', method: checked.method, profile: checked.profile, blocked: true })
+      return
+    }
+    if (checked.profile) auth.audit({ kind: 'chat.profile', method: checked.method, profile: checked.profile })
+    const out = checked.text
+    if (upstream?.readyState === WebSocket.OPEN) upstream.send(out)
+    else queue.push(out)
+  }
+
   try {
     upstream = new WebSocket(await hermes.wsUrl('/api/ws'), { headers: { Origin: cfg.hermesBase } })
   } catch (err) {
@@ -792,12 +826,13 @@ async function proxyChat(client) {
     client.close(1011)
     return
   }
-  /** @type {string[]} */
-  const queue = []
   client.on('message', (raw) => {
     const text = raw.toString()
-    if (upstream.readyState === WebSocket.OPEN) upstream.send(text)
-    else queue.push(text)
+    if (!allowedReady) {
+      hold.push(text)
+      return
+    }
+    forward(text)
   })
   upstream.on('open', () => {
     for (const q of queue.splice(0)) upstream.send(q)
