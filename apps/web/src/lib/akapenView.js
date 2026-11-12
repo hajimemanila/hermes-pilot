@@ -73,8 +73,8 @@ export function waitingCount(items) {
  * ナビのタスクタブに出す「小さな丸の数字」（承認待ち）。
  *
  * 注釈（`1377.jpg` の赤）で決まったこと: 「ティッカー」は下部ナビの丸バッジのこと。
- * 承認待ちはボード横断（`/api/inbox`）なので、赤ペンタブの判断待ちとは別に数える。
- * 赤ペン待ちも承認待ちの一部なので、同じ件が両方の丸に数えられる。
+ * 承認待ち（`/api/inbox`）と赤ペン判断待ち（`/api/akapen`）は**別の数字**で、混ぜない。
+ * `/api/inbox` 側が本文 `[akapen]` の blocked を除いているので、ここは数えるだけでよい。
  *
  * @param {Array} items `/api/inbox` の items
  * @returns {number} 承認待ちの件数（0 以上）

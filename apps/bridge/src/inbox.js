@@ -58,7 +58,14 @@ export function normalizeComment(raw) {
 export function createInbox(cfg, kanban) {
   const boardsRoot = path.join(cfg.kanbanRoot, 'boards')
 
-  /** 1ボードの blocked タスク（理由・直近コメント付き）。 */
+  /**
+   * 1ボードの blocked タスク（理由・直近コメント付き）。
+   *
+   * **赤ペン待ちは除く**（本文に `[akapen]` を持つ blocked）。赤ペンは赤ペンタブが受け持つ別の
+   * 待ち行列で、承認待ちの数字に混ぜると「同じ 1 件を 2 か所で数える」ことになる（実測: 赤ペンの
+   * シート待ちが立っている間、承認待ちが 1 件から 3 件に増えていた）。赤ペン待ちはコメントでは
+   * 答えられず、注釈シート / 回答フォームで答えるものなので、この一覧に出す意味も無い。
+   */
   function boardItems(slug, name) {
     const dbPath = path.join(boardsRoot, slug, 'kanban.db')
     if (!fs.existsSync(dbPath)) return []
@@ -71,6 +78,7 @@ export function createInbox(cfg, kanban) {
                   worker_pid, created_at, started_at, completed_at, session_id
              FROM tasks
             WHERE status = 'blocked'
+              AND COALESCE(body, '') NOT LIKE '%[akapen]%'
             ORDER BY COALESCE(completed_at, started_at, created_at) DESC
             LIMIT 30`,
         )

@@ -103,11 +103,11 @@ test('waitingCount はナビのバッジに出す赤ペン待ち件数（0 な�
   assert.equal(waitingCount([null, waitingItem('w9')]), 1)
 })
 
-test('pendingCount はナビのタスクタブに出す承認待ち件数（赤ペン待ちも含む）', () => {
+test('pendingCount はナビのタスクタブに出す承認待ち件数', () => {
   assert.equal(pendingCount([]), 0)
   assert.equal(pendingCount(undefined), 0)
   assert.equal(pendingCount([{ id: 'x1', board: 'nanokvm' }]), 1)
-  // 承認待ちは全ボード横断なので、赤ペン待ちも 1 件として数える（重複は仕様）
-  assert.equal(pendingCount([{ id: 'x1', board: 'ffp' }, waitingItem('w1')]), 2)
+  // 赤ペン待ちは /api/inbox 側で除かれるので、ここに来る items は承認待ちだけ
+  assert.equal(pendingCount([{ id: 'x1', board: 'ffp' }, { id: 'x2', board: 'mobile' }]), 2)
   assert.equal(pendingCount([null, { id: 'x2' }]), 1)
 })
