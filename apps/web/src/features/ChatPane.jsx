@@ -320,6 +320,16 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
     }
   }, [storedSid, storedProfile])
 
+  /*
+   * 新しい赤ペン完了報告が届いたら、末尾を見ていれば自動で最下部へ寄せる
+   * （報告の行は会話の最後に足されるので、下に居ないと増えたことに気づけない。実測）。
+   * 依存は配列そのものではなく**最後の報告のキー** — 15 秒ごとの取得で配列が作り直される
+   * たびにスクロールすると、上へ遡って読んでいる最中に勝手に飛ぶ。
+   */
+  const reportTarget = storedSid ?? sid ?? readonly?.sessionId
+  const reports = useMemo(() => reportLines(chatReports, reportTarget), [chatReports, reportTarget])
+  const lastReportKey = reports.length ? reports[reports.length - 1].key : ''
+
   useEffect(() => {
     const el = listRef.current
     if (!el) return
@@ -328,7 +338,7 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
     // 進捗行と thinking も「新しい内容」なので追従対象。ここを deps に入れ忘れると
     // ツール行が増えてもスクロールせず、最後の行が下端（入力欄の裏）に隠れる（実測）。
     if (stickRef.current) el.scrollTop = el.scrollHeight
-  }, [blocks, streaming, progress, thinking, readonly?.focusId])
+  }, [blocks, streaming, progress, thinking, readonly?.focusId, lastReportKey])
 
   /** ヒットした発言を画面の上寄りに出す（offsetTop ではなく実測差分で合わせる）。 */
   const scrollToHit = useCallback((mid) => {
@@ -366,17 +376,6 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
       alive = false
     }
   }, [storedSid, sid])
-
-  /**
-   * 赤ペンの完了報告をこの会話に流す（赤ペン chat-report-01: q1=A / chat-badge-01）。
-   *
-   * 起票したタスクの本文に `chat=<session_id>` があるものだけ、監視 cron が
-   * 完了の 1 行（完了・所要・検証）を `chat-reports.jsonl` に書く。行の取得は App が
-   * 15 秒ごとに 1 回だけ行い（`chatReports` prop）、ここは**自分の会話ぶんに絞って**
-   * 末尾 3 行を出す（会話の途中に差し込まない = 順序を偽らない）。
-   */
-  const reportTarget = storedSid ?? sid ?? readonly?.sessionId
-  const reports = useMemo(() => reportLines(chatReports, reportTarget), [chatReports, reportTarget])
 
   // 会話ごとの既読（会話一覧の行の点。赤ペン chat-badge-01 q2=A の「行の点」）。
   useEffect(() => {

@@ -116,6 +116,9 @@ export function App() {
   const [chatReportItems, setChatReportItems] = useState([])
   const [chatUnread, setChatUnread] = useState(0)
   const chatSeenRef = useRef(0)
+  // 直近に知らせた報告の時刻（同じ行で二度トーストを出さない）。
+  // 初回の取得では 0 のまま入れ直すだけにして、過去の報告を「今来た」として出さない。
+  const chatReportedAtRef = useRef(null)
   const tabRef = useRef(tab)
   tabRef.current = tab
   useEffect(() => {
@@ -154,6 +157,22 @@ export function App() {
         if (tabRef.current === 'chat') markChatSeen()
         setChatReportItems(items)
         setChatUnread(newerThan(items, chatSeenRef.current).length)
+        /*
+         * チャットタブを開いたままでも気づけるように、新しい報告が届いたらトーストを出す
+         * （点は「開いている間は既読」で消えるため、開いたまま待つと何も出なかった。実測）。
+         * 出すのは**チャットタブを見ているとき**だけ — 他のタブでは点が役目を果たす。
+         */
+        const newest = items.reduce((a, i) => (Number(i?.at) > Number(a?.at ?? -1) ? i : a), null)
+        const newestAt = Number(newest?.at) || 0
+        if (chatReportedAtRef.current === null) {
+          chatReportedAtRef.current = newestAt // 初回は「今の最新」を基準にするだけ
+        } else if (tabRef.current === 'chat' && newestAt > chatReportedAtRef.current) {
+          chatReportedAtRef.current = newestAt
+          const label = newest.label || newest.taskId || ''
+          notify(`赤ペン完了${label ? `: ${label}` : ''}`)
+        } else if (newestAt > chatReportedAtRef.current) {
+          chatReportedAtRef.current = newestAt
+        }
       } catch {
         /* 完了報告は補助情報。取れなくても画面は壊さない */
       }
@@ -166,6 +185,8 @@ export function App() {
       alive = false
       clearInterval(id)
     }
+    // notify はこの useEffect より後で定義される（同一レンダー内で TDZ になるため deps に入れない）。
+    // 値は useCallback([]) で固定なので、依存に入れなくても stale にはならない。
   }, [markChatSeen])
 
   useEffect(() => {
