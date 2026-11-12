@@ -1066,3 +1066,15 @@ tablet: chipRow 38px / チップ表示幅 760px（スマホは366px） / 横ス�
   ＋→ nanokvm で新規会話 → 送信 → **nanokvm の state.db にだけ** セッション `20261112_190156_346016`
   （`profile_name=nanokvm`）とメッセージが増え、default は不変。ヘッダー高 49px・行高 60-63px（変化なし）。
 
+
+## 新しい会話でリポジトリと板を選ぶ（2026-11-12）
+
+仕様: `docs/SPEC-REPO-PICKER.md`（赤ペン `sheets/repo-picker-01-1` の 4 問すべて A）。
+
+- 「＋」のシートは**1 段**のまま。プロファイル 3 行の下に **リポジトリ節**（前回 + 一覧順で 4 行 → 「すべてのリポジトリ」17 件 → 「リポジトリを選ばない」）
+- リポジトリを押すと開始。板が**複数**なら「ボードを選ぶ」段、**無い**なら「ボードを作る」確認の段（Q3=A: 黙って増やさない）
+- 選択の効果は 3 つ: `session.create` の **`cwd`**（作業ディレクトリ）/ **`hm.board`**（タスクタブと起票の既定ボード）/ ヘッダーの **repo 札**
+- 対応は **板の `default_workdir` と repo の path の一致だけ**（小文字比較）。`mobile`（akapen）のように repo に紐づかない板は出ない
+- 一覧は Git Ops の `repos.json`（`/api/repos`）。板の作成は `POST /api/repos/:id/board` → `hermes kanban boards create`（監査 `repos.board.create`）
+- 実測（:4098 = 同じ dist / 同じ `~/.hermes`）: `session.create {cwd}` の応答 `info.cwd` が repo のパス、repo 選択後のタスクタブが `hermes-mobile-pwa`。**ボード作成の往復だけは本番の板を増やさないため未検証**
+- 落とし穴: 端末の `HERMES_HOME` が profile を指していると、2 つ目のブリッジは別の token/kanban を見る（401 になる）。検証用に別ポートで立てるときは `env -u HERMES_HOME`

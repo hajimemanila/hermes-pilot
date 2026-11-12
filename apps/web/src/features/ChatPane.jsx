@@ -1,6 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useChatSocket } from '../lib/useChatSocket.js'
 import { DEFAULT_PROFILE, STORED_PROFILE_KEY, applyDefaultProfile } from '../lib/profile.js'
+import {
+  boardSummary,
+  defaultBoard,
+  pinnedRepos,
+  readLastRepo,
+  readRecent,
+  rememberRepo,
+  repoLabel,
+} from '../lib/repoPicker.js'
 import { pickResumeTarget, recentSessions } from '../lib/chatResume.js'
 import { mergeProgress } from '../lib/toolProgress.js'
 import { api } from '../api.js'
@@ -41,6 +50,12 @@ export function ChatPane({ notify }) {
   const [storedProfile, setStoredProfile] = useState(DEFAULT_PROFILE)
   const [profiles, setProfiles] = useState([])
   const [profileSheet, setProfileSheet] = useState(false)
+  // 新しい会話のリポジトリ（＝作業ディレクトリ）。決定は sheets/repo-picker-01-1 の 4 問すべて A
+  const [repos, setRepos] = useState([])
+  const [repo, setRepo] = useState(null) // この会話で選んだもの
+  const [repoPick, setRepoPick] = useState(DEFAULT_PROFILE) // シートで選択中のプロファイル
+  const [repoStep, setRepoStep] = useState(null) // {kind:'board'|'create'|'all', repo}
+  const [repoBusy, setRepoBusy] = useState(false)
 
   // 添付
   const [attached, setAttached] = useState([])
@@ -58,6 +73,7 @@ export function ChatPane({ notify }) {
   const sidRef = useRef(null)
   const storedRef = useRef(null)
   const storedProfileRef = useRef(DEFAULT_PROFILE)
+  const repoRef = useRef(null)
   const sessionsRef = useRef([])
   const listRef = useRef(null)
   const taRef = useRef(null)
@@ -67,6 +83,7 @@ export function ChatPane({ notify }) {
   sidRef.current = sid
   storedRef.current = storedSid
   storedProfileRef.current = storedProfile
+  repoRef.current = repo
 
   /**
    * セッション一覧を取り直す。
@@ -486,6 +503,8 @@ export function ChatPane({ notify }) {
         const r = await rpc('session.create', {
           title: shown.slice(0, 24),
           ...(profile && profile !== 'default' ? { profile } : {}),
+          // リポジトリを選んで始めた会話は、その repo を作業ディレクトリにする
+          ...(repoRef.current?.path ? { cwd: repoRef.current.path } : {}),
         })
         target = r?.result?.session_id
         setStoredSid(r?.result?.stored_session_id ?? null)
@@ -546,19 +565,41 @@ export function ChatPane({ notify }) {
     notify('中断しました')
   }, [sid, rpc, notify])
 
-  const newSession = useCallback((prof = DEFAULT_PROFILE) => {
-    const next = prof || DEFAULT_PROFILE
-    setSid(null)
-    setStoredSid(null)
-    setTitle('')
-    setBlocks([])
-    setUsage(null)
-    setReadonly(null)
-    setProfile(next)
-    setStoredProfile(next)
-    setDrawer(false)
-    setProfileSheet(false)
-  }, [])
+  /**
+   * 新しい会話を始める（プロファイル + リポジトリ + ボード）。
+   *
+   * リポジトリは `session.create` の `cwd` として渡す（＝この会話の作業ディレクトリが
+   * その repo になる。起票・worker・パスの解決がそこで揃う）。板は端末の `hm.board` に
+   * 書く＝タスクタブとクイック起票の既定ボードがその repo の板に切り替わる。
+   *
+   * @param {string} prof プロファイル
+   * @param {object|null} pick 選んだリポジトリ（`/api/repos` の 1 件）
+   * @param {{slug: string, name?: string}|null} board 選んだボード
+   */
+  const startSession = useCallback(
+    (prof = DEFAULT_PROFILE, pick = null, board = null) => {
+      const next = prof || DEFAULT_PROFILE
+      const chosen = pick?.path ? pick : null
+      const boardSlug = board?.slug ?? ''
+      setSid(null)
+      setStoredSid(null)
+      setTitle('')
+      setBlocks([])
+      setUsage(null)
+      setReadonly(null)
+      setProfile(next)
+      setStoredProfile(next)
+      setRepo(chosen)
+      setRepoStep(null)
+      setDrawer(false)
+      setProfileSheet(false)
+      if (chosen) {
+        rememberRepo(globalThis.localStorage, { id: chosen.id, board: boardSlug ? { slug: boardSlug } : null })
+        notify(`${repoLabel(chosen)}${boardSlug ? ` ・ ${boardSlug}` : ''} で新しい会話`)
+      }
+    },
+    [notify],
+  )
 
   /** resume できない会話を読み取り専用で開く（カンバン作業ログなど）。 */
   const loadTranscript = useCallback(
@@ -677,16 +718,78 @@ export function ChatPane({ notify }) {
   const openProfileSheet = useCallback(() => {
     setDrawer(false)
     setProfileSheet(true)
-  }, [])
+    setRepoStep(null)
+    setRepoPick(profile || DEFAULT_PROFILE)
+    // リポジトリ一覧は開いたときに取りに行く（ボードの件数は変わらないので 1 回で足りる）
+    if (!repos.length) {
+      api('/api/repos')
+        .then((d) => setRepos(Array.isArray(d?.repos) ? d.repos : []))
+        .catch(() => setRepos([]))
+    }
+  }, [profile, repos.length])
+
+  /**
+   * リポジトリを選んだ（Q2=A）。板が無ければ確認、複数なら次の段、1 つならそのまま開始。
+   * @param {object} r 選んだリポジトリ
+   */
+  const pickRepo = useCallback(
+    (r) => {
+      if (!r) return
+      if (!r.boards?.length) {
+        setRepoStep({ kind: 'create', repo: r })
+        return
+      }
+      if (r.boards.length > 1) {
+        setRepoStep({ kind: 'board', repo: r })
+        return
+      }
+      startSession(repoPick, r, defaultBoard(r.boards))
+    },
+    // startSession は下で useCallback 済み（依存は毎回同じ）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [repoPick],
+  )
+
+  /** 板が無いリポジトリにボードを作る（Q3=A: 確認してから作る）。 */
+  const createRepoBoard = useCallback(async () => {
+    const r = repoStep?.repo
+    if (!r || repoBusy) return
+    setRepoBusy(true)
+    try {
+      const res = await api(`/api/repos/${encodeURIComponent(r.id)}/board`, { method: 'POST', body: {} })
+      if (!res?.ok || !res.board) {
+        notify(res?.error ?? 'ボードを作成できませんでした')
+        return
+      }
+      notify(`ボード ${res.board.slug} を作りました`)
+      // 作った板を一覧に反映してから開始（次の会話では「ボード 1 つ」と出る）
+      setRepos((prev) =>
+        prev.map((x) => (x.id === r.id ? { ...x, boards: [{ slug: res.board.slug, name: res.board.name ?? res.board.slug }] } : x)),
+      )
+      startSession(repoPick, r, { slug: res.board.slug, name: res.board.name ?? res.board.slug })
+    } catch (e) {
+      notify(e.message)
+    } finally {
+      setRepoBusy(false)
+    }
+  }, [repoStep, repoBusy, repoPick, notify, startSession])
 
   const hotSnippets = snippets.filter((s) => s.hot).slice(0, 8)
 
-  /** 新しい会話で選べるプロファイル（既定を先頭・毎回同じ順）。 */
+  /**
+   * 新しい会話で選べるプロファイル（既定を先頭・毎回同じ順）。
+   */
   const orderedProfiles = useMemo(() => {
     const list = profiles.length ? profiles : [DEFAULT_PROFILE]
     const rank = (p) => (p === DEFAULT_PROFILE ? 0 : p === 'default' ? 1 : p === 'nanokvm' ? 2 : 3)
     return [...new Set(list)].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
   }, [profiles])
+
+  /** 前回選んだリポジトリ（Q4=A: 次回の初期値。シートを開くたびに読み直す）。 */
+  const lastRepo = useMemo(() => readLastRepo(), [profileSheet])
+
+  /** シートに直接並べるリポジトリ 4 行（前回が先頭・残りは「すべて」から）。 */
+  const pinned = useMemo(() => pinnedRepos(repos, readRecent()), [repos, profileSheet])
 
   return (
     <div className="pane chat" data-conn={connState}>
@@ -701,6 +804,16 @@ export function ChatPane({ notify }) {
         >
           {profile}
         </span>
+        {repo ? (
+          <button
+            className="prof-chip repo-chip"
+            title={`この会話のリポジトリ: ${repo.id}（${repo.path}）`}
+            aria-label={`この会話のリポジトリ: ${repo.id}`}
+            onClick={openProfileSheet}
+          >
+            {repo.id}
+          </button>
+        ) : null}
         {dcLink?.url ? (
           <button
             className="icon-btn dc-icon"
@@ -711,7 +824,7 @@ export function ChatPane({ notify }) {
             <span aria-hidden="true">#</span>
           </button>
         ) : null}
-        <button className="icon-btn" onClick={openProfileSheet} aria-label="新しい会話（プロファイルを選ぶ）">
+        <button className="icon-btn" onClick={openProfileSheet} aria-label="新しい会話（プロファイルとリポジトリを選ぶ）">
           <Icon name="plus" size={18} />
         </button>
       </div>
@@ -1073,30 +1186,159 @@ export function ChatPane({ notify }) {
       ) : null}
 
       {profileSheet ? (
-        <Sheet title="新しい会話のプロファイル" onClose={() => setProfileSheet(false)}>
-          {orderedProfiles.map((p) => (
-            <button key={p} className="row" onClick={() => newSession(p)}>
-              <span className="row-main">
-                <span className="row-title">
-                  {p}
-                  {p === DEFAULT_PROFILE ? <span className="prof-chip">既定</span> : null}
+        <Sheet
+          title={
+            repoStep?.kind === 'board'
+              ? 'ボードを選ぶ'
+              : repoStep?.kind === 'create'
+                ? 'ボードを作る'
+                : repoStep?.kind === 'all'
+                  ? 'すべてのリポジトリ'
+                  : '新しい会話'
+          }
+          onClose={() => (repoStep ? setRepoStep(null) : setProfileSheet(false))}
+        >
+          {!repoStep ? (
+            <>
+              {orderedProfiles.map((p) => (
+                <button
+                  key={p}
+                  className={`row${repoPick === p ? ' on' : ''}`}
+                  onClick={() => setRepoPick(p)}
+                  aria-pressed={repoPick === p}
+                >
+                  <span className="row-main">
+                    <span className="row-title">
+                      {p}
+                      {p === DEFAULT_PROFILE ? <span className="prof-chip">既定</span> : null}
+                      {repoPick === p ? <span className="prof-chip on">選択</span> : null}
+                    </span>
+                    <span className="row-sub">
+                      {p === 'default'
+                        ? '普段の作業（Discord と同じプロファイル）'
+                        : p === 'mobile'
+                          ? 'PWA の既定（赤ペン・自走実装）'
+                          : p === 'nanokvm'
+                            ? '実機・nanoKVM 系の隔離プロファイル'
+                            : `${p} プロファイル`}
+                    </span>
+                  </span>
+                  <Icon name={repoPick === p ? 'check' : 'chevron'} size={16} />
+                </button>
+              ))}
+
+              <div className="sec">リポジトリ（作業ディレクトリ）</div>
+              {pinned.rows.map((r) => (
+                <button
+                  key={r.id}
+                  className={`row${lastRepo === r.id ? ' on' : ''}`}
+                  onClick={() => pickRepo(r)}
+                  title={`${r.label}（${r.path}）`}
+                >
+                  <span className="row-main">
+                    <span className="row-title">
+                      {repoLabel(r)}
+                      {lastRepo === r.id ? <span className="prof-chip">前回</span> : null}
+                    </span>
+                    <span className="row-sub">
+                      {boardSummary(r.boards)}
+                      {r.boards.length > 1 ? ' ›' : ''}
+                    </span>
+                  </span>
+                  <Icon name="chevron" size={16} />
+                </button>
+              ))}
+              {!repos.length ? (
+                <div className="row-sub" style={{ padding: '6px 6px 10px', lineHeight: 1.7 }}>
+                  リポジトリ一覧を取得中…（取れないときは「リポジトリを選ばない」で始められます）
+                </div>
+              ) : null}
+              {pinned.hidden > 0 ? (
+                <button className="row" onClick={() => setRepoStep({ kind: 'all' })}>
+                  <span className="row-main">
+                    <span className="row-title">すべてのリポジトリ</span>
+                    <span className="row-sub">
+                      残り {pinned.hidden} 件（全 {pinned.total} 件）
+                    </span>
+                  </span>
+                  <Icon name="chevron" size={16} />
+                </button>
+              ) : null}
+              <button className="row" onClick={() => startSession(repoPick, null, null)}>
+                <span className="row-main">
+                  <span className="row-title">リポジトリを選ばない</span>
+                  <span className="row-sub">作業ディレクトリを決めずに始める</span>
                 </span>
-                <span className="row-sub">
-                  {p === 'default'
-                    ? '普段の作業（Discord と同じプロファイル）'
-                    : p === 'mobile'
-                      ? 'PWA の既定（赤ペン・自走実装）'
-                      : p === 'nanokvm'
-                        ? '実機・nanoKVM 系の隔離プロファイル'
-                        : `${p} プロファイル`}
+                <Icon name="chevron" size={16} />
+              </button>
+              <div className="row-sub" style={{ padding: '10px 6px 18px', lineHeight: 1.7 }}>
+                プロファイルを選んでから<b>リポジトリ</b>を押すと、その会話が始まります。
+                板があるリポジトリは、タスクタブと起票の既定ボードもその板に切り替わります。
+              </div>
+            </>
+          ) : null}
+
+          {repoStep?.kind === 'all' ? (
+            <>
+              <div className="sec">すべてのリポジトリ（{repos.length} 件）</div>
+              {repos.map((r) => (
+                <button key={r.id} className="row" onClick={() => pickRepo(r)} title={`${r.label}（${r.path}）`}>
+                  <span className="row-main">
+                    <span className="row-title">{repoLabel(r)}</span>
+                    <span className="row-sub">
+                      {boardSummary(r.boards)}
+                      {r.boards.length > 1 ? ' ›' : ''}
+                    </span>
+                  </span>
+                  <Icon name="chevron" size={16} />
+                </button>
+              ))}
+            </>
+          ) : null}
+
+          {repoStep?.kind === 'board' ? (
+            <>
+              <div className="sec">{repoLabel(repoStep.repo)} のボード</div>
+              {(repoStep.repo.boards ?? []).map((b) => (
+                <button key={b.slug} className="row" onClick={() => startSession(repoPick, repoStep.repo, b)}>
+                  <span className="row-main">
+                    <span className="row-title">{b.name || b.slug}</span>
+                    <span className="row-sub">
+                      {b.slug}
+                      {b.current ? ' ・ 現在のボード' : ''}
+                    </span>
+                  </span>
+                  <Icon name="chevron" size={16} />
+                </button>
+              ))}
+              <div className="row-sub" style={{ padding: '10px 6px 18px', lineHeight: 1.7 }}>
+                押した板が起票の宛先になります（このリポジトリには板が {repoStep.repo.boards.length} つあります）。
+              </div>
+            </>
+          ) : null}
+
+          {repoStep?.kind === 'create' ? (
+            <>
+              <div className="sec">ボードがありません</div>
+              <div className="row-sub" style={{ padding: '6px 6px 12px', lineHeight: 1.7 }}>
+                <b>{repoLabel(repoStep.repo)}</b> にはボードがありません。ボードを作ると、この会話からの起票がその板に載ります。
+              </div>
+              <button className="row" onClick={createRepoBoard} disabled={repoBusy} aria-busy={repoBusy}>
+                <span className="row-main">
+                  <span className="row-title">{repoBusy ? '作成中…' : `ボード ${repoStep.repo.id} を作る`}</span>
+                  <span className="row-sub">{repoStep.repo.path}</span>
                 </span>
-              </span>
-              <Icon name="chevron" size={16} />
-            </button>
-          ))}
-          <div className="row-sub" style={{ padding: '10px 6px 18px', lineHeight: 1.7 }}>
-            選んだプロファイルで新しい会話を作ります。既存の会話は一覧から開けば、そのプロファイルのまま続けられます。
-          </div>
+                <Icon name="check" size={16} />
+              </button>
+              <button className="row" onClick={() => setRepoStep(null)}>
+                <span className="row-main">
+                  <span className="row-title">作らない</span>
+                  <span className="row-sub">リポジトリの選択に戻る（板は増えません）</span>
+                </span>
+                <Icon name="chevron" size={16} />
+              </button>
+            </>
+          ) : null}
         </Sheet>
       ) : null}
 
@@ -1105,7 +1347,7 @@ export function ChatPane({ notify }) {
           <button className="row" onClick={openProfileSheet}>
             <span className="row-main">
               <span className="row-title">新しい会話</span>
-              <span className="row-sub">プロファイルを選んで作る</span>
+              <span className="row-sub">プロファイルとリポジトリを選んで作る</span>
             </span>
             <Icon name="plus" size={16} />
           </button>

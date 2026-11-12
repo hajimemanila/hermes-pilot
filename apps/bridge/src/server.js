@@ -20,6 +20,7 @@ import { createCapture } from './capture.js'
 import { createUsage } from './usage.js'
 import { createLive } from './live.js'
 import { createInbox } from './inbox.js'
+import { createRepos } from './repos.js'
 import { checkFrame, rejectionFrame } from './chat-profile.js'
 
 const require = createRequire(import.meta.url)
@@ -72,6 +73,8 @@ const capture = createCapture(cfg)
 const usage = createUsage(cfg)
 const live = createLive(cfg, kanban)
 const inbox = createInbox(cfg, kanban)
+// リポジトリ（作業ディレクトリ）↔ ボード。一覧の出所は Git Ops の repos.json ひとつ
+const repos = createRepos(cfg, { targets: () => akapen.targets(), boards: () => kanban.boards() })
 // 起動時にコミットサマリを温める（初回のタスク一覧を待たせない）
 gitinfo.warm().catch(() => {})
 
@@ -251,6 +254,22 @@ async function handleApi(req, res, url) {
     // 緊急停止（ESTOP）の状態
     data.paused = ops.paused()
     return sendJson(res, 200, data)
+  }
+
+  // --- リポジトリ（作業ディレクトリ）とボード -------------------------------
+  // /api/repos                … 一覧（Git Ops の repos.json × カンバンボード）
+  // POST /api/repos/:id/board … 板が無いリポジトリにボードを 1 つ作る（UI が確認してから呼ぶ）
+  if (a === 'repos') {
+    if (!b) return sendJson(res, 200, { repos: repos.list() })
+    if (c === 'board' && req.method === 'POST') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+      }
+      const r = await repos.createBoard(b)
+      auth.audit({ kind: 'repos.board.create', repo: b, board: r.board?.slug ?? null, ok: Boolean(r.ok) })
+      return sendJson(res, r.ok ? 201 : 400, r)
+    }
+    return sendJson(res, 404, { error: { message: `unknown endpoint: ${url.pathname}` } })
   }
 
   if (a === 'boards') {

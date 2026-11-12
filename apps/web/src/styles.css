@@ -689,6 +689,26 @@ button.stat:active {
 .row-sub .prof-chip { margin-right: 6px; }
 .row-title .prof-chip { margin-left: 6px; }
 
+/* 会話ヘッダーのリポジトリ札（repo-picker-01 Q2=A）。押すと新しい会話シートが開く */
+.repo-chip {
+  font: inherit;
+  font-size: 10px;
+  background: none;
+  cursor: pointer;
+  max-width: 104px;
+}
+.repo-chip:active { opacity: 0.7; }
+
+/* 新しい会話シートの節の見出し（プロファイル / リポジトリ） */
+.sheet-body .sec {
+  padding: 12px 6px 4px;
+  margin-top: 6px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
 .chat-scroll {
   flex: 1;
   min-height: 0;
