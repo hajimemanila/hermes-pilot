@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useChatSocket } from '../lib/useChatSocket.js'
+import { DEFAULT_PROFILE, STORED_PROFILE_KEY, applyDefaultProfile } from '../lib/profile.js'
 import { api } from '../api.js'
 import { Icon, Sheet, relTime, fmtBytes } from '../components/Ui.jsx'
 
@@ -27,10 +28,10 @@ export function ChatPane({ notify }) {
   const [dcLink, setDcLink] = useState(null)
   // resume できない会話（カンバン作業ログ等）は読み取り専用で表示する
   const [readonly, setReadonly] = useState(null)
-  // いま話しているプロファイル（SPEC-PROFILE-CHAT）。既定は default
-  const [profile, setProfile] = useState('default')
+  // いま話しているプロファイル（SPEC-PROFILE-CHAT）。既定は DEFAULT_PROFILE（mobile）
+  const [profile, setProfile] = useState(DEFAULT_PROFILE)
   // 直近の会話のプロファイル（起動時の復元に使う）
-  const [storedProfile, setStoredProfile] = useState('default')
+  const [storedProfile, setStoredProfile] = useState(DEFAULT_PROFILE)
   const [profiles, setProfiles] = useState([])
   const [profileSheet, setProfileSheet] = useState(false)
 
@@ -49,7 +50,7 @@ export function ChatPane({ notify }) {
 
   const sidRef = useRef(null)
   const storedRef = useRef(null)
-  const storedProfileRef = useRef('default')
+  const storedProfileRef = useRef(DEFAULT_PROFILE)
   const sessionsRef = useRef([])
   const listRef = useRef(null)
   const taRef = useRef(null)
@@ -232,9 +233,11 @@ export function ChatPane({ notify }) {
   // 直近の会話を端末に覚える（プロファイルもセットで。他プロファイルの resume に要る）
   useEffect(() => {
     try {
+      // 既定を mobile に上げた移行（1回だけ）: 端末に残った前の選択を捨てる
+      applyDefaultProfile()
       const saved = localStorage.getItem('hm.storedSid')
       if (saved && !storedRef.current) setStoredSid(saved)
-      const savedProfile = localStorage.getItem('hm.storedProfile')
+      const savedProfile = localStorage.getItem(STORED_PROFILE_KEY)
       if (savedProfile) setStoredProfile(savedProfile)
     } catch {
       /* noop */
@@ -244,7 +247,7 @@ export function ChatPane({ notify }) {
     try {
       if (storedSid) localStorage.setItem('hm.storedSid', storedSid)
       else localStorage.removeItem('hm.storedSid')
-      localStorage.setItem('hm.storedProfile', storedProfile || 'default')
+      localStorage.setItem(STORED_PROFILE_KEY, storedProfile || DEFAULT_PROFILE)
     } catch {
       /* noop */
     }
@@ -447,7 +450,7 @@ export function ChatPane({ notify }) {
         })
         target = r?.result?.session_id
         setStoredSid(r?.result?.stored_session_id ?? null)
-        setStoredProfile(profile || 'default')
+        setStoredProfile(profile || DEFAULT_PROFILE)
         if (!target) return failed('セッションを作成できませんでした')
         setSid(target)
         setTitle(shown.slice(0, 24))
@@ -504,8 +507,8 @@ export function ChatPane({ notify }) {
     notify('中断しました')
   }, [sid, rpc, notify])
 
-  const newSession = useCallback((prof = 'default') => {
-    const next = prof || 'default'
+  const newSession = useCallback((prof = DEFAULT_PROFILE) => {
+    const next = prof || DEFAULT_PROFILE
     setSid(null)
     setStoredSid(null)
     setTitle('')
@@ -639,10 +642,10 @@ export function ChatPane({ notify }) {
 
   const hotSnippets = snippets.filter((s) => s.hot).slice(0, 8)
 
-  /** 新しい会話で選べるプロファイル（default 先頭・毎回同じ順）。 */
+  /** 新しい会話で選べるプロファイル（既定を先頭・毎回同じ順）。 */
   const orderedProfiles = useMemo(() => {
-    const list = profiles.length ? profiles : ['default']
-    const rank = (p) => (p === 'default' ? 0 : p === 'mobile' ? 1 : p === 'nanokvm' ? 2 : 3)
+    const list = profiles.length ? profiles : [DEFAULT_PROFILE]
+    const rank = (p) => (p === DEFAULT_PROFILE ? 0 : p === 'default' ? 1 : p === 'nanokvm' ? 2 : 3)
     return [...new Set(list)].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
   }, [profiles])
 
@@ -654,7 +657,7 @@ export function ChatPane({ notify }) {
         </button>
         <span className="chat-title">{title || 'チャット'}</span>
         <span
-          className={`prof-chip${profile !== 'default' ? ' on' : ''}${profile === 'mobile' ? ' worker' : ''}`}
+          className={`prof-chip${profile !== DEFAULT_PROFILE ? ' on' : ''}`}
           title={`この会話のプロファイル: ${profile}`}
         >
           {profile}
@@ -990,14 +993,13 @@ export function ChatPane({ notify }) {
               <span className="row-main">
                 <span className="row-title">
                   {p}
-                  {p === 'default' ? <span className="prof-chip">既定</span> : null}
-                  {p === 'mobile' ? <span className="prof-chip worker">worker</span> : null}
+                  {p === DEFAULT_PROFILE ? <span className="prof-chip">既定</span> : null}
                 </span>
                 <span className="row-sub">
                   {p === 'default'
                     ? '普段の作業（Discord と同じプロファイル）'
                     : p === 'mobile'
-                      ? 'カンバン worker の実行プロファイル'
+                      ? 'PWA の既定（赤ペン・自走実装）'
                       : p === 'nanokvm'
                         ? '実機・nanoKVM 系の隔離プロファイル'
                         : `${p} プロファイル`}
@@ -1022,7 +1024,7 @@ export function ChatPane({ notify }) {
             <Icon name="plus" size={16} />
           </button>
           {sessions.map((s) => {
-            const foreign = s.profile && s.profile !== 'default'
+            const foreign = s.profile && s.profile !== DEFAULT_PROFILE
             return (
               <button
                 key={`${s.profile ?? 'default'}:${s.id}`}
@@ -1033,7 +1035,7 @@ export function ChatPane({ notify }) {
                   <span className="row-title">{s.title || s.id}</span>
                   <span className="row-sub">
                     {foreign ? (
-                      <span className={`prof-chip on${s.profile === 'mobile' ? ' worker' : ''}`}>{s.profile}</span>
+                      <span className="prof-chip on">{s.profile}</span>
                     ) : null}
                     {s.source ?? 'cli'} ・ {s.message_count ?? 0} msg ・ {relTime((s.started_at ?? 0) * 1000)}
                     {s.is_active ? ' ・ 稼働中' : ''}
