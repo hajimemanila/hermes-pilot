@@ -9,8 +9,27 @@ import {
   isSafeRel,
   answerHash,
   toReplyText,
+  injectAkapenBridge,
   createAkapen,
 } from '../src/akapen.js'
+
+test('injectAkapenBridge は設問見出しのマーカー装飾を注入し、保存物は変えない', () => {
+  const base = '<html><body><section id="akForm"><div class="q"><h3>Q1. 問い</h3></div></section></body></html>'
+  const html = injectAkapenBridge(base, 't_abc12345')
+
+  assert.ok(html.includes('<style id="akBridgeStyle">'), 'マーカー用スタイルが入る')
+  assert.match(html, /#akForm \.q h3\{[^}]*linear-gradient/, '設問見出しにマーカー (linear-gradient) が当たる')
+  assert.ok(html.includes('var TASK = "t_abc12345";'), '送信ブリッジは従来どおり')
+  assert.ok(html.indexOf('akBridgeStyle') < html.indexOf('</body>'), '</body> の直前に注入する')
+
+  assert.equal(base.includes('akBridgeStyle'), false, '元のシート HTML は書き換えない')
+  assert.equal(base.includes('akapen:reply'), false)
+
+  // </body> が無い断片でも末尾に注入する
+  const frag = injectAkapenBridge('<div id="akForm"></div>', 't_1')
+  assert.ok(frag.indexOf('akBridgeStyle') > -1)
+  assert.ok(frag.indexOf('var TASK = "t_1";') > -1)
+})
 
 test('parseAkapenLine は機械可読行を取り出す', () => {
   const body = '本文\n[akapen] label=cockpit-03 round=2 mode=standard sheet=sheets/cockpit-03-2.html\nおわり'

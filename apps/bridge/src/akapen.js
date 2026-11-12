@@ -103,6 +103,87 @@ export function toReplyText(label, answers, global, questions = []) {
 }
 
 /**
+ * シート HTML に「回答をアプリへ送る」小さなブリッジを注入する（保存物は書き換えない）。
+ *
+ * アプリ内で開いたときだけ、設問見出し (Q1…) をマーカーで装飾する（赤ペン注釈の指摘）。
+ * 保存済みのシート（file:// で開く原本）は書き換えないので、装飾はアプリ表示の担当。
+ */
+export function injectAkapenBridge(html, taskId) {
+  const style = `
+<style id="akBridgeStyle">
+#akForm .q h3{
+  display:inline-block;
+  max-width:100%;
+  margin:0 0 10px -3px;
+  padding:1px 6px 2px;
+  font-size:16px;
+  font-weight:700;
+  line-height:1.6;
+  border-radius:3px;
+  background:linear-gradient(180deg,rgba(250,204,21,0) 44%,rgba(250,204,21,.62) 44%,rgba(250,204,21,.62) 96%,rgba(250,204,21,0) 96%);
+}
+</style>
+`
+  const script = `
+<script>
+(function () {
+  var TASK = ${JSON.stringify(String(taskId))};
+  function replyText() { var o = document.getElementById('out'); return o ? o.value : ''; }
+  function report(ok, msg) {
+    var el = document.getElementById('akBridgeStatus');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'akBridgeStatus';
+      el.style.cssText = 'margin:12px 0;padding:10px 12px;border-radius:10px;font:inherit;font-size:13px;line-height:1.6';
+      (document.getElementById('akForm') || document.body).appendChild(el);
+    }
+    el.style.background = ok ? '#e7f8f1' : '#fdecea';
+    el.style.color = ok ? '#0b5f45' : '#8a1f17';
+    el.textContent = msg;
+  }
+  function submit() {
+    var text = replyText();
+    if (!text || text.indexOf('【赤ペン回答】') === -1) return;
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ type: 'akapen:reply', taskId: TASK, text: text }, '*');
+      report(true, 'アプリに回答を送りました（この画面は閉じてOK）');
+      return;
+    }
+    fetch('/api/akapen/' + TASK + '/answer', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'content-type': 'application/json', 'x-client': 'mobile' },
+      body: JSON.stringify({ text: text })
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        var ok = res.ok && res.j && res.j.ok;
+        report(ok, ok ? '回答を送信しました（タスクは ' + (res.j.moved || '') + '）'
+                      : '送信できませんでした: ' + ((res.j && ((res.j.error && res.j.error.message) || res.j.message)) || 'unknown'));
+      })
+      .catch(function (e) { report(false, '送信エラー: ' + e.message); });
+  }
+  // アプリ経由で開いているときは「貼り付ける」ではなく「送信」として見せる
+  function relabel() {
+    var b = document.getElementById('genBtn');
+    if (b) b.textContent = '回答を送信';
+    var note = document.querySelector('#akForm p.m');
+    if (note) note.textContent = '選んで［回答を送信］を押すと、そのままアプリに送られます（未選択は推奨案で確定）。';
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', relabel);
+  else relabel();
+
+  document.addEventListener('click', function (ev) {
+    var t = ev.target;
+    if (t && (t.id === 'genBtn' || (t.closest && t.closest('#genBtn')))) setTimeout(submit, 80);
+  }, true);
+  window.__akapenSubmit = submit;
+})();
+</script>
+`
+  const inject = `${style}${script}`
+  return html.includes('</body>') ? html.replace('</body>', `${inject}\n</body>`) : html + inject
+}
+
+/**
  * @param {object} cfg ブリッジ設定（kanbanRoot を使う）
  * @param {{board?: string, root?: string}} [opts]
  */
