@@ -60,3 +60,25 @@ export function doneHint(doneTotal) {
   if (!n) return '完了はまだありません'
   return `直近 ${Math.min(n, DONE_LIMIT)} 件`
 }
+
+/**
+ * 挿絵を拡大したときのキャプション。
+ *
+ * 選択肢の id とラベルだけだと「A. 塗りのボタン」としか出ず、何の話か分からない
+ * （赤ペン akapen-empty-01 の注釈「この文言はなんですか？」）。問番号を頭に付け、
+ * 問いの文を 2 行目に必ず添える。
+ *
+ * @param {string} qno 問番号（例: 'Q2'）
+ * @param {{id?: string, label?: string}} option 選択肢
+ * @param {string} [questionText] 問いの本文
+ * @returns {{head: string, sub: string}} head=「Q2 A. 塗りのボタン」/ sub=問いの文（無ければ ''）
+ */
+export function thumbCaption(qno, option, questionText) {
+  const no = String(qno ?? '').trim()
+  const id = String(option?.id ?? '').trim()
+  const label = String(option?.label ?? '').trim()
+  const pick = [id && `${id}.`, label].filter(Boolean).join(' ')
+  const head = [no, pick].filter(Boolean).join(' ').trim()
+  const sub = String(questionText ?? '').trim()
+  return { head, sub }
+}

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { DONE_LIMIT, doneHint, groupItems, isWaiting, nextWaiting } from '../src/lib/akapenView.js'
+import { DONE_LIMIT, doneHint, groupItems, isWaiting, nextWaiting, thumbCaption } from '../src/lib/akapenView.js'
 
 /** 赤ペン待ち（blocked + label）。 */
 const waitingItem = (id) => ({ id, status: 'blocked', akapen: { label: 'akapen-view-01', round: 1 } })
@@ -58,4 +58,17 @@ test('doneHint は「直近 8 件」しか言わない（件数を偽らない�
   assert.equal(doneHint(3), '直近 3 件')
   assert.equal(doneHint(10), '直近 8 件')
   assert.equal(doneHint(undefined), '完了はまだありません')
+})
+
+// 注釈「この文言はなんですか？」: ラベルだけでは何の話か分からないので問番号と問いの文を添える
+test('thumbCaption は問番号と選択肢、問いの文を返す', () => {
+  const c = thumbCaption('Q2', { id: 'A', label: '塗りのボタン' }, '「＋ 注釈」への導線は、塗りのボタンか、文字リンクか')
+  assert.equal(c.head, 'Q2 A. 塗りのボタン')
+  assert.equal(c.sub, '「＋ 注釈」への導線は、塗りのボタンか、文字リンクか')
+})
+
+test('thumbCaption は欠けた入力でも崩れない（空白を残さない）', () => {
+  assert.deepEqual(thumbCaption('Q1', { id: 'B' }), { head: 'Q1 B.', sub: '' })
+  assert.deepEqual(thumbCaption('', { label: '枠付きカード' }, undefined), { head: '枠付きカード', sub: '' })
+  assert.deepEqual(thumbCaption(undefined, undefined, null), { head: '', sub: '' })
 })

@@ -1546,7 +1546,9 @@ button.stat:active {
   max-width: 100%; max-height: 78dvh; width: auto; margin: 0 auto;
   border: 1px solid var(--line-strong); border-radius: 10px; background: #0a1417;
 }
-.ak-zoom figcaption { font-size: 12px; color: var(--muted); text-align: center; }
+.ak-zoom figcaption { font-size: 12px; color: var(--muted); text-align: center; display: flex; flex-direction: column; gap: 2px; padding: 0 6px; }
+.ak-zoom figcaption b { color: var(--text); font-weight: 600; font-size: 13px; }
+.ak-zoom figcaption span { font-size: 11px; line-height: 1.45; }
 .ak-zoom-close {
   flex: none; padding: 9px 26px; border-radius: 999px; border: 1px solid var(--line-strong);
   background: var(--surface-2); color: var(--text); font: inherit; font-size: 13px;

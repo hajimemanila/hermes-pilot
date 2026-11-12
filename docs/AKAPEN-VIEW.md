@@ -115,3 +115,14 @@ npm test          # node --test apps/bridge/test/*.test.js apps/web/test/*.test.
 - 幅の制約は `.ak-opt-thumb` から `.ak-thumb-btn`（`max-width: 46%`）へ移した。img 側に
   `max-width: 46%` を残すと、横長画像が `object-fit: contain` で右側に黒帯を出す。
 - 背景タップと「閉じる」で閉じる。シートは閉じない。
+
+### 拡大時のキャプション（注釈 akapen-empty-01: 「この文言はなんですか？」）
+
+- 当初は `figcaption` に `{o.id}. {o.label}` だけを出していたため、`A. 塗りのボタン` としか
+  表示されず、どの問いの案なのか画面から読み取れなかった（人が注釈で質問した）。
+- `thumbCaption(qno, option, questionText)`（`lib/akapenView.js`）で
+  **`Q2 A. 塗りのボタン`（太字）＋ 問いの文（11px・muted）** の 2 行にした。
+  `alt` / `aria-label` も同じ見出しを使う（画像 alt が空文字だったのも同時に修正）。
+- 落とし穴: **`.ak-zoom` を足した直後に dist を作り直さずスクショを撮ると、CSS が無い状態が写る**
+  （オーバーレイが暗幕も原寸も効かず、キャプションと「閉じる」だけが地に落ちて見える）。
+  見た目を撮る前に必ず `npm run build`。

@@ -4,7 +4,16 @@ import { api } from '../api.js'
 import { CloseActions } from '../components/CloseActions.jsx'
 import { Sheet, relTime } from '../components/Ui.jsx'
 import { AnnotationEditor } from './AnnotationEditor.jsx'
-import { doneHint, groupItems, isWaiting, nextWaiting } from '../lib/akapenView.js'
+import { doneHint, groupItems, isWaiting, nextWaiting, thumbCaption } from '../lib/akapenView.js'
+
+/**
+ * 挿絵の拡大用データ。キャプションは「Q2 A. 塗りのボタン」＋問いの文。
+ * ラベルだけだと何の話か分からない（注釈 akapen-empty-01: この文言はなんですか？）。
+ */
+function toZoom(taskId, option, qIndex, question, thumb) {
+  const { head, sub } = thumbCaption(`Q${qIndex + 1}`, option, question?.text)
+  return { src: `/api/akapen/${taskId}/thumb/${thumb}`, head, sub }
+}
 
 /**
  * 赤ペン（akapen）ビュー。
@@ -256,17 +265,17 @@ function StandardForm({ item, data, onSubmitted }) {
                       className="ak-thumb-btn"
                       role="button"
                       tabIndex={0}
-                      aria-label={`${o.id} の挿絵を拡大`}
+                      aria-label={`${thumbCaption(`Q${i + 1}`, o).head} の挿絵を拡大`}
                       onClick={(e) => {
                         e.preventDefault()
                         e.stopPropagation()
-                        setZoom({ src: `/api/akapen/${item.id}/thumb/${o.thumb}`, label: `${o.id}. ${o.label}` })
+                        setZoom(toZoom(item.id, o, i, q, o.thumb))
                       }}
                       onKeyDown={(e) => {
                         if (e.key !== 'Enter' && e.key !== ' ') return
                         e.preventDefault()
                         e.stopPropagation()
-                        setZoom({ src: `/api/akapen/${item.id}/thumb/${o.thumb}`, label: `${o.id}. ${o.label}` })
+                        setZoom(toZoom(item.id, o, i, q, o.thumb))
                       }}
                     >
                       <img className="ak-opt-thumb" src={`/api/akapen/${item.id}/thumb/${o.thumb}`} alt="" />
@@ -313,12 +322,15 @@ function StandardForm({ item, data, onSubmitted }) {
               className="ak-zoom"
               role="dialog"
               aria-modal="true"
-              aria-label={`${zoom.label} の挿絵`}
+              aria-label={`${zoom.head} の挿絵`}
               onClick={() => setZoom(null)}
             >
               <figure onClick={(e) => e.stopPropagation()}>
-                <img src={zoom.src} alt="" />
-                <figcaption>{zoom.label}</figcaption>
+                <img src={zoom.src} alt={`${zoom.head} の挿絵`} />
+                <figcaption>
+                  <b>{zoom.head}</b>
+                  {zoom.sub ? <span>{zoom.sub}</span> : null}
+                </figcaption>
               </figure>
               <button className="ak-zoom-close" type="button" onClick={() => setZoom(null)}>
                 閉じる
