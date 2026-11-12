@@ -73,7 +73,8 @@ function tempBoard() {
   const db = new DatabaseSync(path.join(boardDir, 'kanban.db'))
   db.exec(`CREATE TABLE tasks (
     id TEXT PRIMARY KEY, title TEXT, body TEXT, status TEXT NOT NULL, assignee TEXT,
-    priority INTEGER DEFAULT 0, created_at INTEGER, started_at INTEGER, completed_at INTEGER, result TEXT)`)
+    priority INTEGER DEFAULT 0, created_at INTEGER, started_at INTEGER, completed_at INTEGER, result TEXT,
+    last_heartbeat_at INTEGER)`)
   db.prepare('INSERT INTO tasks (id,title,body,status,assignee,created_at) VALUES (?,?,?,?,?,?)').run(
     't_test1',
     'キーボード配置',
@@ -168,4 +169,48 @@ test('answer はシートの無いタスクを拒否する', async () => {
   const r = await api.answer('t_plain', { answers: [] })
   assert.equal(r.ok, false)
   assert.equal(r.code, 'NO_SHEET')
+})
+
+test('answer は赤ペン待ち（blocked）以外を拒否し、answer.json を上書きしない', async () => {
+  const { root, workdir } = tempBoard()
+  const calls = []
+  const dbPath = path.join(root, 'kanban', 'boards', 'mobile', 'kanban.db')
+  const setStatus = (status) => {
+    const db = new DatabaseSync(dbPath)
+    db.prepare('UPDATE tasks SET status=? WHERE id=?').run(status, 't_test1')
+    db.close()
+  }
+  const api = createAkapen(
+    { kanbanRoot: path.join(root, 'kanban') },
+    {
+      runKanban: async (args) => {
+        calls.push(args)
+        if (args[0] === 'unblock') setStatus('ready')
+        return { code: 0, out: 'ok' }
+      },
+    },
+  )
+
+  const first = await api.answer('t_test1', { answers: [{ id: 'q1', choice: 'A' }], by: 'hajime' })
+  assert.equal(first.ok, true)
+  assert.equal(first.moved, 'ready')
+  const callsAfterFirst = calls.length
+
+  // 反映待ち（ready）へ別の回答 → 拒否。comment も unblock も呼ばない
+  const second = await api.answer('t_test1', { answers: [{ id: 'q1', choice: 'B' }], by: 'hajime' })
+  assert.equal(second.ok, false)
+  assert.equal(second.code, 'NOT_WAITING')
+  assert.equal(second.status, 'ready')
+  assert.equal(calls.length, callsAfterFirst)
+
+  const saved = JSON.parse(fs.readFileSync(path.join(workdir, 'sheets', 'cockpit-03-1.answer.json'), 'utf8'))
+  assert.equal(saved.answers[0].choice, 'A', 'answer.json は上書きされない')
+
+  // 完了（done）も同じ扱い
+  setStatus('done')
+  const third = await api.answer('t_test1', { answers: [{ id: 'q1', choice: 'C' }], by: 'hajime' })
+  assert.equal(third.ok, false)
+  assert.equal(third.code, 'NOT_WAITING')
+  assert.equal(third.status, 'done')
+  assert.equal(calls.length, callsAfterFirst)
 })

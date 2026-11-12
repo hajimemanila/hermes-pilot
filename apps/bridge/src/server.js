@@ -378,7 +378,8 @@ async function handleApi(req, res, url) {
         choiceCount: Array.isArray(body?.answers) ? body.answers.length : 0,
         ok: Boolean(r.ok),
       })
-      return sendJson(res, r.ok ? 200 : 400, r)
+      // 赤ペン待ち以外への送信は 409（状態の衝突）として返す。他の失敗は 400。
+      return sendJson(res, r.ok ? 200 : r.code === 'NOT_WAITING' ? 409 : 400, r)
     }
     if (c === 'reopen' && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {

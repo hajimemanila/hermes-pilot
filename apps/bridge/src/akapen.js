@@ -105,7 +105,7 @@ export function createAkapen(cfg, opts = {}) {
       return db
         .prepare(
           `SELECT id, title, body, status, assignee, priority,
-                  created_at, started_at, completed_at, result
+                  created_at, started_at, completed_at, result, last_heartbeat_at
              FROM tasks
             WHERE status IN ('review','ready','running','blocked','done')
             ORDER BY CASE status WHEN 'review' THEN 0 WHEN 'ready' THEN 1 WHEN 'running' THEN 2
@@ -116,6 +116,33 @@ export function createAkapen(cfg, opts = {}) {
         .all(limit)
     } catch {
       return []
+    } finally {
+      db.close()
+    }
+  }
+
+  /** 各タスクの最新イベント（進行が見えるように）。 */
+  function lastEvents(ids) {
+    if (!ids.length) return {}
+    let db
+    try {
+      db = openDb()
+    } catch {
+      return {}
+    }
+    try {
+      const placeholders = ids.map(() => '?').join(',')
+      const rs = db
+        .prepare(
+          `SELECT task_id, kind, created_at FROM task_events
+            WHERE id IN (SELECT MAX(id) FROM task_events WHERE task_id IN (${placeholders}) GROUP BY task_id)`,
+        )
+        .all(...ids)
+      const out = {}
+      for (const r of rs) out[r.task_id] = { kind: r.kind, at: Number(r.created_at ?? 0) * 1000 }
+      return out
+    } catch {
+      return {}
     } finally {
       db.close()
     }
@@ -162,7 +189,9 @@ export function createAkapen(cfg, opts = {}) {
   /** 一覧（PWA の赤ペンタブ）。 */
   function list(limit = 80) {
     const out = []
-    for (const r of rows(limit)) {
+    const base = rows(limit)
+    const events = lastEvents(base.map((r) => r.id))
+    for (const r of base) {
       const ak = parseAkapenLine(r.body)
       if (!ak) continue
       const sheetAbs = ak.sheet ? resolveInside(ak.sheet) : null
@@ -179,6 +208,12 @@ export function createAkapen(cfg, opts = {}) {
         createdAt: Number(r.created_at ?? 0) * 1000,
         completedAt: r.completed_at ? Number(r.completed_at) * 1000 : null,
         result: r.result ? String(r.result).slice(0, 400) : null,
+        progress: {
+          lastEvent: events[r.id]?.kind ?? null,
+          lastEventAt: events[r.id]?.at ?? null,
+          heartbeatAt: r.last_heartbeat_at ? Number(r.last_heartbeat_at) * 1000 : null,
+          startedAt: r.started_at ? Number(r.started_at) * 1000 : null,
+        },
         akapen: {
           label: ak.label ?? null,
           round: Number(ak.round ?? 1),
@@ -278,8 +313,15 @@ export function createAkapen(cfg, opts = {}) {
         output: moved.out.slice(0, 400),
       }
     }
-    if (b.status === 'done') {
-      return { ok: false, code: 'ALREADY_DONE', message: 'このタスクは完了済みです' }
+    // 回答は「赤ペン待ち（blocked）」のときだけ受け付ける。ready / running / review / done へ
+    // 送ると answer.json を上書きし、comment が二重に付く（赤ペンシートの付録 1-2）。
+    if (b.status !== 'blocked') {
+      return {
+        ok: false,
+        code: 'NOT_WAITING',
+        status: b.status,
+        message: `赤ペン待ちではありません（現在: ${b.status}）`,
+      }
     }
 
     const record = {

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api.js'
 import { Sheet, relTime } from '../components/Ui.jsx'
+import { doneHint, groupItems, isWaiting, nextWaiting } from '../lib/akapenView.js'
 
 /**
  * 赤ペン（akapen）ビュー。
@@ -11,14 +12,48 @@ import { Sheet, relTime } from '../components/Ui.jsx'
  *
  * 送信は `POST /api/akapen/:id/answer` のみ。サーバが回答ファイルを書き、
  * カンバンを comment → unblock するので、この画面は状態を推測しない。
+ *
+ * 表示仕様は `docs/AKAPEN-VIEW.md`（赤ペン akapen-view-01 の回答で確定）:
+ * 既定は「判断待ち」だけを見せ、送信後は次の判断待ちへ移る。
  */
 
 const STATUS_LABEL = {
-  review: '赤ペン待ち',
+  review: 'レビュー中',
   ready: '反映待ち',
   running: '生成中',
   blocked: '停止',
   done: '完了',
+}
+
+const TABS = [
+  { id: 'waiting', label: '判断待ち' },
+  { id: 'active', label: '進行中' },
+  { id: 'done', label: '完了' },
+]
+
+/** 進行状況の1行（「動いているのか」を数字で示す）。 */
+function progressText(item) {
+  const pr = item.progress || {}
+  const now = Date.now()
+  const ago = (ts) => {
+    if (!ts) return null
+    const s = Math.max(0, Math.round((now - ts) / 1000))
+    if (s < 90) return `${s}秒前`
+    if (s < 3600) return `${Math.round(s / 60)}分前`
+    return `${Math.round(s / 3600)}時間前`
+  }
+  if (item.status === 'running') {
+    const beat = ago(pr.heartbeatAt)
+    const since = ago(pr.startedAt)
+    return `反映中${since ? `（開始 ${since}）` : ''}${beat ? ` ・ 心拍 ${beat}` : ''}`
+  }
+  if (item.status === 'ready') return '反映待ち（worker の起動待ち）'
+  if (item.status === 'blocked' && item.akapen?.label) {
+    const at = ago(pr.lastEventAt)
+    return `赤ペン待ち${at ? ` ・ 提示 ${at}` : ''}`
+  }
+  if (item.status === 'done') return `完了${pr.lastEventAt ? ` ・ ${ago(pr.lastEventAt)}` : ''}`
+  return ''
 }
 
 function Chip({ tone, children }) {
@@ -27,7 +62,7 @@ function Chip({ tone, children }) {
 
 function ItemRow({ item, onOpen }) {
   const ak = item.akapen || {}
-  const waiting = item.status === 'review' || (item.status === 'blocked' && Boolean(ak.label))
+  const waiting = isWaiting(item)
   const age = item.completedAt || item.createdAt ? relTime(item.completedAt || item.createdAt) : ''
   return (
     <button className="ak-row" onClick={() => onOpen(item)} type="button">
@@ -40,6 +75,7 @@ function ItemRow({ item, onOpen }) {
           {ak.mode && ak.mode !== 'standard' ? <span>{ak.mode}</span> : null}
           <span>{age}</span>
         </div>
+        {progressText(item) ? <div className="ak-row-phase">{progressText(item)}</div> : null}
       </div>
       <div className="ak-row-side">
         <Chip tone={waiting ? 'warn' : item.status === 'done' ? 'good' : ''}>
@@ -82,7 +118,7 @@ export function parsePastedReply(text) {
   return out
 }
 
-function StandardForm({ item, data, onSubmitted, notify }) {
+function StandardForm({ item, data, onSubmitted }) {
   const questions = data.questions || []
   const [answers, setAnswers] = useState(() => {
     const init = {}
@@ -112,8 +148,6 @@ function StandardForm({ item, data, onSubmitted, notify }) {
         by: 'mobile',
       }
       const r = await api(`/api/akapen/${item.id}/answer`, { method: 'POST', body: payload })
-      if (r?.duplicate) notify?.('同じ回答が既に保存されています')
-      else notify?.(`回答を送信しました（${r?.moved || ''}）`)
       onSubmitted?.(r)
     } catch (e) {
       setError(e?.message || '送信できませんでした')
@@ -187,7 +221,7 @@ function StandardForm({ item, data, onSubmitted, notify }) {
   )
 }
 
-function IframeForm({ item, notify, onSubmitted }) {
+function IframeForm({ item, onSubmitted }) {
   const [pasted, setPasted] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
@@ -199,7 +233,6 @@ function IframeForm({ item, notify, onSubmitted }) {
     try {
       const parsed = parsePastedReply(pasted)
       const r = await api(`/api/akapen/${item.id}/answer`, { method: 'POST', body: { ...parsed, by: 'mobile' } })
-      notify?.(r?.duplicate ? '同じ回答が既に保存されています' : '回答を送信しました')
       onSubmitted?.(r)
     } catch (e) {
       setError(e?.message || '送信できませんでした')
@@ -233,8 +266,42 @@ function IframeForm({ item, notify, onSubmitted }) {
   )
 }
 
+/** 赤ペン待ち以外（進行中・完了）の読み取り専用ビュー。回答フォームは出さない。 */
+function ReadOnlyDetail({ item }) {
+  const ak = item.akapen || {}
+  const label = STATUS_LABEL[item.status] || item.status
+  const answered = ak.answeredAt ? relTime(Date.parse(ak.answeredAt)) : null
+  return (
+    <div className="ak-form">
+      <div className="ak-readonly">
+        <Chip tone={item.status === 'done' ? 'good' : ''}>{label}</Chip>
+        <span className="ak-label">{ak.label || item.id}</span>
+        {ak.round ? <span>r{ak.round}</span> : null}
+        {ak.questions ? <span>{ak.questions}問</span> : null}
+        {answered ? <span>回答 {answered}</span> : null}
+        {item.completedAt ? <span>完了 {relTime(item.completedAt)}</span> : null}
+      </div>
+      <p className="ak-hint">
+        赤ペンを送れるのは「赤ペン待ち」のシートだけです（このシートは{label}）。
+        {item.result ? (
+          <>
+            <br />
+            {item.result}
+          </>
+        ) : null}
+      </p>
+      <div className="ak-actions">
+        <a className="ak-link" href={`/api/akapen/${item.id}/sheet`} target="_blank" rel="noreferrer">
+          シート全体を開く
+        </a>
+      </div>
+    </div>
+  )
+}
+
 export function AkapenPane({ notify }) {
   const [state, setState] = useState({ loading: true, items: [], error: null })
+  const [tab, setTab] = useState('waiting')
   const [open, setOpen] = useState(null)
   const [data, setData] = useState(null)
   const [dataError, setDataError] = useState(null)
@@ -242,9 +309,12 @@ export function AkapenPane({ notify }) {
   const load = useCallback(async () => {
     try {
       const r = await api('/api/akapen')
-      setState({ loading: false, items: r.items || [], error: null })
+      const items = r.items || []
+      setState({ loading: false, items, error: null })
+      return items
     } catch (e) {
       setState({ loading: false, items: [], error: e?.message || '取得できません' })
+      return []
     }
   }, [])
 
@@ -256,20 +326,15 @@ export function AkapenPane({ notify }) {
     return () => clearInterval(id)
   }, [load])
 
-  const groups = useMemo(() => {
-    const isWaiting = (i) => i.status === 'review' || (i.status === 'blocked' && Boolean(i.akapen?.label))
-    const review = state.items.filter(isWaiting)
-    const active = state.items.filter(
-      (i) => (i.status === 'ready' || i.status === 'running' || i.status === 'blocked') && !isWaiting(i),
-    )
-    const done = state.items.filter((i) => i.status === 'done').slice(0, 8)
-    return { review, active, done }
-  }, [state.items])
+  const groups = useMemo(() => groupItems(state.items), [state.items])
+  const counts = { waiting: groups.waiting.length, active: groups.active.length }
 
   async function openItem(item) {
     setOpen(item)
     setData(null)
     setDataError(null)
+    // 進行中・完了は読むだけ（bridge の answer() も赤ペン待ち以外は 409 で拒否する）
+    if (!isWaiting(item)) return
     const ak = item.akapen || {}
     if (ak.mode && ak.mode !== 'standard') return
     try {
@@ -280,13 +345,39 @@ export function AkapenPane({ notify }) {
     }
   }
 
+  function closeSheet() {
+    setOpen(null)
+    setData(null)
+    setDataError(null)
+  }
+
+  /**
+   * 送信後（赤ペン回答 Q2-B）: 閉じずに次の判断待ちを開く。
+   * 残りが無いときだけ閉じる。送れた実感はトーストで補う。
+   */
+  async function handleSubmitted(answeredId, result) {
+    const items = await load()
+    const head = result?.duplicate ? '同じ回答が既に保存されています' : '回答を送信しました'
+    const next = nextWaiting(items, answeredId)
+    if (next) {
+      await openItem(next)
+      notify?.(`${head} — 次の判断待ちを開きました`)
+      return
+    }
+    setTab('waiting')
+    closeSheet()
+    notify?.(`${head} — 判断待ちは残っていません`)
+  }
+
+  const hasItems = state.items.length > 0
+
   return (
     <div className="pane ak-page">
       <div className="ak-head">
         <div>
           <div className="ak-title">赤ペン</div>
           <div className="ak-sub">
-            {groups.review.length ? `${groups.review.length} 件の判断待ち` : '判断待ちはありません'}
+            {counts.waiting ? `${counts.waiting} 件の判断待ち` : '判断待ちはありません'}
           </div>
         </div>
         <button className="btn" type="button" onClick={load}>
@@ -294,10 +385,26 @@ export function AkapenPane({ notify }) {
         </button>
       </div>
 
+      <div className="chips ak-tabs" role="tablist">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.id}
+            className={`chip${tab === t.id ? ' on' : ''}`}
+            onClick={() => setTab(t.id)}
+          >
+            {t.label}
+            {t.id !== 'done' && counts[t.id] ? ` ${counts[t.id]}` : null}
+          </button>
+        ))}
+      </div>
+
       {state.error ? <div className="ak-error">{state.error}</div> : null}
       {state.loading ? <div className="empty">読み込み中…</div> : null}
 
-      {!state.loading && !state.items.length ? (
+      {!state.loading && !hasItems ? (
         <div className="empty">
           まだシートがありません。
           <br />
@@ -305,67 +412,60 @@ export function AkapenPane({ notify }) {
         </div>
       ) : null}
 
-      {groups.review.length ? (
-        <section className="ak-group">
-          <div className="ak-group-title">判断待ち</div>
-          {groups.review.map((it) => (
-            <ItemRow key={it.id} item={it} onOpen={openItem} />
-          ))}
-        </section>
+      {!state.loading && hasItems && tab === 'waiting' ? (
+        groups.waiting.length ? (
+          <section className="ak-group">
+            {groups.waiting.map((it) => (
+              <ItemRow key={it.id} item={it} onOpen={openItem} />
+            ))}
+          </section>
+        ) : (
+          <div className="empty">
+            判断待ちはありません。
+            <br />
+            進行中 {counts.active} 件 / 完了 {groups.doneTotal} 件
+          </div>
+        )
       ) : null}
 
-      {groups.active.length ? (
-        <section className="ak-group">
-          <div className="ak-group-title">進行中</div>
-          {groups.active.map((it) => (
-            <ItemRow key={it.id} item={it} onOpen={openItem} />
-          ))}
-        </section>
+      {!state.loading && hasItems && tab === 'active' ? (
+        groups.active.length ? (
+          <section className="ak-group">
+            {groups.active.map((it) => (
+              <ItemRow key={it.id} item={it} onOpen={openItem} />
+            ))}
+          </section>
+        ) : (
+          <div className="empty">進行中はありません。</div>
+        )
       ) : null}
 
-      {groups.done.length ? (
-        <details className="ak-group">
-          <summary className="ak-group-title">完了 ({groups.done.length})</summary>
-          {groups.done.map((it) => (
-            <ItemRow key={it.id} item={it} onOpen={openItem} />
-          ))}
-        </details>
+      {!state.loading && hasItems && tab === 'done' ? (
+        <>
+          <div className="ak-group-title">{doneHint(groups.doneTotal)}</div>
+          {groups.done.length ? (
+            <section className="ak-group">
+              {groups.done.map((it) => (
+                <ItemRow key={it.id} item={it} onOpen={openItem} />
+              ))}
+            </section>
+          ) : null}
+        </>
       ) : null}
 
       {open ? (
-        <Sheet
-          title={(open.akapen?.title || open.title) + ''}
-          onClose={() => {
-            setOpen(null)
-            setData(null)
-          }}
-        >
-          {dataError ? <div className="ak-error">{dataError} — シートを直接開いてください</div> : null}
-          {data?.questions?.length ? (
-            <StandardForm
-              item={open}
-              data={data}
-              notify={notify}
-              onSubmitted={() => {
-                load()
-                setTimeout(() => {
-                  setOpen(null)
-                  setData(null)
-                }, 600)
-              }}
-            />
+        <Sheet title={(open.akapen?.title || open.title) + ''} onClose={closeSheet}>
+          {isWaiting(open) ? (
+            <>
+              {dataError ? <div className="ak-error">{dataError} — シートを直接開いてください</div> : null}
+              {data?.questions?.length ? (
+                <StandardForm item={open} data={data} onSubmitted={(r) => handleSubmitted(open.id, r)} />
+              ) : (
+                <IframeForm item={open} onSubmitted={(r) => handleSubmitted(open.id, r)} />
+              )}
+            </>
           ) : (
-            <IframeForm
-              item={open}
-              notify={notify}
-              onSubmitted={() => {
-                load()
-                setTimeout(() => {
-                  setOpen(null)
-                  setData(null)
-                }, 600)
-              }}
-            />
+            <ReadOnlyDetail item={open} />
           )}
         </Sheet>
       ) : null}
