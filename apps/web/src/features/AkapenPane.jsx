@@ -144,6 +144,7 @@ function StandardForm({ item, data, onSubmitted, notify }) {
                     <b>{o.id}</b>
                     <span>{o.label}</span>
                     {o.recommended ? <Chip tone="rec">推奨</Chip> : null}
+                    <span className="ak-opt-check" aria-hidden="true">✓</span>
                   </span>
                   {o.detail ? <span className="ak-opt-detail">{o.detail}</span> : null}
                   {o.thumb ? <img className="ak-opt-thumb" src={`/api/akapen/${item.id}/thumb/${o.thumb}`} alt="" /> : null}
@@ -177,8 +178,8 @@ function StandardForm({ item, data, onSubmitted, notify }) {
         <button className="btn primary" type="button" disabled={busy} onClick={submit}>
           {busy ? '送信中…' : '赤ペンを送る'}
         </button>
-        <a className="btn" href={`/api/akapen/${item.id}/sheet`} target="_blank" rel="noreferrer">
-          シート全体
+        <a className="ak-link" href={`/api/akapen/${item.id}/sheet`} target="_blank" rel="noreferrer">
+          シート全体を開く
         </a>
       </div>
       <p className="ak-hint">未選択は推奨案で確定します。送信するとカンバンが ready に戻り、agent が反映します。</p>
