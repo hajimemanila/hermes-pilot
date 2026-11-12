@@ -311,9 +311,6 @@ function StandardForm({ item, data, onSubmitted }) {
         <button className="btn primary" type="button" disabled={busy} onClick={submit}>
           {busy ? '送信中…' : '赤ペンを送る'}
         </button>
-        <a className="ak-link" href={`/api/akapen/${item.id}/sheet`} target="_blank" rel="noreferrer">
-          シート全体を開く
-        </a>
       </div>
       <p className="ak-hint">未選択は推奨案で確定します。送信するとカンバンが ready に戻り、agent が反映します。</p>
       {zoom
@@ -410,6 +407,24 @@ function IframeForm({ item, onSubmitted, notify }) {
   )
 }
 
+/**
+ * 詳細シート（`/api/akapen/:id/sheet`）への導線。**ドロワーの先頭に固定して出す**。
+ *
+ * 判断待ちのドロワーはネイティブの設問フォームが主で、前提・挿絵・前回の回答といった
+ * シートの全体像は見えない。リンクをフォームの末尾に置くと、設問が増えた時点で
+ * スクロールの下に隠れて「導線が無い」と読める（実測: Q3+挿絵で 390x844 の1画面を超える）。
+ * 完了（ReadOnlyDetail）でも同じ位置に出す — 同じ操作は同じ場所に置く。
+ */
+function SheetLink({ item }) {
+  return (
+    <div className="ak-sheetlink">
+      <a className="ak-link" href={`/api/akapen/${item.id}/sheet`} target="_blank" rel="noreferrer">
+        シート全体を開く ↗
+      </a>
+    </div>
+  )
+}
+
 /** 赤ペン待ち以外（進行中・完了）の読み取り専用ビュー。回答フォームは出さない。 */
 function ReadOnlyDetail({ item }) {
   const ak = item.akapen || {}
@@ -434,11 +449,6 @@ function ReadOnlyDetail({ item }) {
           </>
         ) : null}
       </p>
-      <div className="ak-actions">
-        <a className="ak-link" href={`/api/akapen/${item.id}/sheet`} target="_blank" rel="noreferrer">
-          シート全体を開く
-        </a>
-      </div>
     </div>
   )
 }
@@ -831,6 +841,7 @@ export function AkapenPane({ notify }) {
 
       {open && open.akapen?.mode !== 'annotation' ? (
         <Sheet title={(open.akapen?.title || open.title) + ''} onClose={closeSheet}>
+          <SheetLink item={open} />
           {isWaiting(open) ? (
             <>
               {dataError ? <div className="ak-error">{dataError} — シートを直接開いてください</div> : null}
