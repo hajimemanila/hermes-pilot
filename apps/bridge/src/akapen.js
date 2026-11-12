@@ -569,6 +569,44 @@ export function createAkapen(cfg, opts = {}) {
   }
 
 
+
+  /**
+   * 注釈の反映先として選べるリポジトリ（Git Ops の repos.json が唯一の一覧）。
+   * 自由入力は受けない（存在しないパスへ誤って起票しないため）。
+   */
+  function targets() {
+    const root = path.dirname(cfg.kanbanRoot || path.join(os.homedir(), '.hermes', 'kanban'))
+    const cfgPath = path.join(root, 'plugins', 'git-ops', 'config', 'repos.json')
+    let data = null
+    try {
+      data = JSON.parse(fs.readFileSync(cfgPath, 'utf8'))
+    } catch {
+      return []
+    }
+    const list = Array.isArray(data) ? data : data?.repos || []
+    const out = []
+    for (const r of list) {
+      const raw = String(r?.path || '')
+      if (!raw) continue
+      const abs = path.resolve(raw.replace(/^~/, os.homedir()))
+      // ホームディレクトリ自体や .git の無いものは候補にしない
+      if (abs === os.homedir()) continue
+      if (!fs.existsSync(path.join(abs, '.git'))) continue
+      out.push({ id: String(r.id || ''), label: String(r.label || r.id || abs), path: abs })
+    }
+    out.sort((a, b) => (a.id === 'hermes-mobile-pwa' ? -1 : b.id === 'hermes-mobile-pwa' ? 1 : a.label.localeCompare(b.label)))
+    return out
+  }
+
+  /** target を登録済みリポジトリに解決する（未登録なら null）。 */
+  function resolveTarget(raw) {
+    const list = targets()
+    if (!list.length) return null
+    const want = raw ? path.resolve(String(raw).replace(/^~/, os.homedir())) : null
+    if (want) return list.find((x) => x.path === want) || null
+    return list.find((x) => x.id === 'hermes-mobile-pwa') || list[0]
+  }
+
   /** 注釈の下地にできる画像（library/** と shots/*.png|jpg、注釈済みは除く）。 */
   function library(limit = 60) {
     const root = workdir()
@@ -672,8 +710,17 @@ export function createAkapen(cfg, opts = {}) {
     fs.mkdirSync(path.dirname(shotAbs), { recursive: true })
     fs.writeFileSync(shotAbs, buf)
 
-    // 注釈の反映先。既定はこの PWA（画面のスクショを注釈する用途が最も多い）
-    const target = String(payload?.target || process.env.AKAPEN_DEFAULT_TARGET || path.join(os.homedir(), 'Projects', 'hermes-mobile-pwa'))
+    // 注釈の反映先は登録済みリポジトリから選ぶ（自由入力は受けない）
+    const picked = resolveTarget(payload?.target)
+    if (!picked) {
+      return {
+        ok: false,
+        code: 'UNKNOWN_TARGET',
+        message: '対象リポジトリは Git Ops に登録済みのものから選んでください',
+        targets: targets().map((x) => ({ id: x.id, label: x.label })),
+      }
+    }
+    const target = picked.path
     const body = `[akapen] label=${label} round=1 mode=annotation image=${relShot} target=${target}`
     // assignee が無いと dispatcher が拾わない（実測: ready のまま止まる）
     const created = await runKanban(['create', title, '--body', body, '--assignee', 'mobile'])
@@ -693,5 +740,5 @@ export function createAkapen(cfg, opts = {}) {
     }
   }
 
-  return { board, workdir, list, sheetHtml, sheetData, answer, reopen, sessionId, image, annotation, saveAnnotation, library, libraryFile, createFromImage }
+  return { board, workdir, list, sheetHtml, sheetData, answer, reopen, sessionId, image, annotation, saveAnnotation, library, libraryFile, createFromImage, targets }
 }

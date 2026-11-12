@@ -421,6 +421,9 @@ async function handleApi(req, res, url) {
     // /api/akapen/library            … 注釈の下地にできる画像（library + shots）
     // /api/akapen/library/file?path= … その画像
     // /api/akapen/from-image         … 画像から注釈タスクを1件作る
+    if (b === 'targets') {
+      return sendJson(res, 200, { targets: akapen.targets() })
+    }
     if (b === 'library' && !c) {
       return sendJson(res, 200, { items: akapen.library(Number(url.searchParams.get('limit') ?? 60)) })
     }

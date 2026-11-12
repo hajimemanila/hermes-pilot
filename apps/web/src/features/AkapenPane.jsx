@@ -416,6 +416,7 @@ function downscaleFile(file) {
 /** 「＋ 注釈」: 端末の画像 / library・直近スクショ から注釈タスクを作る。 */
 function NewAnnotationSheet({ onCreated, onClose, notify }) {
   const [items, setItems] = useState(null)
+  const [targets, setTargets] = useState([])
   const [target, setTarget] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
@@ -428,6 +429,14 @@ function NewAnnotationSheet({ onCreated, onClose, notify }) {
         setItems([])
         setError(e?.message || '一覧を取得できません')
       })
+    api('/api/akapen/targets')
+      .then((r) => {
+        const list = r.targets || []
+        setTargets(list)
+        // 既定は hermes-mobile-pwa（サーバ側で先頭に並ぶ）
+        setTarget((prev) => prev || list[0]?.path || '')
+      })
+      .catch(() => setTargets([]))
   }, [])
 
   async function create(body) {
@@ -466,15 +475,16 @@ function NewAnnotationSheet({ onCreated, onClose, notify }) {
           端末の画像（ギャラリー / カメラ）
         </button>
         <input ref={fileRef} type="file" accept="image/*" hidden onChange={onPick} />
-        <input
-          className="ak-new-target"
-          value={target}
-          onChange={(e) => setTarget(e.target.value)}
-          placeholder="対象リポジトリ（既定: ~/Projects/hermes-mobile-pwa）"
-          autoCapitalize="off"
-          autoCorrect="off"
-          spellCheck={false}
-        />
+        <label className="ak-new-target-row">
+          <span>対象</span>
+          <select className="ak-new-target" value={target} onChange={(e) => setTarget(e.target.value)}>
+            {targets.map((tg) => (
+              <option key={tg.path} value={tg.path}>
+                {tg.label}（{tg.id}）
+              </option>
+            ))}
+          </select>
+        </label>
         {error ? <div className="ak-error">{error}</div> : null}
         <div className="ak-new-sub">library と直近のスクショ（{items ? items.length : '…'} 件）</div>
         {items && !items.length ? <div className="ak-worker-empty">まだ画像がありません</div> : null}

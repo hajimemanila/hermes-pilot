@@ -283,6 +283,13 @@ test('saveAnnotation は画像を保存して unblock を呼ぶ（冪等）', as
 
 test('createFromImage は assignee と target を付けて起票し、blocked にする', async () => {
   const { root } = tempBoard()
+  const repoA = path.join(root, 'repo-a')
+  fs.mkdirSync(path.join(repoA, '.git'), { recursive: true })
+  fs.mkdirSync(path.join(root, 'plugins', 'git-ops', 'config'), { recursive: true })
+  fs.writeFileSync(
+    path.join(root, 'plugins', 'git-ops', 'config', 'repos.json'),
+    JSON.stringify({ repos: [{ id: 'hermes-mobile-pwa', label: 'Mobile', path: repoA }] }),
+  )
   const calls = []
   const api = createAkapen(
     { kanbanRoot: path.join(root, 'kanban') },
@@ -295,11 +302,40 @@ test('createFromImage は assignee と target を付けて起票し、blocked �
     },
   )
   const png = 'data:image/png;base64,' + Buffer.from('x').toString('base64')
-  const r = await api.createFromImage({ source: 'upload', image: png, title: 'gap test', target: '/tmp/repo' })
+  const r = await api.createFromImage({ source: 'upload', image: png, title: 'gap test', target: repoA })
   assert.equal(r.ok, true)
   assert.equal(r.taskId, 't_abcdef12')
   const createArgs = calls.find((a) => a[0] === 'create')
   assert.ok(createArgs.includes('--assignee'), 'assignee が無いと dispatcher が拾わない')
-  assert.ok(createArgs.join(' ').includes('target=/tmp/repo'))
+  assert.ok(createArgs.join(' ').includes(`target=${repoA}`))
   assert.deepEqual(calls.find((a) => a[0] === 'block').slice(0, 3), ['block', 't_abcdef12', '注釈待ち（画像から作成）'])
+})
+
+test('targets は Git Ops の登録リポジトリだけを返し、未登録の target は拒否する', async () => {
+  const { root } = tempBoard()
+  const repoA = path.join(root, 'repo-a')
+  fs.mkdirSync(path.join(repoA, '.git'), { recursive: true })
+  fs.mkdirSync(path.join(root, 'plugins', 'git-ops', 'config'), { recursive: true })
+  fs.writeFileSync(
+    path.join(root, 'plugins', 'git-ops', 'config', 'repos.json'),
+    JSON.stringify({ repos: [{ id: 'hermes-mobile-pwa', label: 'Mobile', path: repoA }, { id: 'home', label: 'Home', path: root }] }),
+  )
+  const calls = []
+  const api = createAkapen(
+    { kanbanRoot: path.join(root, 'kanban') },
+    { runKanban: async (a) => { calls.push(a); return a[0] === 'create' ? { code: 0, out: 'Created t_11112222' } : { code: 0, out: 'ok' } } },
+  )
+  const list = api.targets()
+  assert.equal(list.length, 1, 'git の無いパスとホームは除外')
+  assert.equal(list[0].id, 'hermes-mobile-pwa')
+
+  const png = 'data:image/png;base64,' + Buffer.from('x').toString('base64')
+  const bad = await api.createFromImage({ source: 'upload', image: png, target: '/tmp/not-registered' })
+  assert.equal(bad.ok, false)
+  assert.equal(bad.code, 'UNKNOWN_TARGET')
+
+  const good = await api.createFromImage({ source: 'upload', image: png })
+  assert.equal(good.ok, true)
+  const createArgs = calls.find((a) => a[0] === 'create').join(' ')
+  assert.ok(createArgs.includes(`target=${repoA}`), '既定の target が本文に入る')
 })

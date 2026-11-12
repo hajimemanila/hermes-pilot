@@ -1605,3 +1605,6 @@ button.stat:active {
   width: 100%; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--line);
   background: var(--bg-2); color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
 }
+.ak-new-target-row { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
+.ak-new-target-row > span { flex: none; }
+.ak-new-target { flex: 1 1 auto; min-width: 0; }
