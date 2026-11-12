@@ -358,3 +358,11 @@ test('targets は Git Ops の登録リポジトリだけを返し、未登録の
   const createArgs = calls.find((a) => a[0] === 'create').join(' ')
   assert.ok(createArgs.includes(`target=${repoA}`), '既定の target が本文に入る')
 })
+
+test('image=<*.html> は sheet の別名として解釈する（NO_SHEET の再発防止）', () => {
+  const a = parseAkapenLine('[akapen] label=s-01 round=1 mode=sheet image=sheets/s-01-1.html')
+  assert.equal(a.sheet, 'sheets/s-01-1.html')
+  const b = parseAkapenLine('[akapen] label=a-01 round=1 mode=annotation image=shots/a-01-1.png')
+  assert.equal(b.sheet, undefined, '画像は sheet にしない')
+  assert.equal(b.image, 'shots/a-01-1.png')
+})

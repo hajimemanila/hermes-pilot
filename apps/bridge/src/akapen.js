@@ -29,6 +29,9 @@ export function parseAkapenLine(body) {
     const idx = token.indexOf('=')
     if (idx > 0) out[token.slice(0, idx)] = token.slice(idx + 1)
   }
+  // シートは `sheet=` が正だが、`image=<....html>` と書かれた実例がある（NO_SHEET になった）。
+  // html を指しているときだけ別名として受ける。
+  if (!out.sheet && out.image && /\.html?$/i.test(out.image)) out.sheet = out.image
   if (!out.sheet && !out.label) return null
   if (out.sheet && !isSafeRel(out.sheet)) return null
   return out
