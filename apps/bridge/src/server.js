@@ -863,7 +863,8 @@ async function proxyChat(client) {
   }
 
   try {
-    upstream = new WebSocket(await hermes.wsUrl('/api/ws'), { headers: { Origin: cfg.hermesBase } })
+    // 端末が繋ぐたびにトークンを取り直す（gateway 再起動後の 403 を自己回復）
+    upstream = new WebSocket(await hermes.wsUrl('/api/ws', { fresh: true }), { headers: { Origin: cfg.hermesBase } })
   } catch (err) {
     client.send(JSON.stringify({ jsonrpc: '2.0', method: 'event', params: { type: 'bridge.error', payload: { message: String(err?.message ?? err) } } }))
     client.close(1011)

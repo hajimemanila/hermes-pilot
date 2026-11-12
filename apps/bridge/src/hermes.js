@@ -69,13 +69,15 @@ export function createHermesClient(cfg) {
       return { status: res.status, data }
     }
     let out = await run(await ensureToken())
-    if (out.status === 401) out = await run(await ensureToken(true))
+    // gateway を再起動するとセッショントークンが回る。401/403 のどちらでも1回だけ取り直す
+    if (out.status === 401 || out.status === 403) out = await run(await ensureToken(true))
     return out
   }
 
   /** WS の上流 URL（トークンはサーバ側で付ける）。 */
-  async function wsUrl(pathname = '/api/ws') {
-    const tok = await ensureToken()
+  async function wsUrl(pathname = '/api/ws', { fresh = false } = {}) {
+    // fresh: gateway 再起動でトークンが回っても、次に繋ぐときに拾い直す
+    const tok = await ensureToken(fresh)
     return `${cfg.hermesBase.replace(/^http/, 'ws')}${pathname}?token=${encodeURIComponent(tok)}`
   }
 
