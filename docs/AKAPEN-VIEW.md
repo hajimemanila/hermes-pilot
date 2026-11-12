@@ -126,3 +126,19 @@ npm test          # node --test apps/bridge/test/*.test.js apps/web/test/*.test.
 - 落とし穴: **`.ak-zoom` を足した直後に dist を作り直さずスクショを撮ると、CSS が無い状態が写る**
   （オーバーレイが暗幕も原寸も効かず、キャプションと「閉じる」だけが地に落ちて見える）。
   見た目を撮る前に必ず `npm run build`。
+
+### 画像一覧の取得日時とリポジトリ名（`.ak-new-cap`）
+
+「＋ 注釈」の下地一覧（`/api/akapen/library`）は同じ画面のショットが並ぶため、どれが
+いつ・どのリポジトリの画像かが画面から読めなかった。各セルの下に 2 行で出す。
+
+- 取得日時 = `mtime`（epoch ms）。一覧の並びもこの値の新しい順。`capturedLabel(ms)` が
+  端末ローカルの `MM/DD HH:mm` に整形する（秒は出さない。3 列に収める）。
+  library への取り込みは `shutil.copy2` なので、元画像の撮影時刻がそのまま残る。
+- リポジトリ名 = **画像にリポジトリ情報は無い**ので bridge が推定する。赤ペンのタスク本文
+  `[akapen] … image=<rel> target=<path>` を集め、`image=` の完全一致 → `label=` の
+  ハイフン境界一致（撮影名は `<label>-<stamp>-<round>.<kind>.png`）→ `target` を
+  Git Ops の登録リポジトリへ**最長一致**で解決（`~/.hermes` のような広いリポジトリがある
+  ため短い一致で打ち切らない）。推定できなければ `—`（`repoLabel()`、実測 33 枚中 4 枚）。
+- `target=` は `~/projects/…` と `~/Projects/…` が混在するので比較は小文字で行う
+  （macOS は大文字小文字を区別しない）。

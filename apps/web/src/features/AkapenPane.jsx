@@ -4,7 +4,7 @@ import { api } from '../api.js'
 import { CloseActions } from '../components/CloseActions.jsx'
 import { Sheet, relTime } from '../components/Ui.jsx'
 import { AnnotationEditor } from './AnnotationEditor.jsx'
-import { doneHint, groupItems, isWaiting, nextWaiting, thumbCaption } from '../lib/akapenView.js'
+import { capturedLabel, doneHint, groupItems, isWaiting, nextWaiting, repoLabel, thumbCaption } from '../lib/akapenView.js'
 
 /**
  * 挿絵の拡大用データ。キャプションは「Q2 A. 塗りのボタン」＋問いの文。
@@ -553,8 +553,17 @@ function NewAnnotationSheet({ onCreated, onClose, notify }) {
               disabled={busy}
               onClick={() => create({ source: it.source === 'capture' ? 'capture' : 'library', path: it.path, title: it.name.replace(/^\d{8}-\d{4}-/, '').replace(/\.[a-z]+$/i, ''), target })}
             >
-              <img src={`/api/akapen/library/file?path=${encodeURIComponent(it.path)}`} alt="" loading="lazy" />
-              <span className="ak-new-tag">{it.source}</span>
+              <span className="ak-new-thumb">
+                <img src={`/api/akapen/library/file?path=${encodeURIComponent(it.path)}`} alt="" loading="lazy" />
+                <span className="ak-new-tag">{it.source}</span>
+              </span>
+              {/* 取得日時とリポジトリ名: 同じ画面のショットが並ぶので、これが無いと選べない */}
+              <span className="ak-new-cap">
+                <span className="ak-new-when">{capturedLabel(it.mtime)}</span>
+                <span className="ak-new-repo" title={`${repoLabel(it.repo)} · ${it.path}`}>
+                  {repoLabel(it.repo)}
+                </span>
+              </span>
             </button>
           ))}
         </div>

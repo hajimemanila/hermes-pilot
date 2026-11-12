@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { DONE_LIMIT, doneHint, groupItems, isWaiting, nextWaiting, thumbCaption } from '../src/lib/akapenView.js'
+import { capturedLabel, DONE_LIMIT, doneHint, groupItems, isWaiting, nextWaiting, repoLabel, thumbCaption } from '../src/lib/akapenView.js'
 
 /** 赤ペン待ち（blocked + label）。 */
 const waitingItem = (id) => ({ id, status: 'blocked', akapen: { label: 'akapen-view-01', round: 1 } })
@@ -71,4 +71,21 @@ test('thumbCaption は欠けた入力でも崩れない（空白を残さない�
   assert.deepEqual(thumbCaption('Q1', { id: 'B' }), { head: 'Q1 B.', sub: '' })
   assert.deepEqual(thumbCaption('', { label: '枠付きカード' }, undefined), { head: '枠付きカード', sub: '' })
   assert.deepEqual(thumbCaption(undefined, undefined, null), { head: '', sub: '' })
+})
+
+// 画像一覧: 同じ画面のショットが並ぶので、取得日時とリポジトリ名が無いと選べない
+test('capturedLabel はローカル時刻の MM/DD HH:mm を返す', () => {
+  assert.equal(capturedLabel(new Date(2026, 10, 12, 21, 5).getTime()), '11/12 21:05')
+  assert.equal(capturedLabel(new Date(2026, 0, 3, 9, 7).getTime()), '01/03 09:07')
+  assert.equal(capturedLabel(undefined), '—')
+  assert.equal(capturedLabel(0), '—')
+  assert.equal(capturedLabel('abc'), '—')
+})
+
+test('repoLabel はリポジトリ id を出し、推定できなければ —', () => {
+  assert.equal(repoLabel({ id: 'hermes-mobile-pwa', label: 'Mobile PWA' }), 'hermes-mobile-pwa')
+  assert.equal(repoLabel({ label: 'Mobile PWA' }), 'Mobile PWA')
+  assert.equal(repoLabel('nanokvm'), 'nanokvm')
+  assert.equal(repoLabel(null), '—')
+  assert.equal(repoLabel({}), '—')
 })

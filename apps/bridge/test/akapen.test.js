@@ -366,3 +366,40 @@ test('image=<*.html> は sheet の別名として解釈する（NO_SHEET の再�
   assert.equal(b.sheet, undefined, '画像は sheet にしない')
   assert.equal(b.image, 'shots/a-01-1.png')
 })
+
+test('library は取得日時とリポジトリ名を返す（画像にリポジトリ情報は無いのでタスクから推定）', () => {
+  const { root, workdir } = tempBoard()
+  const repoA = path.join(root, 'repo-a')
+  fs.mkdirSync(path.join(repoA, '.git'), { recursive: true })
+  fs.mkdirSync(path.join(root, 'plugins', 'git-ops', 'config'), { recursive: true })
+  fs.writeFileSync(
+    path.join(root, 'plugins', 'git-ops', 'config', 'repos.json'),
+    JSON.stringify({ repos: [{ id: 'demo-repo', label: 'Demo', path: repoA }, { id: 'home', label: 'Home', path: root }] }),
+  )
+  // 赤ペンのタスク本文: image= は完全一致、label= は撮影名の前方一致に使う
+  const db = new DatabaseSync(path.join(root, 'kanban', 'boards', 'mobile', 'kanban.db'))
+  db.prepare('UPDATE tasks SET body = ? WHERE id = ?').run(
+    `[akapen] label=cockpit-03 round=1 mode=annotation image=shots/cockpit-03-202611122105-1.png target=${repoA}`,
+    't_test1',
+  )
+  db.close()
+  for (const d of ['shots', path.join('library', 'chat')]) fs.mkdirSync(path.join(workdir, d), { recursive: true })
+  fs.writeFileSync(path.join(workdir, 'shots', 'cockpit-03-202611122105-1.png'), 'x')
+  fs.writeFileSync(path.join(workdir, 'shots', 'cockpit-03-202611122110-1.before.png'), 'x')
+  fs.writeFileSync(path.join(workdir, 'shots', 'unknown-shot.png'), 'x')
+  fs.writeFileSync(path.join(workdir, 'library', 'chat', '20261112-2105-shot.png'), 'x')
+
+  const api = createAkapen({ kanbanRoot: path.join(root, 'kanban') })
+  const byName = Object.fromEntries(api.library(20).map((i) => [i.name, i]))
+
+  assert.deepEqual(byName['cockpit-03-202611122105-1.png'].repo, { id: 'demo-repo', label: 'Demo' }, 'image= の完全一致')
+  assert.deepEqual(byName['cockpit-03-202611122110-1.before.png'].repo, { id: 'demo-repo', label: 'Demo' }, 'label= の前方一致')
+  assert.equal(byName['unknown-shot.png'].repo, null, '手掛かりが無い画像は null（UI は —）')
+  assert.equal(byName['20261112-2105-shot.png'].repo, null)
+  assert.ok(byName['unknown-shot.png'].mtime > 0, '取得日時（mtime, epoch ms）が入る')
+  assert.equal(
+    typeof byName['cockpit-03-202611122105-1.png'].mtime,
+    'number',
+    '取得日時はソートに使う数値のまま返す（整形は PWA）',
+  )
+})

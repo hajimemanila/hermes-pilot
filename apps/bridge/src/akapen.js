@@ -692,10 +692,98 @@ export function createAkapen(cfg, opts = {}) {
     return list.find((x) => x.id === 'hermes-mobile-pwa') || list[0]
   }
 
+  /**
+   * 反映先パス → Git Ops の登録リポジトリ（**最長一致**）。
+   *
+   * macOS は大文字小文字を区別しないので比較は小文字で行う（実測: ボードの
+   * `target=` は `~/projects/hermes-mobile-pwa` と `~/Projects/hermes-mobile-pwa`
+   * が混在している）。`~/.hermes` のような広いリポジトリがあるため、短い一致で
+   * 打ち切らず最長一致を採る。
+   */
+  function repoForTarget(target) {
+    const raw = String(target || '')
+    if (!raw || !(raw.startsWith('/') || raw.startsWith('~'))) return null
+    const abs = path.resolve(raw.replace(/^~/, os.homedir())).toLowerCase()
+    let best = null
+    for (const t of targets()) {
+      const p = t.path.toLowerCase()
+      if (abs !== p && !abs.startsWith(p + path.sep)) continue
+      if (!best || p.length > best.p.length) best = { id: t.id, label: t.label, p }
+    }
+    return best ? { id: best.id, label: best.label } : null
+  }
+
+  /**
+   * 画像 → 反映先リポジトリの手掛かり。
+   *
+   * 画像そのものにリポジトリ情報は無い（library の名前は取得時刻と slug だけ）。
+   * 赤ペンのタスク本文 `[akapen] label=… image=shots/x.png target=<path>` の対応を集め、
+   * `image=` の完全一致 → `label=` の前方一致の順で当てる。撮影名は
+   * `<label>-<stamp>-<round>.<kind>.png`（実測 33 枚中 27 枚がこれで解決）。
+   */
+  function imageRepos() {
+    const byImage = new Map()
+    const byLabel = new Map()
+    let db
+    try {
+      db = openDb()
+    } catch {
+      return { byImage, labels: [] }
+    }
+    let rs = []
+    try {
+      rs = db.prepare("SELECT body FROM tasks WHERE body LIKE '%[akapen]%'").all()
+    } catch {
+      rs = []
+    } finally {
+      db.close()
+    }
+    for (const r of rs) {
+      const ak = parseAkapenLine(r.body)
+      if (!ak?.target) continue
+      if (ak.image) byImage.set(String(ak.image), ak.target)
+      if (ak.label) byLabel.set(String(ak.label), ak.target)
+    }
+    // ラベルは丸ごと一致しないことが多い（`sheet-form` の撮影名に対し
+    // タスクは `sheet-form-202611121013`）。ハイフン境界で切った前方部分も候補にする。
+    const labels = []
+    for (const [label, target] of byLabel) {
+      const parts = label.split('-')
+      const seen = new Set()
+      for (let i = parts.length; i >= 2; i--) {
+        const cand = parts.slice(0, i).join('-')
+        if (seen.has(cand)) continue
+        seen.add(cand)
+        labels.push([cand, target])
+      }
+    }
+    labels.sort((a, b) => b[0].length - a[0].length)
+    return { byImage, labels }
+  }
+
+  /** 撮影名から target を引く（ハイフン境界だけを見る。部分文字列の誤爆を避ける）。 */
+  function labelTarget(name, labels) {
+    const ext = path.extname(name)
+    for (const [label, target] of labels) {
+      if (
+        name === `${label}${ext}` ||
+        name === label ||
+        name.startsWith(`${label}-`) ||
+        name.startsWith(`${label}.`) ||
+        name.includes(`-${label}-`) ||
+        name.includes(`-${label}.`)
+      ) {
+        return target
+      }
+    }
+    return null
+  }
+
   /** 注釈の下地にできる画像（library/** と shots/*.png|jpg、注釈済みは除く）。 */
   function library(limit = 60) {
     const root = workdir()
     const items = []
+    const { byImage, labels } = imageRepos()
     const exts = new Set(['.png', '.jpg', '.jpeg', '.webp'])
     const walk = (dir, source) => {
       let ents = []
@@ -718,12 +806,18 @@ export function createAkapen(cfg, opts = {}) {
         } catch {
           continue
         }
+        const rel = path.relative(root, abs)
+        const target = byImage.get(rel) || labelTarget(e.name, labels)
         items.push({
-          path: path.relative(root, abs),
-          source: source || (path.relative(root, abs).startsWith('shots') ? 'capture' : 'library'),
+          path: rel,
+          source: source || (rel.startsWith('shots') ? 'capture' : 'library'),
           name: e.name,
           bytes: st.size,
+          // 取得日時: 一覧の並びもこれ。library への取り込みは copy2 なので
+          // 元画像の撮影時刻が残る（実測: chat の取り込み 1746 のファイルが 16:42）
           mtime: Math.round(st.mtimeMs),
+          repo: repoForTarget(target), // 分からなければ null（UI は '—'）
+          target: target || null,
         })
       }
     }

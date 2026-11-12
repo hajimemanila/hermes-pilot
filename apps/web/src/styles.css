@@ -1672,10 +1672,19 @@ button.stat:active {
 .ak-new-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .ak-new-item {
   position: relative; padding: 0; border: 1px solid var(--line); border-radius: 10px;
-  overflow: hidden; background: var(--bg-2); aspect-ratio: 3 / 4;
+  overflow: hidden; background: var(--bg-2); display: flex; flex-direction: column; text-align: left;
 }
 /* 下地は判別できることが最優先。phone の縦長ショットを切り落とさず全体を出す */
-.ak-new-item img { width: 100%; height: 100%; object-fit: contain; display: block; background: #0a1417; }
+.ak-new-thumb { position: relative; display: block; }
+.ak-new-item img { width: 100%; aspect-ratio: 3 / 4; object-fit: contain; display: block; background: #0a1417; }
+/* 取得日時とリポジトリ名。3 列に収めるため 9.5px・分まで・あふれは省略 */
+.ak-new-cap {
+  display: flex; flex-direction: column; gap: 1px; padding: 3px 5px 4px;
+  border-top: 1px solid var(--line);
+  font: 9.5px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.ak-new-when { color: var(--muted); font-variant-numeric: tabular-nums; }
+.ak-new-repo { color: var(--accent-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ak-new-tag {
   position: absolute; left: 4px; bottom: 4px; font-size: 9px; padding: 1px 6px; border-radius: 999px;
   background: rgba(6,22,26,.8); color: var(--accent-2); border: 1px solid var(--line-strong);

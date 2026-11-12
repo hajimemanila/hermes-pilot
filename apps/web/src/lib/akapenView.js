@@ -82,3 +82,35 @@ export function thumbCaption(qno, option, questionText) {
   const sub = String(questionText ?? '').trim()
   return { head, sub }
 }
+
+/**
+ * 画像一覧に出す「取得日時」。
+ *
+ * 3 列に並ぶので秒は出さない（分まで）。端末のローカル時刻で出す — UTC にすると
+ * 「いつの画像か」が人に分からない。**一覧はこの値の新しい順**なので、並びの
+ * 意味が読めるように必ず出す。
+ *
+ * @param {number} ms `/api/akapen/library` の `mtime`（epoch ms）
+ * @returns {string} 例: '11/12 21:05'。値が無ければ '—'
+ */
+export function capturedLabel(ms) {
+  const n = Number(ms)
+  if (!Number.isFinite(n) || n <= 0) return '—'
+  const d = new Date(n)
+  const p = (v) => String(v).padStart(2, '0')
+  return `${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+/**
+ * 画像一覧に出す「リポジトリ名」。
+ *
+ * 画像にリポジトリ情報は無いので、bridge が赤ペンのタスク（`[akapen] … target=`）から
+ * 推定した id を出す。推定できない画像（チャットから取り込んだだけ等）は '—'。
+ *
+ * @param {{id?: string, label?: string}|string|null} repo
+ * @returns {string} 例: 'hermes-mobile-pwa' / '—'
+ */
+export function repoLabel(repo) {
+  const id = typeof repo === 'string' ? repo : String(repo?.id ?? repo?.label ?? '')
+  return id.trim() || '—'
+}
