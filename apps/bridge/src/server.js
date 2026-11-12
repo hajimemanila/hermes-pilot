@@ -270,6 +270,16 @@ function injectAkapenBridge(html, taskId) {
       })
       .catch(function (e) { report(false, '送信エラー: ' + e.message); });
   }
+  // アプリ経由で開いているときは「貼り付ける」ではなく「送信」として見せる
+  function relabel() {
+    var b = document.getElementById('genBtn');
+    if (b) b.textContent = '回答を送信';
+    var note = document.querySelector('#akForm p.m');
+    if (note) note.textContent = '選んで［回答を送信］を押すと、そのままアプリに送られます（未選択は推奨案で確定）。';
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', relabel);
+  else relabel();
+
   document.addEventListener('click', function (ev) {
     var t = ev.target;
     if (t && (t.id === 'genBtn' || (t.closest && t.closest('#genBtn')))) setTimeout(submit, 80);
