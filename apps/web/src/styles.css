@@ -693,7 +693,7 @@ button.stat:active {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 12px 12px 4px;
+  padding: 12px 12px 10px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -742,11 +742,15 @@ button.stat:active {
   font-size: 11px;
   color: #6f8f8d;
   padding: 2px 8px 6px;
-  font-style: italic;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  /* 1行の "thinking…" 前提だった。いまはタイマー＋ツール行のブロックを載せるので、
+     nowrap + overflow hidden のままだと高さ8pxに潰れて中身が全部見切れる（実測） */
+  white-space: normal;
+  overflow: visible;
+  font-variant-numeric: tabular-nums;
+  max-width: 100%;
 }
+.thinking > b { font-style: normal; }
+.thinking .tool-rows { margin-top: 5px; }
 
 .usage {
   align-self: flex-end;

@@ -295,8 +295,10 @@ export function ChatPane({ notify }) {
     if (!el) return
     // 検索ヒット位置へ寄せるときは末尾スクロールをしない
     if (readonly?.focusId) return
+    // 進捗行と thinking も「新しい内容」なので追従対象。ここを deps に入れ忘れると
+    // ツール行が増えてもスクロールせず、最後の行が下端（入力欄の裏）に隠れる（実測）。
     if (stickRef.current) el.scrollTop = el.scrollHeight
-  }, [blocks, streaming, readonly?.focusId])
+  }, [blocks, streaming, progress, thinking, readonly?.focusId])
 
   /** ヒットした発言を画面の上寄りに出す（offsetTop ではなく実測差分で合わせる）。 */
   const scrollToHit = useCallback((mid) => {
