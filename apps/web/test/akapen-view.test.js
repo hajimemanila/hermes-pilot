@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { capturedLabel, DONE_LIMIT, doneHint, groupItems, isWaiting, nextWaiting, repoLabel, thumbCaption } from '../src/lib/akapenView.js'
+import { capturedLabel, DONE_LIMIT, doneHint, groupItems, isWaiting, nextWaiting, repoLabel, thumbCaption, waitingCount } from '../src/lib/akapenView.js'
 
 /** 赤ペン待ち（blocked + label）。 */
 const waitingItem = (id) => ({ id, status: 'blocked', akapen: { label: 'akapen-view-01', round: 1 } })
@@ -88,4 +88,17 @@ test('repoLabel はリポジトリ id を出し、推定できなければ —',
   assert.equal(repoLabel('nanokvm'), 'nanokvm')
   assert.equal(repoLabel(null), '—')
   assert.equal(repoLabel({}), '—')
+})
+
+// 下部ナビの丸バッジ（注釈 1377.jpg の赤）: 判断待ちの件数だけを数える
+test('waitingCount はナビのバッジに出す赤ペン待ち件数（0 ならバッジを出さない）', () => {
+  assert.equal(waitingCount([]), 0)
+  assert.equal(waitingCount(undefined), 0)
+  assert.equal(waitingCount([waitingItem('w1')]), 1)
+  assert.equal(waitingCount([waitingItem('w1'), waitingItem('w2')]), 2)
+  // 進行中・完了・label 無しの blocked はバッジに数えない
+  assert.equal(waitingCount([activeItem('a1', 'ready'), activeItem('a2', 'running'), doneItem('d1')]), 0)
+  assert.equal(waitingCount([{ id: 'b1', status: 'blocked', akapen: {} }]), 0)
+  assert.equal(waitingCount([waitingItem('w1'), doneItem('d1'), activeItem('a1', 'review')]), 1)
+  assert.equal(waitingCount([null, waitingItem('w9')]), 1)
 })

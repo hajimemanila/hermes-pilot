@@ -1402,6 +1402,34 @@ button.stat:active {
   color: var(--accent-2);
 }
 
+/* 判断待ちの件数（ティッカー）: アイコン右上の小さい丸に数字。
+   注釈 1377.jpg の赤 =「このナビゲーションに小さい丸に数字」。タブ内の表示は変えない */
+.nav-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nav-badge {
+  position: absolute;
+  top: -5px;
+  right: -9px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--warn);
+  color: #1d1300;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  /* ナビ背景に丸の縁を抜く（アイコンの線と重ねない） */
+  box-shadow: 0 0 0 2px rgba(6, 22, 26, 0.96);
+}
+
 .toast {
   position: fixed;
   left: 50%;

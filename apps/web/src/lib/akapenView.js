@@ -54,6 +54,21 @@ export function nextWaiting(items, answeredId) {
   return list.find((i) => isWaiting(i) && i.id !== answeredId) || null
 }
 
+/**
+ * ナビの赤ペンタブに出す「小さな丸の数字」（ティッカー）。
+ *
+ * 注釈（`1377.jpg` の赤）で決まったこと: 件数は**下部ナビの丸バッジ**にだけ出し、
+ * タブ内の表示（「N 件の判断待ち」）は変えない。0 のときはバッジ自体を出さない
+ * （0 の丸は「何かある」と誤読させる）。
+ *
+ * @param {Array} items `/api/akapen` の items
+ * @returns {number} 赤ペン待ちの件数（0 以上）
+ */
+export function waitingCount(items) {
+  const list = Array.isArray(items) ? items.filter(Boolean) : []
+  return list.filter(isWaiting).length
+}
+
 /** 完了タブの見出し（件数を偽らない: 直近 N 件、とだけ言う）。 */
 export function doneHint(doneTotal) {
   const n = Number(doneTotal) || 0

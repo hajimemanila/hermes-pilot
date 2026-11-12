@@ -590,6 +590,12 @@ export function AkapenPane({ notify }) {
       const r = await api('/api/akapen')
       const items = r.items || []
       setState({ loading: false, items, error: null })
+      // 下部ナビの丸バッジ（注釈 1377.jpg の赤）を、この一覧と同じデータで同期する
+      try {
+        window.dispatchEvent(new CustomEvent('hm:akapen-items', { detail: { items } }))
+      } catch {
+        /* noop */
+      }
       return items
     } catch (e) {
       setState({ loading: false, items: [], error: e?.message || '取得できません' })
