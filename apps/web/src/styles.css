@@ -1690,3 +1690,11 @@ button.stat:active {
 .empty-recent { display: flex; flex-direction: column; gap: 6px; }
 .empty-recent .btn { font-size: 12.5px; }
 .thinking-text { margin-top: 4px; font-size: 11.5px; color: var(--muted); max-height: 3.2em; overflow: hidden; }
+/* チャットのツール進捗（Discord のツール表示に相当する行） */
+.tool-rows { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.tool-rows li { display: flex; gap: 6px; align-items: baseline; font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.tool-rows li.run .tool-name { color: var(--accent-2); }
+.tool-rows li.done .tool-name { color: var(--muted); }
+.tool-name { flex: none; font-weight: 600; }
+.tool-detail { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim, #9fb3b0); }
+.tool-ms { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }

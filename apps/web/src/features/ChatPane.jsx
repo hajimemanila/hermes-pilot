@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useChatSocket } from '../lib/useChatSocket.js'
 import { DEFAULT_PROFILE, STORED_PROFILE_KEY, applyDefaultProfile } from '../lib/profile.js'
 import { pickResumeTarget, recentSessions } from '../lib/chatResume.js'
+import { mergeProgress } from '../lib/toolProgress.js'
 import { api } from '../api.js'
 import { Icon, Sheet, relTime, fmtBytes } from '../components/Ui.jsx'
 
@@ -26,6 +27,8 @@ export function ChatPane({ notify }) {
   // ターンの経過時間（長いターンで「動いている」ことが分かるように）
   const [runStartedAt, setRunStartedAt] = useState(null)
   const [nowTick, setNowTick] = useState(Date.now())
+  // ツール呼び出しの進捗（Discord と同じ「動いている」が見える行）
+  const [progress, setProgress] = useState([])
   const [usage, setUsage] = useState(null)
   const [drawer, setDrawer] = useState(false)
   const [thinking, setThinking] = useState('')
@@ -145,10 +148,24 @@ export function ChatPane({ notify }) {
     const sidMsg = msg?.params?.session_id
     if (sidMsg && sidRef.current && sidMsg !== sidRef.current) return
 
+    if (type === 'tool.start' || type === 'tool.complete') {
+      const args = p.args && typeof p.args === 'object' ? p.args : {}
+      setProgress((rows) =>
+        mergeProgress(rows, {
+          kind: type === 'tool.start' ? 'start' : 'complete',
+          id: p.tool_id || p.tool_call_id || p.name || '',
+          name: p.name || p.tool_name || 'tool',
+          args,
+          duration_ms: p.duration_ms,
+        }),
+      )
+      return
+    }
     if (type === 'message.start') {
       setStreaming(true)
       setRunStartedAt(Date.now())
       setThinking('')
+      setProgress([])
       setBlocks((prev) => {
         const last = prev[prev.length - 1]
         if (last?.role === 'assistant' && last.open && !last.text) return prev
@@ -793,7 +810,18 @@ export function ChatPane({ notify }) {
               return (
                 <>
                   <b>実行中 {mm}:{ss}</b>
-                  <span className="m"> ・ツールを動かしています（結果はこの下に出ます）</span>
+                  <span className="m"> ・{progress.length ? `ツール ${progress.length} 件` : 'ツールを動かしています'}</span>
+                  {progress.length ? (
+                    <ol className="tool-rows">
+                      {progress.map((r) => (
+                        <li key={r.id + r.name} className={r.done ? 'done' : 'run'}>
+                          <span className="tool-name">{r.name}</span>
+                          {r.detail ? <span className="tool-detail">{r.detail}</span> : null}
+                          {r.done ? <span className="tool-ms">{r.ms ? (r.ms / 1000).toFixed(1) + 's' : '✓'}</span> : <span className="tool-ms">…</span>}
+                        </li>
+                      ))}
+                    </ol>
+                  ) : null}
                   {thinking ? <div className="thinking-text">{thinking}</div> : null}
                 </>
               )
