@@ -14,6 +14,7 @@ import { pickResumeTarget, recentSessions } from '../lib/chatResume.js'
 import { mergeProgress } from '../lib/toolProgress.js'
 import { api } from '../api.js'
 import { composerHeight } from '../lib/composerSize.js'
+import { shouldSendOnEnter } from '../lib/composerKey.js'
 import { Icon, Sheet, relTime, fmtBytes } from '../components/Ui.jsx'
 
 /** 入力欄を内容に合わせて伸ばす（枠の分を足さないと 2px 溢れて縦棒が出る）。 */
@@ -1053,10 +1054,10 @@ export function ChatPane({ notify }) {
             addFiles(files)
           }}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault()
-              send()
-            }
+            // Enter は改行。送信は丸ボタンと、物理キーボードの Shift+Enter だけ（赤ペン enter-key-01）
+            if (!shouldSendOnEnter({ key: e.key, shiftKey: e.shiftKey, isComposing: e.nativeEvent?.isComposing })) return
+            e.preventDefault()
+            send()
           }}
         />
         {streaming ? (

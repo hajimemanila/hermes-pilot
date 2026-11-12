@@ -235,6 +235,14 @@ conn=ready → kill → conn=closed (t=18.1s) → conn=ready (t=20.0s)   ← リ
 - 長押し送信では**書きかけの下書きを消さない**（`sendText(override)` は `override != null` のとき `setText('')` をしない）
 - マイスニペットは設定タブで追加・削除。保存後 `hm:snippets` イベントでチャット側のバーが即更新される
 
+### 入力欄のキー（2026-11-13 / 赤ペン enter-key-01）
+
+- **Enter = 改行**。送信は**右の丸い送信ボタン**と、物理キーボードの **Shift+Enter** だけ
+  （`apps/web/src/lib/composerKey.js` の `shouldSendOnEnter`、`apps/web/test/composerKey.test.js` が機械検査）
+- スマホのキーボードは `shiftKey` が立たないので、Enter は改行のみ＝誤送信しない
+- IME 変換中の Enter（`nativeEvent.isComposing`）は確定に使うので送らない
+- placeholder は「Hermes に送る…」のまま（Shift+Enter の説明は書かない）
+
 ### 実測（2026-10-23, 390×844 / :8444）
 
 ```
