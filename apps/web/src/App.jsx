@@ -112,6 +112,14 @@ export function App() {
   }, [])
 
   const toastTimer = useRef(null)
+  // タブが増えても選択中が見えるように、切替時に横スクロールで寄せる
+  const navRef = useRef(null)
+  useEffect(() => {
+    const el = navRef.current?.querySelector('.nav-item.on')
+    if (el && typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' })
+    }
+  }, [tab])
 
   const notify = useCallback((msg) => {
     setToast({ msg, at: Date.now() })
@@ -234,9 +242,14 @@ export function App() {
         </ErrorBoundary>
       </main>
 
-      <nav className="nav">
+      <nav className="nav" ref={navRef}>
         {TABS.map((t) => (
-          <button key={t.id} className={`nav-item${tab === t.id ? ' on' : ''}`} onClick={() => setTab(t.id)}>
+          <button
+            key={t.id}
+            className={`nav-item${tab === t.id ? ' on' : ''}`}
+            aria-current={tab === t.id ? 'page' : undefined}
+            onClick={() => setTab(t.id)}
+          >
             <Icon name={t.icon} />
             <span>{t.label}</span>
           </button>

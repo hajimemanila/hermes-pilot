@@ -1322,8 +1322,14 @@ button.stat:active {
   position: sticky;
   bottom: 0;
   z-index: 5;
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* タブが増えても崩れない: 4つまでは等分、5つ以上は横スクロール */
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
   height: calc(var(--nav-h) + var(--safe-b));
   padding-bottom: var(--safe-b);
   border-top: 1px solid var(--line);
@@ -1331,12 +1337,31 @@ button.stat:active {
   backdrop-filter: blur(10px);
 }
 
+.nav::-webkit-scrollbar { display: none; }
+
+/* 端に「まだ先がある」ことを示す淡いフェード（タップは通す） */
+.nav::before,
+.nav::after {
+  content: "";
+  position: sticky;
+  z-index: 2;
+  flex: 0 0 14px;
+  pointer-events: none;
+}
+.nav::before { left: 0; margin-right: -14px; background: linear-gradient(90deg, rgba(6,22,26,.96), transparent); }
+.nav::after { right: 0; margin-left: -14px; background: linear-gradient(270deg, rgba(6,22,26,.96), transparent); }
+
 .nav-item {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 3px;
+  /* 4つなら等分、増えたら最小幅を保って横スクロール */
+  flex: 1 0 68px;
+  min-width: 68px;
+  scroll-snap-align: center;
+  white-space: nowrap;
   border: none;
   background: none;
   color: #5c7f7e;
