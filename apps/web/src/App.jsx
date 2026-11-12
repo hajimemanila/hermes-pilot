@@ -89,6 +89,14 @@ export function App() {
   const [toast, setToast] = useState(null)
   const [booting, setBooting] = useState(true)
   const [searchOpen, setSearchOpen] = useState(false)
+  /*
+   * チャットはタブを移っても畳まない（赤ペン chat-keepalive-01: q1=A 画面を残す / q2=A 裏でも受ける）。
+   * 一度開いたら「隠すだけ」にして、スクロール位置・ツール使用ログ・書きかけ・WS の受信をそのまま残す。
+   * 起動直後にチャットへ繋がないよう、初回にチャットタブを開くまでマウントしない。
+   * 書きかけはメモリのみ（q3=B）なので localStorage には保存しない。
+   */
+  const [chatMounted, setChatMounted] = useState(tab === 'chat')
+  const chatHostRef = useRef(null)
   // 下部ナビの赤ペンタブに出す判断待ち件数（注釈 1377.jpg の赤 = 小さい丸に数字）。
   // タブ内の表示は AkapenPane の持ち物なので、ここでは数えるだけ。
   const [akapenWaiting, setAkapenWaiting] = useState(0)
@@ -130,6 +138,23 @@ export function App() {
   }, [])
 
   const toastTimer = useRef(null)
+  // チャットは初回に開いたときだけマウントし、以降はタブを移っても残す（下の pane-host）。
+  useEffect(() => {
+    if (tab === 'chat') setChatMounted(true)
+  }, [tab])
+
+  // 隠している間はフォーカスもキー入力も入れない（隠れた入力欄に物理キーボードが吸われるのを防ぐ）。
+  useEffect(() => {
+    const host = chatHostRef.current
+    if (!host) return
+    const hidden = tab !== 'chat'
+    if ('inert' in host) host.inert = hidden
+    if (hidden) {
+      const active = document.activeElement
+      if (active && host.contains(active) && typeof active.blur === 'function') active.blur()
+    }
+  }, [tab, chatMounted])
+
   // タブが増えても選択中が見えるように、切替時に横スクロールで寄せる
   const navRef = useRef(null)
   useEffect(() => {
@@ -339,13 +364,27 @@ export function App() {
             />
           ) : tab === 'akapen' ? (
             <AkapenPane notify={notify} />
-          ) : tab === 'chat' ? (
-            <ChatPane notify={notify} />
           ) : tab === 'term' ? (
             <TermPane notify={notify} />
-          ) : (
+          ) : tab === 'settings' ? (
             <SettingsPane overview={overview} notify={notify} refresh={refresh} />
-          )}
+          ) : null}
+          {/*
+            チャットはタブを移っても作り直さない（q1=A）。隠すだけなのでスクロール位置・
+            ツール使用ログ・書きかけが残り、他のタブにいる間も進捗を受け続ける（q2=A）。
+            display:none だとスクロール位置が飛ぶので、CSS 側で絶対配置 + visibility で隠す。
+          */}
+          {chatMounted && !booting ? (
+            <div
+              className={`pane-host${tab === 'chat' ? '' : ' is-hidden'}`}
+              ref={chatHostRef}
+              aria-hidden={tab === 'chat' ? undefined : 'true'}
+            >
+              <ErrorBoundary tab="chat">
+                <ChatPane notify={notify} />
+              </ErrorBoundary>
+            </div>
+          ) : null}
         </ErrorBoundary>
       </main>
 

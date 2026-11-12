@@ -107,6 +107,25 @@ body {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  /* チャットの pane-host を「隠すだけ」で重ねるための基準 */
+  position: relative;
+}
+
+/*
+ * チャットはタブ移動で作り直さないので、隠すときも display:none にしない
+ * （display:none はスクロール位置・入力欄の状態を落とす）。レイアウトは保ったまま
+ * 不可視・非対話にするので、戻った瞬間に元のスクロール位置と書きかけがそのまま出る。
+ */
+.pane-host {
+  height: 100%;
+}
+
+.pane-host.is-hidden {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  pointer-events: none;
+  z-index: 0;
 }
 
 .pane {
