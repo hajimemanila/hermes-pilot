@@ -1440,7 +1440,7 @@ server.on('error', (err) => {
   if (err?.code === 'EADDRINUSE') {
     console.error(
       `[bridge] ポート ${cfg.port} は使用中です。手動起動したプロセスが残っていませんか: ` +
-        `lsof -nP -iTCP:${cfg.port} -sTCP:LISTEN  →  launchctl kickstart -k gui/$(id -u)/ai.hermes.hermes-mobile`,
+        `lsof -nP -iTCP:${cfg.port} -sTCP:LISTEN  →  hermes-pilot service restart（または launchctl kickstart -k gui/$(id -u)/ai.hermes.pilot）`,
     )
     process.exit(75)
   }

@@ -208,7 +208,12 @@ export function readTailscaleStatus() {
   for (const bin of tailscaleCommandCandidates()) {
     try {
       const text = String(
-        execFileSync(bin, ['status', '--json'], { timeout: 1500, maxBuffer: 4 * 1024 * 1024, encoding: 'utf8' }),
+        execFileSync(bin, ['status', '--json'], {
+          timeout: 1500,
+          maxBuffer: 4 * 1024 * 1024,
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        }),
       )
       if (text.trim()) return text
     } catch {
@@ -369,7 +374,7 @@ function printPairing({ token, port, tlsPort = null, dnsName = null, svg = false
       const png = qrPng(info.best.url)
       fs.mkdirSync(path.dirname(pngPath), { recursive: true })
       fs.writeFileSync(pngPath, png, { mode: 0o600 })
-      out('', `QR 画像 / PNG: ${pngPath}`, '  → これを大きく開いてカメラで読み取ってください（${png.length} bytes）。')
+      out('', `QR 画像 / PNG: ${pngPath}`, `  → これを大きく開いてカメラで読み取ってください（${png.length} bytes）。`)
     } catch (err) {
       out('', `QR 画像を書けませんでした: ${err?.message ?? err}`)
     }

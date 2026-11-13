@@ -91,7 +91,7 @@ test('capturedLabel はローカル時刻の MM/DD HH:mm を返す', () => {
 test('repoLabel はリポジトリ id を出し、推定できなければ —', () => {
   assert.equal(repoLabel({ id: 'hermes-mobile-pwa', label: 'Mobile PWA' }), 'hermes-mobile-pwa')
   assert.equal(repoLabel({ label: 'Mobile PWA' }), 'Mobile PWA')
-  assert.equal(repoLabel('nanokvm'), 'nanokvm')
+  assert.equal(repoLabel('sample-app'), 'sample-app')
   assert.equal(repoLabel(null), '—')
   assert.equal(repoLabel({}), '—')
 })
@@ -112,7 +112,7 @@ test('waitingCount はナビのバッジに出すレビュー待ち件数（0 �
 test('pendingCount はナビのタスクタブに出す未回答の承認待ち件数', () => {
   assert.equal(pendingCount([]), 0)
   assert.equal(pendingCount(undefined), 0)
-  assert.equal(pendingCount([{ id: 'x1', board: 'nanokvm' }]), 1)
+  assert.equal(pendingCount([{ id: 'x1', board: 'sample-app' }]), 1)
   // レビュー待ちは /api/inbox 側で除かれるので、ここに来る items は承認待ちだけ
   assert.equal(pendingCount([{ id: 'x1', board: 'ffp' }, { id: 'x2', board: 'mobile' }]), 2)
   assert.equal(pendingCount([null, { id: 'x2' }]), 1)

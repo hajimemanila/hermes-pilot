@@ -158,7 +158,7 @@ test('answer は保存して comment + unblock を呼び、二重投稿を弾く
       },
     },
   )
-  const payload = { answers: [{ id: 'q1', choice: 'A', note: 'これで' }], global: 'お願いします', by: 'hajime' }
+  const payload = { answers: [{ id: 'q1', choice: 'A', note: 'これで' }], global: 'お願いします', by: 'alice' }
 
   const first = await api.answer('t_test1', payload)
   assert.equal(first.ok, true)
@@ -212,13 +212,13 @@ test('answer はレビュー待ち（blocked）以外を拒否し、answer.json 
     },
   )
 
-  const first = await api.answer('t_test1', { answers: [{ id: 'q1', choice: 'A' }], by: 'hajime' })
+  const first = await api.answer('t_test1', { answers: [{ id: 'q1', choice: 'A' }], by: 'alice' })
   assert.equal(first.ok, true)
   assert.equal(first.moved, 'ready')
   const callsAfterFirst = calls.length
 
   // 反映待ち（ready）へ別の回答 → 拒否。comment も unblock も呼ばない
-  const second = await api.answer('t_test1', { answers: [{ id: 'q1', choice: 'B' }], by: 'hajime' })
+  const second = await api.answer('t_test1', { answers: [{ id: 'q1', choice: 'B' }], by: 'alice' })
   assert.equal(second.ok, false)
   assert.equal(second.code, 'NOT_WAITING')
   assert.equal(second.status, 'ready')
@@ -229,7 +229,7 @@ test('answer はレビュー待ち（blocked）以外を拒否し、answer.json 
 
   // 完了（done）も同じ扱い
   setStatus('done')
-  const third = await api.answer('t_test1', { answers: [{ id: 'q1', choice: 'C' }], by: 'hajime' })
+  const third = await api.answer('t_test1', { answers: [{ id: 'q1', choice: 'C' }], by: 'alice' })
   assert.equal(third.ok, false)
   assert.equal(third.code, 'NOT_WAITING')
   assert.equal(third.status, 'done')
@@ -528,10 +528,10 @@ test('createFromImage は chat= を本文に付ける（注釈タスクの完了
   )
   const png = 'data:image/png;base64,' + Buffer.from('x').toString('base64')
 
-  const r = await api.createFromImage({ source: 'upload', image: png, target: repoA, chat: '20261113_011804_9597b4' })
+  const r = await api.createFromImage({ source: 'upload', image: png, target: repoA, chat: '20260101_120000_cafebabe' })
   assert.equal(r.ok, true)
   const line = calls.find((a) => a[0] === 'create').join(' ')
-  assert.ok(line.includes('chat=20261113_011804_9597b4'), '端末が渡した会話 ID が本文に入る')
+  assert.ok(line.includes('chat=20260101_120000_cafebabe'), '端末が渡した会話 ID が本文に入る')
 
   // 記号は落とす（本文の機械可読行が壊れないように）
   calls.length = 0
@@ -963,7 +963,7 @@ test('answer: .json シート（mode=standard）でも設問 JSON を壊さず .
     { kanbanRoot: path.join(root, 'kanban') },
     { runKanban: async () => ({ code: 0, out: 'ok' }) },
   )
-  const r = await api.answer('t_std01', { answers: [{ id: 'q1', choice: 'A' }, { id: 'q2', choice: 'B' }], by: 'hajime' })
+  const r = await api.answer('t_std01', { answers: [{ id: 'q1', choice: 'A' }, { id: 'q2', choice: 'B' }], by: 'alice' })
   assert.equal(r.ok, true)
   assert.equal(fs.readFileSync(sheetFile, 'utf8'), before, '設問 JSON が上書きされた')
   const answerFile = path.join(workdir, 'sheets', 'std-01-1.answer.json')

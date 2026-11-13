@@ -121,7 +121,7 @@ test('複数プロファイルの state.db を横断合算する', () => {
     dbs: [
       { profile: 'default', path: dbDefault },
       { profile: 'mobile', path: dbMobile },
-      { profile: 'nanokvm', path: '/nonexistent/state.db' },
+      { profile: 'sample-app', path: '/nonexistent/state.db' },
     ],
   })
   assert.equal(both.ok, true)

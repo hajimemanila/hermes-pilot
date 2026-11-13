@@ -2,11 +2,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { checkFrame, isSafeProfileName, rejectionFrame, PROFILE_METHODS } from '../src/chat-profile.js'
 
-const ALLOWED = ['default', 'mobile', 'nanokvm']
+const ALLOWED = ['default', 'mobile', 'sample-app']
 const frame = (method, params, id = 1) => JSON.stringify({ jsonrpc: '2.0', id, method, params })
 
 test('プロファイル名は英数・-・_ のみ（パス区切りと空白を弾く）', () => {
-  assert.equal(isSafeProfileName('nanokvm'), true)
+  assert.equal(isSafeProfileName('sample-app'), true)
   assert.equal(isSafeProfileName('work-2'), true)
   assert.equal(isSafeProfileName('../etc'), false)
   assert.equal(isSafeProfileName('a/b'), false)
@@ -30,19 +30,19 @@ test('profile 省略・空は上流の既定に任せる（後方互換）', () 
 })
 
 test('serve 済みの名前はそのまま通る', () => {
-  const r = checkFrame(frame('session.create', { title: 'x', profile: 'nanokvm' }, 7), ALLOWED)
+  const r = checkFrame(frame('session.create', { title: 'x', profile: 'sample-app' }, 7), ALLOWED)
   assert.equal(r.ok, true)
-  assert.equal(r.profile, 'nanokvm')
+  assert.equal(r.profile, 'sample-app')
   assert.equal(r.method, 'session.create')
   const sent = JSON.parse(r.text)
   assert.equal(sent.id, 7)
-  assert.equal(sent.params.profile, 'nanokvm')
+  assert.equal(sent.params.profile, 'sample-app')
 })
 
 test('未知のプロファイル・注入は -32602 で止める', () => {
-  for (const bad of ['../../etc', 'ghost', 'nanokvm ' /* 前後空白は trim される */]) {
+  for (const bad of ['../../etc', 'ghost', 'sample-app ' /* 前後空白は trim される */]) {
     const r = checkFrame(frame('session.resume', { session_id: 's1', profile: bad }), ALLOWED)
-    if (bad.trim() === 'nanokvm') {
+    if (bad.trim() === 'sample-app') {
       assert.equal(r.ok, true) // trim 後に既知なら通す
       continue
     }
@@ -58,7 +58,7 @@ test('未知のプロファイル・注入は -32602 で止める', () => {
 test('プロファイル一覧が取れなくても default だけは通る（退避）', () => {
   const ok = checkFrame(frame('session.create', { title: 'x', profile: 'default' }), [])
   assert.equal(ok.ok, true)
-  const ng = checkFrame(frame('session.create', { title: 'x', profile: 'nanokvm' }), [])
+  const ng = checkFrame(frame('session.create', { title: 'x', profile: 'sample-app' }), [])
   assert.equal(ng.ok, false)
 })
 
@@ -71,6 +71,6 @@ test('profile を持たない RPC と壊れたフレームは素通し（検証�
   assert.equal(checkFrame(broken, ALLOWED).text, broken)
 
   // session.list は profile を受けるが、ここでは検証しない（送信系だけ守る）
-  const list = frame('session.list', { profile: 'nanokvm' })
+  const list = frame('session.list', { profile: 'sample-app' })
   assert.equal(checkFrame(list, ALLOWED).text, list)
 })

@@ -16,7 +16,7 @@
 | カンバン参照 | SQLite 1クエリ **0.00 秒** | 60秒ポーリングしても負荷は無視できる |
 | タスクのgit情報 | `~/.hermes/state/kanban-sop/history.jsonl` の `metadata.git` = `{repo, branch, head, dirty, changed_count, diff_stat, status_porcelain[]}` | `done` 実行時のスナップショット。**既に存在する**（新規収集不要） |
 | 差分の素材 | `git show --numstat 222758b` → `47 1 apps/web/src/styles.css` | 実データで確認済み。+47 −1 を算出できる |
-| Discord ルーティング | セッションキーが `agent:main:discord:thread:<channel>:<thread>` 等で保存済み | スレッドID → guild_id を API で解決できることを実測（`1560581479648469033` / parent `1560581480168558625`） |
+| Discord ルーティング | セッションキーが `agent:main:discord:thread:<channel>:<thread>` 等で保存済み | スレッドID → guild_id を API で解決できることを実測（`111111111111111111` / parent `222222222222222222`） |
 | 通知基盤 | `sw.js` に `push` ハンドラ無し、`web-push` 依存無し | Web Push は完全な新規実装 |
 | 実在するロック | `gateway.lock` / `gateway.pid` / `auth.lock` / `kanban.db.dispatch.lock` / `kanban/.dispatcher.lock` / `processes.json.lock` 等 **18個以上** | 一括削除は稼働中の相互排他を壊す |
 
@@ -96,7 +96,7 @@
 
 - セッションキーから `channel_id` / `thread_id` を抽出（`agent:main:discord:thread:<ch>:<th>`）
 - guild_id は Discord API `GET /channels/<id>` で解決し、`~/.hermes/mobile-pwa/discord-cache.json` にキャッシュ（TTL 7日）
-  - 実測: thread `1561742963170877553` → guild `1560581479648469033`
+  - 実測: thread `222222222222222222` → guild `111111111111111111`
   - トークンは `~/.hermes/.env` の `DISCORD_BOT_TOKEN` をブリッジ内でのみ使用（端末に渡さない）
 - リンク形式: `https://discord.com/channels/<guild>/<channel>`（Discord アプリが入っていればアプリで開く）
 - 置き場所: 会話ヘッダーの小さなアイコン＋タスクカード（`session_anchor` があるもの）

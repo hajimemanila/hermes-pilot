@@ -33,25 +33,25 @@ function fakeStorage(init = {}) {
 const REPOS = [
   { id: 'hermes-mobile-pwa', label: 'Hermes Mobile PWA', boards: [{ slug: 'hermes-mobile-pwa', current: false }] },
   {
-    id: 'nanokvm-custom-launcher',
-    label: 'NanoKVM Custom Launcher',
+    id: 'app-launcher',
+    label: 'App Launcher',
     boards: [
       { slug: 'custom-launcher' },
-      { slug: 'nanokvm-custom-launcher' },
-      { slug: 'nanokvm-dev-env' },
+      { slug: 'app-launcher' },
+      { slug: 'app-dev-env' },
     ],
   },
   { id: 'hermes-agent', label: 'Hermes Agent', boards: [] },
-  { id: 'dsh-web-ui', label: 'DSH Web UI', boards: [{ slug: 'dsh-web-ui' }] },
-  { id: 'ffp-controller-pwa', label: 'ffp-controller-pwa', boards: [{ slug: 'ffp-controller-pwa' }] },
+  { id: 'web-console', label: 'Web Console', boards: [{ slug: 'web-console' }] },
+  { id: 'controller-pwa', label: 'controller-pwa', boards: [{ slug: 'controller-pwa' }] },
 ]
 
 test('boardSummary は板の数を偽らない（sheet repo-picker-01 Q2=A の文言）', () => {
   setLang('ja')
   assert.equal(boardSummary([{ slug: 'hermes-mobile-pwa' }]), 'ボード 1 つ: hermes-mobile-pwa')
   assert.equal(
-    boardSummary([{ slug: 'custom-launcher' }, { slug: 'nanokvm-custom-launcher' }, { slug: 'nanokvm-dev-env' }]),
-    'ボード 3 つ: custom-launcher / nanokvm-custom-launcher / nanokvm-dev-env',
+    boardSummary([{ slug: 'custom-launcher' }, { slug: 'app-launcher' }, { slug: 'app-dev-env' }]),
+    'ボード 3 つ: custom-launcher / app-launcher / app-dev-env',
   )
   assert.equal(boardSummary([]), 'ボードなし', '板が無いリポジトリは「ボードなし」')
   assert.equal(boardSummary([{ slug: 'a' }, { slug: 'b' }, { slug: 'c' }, { slug: 'd' }]), 'ボード 4 つ: a / b / c ほか 1')
@@ -69,29 +69,29 @@ test('defaultBoard は current を優先し、無ければ先頭', () => {
 })
 
 test('pinnedRepos: 履歴が先頭、足りない分は一覧の順で 4 行に埋める（Q1=A の 3+4 行）', () => {
-  const { rows, total, hidden } = pinnedRepos(REPOS, ['dsh-web-ui', 'hermes-agent'])
+  const { rows, total, hidden } = pinnedRepos(REPOS, ['web-console', 'hermes-agent'])
   assert.equal(rows.length, PINNED_ROWS)
-  assert.equal(rows[0].id, 'dsh-web-ui', '直近が先頭')
+  assert.equal(rows[0].id, 'web-console', '直近が先頭')
   assert.equal(rows[1].id, 'hermes-agent')
   assert.equal(total, REPOS.length)
   assert.equal(hidden, REPOS.length - PINNED_ROWS, '残りは「すべて」から選ぶ')
 })
 
 test('pinnedRepos: 履歴が壊れていても・重複しても落ちない', () => {
-  const { rows } = pinnedRepos(REPOS, ['dsh-web-ui', 'dsh-web-ui', 'ghost', '', null])
-  assert.equal(rows[0].id, 'dsh-web-ui')
+  const { rows } = pinnedRepos(REPOS, ['web-console', 'web-console', 'ghost', '', null])
+  assert.equal(rows[0].id, 'web-console')
   assert.equal(new Set(rows.map((r) => r.id)).size, rows.length, '重複しない')
   assert.deepEqual(pinnedRepos([], ['x']).rows, [])
 })
 
 test('rememberRepo は「この会話の選択」と次回の初期値・ボード既定を同時に残す（Q4=A）', () => {
-  const s = fakeStorage({ [RECENT_REPOS_KEY]: JSON.stringify(['dsh-web-ui']) })
+  const s = fakeStorage({ [RECENT_REPOS_KEY]: JSON.stringify(['web-console']) })
   const saved = rememberRepo(s, { id: 'hermes-mobile-pwa', board: { slug: 'hermes-mobile-pwa' } })
   assert.deepEqual(saved, { repo: 'hermes-mobile-pwa', board: 'hermes-mobile-pwa' })
   assert.equal(s.getItem(REPO_KEY), 'hermes-mobile-pwa', '次回の初期値')
   assert.equal(s.getItem(BOARD_KEY), 'hermes-mobile-pwa', '起票の既定ボードがその repo の板になる')
   const recent = JSON.parse(s.getItem(RECENT_REPOS_KEY))
-  assert.deepEqual(recent, ['hermes-mobile-pwa', 'dsh-web-ui'], '新しい順・重複なし')
+  assert.deepEqual(recent, ['hermes-mobile-pwa', 'web-console'], '新しい順・重複なし')
 })
 
 test('rememberRepo: 履歴は 6 件まで・storage が拒否しても会話は始められる', () => {
@@ -117,13 +117,13 @@ test('readRecent / readLastRepo は壊れた保存値を無視する', () => {
   assert.deepEqual(readRecent(fakeStorage({ [RECENT_REPOS_KEY]: '{oops' })), [])
   assert.deepEqual(readRecent(fakeStorage({ [RECENT_REPOS_KEY]: '{"a":1}' })), [])
   assert.equal(readLastRepo(fakeStorage()), null)
-  assert.equal(readLastRepo(fakeStorage({ [REPO_KEY]: 'dsh-web-ui' })), 'dsh-web-ui')
+  assert.equal(readLastRepo(fakeStorage({ [REPO_KEY]: 'web-console' })), 'web-console')
 })
 
 test('matchRepoByCwd は大小文字と末尾スラッシュを無視して一致を返す', () => {
   const repos = [
     { id: 'hermes-mobile-pwa', path: '/Users/h/Projects/hermes-mobile-pwa' },
-    { id: 'nanokvm', path: '/Users/h/projects/nanokvm' },
+    { id: 'sample-app', path: '/Users/h/projects/sample-app' },
   ]
   assert.equal(matchRepoByCwd(repos, '/Users/h/projects/hermes-mobile-pwa/')?.id, 'hermes-mobile-pwa')
   assert.equal(matchRepoByCwd(repos, '/Users/h/projects/unknown'), null)

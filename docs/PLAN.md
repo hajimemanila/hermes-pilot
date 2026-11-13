@@ -48,7 +48,7 @@ Android（Tailscale 経由）から、外出先で Hermes Agent の状態を見�
    ▼
 [Tailscale serve :443 /m  … または 8443]     ← 既存の / と共存
    ▼
-[mobile bridge  127.0.0.1:4097]  Node 24（dsh-web-ui と同一構成）
+[mobile bridge  127.0.0.1:4097]  Node 24（web-console と同一構成）
    ├─ 静的配信（React + Vite の PWA / SW / manifest）
    ├─ REST プロキシ  → http://127.0.0.1:9119/api/*  （トークンをサーバ側で注入）
    ├─ WS プロキシ    → /api/ws, /api/pty（?token= をサーバ側で付与）
@@ -181,7 +181,7 @@ DSH アプリの「4 タブ + 入力欄まわり」をそのまま持ってく�
 - 390×844 の実機サイズで、ホーム→タスク→停止 まで**3 タップ以内**
 - チャット送信→ストリーミング→中断 の往復
 - ターミナルで `tty` / `ls` が実 PTY に載る
-- カンバン: `dsh-web-ui` ボードの実タスクが表示され、件数が `sqlite3` の実数と一致
+- カンバン: `web-console` ボードの実タスクが表示され、件数が `sqlite3` の実数と一致
 - キルスイッチ: drain → 新規ターンが拒否される / restart → graceful に再起動（実測済みの挙動と一致）
 - 標準ダッシュボード（9119）が**無傷**であること（`/api/health` と画面表示）
 - 端末の DevTools で **Hermes のセッショントークンが見えない**こと
@@ -198,10 +198,10 @@ DSH アプリの「4 タブ + 入力欄まわり」をそのまま持ってく�
 Tailscale serve の現状（実測）:
 
 ```
-https://hajimemac-mini.tail975a79.ts.net        → 127.0.0.1:9120（既存ダッシュボード）
+https://hermes-host.tail1234.ts.net        → 127.0.0.1:9120（既存ダッシュボード）
                                           /dsh  → 127.0.0.1:8787（DSH Web UI）
-https://hajimemac-mini.tail975a79.ts.net:8443   → 127.0.0.1:8787（DSH の別オリジン）
-https://hajimemac-mini.tail975a79.ts.net:8444   → 127.0.0.1:4097（本案・新規）
+https://hermes-host.tail1234.ts.net:8443   → 127.0.0.1:8787（DSH の別オリジン）
+https://hermes-host.tail1234.ts.net:8444   → 127.0.0.1:4097（本案・新規）
 ```
 
 別オリジンにする効果:

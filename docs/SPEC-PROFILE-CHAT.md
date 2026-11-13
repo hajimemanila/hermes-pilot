@@ -26,8 +26,8 @@
 `/api/ws`（legacy token path, bridge と同じ経路）で確認:
 
 ```
-session.list   {profile:"nanokvm"}                              -> 6 件（例 20261029_131928_c22da261）
-session.resume {session_id:"2026...", profile:"nanokvm", lazy:true} -> ok / history 133 件
+session.list   {profile:"sample-app"}                              -> 6 件（例 20260101_120000_deadbeef）
+session.resume {session_id:"2026...", profile:"sample-app", lazy:true} -> ok / history 133 件
 session.create {title:"...", profile:"default"}                 -> ok / info.profile_name = default
 ```
 
@@ -38,11 +38,11 @@ session.create {title:"...", profile:"default"}                 -> ok / info.pro
 - `prompt.submit` は**セッション記録に束縛済み**の `profile_home` で走る（`tui_gateway/methods_prompt.py:1428-`）
 - `/api/ws` は legacy token でも `profile_scope='host'` になり、serve 済みの兄弟プロファイルを選べる
   （`hermes_cli/web_routers/chat_ws.py:702-735`）
-- gateway は multiplex（1 プロセスが default / mobile / nanokvm を serve: `hermes gateway list` で全て同じ PID）
+- gateway は multiplex（1 プロセスが default / mobile / sample-app を serve: `hermes gateway list` で全て同じ PID）
 
 → **不足しているのは bridge の受け渡しと UI の 2 点だけ。** profile を渡さないコードが「読み取り専用」の実体。
 
-規模（state.db の sessions）: default 109 / mobile 9 / nanokvm 15。
+規模（state.db の sessions）: default 109 / mobile 9 / sample-app 15。
 
 ## 3. 設計案（採用候補）
 
@@ -58,7 +58,7 @@ session.create {title:"...", profile:"default"}                 -> ok / info.pro
 
 ### 3.2 UI
 
-- **会話一覧**: 各行に小さなプロファイルチップ。`default` は無印、他は名前（例 `nanokvm`）
+- **会話一覧**: 各行に小さなプロファイルチップ。`default` は無印、他は名前（例 `sample-app`）
 - **会話ヘッダー**: 開いている会話のプロファイル名を常設（読み取り専用バナーは廃止）
 - **新規会話**: 「＋」→ プロファイル選択シート（default を先頭・推奨）→ `session.create {profile}`
 - **他プロファイルの既存会話**: タップで `session.resume {profile}` → そのまま続きを書ける
@@ -84,7 +84,7 @@ session.create {title:"...", profile:"default"}                 -> ok / info.pro
 
 | # | 論点 | 決定 | 理由 |
 |---|---|---|---|
-| D1 | 書き込みを許すプロファイル範囲 | **3 つすべて**（default / mobile / nanokvm） | gateway が 1 プロセスで全部 serve 済み。役割分担「PWA=即時処理」を全プロファイルで成立させる |
+| D1 | 書き込みを許すプロファイル範囲 | **3 つすべて**（default / mobile / sample-app） | gateway が 1 プロセスで全部 serve 済み。役割分担「PWA=即時処理」を全プロファイルで成立させる |
 | D2 | 新規会話のプロファイル指定 | **「＋」→ プロファイル選択シート**（default 先頭・1 タップで既定） | 誤爆しやすい mobile への送信に 1 クッション挟む。既定は押すだけ |
 | D3 | 履歴・ヘッダーでの見分け | **一覧行に小さなチップ**（default は無印、他は名前）**＋ 会話ヘッダーにも常設** | 「今どのプロファイルに話しているか」を常に 1 箇所で読める |
 | D4 | worker 誤爆対策の強さ | **ヘッダー常設表示のみ**（送信は 1 タップのまま） | 長押しは常用操作を重くする。可視化で足りる |
@@ -94,7 +94,7 @@ session.create {title:"...", profile:"default"}                 -> ok / info.pro
 
 - 並び順は既存の **lastActive 降順**のまま。default を先頭固定しない（並びの規則を壊さない）
 - 新規シートは**前回選択を記憶しない**（毎回 default が先頭＝D2 のクッションを毎回効かせる）
-- チップの色: `mobile` は warn 系（worker）、`nanokvm` は neutral、`default` は無印。凡例は出さない
+- チップの色: `mobile` は warn 系（worker）、`sample-app` は neutral、`default` は無印。凡例は出さない
 - 「読み取り専用」バナーは**他プロファイルでは廃止**し、`<profile> プロファイル` の常設表示に置換。
   `local-…`（カンバン作業ログ）は従来どおり読み取り専用のまま
 - `profile` は **`/api/profiles` の served 名のみ許可**（注入・存在しない名前は `-32602`）
@@ -110,7 +110,7 @@ session.create {title:"...", profile:"default"}                 -> ok / info.pro
 ## 7. 検証計画（実装時）
 
 1. `npm test` に bridge の profile 許可/拒否テスト（既知 3 名 + 未知名 + 注入文字列）
-2. 実機: `nanokvm` の会話を resume → 送信 → **nanokvm の state.db にだけ**メッセージが増えること（default は不変）
+2. 実機: `sample-app` の会話を resume → 送信 → **sample-app の state.db にだけ**メッセージが増えること（default は不変）
 3. UI: 390×844 で一覧チップ・新規シート・ヘッダーの px 実測（一覧の可視領域を削らない）
 4. 送信フォールバック: 存在しない session_id を resume させ、**default に作られない**ことを確認
 
@@ -120,7 +120,7 @@ session.create {title:"...", profile:"default"}                 -> ok / info.pro
 |---|---|---|---|
 | A | bridge | `/ws/chat` で `session.create` / `session.resume` の `params.profile` を許可リスト検証して素通し・audit `chat.profile` | 未知名/注入が `-32602`、既知 3 名は通る。`npm test` に 4 ケース追加 |
 | B | UI | 一覧チップ・ヘッダー常設・「＋」選択シート・resume 失敗時のみ読み取り専用フォールバック | 390×844 で一覧の可視領域を削らない（px 実測）。`mobile` 行にチップが出る |
-| C | 実機 | nanokvm の会話を resume → 送信 → **nanokvm の state.db にだけ**増える | default の state.db の当該セッション行が不変 |
+| C | 実機 | sample-app の会話を resume → 送信 → **sample-app の state.db にだけ**増える | default の state.db の当該セッション行が不変 |
 
 A → B → C の順（B は A が入るまで送信できない）。A と B で 1 タスクにまとめても良いが、
 レビューしやすさのため **A / B を別タスク**にする。

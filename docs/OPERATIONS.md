@@ -308,7 +308,7 @@ conn=ready → kill → conn=closed (t=18.1s) → conn=ready (t=20.0s)   ← リ
 長押し「ドレイン解除」→ "drain marker を削除しました"（入力中の行は破棄される）
 シート「ポート確認」→ 9119(python3.1 68539) / 4097(node 9983) / 8787(node 95564) が LISTEN
 シート「疎通3点」→ dashboard 200 / mobile 200 / dsh 200
-長押し「GW状態」→ "Gateway is supervised by launchd (PID 97432)" / nanokvm PID 68042
+長押し「GW状態」→ "Gateway is supervised by launchd (PID 97432)" / sample-app PID 68042
 レイアウト: action-bar 36px、term-host 614px（33行）、nav top 786、scrollY 0
 ```
 
@@ -366,7 +366,7 @@ conn=ready → kill → conn=closed (t=18.1s) → conn=ready (t=20.0s)   ← リ
 詳細: コミット 575ed26 (main) / メッセージ表示 / 変更ファイル +1249 −26 / ファイル13行
 パッチ: uploads.js をタップ → 200行・truncated=false・背景 rgb(5,18,26)
 Discord: カードにチップ、詳細に「Discord スレッドで開く」、チャットヘッダーに # ボタン
-  古いスレッド 20261016_184630_559bc3cb を resume → タイトル「開発環境構築の準備」+ # ボタン表示
+  古いスレッド 20260101_120000_deadbeef を resume → タイトル「開発環境構築の準備」+ # ボタン表示
 API: /tasks/:id/diff → ok:true / files 2件 / total +60 −1
      ?file=../../etc/passwd → 404
 ```
@@ -548,7 +548,7 @@ UI: 長押し → バナー「一時停止中（新規の受付を止めてい�
 
 ```
 GET /api/live:
-  turns[0] = { sessionId: 20261022_163552_3305cfe1, title: "DeepSeek Harness 向け Android Web UI 実装方針",
+  turns[0] = { sessionId: 20260101_120000_deadbeef, title: "DeepSeek Harness 向け Android Web UI 実装方針",
                platform: "discord", elapsedSec: 60, expiresInSec: 300,
                lastTool: { name: "terminal", at: … }, discordUrl: … }
   counts = { turns: 1, tasks: 0 }
@@ -1033,8 +1033,8 @@ WebAPK インストール基盤（Google Play Services 側）** にある。
 
 実測（390×844）:
 ```
-並び: hermes-mobile-pwa(13:49) → dsh-web-ui(03:44) → nanokvm-dev-env → … → git-ops
-選択: NanoKVM 開発環境構築 → チャット → タスク → 復元、再読込後も復元（localStorage=nanokvm-dev-env）
+並び: hermes-mobile-pwa(13:49) → web-console(03:44) → app-dev-env → … → git-ops
+選択: SampleApp 開発環境構築 → チャット → タスク → 復元、再読込後も復元（localStorage=app-dev-env）
 npm test 82 pass（boards-order.test.js 追加）
 ```
 
@@ -1077,9 +1077,9 @@ tablet: chipRow 38px / チップ表示幅 760px（スマホは366px） / 横ス�
   `session.resume {profile}` で開いてそのまま送信でき、**resume できたときだけ**読み取り専用を解除する
   （`local-…` のカンバン作業ログは従来どおり読み取り専用）。
 - 永続化: `hm.storedSid` と `hm.storedProfile` を**セットで**保存（片方だけだと再起動時に default へ落ちる）。
-- 実測（390×844 / 本番 :4097）: nanokvm の会話を開く → 読み取り専用バナー無し・composer 表示・72 msg。
-  ＋→ nanokvm で新規会話 → 送信 → **nanokvm の state.db にだけ** セッション `20261112_190156_346016`
-  （`profile_name=nanokvm`）とメッセージが増え、default は不変。ヘッダー高 49px・行高 60-63px（変化なし）。
+- 実測（390×844 / 本番 :4097）: sample-app の会話を開く → 読み取り専用バナー無し・composer 表示・72 msg。
+  ＋→ sample-app で新規会話 → 送信 → **sample-app の state.db にだけ** セッション `20260101_120000_deadbeef`
+  （`profile_name=sample-app`）とメッセージが増え、default は不変。ヘッダー高 49px・行高 60-63px（変化なし）。
 
 
 ## 新しい会話でリポジトリと板を選ぶ（2026-11-12）

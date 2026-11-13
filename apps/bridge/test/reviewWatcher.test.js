@@ -89,7 +89,7 @@ test('done 遷移で feed と chat-reports に 1 行ずつ追記し、2 回目�
   addTask(env.dbPath, {
     id: 't_done1',
     title: 'レビュー: 帯の形',
-    body: '[review] label=strip-01 round=1 mode=sheet sheet=sheets/strip-01-1.html chat=20261113_011804_9597b4',
+    body: '[review] label=strip-01 round=1 mode=sheet sheet=sheets/strip-01-1.html chat=20260101_120000_cafebabe',
     status: 'running',
   })
   const w = createReviewWatcher(
@@ -113,7 +113,7 @@ test('done 遷移で feed と chat-reports に 1 行ずつ追記し、2 回目�
 
   const reports = readJsonl(path.join(env.reviewDir, 'chat-reports.jsonl'))
   assert.equal(reports.length, 1, '会話宛ての完了報告も 1 行')
-  assert.equal(reports[0].session_id, '20261113_011804_9597b4', '本文の chat= を宛先にする')
+  assert.equal(reports[0].session_id, '20260101_120000_cafebabe', '本文の chat= を宛先にする')
   assert.equal(reports[0].task_id, 't_done1')
 
   // 同じ状態のまま何度ティックしても増えない（冪等）

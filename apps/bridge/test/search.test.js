@@ -129,7 +129,7 @@ test('複数プロファイルの state.db を横断検索して profile を付�
     dbs: [
       { profile: 'default', path: dbDefault },
       { profile: 'mobile', path: dbMobile },
-      { profile: 'nanokvm', path: '/nonexistent/state.db' },
+      { profile: 'sample-app', path: '/nonexistent/state.db' },
     ],
   })
   assert.equal(r.ok, true)

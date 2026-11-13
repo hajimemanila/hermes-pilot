@@ -145,7 +145,7 @@ test('複数プロファイルの state.db を横断してターンを統合す�
     dbs: [
       { profile: 'default', path: dbDefault },
       { profile: 'mobile', path: dbMobile },
-      { profile: 'nanokvm', path: '/nonexistent/state.db' },
+      { profile: 'sample-app', path: '/nonexistent/state.db' },
     ],
   })
   assert.equal(s.ok, true)

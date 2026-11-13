@@ -13,29 +13,29 @@ function fixture(entries) {
   return { root, file }
 }
 
-const THREAD_KEY = 'agent:main:discord:thread:1562746287588114463:1562746287588114463'
+const THREAD_KEY = 'agent:main:discord:thread:222222222222222222:222222222222222222'
 
 test('origin から guild/thread を拾ってリンクを作る', () => {
   const { file } = fixture({
     [THREAD_KEY]: {
-      session_id: '20261022_163552_3305cfe1',
+      session_id: '20260101_120000_deadbeef',
       platform: 'discord',
       chat_type: 'thread',
       origin: {
         platform: 'discord',
-        chat_id: '1562746287588114463',
-        thread_id: '1562746287588114463',
-        guild_id: '1560581479648469033',
-        message_id: '1562746287588114463',
-        chat_name: 'Hajime@Hemes Agent🔥 / #一般 / テスト',
+        chat_id: '222222222222222222',
+        thread_id: '222222222222222222',
+        guild_id: '111111111111111111',
+        message_id: '222222222222222222',
+        chat_name: 'Alice@Hermes Agent / #general / test',
       },
     },
   })
   const dc = createDiscord({ home: '/nonexistent', sessionsFile: file })
-  const link = dc.forSession('20261022_163552_3305cfe1')
-  assert.equal(link.url, 'https://discord.com/channels/1560581479648469033/1562746287588114463')
-  assert.equal(link.threadId, '1562746287588114463')
-  assert.equal(link.guildId, '1560581479648469033')
+  const link = dc.forSession('20260101_120000_deadbeef')
+  assert.equal(link.url, 'https://discord.com/channels/111111111111111111/222222222222222222')
+  assert.equal(link.threadId, '222222222222222222')
+  assert.equal(link.guildId, '111111111111111111')
 })
 
 test('guild_id が無い（DM 等）ならリンクを作らない', () => {

@@ -8,7 +8,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/opt/homebrew/opt/node@24/bin/node</string>
-    <string>/Users/hajimenakagawa/Projects/hermes-mobile-pwa/apps/bridge/src/server.js</string>
+    <string>/Users/alice/Projects/hermes-mobile-pwa/apps/bridge/src/server.js</string>
   </array>
 
   <key>EnvironmentVariables</key>
@@ -18,13 +18,13 @@
     <key>HM_PORT</key>
     <string>4097</string>
     <key>HERMES_HOME</key>
-    <string>/Users/hajimenakagawa/.hermes</string>
+    <string>/Users/alice/.hermes</string>
     <key>PATH</key>
-    <string>/opt/homebrew/opt/node@24/bin:/Users/hajimenakagawa/.hermes/hermes-agent/.hermes/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>/opt/homebrew/opt/node@24/bin:/Users/alice/.hermes/hermes-agent/.hermes/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
 
   <key>WorkingDirectory</key>
-  <string>/Users/hajimenakagawa/Projects/hermes-mobile-pwa</string>
+  <string>/Users/alice/Projects/hermes-mobile-pwa</string>
 
   <key>RunAtLoad</key>
   <true/>
@@ -39,8 +39,8 @@
   <integer>15</integer>
 
   <key>StandardOutPath</key>
-  <string>/Users/hajimenakagawa/.hermes/logs/hermes-mobile.log</string>
+  <string>/Users/alice/.hermes/logs/hermes-mobile.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/hajimenakagawa/.hermes/logs/hermes-mobile.error.log</string>
+  <string>/Users/alice/.hermes/logs/hermes-mobile.error.log</string>
 </dict>
 </plist>

@@ -5,7 +5,7 @@ import { toolDetail, toolFullDetail, mergeProgress, shortenPath, foldTranscriptM
 test('toolDetail は引数から短い説明を作る', () => {
   assert.equal(toolDetail('terminal', { command: 'npm test' }), 'npm test')
   assert.equal(toolDetail('write_file', { path: 'apps/web/src/App.jsx', content: 'x'.repeat(999) }), 'apps/web/src/App.jsx')
-  assert.equal(toolDetail('web_search', { query: 'nanoKVM h264 latency' }), 'nanoKVM h264 latency')
+  assert.equal(toolDetail('web_search', { query: 'webrtc stream latency' }), 'webrtc stream latency')
   assert.equal(toolDetail('read_file', {}), '')
   assert.match(toolDetail('terminal', { command: 'x'.repeat(200) }), /…$/)
 })
@@ -35,7 +35,7 @@ test('complete だけ来ても壊れない（対応する start が無い）', (
 })
 
 test('shortenPath は長いパスの末尾 2 セグメントを残す', () => {
-  const longPath = '/Users/hajimenakagawa/projects/hermes-mobile-pwa/apps/web/src/features/ChatPane.jsx'
+  const longPath = '/Users/alice/projects/hermes-pilot/apps/web/src/features/ChatPane.jsx'
   assert.equal(shortenPath(longPath, 30), '…/features/ChatPane.jsx')
   assert.equal(toolDetail('read_file', { path: longPath }), '…/features/ChatPane.jsx')
   assert.equal(toolFullDetail('read_file', { path: longPath }), longPath)

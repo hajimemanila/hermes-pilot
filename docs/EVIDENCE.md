@@ -17,7 +17,7 @@ $ hermes dashboard --help   # 同サーバ + Web UI
 
 ```
 $ lsof -nP -iTCP:9119 -sTCP:LISTEN
-python3.1 68539 hajimenakagawa 10u IPv4 TCP 127.0.0.1:9119 (LISTEN)
+python3.1 68539 alice 10u IPv4 TCP 127.0.0.1:9119 (LISTEN)
 ```
 
 → 9119 はループバックのみ。PWA は直接叩けない（CORS と Origin ゲート）。
@@ -26,7 +26,7 @@ python3.1 68539 hajimenakagawa 10u IPv4 TCP 127.0.0.1:9119 (LISTEN)
 
 ```
 $ curl -s http://127.0.0.1:9119/ | grep -o 'window.__HERMES_SESSION_TOKEN__="[^"]*"'
-window.__HERMES_SESSION_TOKEN__="54J7_bnnEmtMECaZHPE2s1aQuXF4dcnDnPJCEgsaMbM"
+window.__HERMES_SESSION_TOKEN__="<random-32-byte-session-token>"
 ```
 
 `hermes_cli/web_server.py`:
@@ -54,7 +54,7 @@ Gated: ?ticket= (browser-minted, single-use, 30s TTL) or ?internal=
 200 /api/health          {"ok":true,"version":"0.22.4",...}
 200 /api/status          {"version":"0.22.4","config_version":51,...}
 200 /api/system/stats    {"os":"Darwin","cpu_count":10,"memory":{"total":17179869184,"used":8019509248,"percent":62.6},"disk":{...}}
-200 /api/sessions        {"sessions":[{"id":"20261022_163552_3305cfe1","source":"discord","is_active":true,
+200 /api/sessions        {"sessions":[{"id":"20260101_120000_deadbeef","source":"discord","is_active":true,
                                         "last_activity_description":"starting new turn","message_count":404,
                                         "tool_call_count":225,"estimated_cost_usd":0.685,...}]}
 200 /api/sessions/{id}   セッション詳細（同上のフル項目）
@@ -118,13 +118,13 @@ $ sqlite3 ~/.hermes/kanban.db ".tables"
 kanban_notify_subs  task_comments  task_links  tasks  task_attachments  task_events  task_runs
 
 $ ls ~/.hermes/kanban/boards
-deepseek-hermes  dsh-web-ui  git-ops  kanban-sop  nanokvm-custom-launcher  nanokvm-dev-env  roi-costs  system-ops
+deepseek-hermes  web-console  git-ops  kanban-sop  app-launcher  app-dev-env  roi-costs  system-ops
 
-$ cat ~/.hermes/kanban/boards/dsh-web-ui/board.json
-{"slug":"dsh-web-ui","name":"DSH Web UI (Android)","icon":"📱",
- "default_workdir":"/Users/hajimenakagawa/Projects/dsh-web-ui","archived":false}
+$ cat ~/.hermes/kanban/boards/web-console/board.json
+{"slug":"web-console","name":"Web Console (Android)","icon":"📱",
+ "default_workdir":"/Users/alice/Projects/web-console","archived":false}
 
-$ sqlite3 ~/.hermes/kanban/boards/dsh-web-ui/kanban.db "pragma table_info(tasks)" | head
+$ sqlite3 ~/.hermes/kanban/boards/web-console/kanban.db "pragma table_info(tasks)" | head
 id|title|body|assignee|status|priority|created_by|created_at|started_at|completed_at|…
 ```
 

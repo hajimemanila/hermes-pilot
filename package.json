@@ -1,23 +1,37 @@
 {
   "name": "hermes-pilot",
-  "private": true,
   "version": "0.1.0",
   "description": "Drive an autonomous Hermes Agent from your phone or tablet: Quick Review, annotation, kanban and chat in one installable PWA.",
   "license": "MIT",
+  "homepage": "https://github.com/hajimenakagawa/hermes-pilot#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hajimenakagawa/hermes-pilot.git"
+  },
   "type": "module",
   "bin": {
     "hermes-pilot": "bin/hermes-pilot.mjs"
   },
   "files": [
     "bin/",
-    "plugin.json",
-    "skills/",
     "apps/bridge/src/",
     "apps/web/dist/",
+    "apps/dashboard/*.py",
+    "apps/dashboard/*.js",
+    "apps/dashboard/*.css",
+    "apps/dashboard/*.json",
+    "!**/__pycache__/**",
+    "!**/*.pyc",
+    "skills/quick-review/",
+    "skills/annotation/",
+    "scripts/postinstall.mjs",
     "scripts/deploy.mjs",
     "scripts/migrate-to-hermes-pilot.mjs",
+    "plugin.json",
+    "plugin.yaml",
     "README.md",
-    "README.ja.md"
+    "README.ja.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=22.19.0"
@@ -33,7 +47,7 @@
     "probe:bridge": "node scripts/probe-bridge.mjs",
     "revoke": "node scripts/revoke.mjs",
     "check:pwa": "python3 scripts/check-pwa.py --dir apps/web/public",
-    "check:pwa:live": "python3 scripts/check-pwa.py --url https://hajimemac-mini.tail975a79.ts.net:8444",
+    "check:pwa:live": "python3 scripts/check-pwa.py --url http://127.0.0.1:4097",
     "check:pwa:selftest": "python3 scripts/check-pwa.py --self-test",
     "verify": "npm test && npm run check:pwa && npm run build",
     "deploy": "node scripts/deploy.mjs",
