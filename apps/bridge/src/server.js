@@ -23,6 +23,8 @@ import { createLive } from './live.js'
 import { createInbox } from './inbox.js'
 import { createRepos } from './repos.js'
 import { getCapabilities } from './capabilities.js'
+import { errorBody } from './api-errors.js'
+import { resolveLang } from './lang.js'
 import { checkFrame, rejectionFrame } from './chat-profile.js'
 import { readTailText } from './tail.js'
 
@@ -145,6 +147,46 @@ function sendJson(res, status, data) {
     'cache-control': 'no-store',
   })
   res.end(body)
+}
+
+/**
+ * エラー応答（SPEC §6.3）。`{ok:false, code, error, params}` の形に統一する。
+ * @param {import('node:http').ServerResponse} res 応答
+ * @param {number} status HTTP ステータス
+ * @param {string} code エラーコード
+ * @param {Record<string, unknown>} [params] プレースホルダ値
+ * @returns {void}
+ */
+function sendError(res, status, code, params) {
+  sendJson(res, status, errorBody(code, params))
+}
+
+/**
+ * 内部モジュールの `{ok:false, code?, error|message}` を §6.3 の形へ正規化して返す。
+ * 元の説明文は `detail` に残す（英語既定だけでは原因が分からない時用）。
+ * @param {import('node:http').ServerResponse} res 応答
+ * @param {number} status HTTP ステータス
+ * @param {{code?: string, error?: unknown, message?: unknown, params?: object, status?: unknown, reason?: unknown}} r 失敗結果
+ * @returns {void}
+ */
+function sendFailure(res, status, r) {
+  const fallback = status === 404 ? 'NOT_FOUND' : status === 409 ? 'CONFLICT' : 'BAD_REQUEST'
+  const code = r?.code ?? fallback
+  const params = r?.params ?? (r?.status ? { status: r.status } : {})
+  const body = errorBody(code, params)
+  const detail = [r?.message, r?.error, r?.reason].find((v) => typeof v === 'string' && v.trim())
+  if (detail && detail !== body.error) body.detail = String(detail)
+  sendJson(res, status, body)
+}
+
+/**
+ * リクエストの表示言語（`?lang=` → `Accept-Language` → en・SPEC §6.1）。
+ * @param {import('node:http').IncomingMessage} req リクエスト
+ * @param {URL} url URL
+ * @returns {'en'|'ja'} 言語
+ */
+function langOf(req, url) {
+  return resolveLang({ queryLang: url.searchParams.get('lang'), acceptLanguage: req.headers['accept-language'] })
 }
 
 /** 本文を JSON として読む（上限 1MB）。 */
@@ -312,17 +354,17 @@ async function handleApi(req, res, url) {
     }
     if (!b && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+        return sendError(res, 429, 'RATE_LIMITED')
       }
       const body = await readJson(req)
       const r = Array.isArray(body?.scanDirs) ? repos.setScanDirs(body.scanDirs) : repos.add(body)
       auth.audit({ kind: 'repos.save', ok: Boolean(r.ok), path: body?.path ?? null })
-      if (!r.ok) return sendJson(res, 400, r)
+      if (!r.ok) return sendFailure(res, 400, r)
       return sendJson(res, 201, { ...r, repos: repos.list({ force: true }), scanDirs: repos.scanDirs() })
     }
     if (b === 'scan' && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+        return sendError(res, 429, 'RATE_LIMITED')
       }
       const r = repos.scan()
       auth.audit({ kind: 'repos.scan', count: r.repos.length })
@@ -330,22 +372,22 @@ async function handleApi(req, res, url) {
     }
     if (b && c === 'board' && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+        return sendError(res, 429, 'RATE_LIMITED')
       }
       const r = await repos.createBoard(b)
       auth.audit({ kind: 'repos.board.create', repo: b, board: r.board?.slug ?? null, ok: Boolean(r.ok) })
-      return sendJson(res, r.ok ? 201 : 400, r)
+      return r.ok ? sendJson(res, 201, r) : sendFailure(res, 400, r)
     }
     if (b && req.method === 'DELETE') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+        return sendError(res, 429, 'RATE_LIMITED')
       }
       const r = repos.remove(b)
       auth.audit({ kind: 'repos.remove', repo: b, hidden: r.hidden ?? null, ok: Boolean(r.ok) })
-      if (!r.ok) return sendJson(res, 400, r)
+      if (!r.ok) return sendFailure(res, 400, r)
       return sendJson(res, 200, { ...r, repos: repos.list({ force: true }) })
     }
-    return sendJson(res, 404, { error: { message: `unknown endpoint: ${url.pathname}` } })
+    return sendError(res, 404, 'UNKNOWN_ENDPOINT', { path: url.pathname })
   }
 
   if (a === 'boards') {
@@ -358,7 +400,7 @@ async function handleApi(req, res, url) {
     // クイック起票（POST /api/boards/:slug/tasks）
     if (b && c === 'tasks' && !d && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+        return sendError(res, 429, 'RATE_LIMITED')
       }
       const body = await readJson(req)
       const r = await capture.create({ ...body, board: b })
@@ -369,7 +411,7 @@ async function handleApi(req, res, url) {
         created: Boolean(r.created),
         ok: Boolean(r.ok),
       })
-      return sendJson(res, r.ok ? 201 : 400, r)
+      return r.ok ? sendJson(res, 201, r) : sendFailure(res, 400, r)
     }
     if (b && c === 'tasks' && !d) {
       const list = kanban.tasks(b, { limit: Number(url.searchParams.get('limit') ?? 60) })
@@ -395,7 +437,7 @@ async function handleApi(req, res, url) {
     }
     if (b && c === 'tasks' && d && e === 'comment' && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+        return sendError(res, 429, 'RATE_LIMITED')
       }
       const body = await readJson(req)
       const out = await inbox.comment(b, d, body?.body ?? body?.text, String(body?.by ?? 'mobile'))
@@ -404,7 +446,7 @@ async function handleApi(req, res, url) {
     }
     if (b && c === 'tasks' && d && e === 'close' && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+        return sendError(res, 429, 'RATE_LIMITED')
       }
       const body = await readJson(req)
       const out = await inbox.close(b, d, body?.action, body?.note ?? body?.reason ?? '', String(body?.by ?? 'mobile'))
@@ -420,7 +462,7 @@ async function handleApi(req, res, url) {
     }
     if (b && c === 'tasks' && d && e === 'unblock' && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+        return sendError(res, 429, 'RATE_LIMITED')
       }
       const body = await readJson(req)
       const out = await inbox.unblock(b, d, body?.note ?? body?.reason ?? '', String(body?.by ?? 'mobile'))
@@ -435,7 +477,7 @@ async function handleApi(req, res, url) {
     }
     if (b && c === 'tasks' && d && e === 'abort' && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+        return sendError(res, 429, 'RATE_LIMITED')
       }
       const body = await readJson(req)
       const reason = String(body?.reason ?? 'mobile kill switch').slice(0, 200)
@@ -452,7 +494,7 @@ async function handleApi(req, res, url) {
       }
       return sendJson(res, 200, detail)
     }
-    return sendJson(res, 404, { error: { message: `unknown endpoint: ${url.pathname}` } })
+    return sendError(res, 404, 'UNKNOWN_ENDPOINT', { path: url.pathname })
   }
 
 
@@ -494,7 +536,7 @@ async function handleApi(req, res, url) {
     // （監視 cron が起票元の会話へ返す 1 行。端末はチャットタブが 15 秒ごとに読む）
     if (b === 'chat-report' && req.method === 'GET') {
       const sessionId = String(url.searchParams.get('session_id') || '')
-      if (!sessionId) return sendJson(res, 400, { error: { code: 'SESSION_REQUIRED', message: 'session_id が必要です' } })
+      if (!sessionId) return sendError(res, 400, 'SESSION_REQUIRED')
       return sendJson(res, 200, {
         sessionId,
         items: review.chatReport(sessionId, {
@@ -506,13 +548,13 @@ async function handleApi(req, res, url) {
     // /api/review/:id/session        … 実行ワーカーの session_id を解決する
     if (c === 'session' && req.method === 'GET') {
       const info = review.sessionId(b)
-      if (!info) return sendJson(res, 404, { error: { code: 'NO_SESSION', message: 'このタスクに worker セッションがありません' } })
+      if (!info) return sendError(res, 404, 'NO_SESSION')
       return sendJson(res, 200, { taskId: b, status: info.status, sessionId: info.sessionId })
     }
     if (c === 'worker' && req.method === 'GET') {
       // worker（profile mobile）の進行を読む。session.resume は通らないので state.db を直接読む
       const info = review.sessionId(b)
-      if (!info) return sendJson(res, 404, { error: { code: 'NO_SESSION', message: 'このタスクに worker セッションがありません' } })
+      if (!info) return sendError(res, 404, 'NO_SESSION')
       // セッションの DB はイベントが記録した実パスを優先（無ければ profiles/mobile）
       const profileDb =
         info.db || path.join(path.dirname(cfg.kanbanRoot || path.join(os.homedir(), '.hermes', 'kanban')), 'profiles', 'mobile', 'state.db')
@@ -534,7 +576,7 @@ async function handleApi(req, res, url) {
     }
     if (b === 'library' && c === 'file' && req.method === 'GET') {
       const r = review.libraryFile(String(url.searchParams.get('path') || ''))
-      if (!r.ok) return sendJson(res, 404, { error: { code: r.code, message: r.message } })
+      if (!r.ok) return sendFailure(res, 404, r)
       res.writeHead(200, { 'content-type': r.type, 'cache-control': 'private, max-age=600' })
       return res.end(r.data)
     }
@@ -542,26 +584,26 @@ async function handleApi(req, res, url) {
     // 旧 `/api/review/from-image` は、配信済み dist を掴んだ端末のために受け続ける。
     if (((b === 'annotation' && c === 'new') || b === 'from-image') && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+        return sendError(res, 429, 'RATE_LIMITED')
       }
       const body = await readJson(req, 12_000_000)
       const r = await review.createFromImage(body || {})
       auth.audit({ kind: 'review.from_image', task: r.taskId ?? null, source: body?.source ?? 'upload', ok: Boolean(r.ok) })
-      return sendJson(res, r.ok ? 201 : 400, r)
+      return r.ok ? sendJson(res, 201, r) : sendFailure(res, 400, r)
     }
     if (c === 'image' && req.method === 'GET') {
       const r = review.image(b, { annotated: url.searchParams.get('annotated') === '1' })
-      if (!r.ok) return sendJson(res, 404, { error: { code: r.code, message: r.message } })
+      if (!r.ok) return sendFailure(res, 404, r)
       res.writeHead(200, { 'content-type': r.type, 'cache-control': 'private, max-age=120' })
       return res.end(r.data)
     }
     if (c === 'annotation' && req.method === 'GET') {
       const r = review.annotation(b)
-      return sendJson(res, r.ok ? 200 : 404, r.ok ? r : { error: { code: r.code, message: r.message } })
+      return r.ok ? sendJson(res, 200, r) : sendFailure(res, 404, r)
     }
     if (c === 'annotation' && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+        return sendError(res, 429, 'RATE_LIMITED')
       }
       // 画像は base64 で来るので、この経路だけ上限を上げる（既定は 1MB）
       const body = await readJson(req, 12_000_000)
@@ -573,11 +615,11 @@ async function handleApi(req, res, url) {
         marks: r.marks ?? 0,
         ok: Boolean(r.ok),
       })
-      return sendJson(res, r.ok ? 200 : 400, r)
+      return r.ok ? sendJson(res, 200, r) : sendFailure(res, 400, r)
     }
     if (c === 'sheet' && req.method === 'GET') {
       const r = review.sheetHtml(b)
-      if (!r.ok) return sendJson(res, r.code === 'NOT_FOUND' ? 404 : 409, { error: { code: r.code, message: r.message } })
+      if (!r.ok) return sendFailure(res, r.code === 'NOT_FOUND' ? 404 : 409, r)
       // iframe で埋め込む時は sandbox（別オリジン）で隔離し、回答は postMessage で親へ。
       // 単体タブで開いた時は same-origin を許可して自分で API に POST できるようにする。
       const framed = String(req.headers['sec-fetch-dest'] || '') === 'iframe'
@@ -597,17 +639,17 @@ async function handleApi(req, res, url) {
     if (c === 'thumb' && req.method === 'GET') {
       const rel = url.pathname.split('/').slice(5).join('/')
       const r = review.thumb(decodeURIComponent(rel))
-      if (!r.ok) return sendJson(res, 404, { error: { code: r.code, message: r.message } })
+      if (!r.ok) return sendFailure(res, 404, r)
       res.writeHead(200, { 'content-type': r.type, 'cache-control': 'private, max-age=600' })
       return res.end(r.data)
     }
     if (c === 'data' && req.method === 'GET') {
       const r = review.sheetData(b)
-      return sendJson(res, r.ok ? 200 : 409, r.ok ? r : { error: { code: r.code, message: r.message } })
+      return r.ok ? sendJson(res, 200, r) : sendFailure(res, 409, r)
     }
     if (c === 'answer' && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+        return sendError(res, 429, 'RATE_LIMITED')
       }
       const body = await readJson(req)
       const r = await review.answer(b, body || {})
@@ -619,25 +661,25 @@ async function handleApi(req, res, url) {
         ok: Boolean(r.ok),
       })
       // レビュー待ち以外への送信は 409（状態の衝突）として返す。他の失敗は 400。
-      return sendJson(res, r.ok ? 200 : r.code === 'NOT_WAITING' ? 409 : 400, r)
+      return r.ok ? sendJson(res, 200, r) : sendFailure(res, r.code === 'NOT_WAITING' ? 409 : 400, r)
     }
     if (c === 'reopen' && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+        return sendError(res, 429, 'RATE_LIMITED')
       }
       const body = await readJson(req)
       const r = await review.reopen(b, body?.reason)
       auth.audit({ kind: 'review.reopen', task: b, ok: Boolean(r.ok) })
-      return sendJson(res, r.ok ? 200 : 400, r)
+      return r.ok ? sendJson(res, 200, r) : sendFailure(res, 400, r)
     }
-    return sendJson(res, 404, { error: { message: `unknown endpoint: ${url.pathname}` } })
+    return sendError(res, 404, 'UNKNOWN_ENDPOINT', { path: url.pathname })
   }
 
   // --- 読み取り専用トランスクリプト ------------------------------------------
   // /api/sessions/:id/transcript  … カンバン作業ログなど resume できない会話
   if (a === 'sessions' && b && c === 'transcript' && req.method === 'GET') {
     if (!readAllowed('transcript', cfg.rate.maxReads ?? 240, cfg.rate.windowMs)) {
-      return sendJson(res, 429, { error: { message: '読み取りが多すぎます' } })
+      return sendError(res, 429, 'RATE_LIMITED')
     }
     const profileName = url.searchParams.get('profile')
     const profiles = profileName ? await listProfiles() : []
@@ -647,14 +689,14 @@ async function handleApi(req, res, url) {
       includeTools: url.searchParams.get('tools') === '1',
       dbPath: profileName ? stateDbFor(profiles, profileName) : undefined,
     })
-    return sendJson(res, r.ok ? 200 : 404, r)
+    return r.ok ? sendJson(res, 200, r) : sendFailure(res, 404, r)
   }
 
   // --- ライブ進捗（実行中ターンと実行中タスク）--------------------------------
   // /api/live  … 5秒ポーリング前提。全プロファイルの state.db のリースとカンバンを合成する
   if (a === 'live' && req.method === 'GET') {
     if (!readAllowed('live', cfg.rate.maxReads ?? 240, cfg.rate.windowMs)) {
-      return sendJson(res, 429, { error: { message: '読み取りが多すぎます' } })
+      return sendError(res, 429, 'RATE_LIMITED')
     }
     const r = live.snapshot({ dbs: await listStateDbs() })
     // Discord 由来のターンにはスレッドリンクを添える
@@ -682,7 +724,7 @@ async function handleApi(req, res, url) {
   // /api/inbox  … ボード横断の blocked タスク（読む＋コメントで答える）
   if (a === 'inbox' && req.method === 'GET') {
     if (!readAllowed('inbox', cfg.rate.maxReads ?? 240, cfg.rate.windowMs)) {
-      return sendJson(res, 429, { error: { message: '読み取りが多すぎます' } })
+      return sendError(res, 429, 'RATE_LIMITED')
     }
     return sendJson(res, 200, inbox.list())
   }
@@ -691,16 +733,16 @@ async function handleApi(req, res, url) {
   // /api/usage?hours=24  … 合計とモデル別・上位セッション（全プロファイル合算）
   if (a === 'usage' && req.method === 'GET') {
     const r = usage.summary({ hours: Number(url.searchParams.get('hours') ?? 24), dbs: await listStateDbs() })
-    return sendJson(res, r.ok ? 200 : 500, r)
+    return r.ok ? sendJson(res, 200, r) : sendFailure(res, 500, r)
   }
 
   // --- 横断検索 --------------------------------------------------------------
   // /api/search?q=&limit=&hours=  … 全プロファイル・全セッションの発言から抜粋を返す（読み取り専用）
   if (a === 'search' && req.method === 'GET') {
     const q = String(url.searchParams.get('q') ?? '')
-    if (!q.trim()) return sendJson(res, 400, { error: { message: 'q が必要です' } })
+    if (!q.trim()) return sendError(res, 400, 'QUERY_REQUIRED')
     if (!readAllowed('search', cfg.rate.maxReads ?? 240, cfg.rate.windowMs)) {
-      return sendJson(res, 429, { error: { message: '検索が多すぎます' } })
+      return sendError(res, 429, 'RATE_LIMITED')
     }
     const r = search.search({
       q,
@@ -715,7 +757,7 @@ async function handleApi(req, res, url) {
         if (link) h.discordUrl = link.url
       }
     }
-    return sendJson(res, r.ok ? 200 : 400, r)
+    return r.ok ? sendJson(res, 200, r) : sendFailure(res, 400, r)
   }
 
   // --- Discord ディープリンク ------------------------------------------------
@@ -727,13 +769,13 @@ async function handleApi(req, res, url) {
   }
 
   if (a === 'gateway' && b && req.method === 'POST') {
-    if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+    if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) return sendError(res, 429, 'RATE_LIMITED')
     const body = await readJson(req)
     const by = String(body?.by ?? 'mobile')
     if (b === 'pause' || b === 'resume') {
       const expected = b.toUpperCase()
       if (String(body?.confirm ?? '').toUpperCase() !== expected) {
-        return sendJson(res, 400, { error: { message: `確認語が一致しません（${expected}）` } })
+        return sendError(res, 400, 'CONFIRM_MISMATCH', { expected })
       }
       const out = b === 'pause' ? await ops.pause(String(body?.reason ?? 'mobile'), by) : await ops.resume(by)
       return sendJson(res, 200, out)
@@ -779,28 +821,32 @@ async function handleApi(req, res, url) {
 
   // --- 端末の定型コマンド ---------------------------------------------------
   if (a === 'snippets' && b === 'term' && req.method === 'GET') {
-    return sendJson(res, 200, { snippets: listTermSnippets(capabilities) })
+    return sendJson(res, 200, { snippets: listTermSnippets(capabilities, langOf(req, url)) })
   }
 
   // --- 定型スニペット ------------------------------------------------------
   if (a === 'snippets') {
     if (req.method === 'GET') {
-      return sendJson(res, 200, { snippets: listSnippets(readCustomSnippets()), customMax: CUSTOM_MAX })
+      return sendJson(res, 200, {
+        snippets: listSnippets(readCustomSnippets(), langOf(req, url)),
+        customMax: CUSTOM_MAX,
+        lang: langOf(req, url),
+      })
     }
     if (req.method === 'PUT') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+        return sendError(res, 429, 'RATE_LIMITED')
       }
       const body = await readJson(req)
       const saved = writeCustomSnippets(body?.custom ?? [])
       auth.audit({ kind: 'snippets.save', count: saved.length })
-      return sendJson(res, 200, { custom: saved, snippets: listSnippets(saved) })
+      return sendJson(res, 200, { custom: saved, snippets: listSnippets(saved, langOf(req, url)) })
     }
   }
 
   // --- 端末側の例外を受け取る（下部ナビ消失などの原因調査用）-------------
   if (a === 'client-error' && req.method === 'POST') {
-    if (!writeAllowed(30, 60_000)) return sendJson(res, 429, { error: { message: 'too many' } })
+    if (!writeAllowed(30, 60_000)) return sendError(res, 429, 'RATE_LIMITED')
     const body = await readJson(req, 200_000)
     try {
       fs.mkdirSync(cfg.dataDir, { recursive: true })
@@ -839,7 +885,7 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, { lines: parsed })
   }
 
-  sendJson(res, 404, { error: { message: `unknown endpoint: ${url.pathname}` } })
+  sendError(res, 404, 'UNKNOWN_ENDPOINT', { path: url.pathname })
 }
 
 /**
@@ -895,14 +941,14 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (!isPublicPath(url.pathname) && !auth.authorized(req)) {
-    if (url.pathname.startsWith('/api/')) return sendJson(res, 401, { error: { message: 'unauthorized', code: 'AUTH_REQUIRED' } })
+    if (url.pathname.startsWith('/api/')) return sendError(res, 401, 'AUTH_REQUIRED')
     res.writeHead(401, { 'content-type': 'text/html; charset=utf-8' }).end(LOGIN_HTML)
     return
   }
 
   // 殻は公開、API は認証必須（殻の中の /api/* 呼び出しで 401 を受けたら UI がログインを出す）
   if (url.pathname.startsWith('/api/') && !auth.authorized(req)) {
-    return sendJson(res, 401, { error: { message: 'unauthorized', code: 'AUTH_REQUIRED' } })
+    return sendError(res, 401, 'AUTH_REQUIRED')
   }
 
   try {
@@ -911,7 +957,7 @@ const server = http.createServer(async (req, res) => {
   } catch (err) {
     const status = err?.statusCode ?? 500
     if (status >= 500) console.error('[api] 失敗:', err)
-    sendJson(res, status, { error: { message: err?.message ?? 'internal error' } })
+    sendError(res, status, status >= 500 ? 'INTERNAL' : 'BAD_REQUEST', { detail: String(err?.message ?? '') })
   }
 })
 

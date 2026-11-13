@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from '../api.js'
 import { CloseActions } from '../components/CloseActions.jsx'
-import { Loader, RefreshButton, Sheet, Spinner, relTime } from '../components/Ui.jsx'
+import { Loader, RefreshButton, Sheet, Spinner, fmtTime, relTime } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
 import { readActiveChatId } from '../lib/chatReports.js'
 import { AnnotationEditor } from './AnnotationEditor.jsx'
@@ -188,7 +188,7 @@ function WorkerFeed({ taskId, open }) {
       {!error && !msgs.length ? <div className="ak-worker-empty">まだ出力がありません</div> : null}
       <div className="ak-worker-log" ref={boxRef}>
         {msgs.map((m) => {
-          const time = new Date(m.at).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+          const time = fmtTime(m.at)
           const label = m.role === 'tool' ? m.toolName || 'tool' : 'agent'
           const text = String(m.text || '').replace(/\s+/g, ' ').slice(0, 220)
           return (
@@ -1012,7 +1012,7 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
           {feed.slice(-3).map((n, i) => (
             <div className="ak-feed-row" key={`${n.at}-${i}`}>
               <span className="ak-feed-at">
-                {new Date(n.at).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+                {fmtTime(n.at)}
               </span>
               <span className="ak-feed-text">{n.text}</span>
             </div>

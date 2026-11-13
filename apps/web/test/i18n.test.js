@@ -1,0 +1,151 @@
+/**
+ * i18n 基盤の自動検証（SPEC §6.2 / Batch T3 受入条件）。
+ *
+ * - en.json と ja.json のキー差分 0 件
+ * - `{var}` プレースホルダ名の不一致 0 件
+ * - キー欠落時のフォールバック（ja → en → キー文字列）
+ * - ブリッジの全エラーコードに `err.*` の訳があること
+ */
+
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import path from 'node:path'
+import {
+  DICTS,
+  placeholders,
+  resolveLang,
+  formatMessage,
+  translate,
+  localizeError,
+  setLang,
+  getLang,
+} from '../src/i18n/lang.js'
+import { fmtBytes, fmtDateTime, fmtNumber, relTime, setLocale } from '../src/lib/format.js'
+import { ERROR_MESSAGES } from '../../bridge/src/api-errors.js'
+
+const here = import.meta.dirname
+const readDict = (lang) => JSON.parse(fs.readFileSync(path.join(here, '..', 'src', 'i18n', `${lang}.json`), 'utf8'))
+const en = readDict('en')
+const ja = readDict('ja')
+
+test('en.json と ja.json のキー集合は完全一致（差分 0 件）', () => {
+  const enKeys = Object.keys(en).sort()
+  const jaKeys = Object.keys(ja).sort()
+  const onlyEn = enKeys.filter((k) => !(k in ja))
+  const onlyJa = jaKeys.filter((k) => !(k in en))
+  assert.deepEqual(onlyEn, [], `ja に無いキー: ${onlyEn.join(', ')}`)
+  assert.deepEqual(onlyJa, [], `en に無いキー: ${onlyJa.join(', ')}`)
+  assert.deepEqual(jaKeys, enKeys)
+  // 実行時辞書（import されたもの）も同じキー集合であること
+  assert.deepEqual(Object.keys(DICTS.ja).sort(), enKeys)
+})
+
+test('プレースホルダ {var} の名前は en/ja で一致（不一致 0 件）', () => {
+  const mismatched = []
+  for (const key of Object.keys(en)) {
+    const a = placeholders(en[key])
+    const b = placeholders(ja[key])
+    if (a.join(',') !== b.join(',')) mismatched.push(`${key}: en=[${a}] ja=[${b}]`)
+  }
+  assert.deepEqual(mismatched, [])
+})
+
+test('訳文は空でなく、英語と日本語が同一ではない（訳し忘れ検出）', () => {
+  const empty = []
+  for (const key of Object.keys(en)) {
+    if (!String(en[key]).trim()) empty.push(`en.${key}`)
+    if (!String(ja[key]).trim()) empty.push(`ja.${key}`)
+  }
+  assert.deepEqual(empty, [])
+  // 記号のみ・固有名詞のみのキー（GW / 日本語 / English）は除いて比較する
+  const sameAllowed = new Set(['status.gw', 'settings.languageEn', 'settings.languageJa', 'common.ok'])
+  const untranslated = Object.keys(en).filter((k) => !sameAllowed.has(k) && en[k] === ja[k])
+  assert.deepEqual(untranslated, [], `未翻訳の疑い: ${untranslated.join(', ')}`)
+})
+
+test('§6.2 の対照表のキーがすべて存在する', () => {
+  const required = [
+    'nav.tasks', 'nav.review', 'nav.chat', 'nav.term', 'nav.settings',
+    'status.gw', 'status.workers', 'status.reviewWaiting',
+    'review.tab.waiting', 'review.tab.active', 'review.tab.done',
+    'review.newAnnotation', 'review.submitAnswer',
+    'chat.working', 'chat.toolsRan', 'chat.reviewWaitingTitle', 'chat.openInReview',
+    'chat.jumpBottom', 'chat.jumpBottomWorking',
+    'settings.language', 'settings.theme',
+  ]
+  const missing = required.filter((k) => !(k in en) || !(k in ja))
+  assert.deepEqual(missing, [])
+  // 表の代表値が仕様どおり
+  assert.equal(en['chat.toolsRan'], '🔧 Ran {count} tools')
+  assert.equal(ja['chat.toolsRan'], '🔧 ツール {count} 件を実行')
+  assert.equal(en['review.newAnnotation'], '+ Annotate')
+  assert.equal(ja['review.newAnnotation'], '＋ 注釈')
+})
+
+test('ブリッジの全エラーコードに err.* の訳がある', () => {
+  const missing = []
+  for (const code of Object.keys(ERROR_MESSAGES)) {
+    if (!(`err.${code}` in en)) missing.push(`en.err.${code}`)
+    if (!(`err.${code}` in ja)) missing.push(`ja.err.${code}`)
+    if (!ERROR_MESSAGES[code].trim()) missing.push(`api-errors:${code}`)
+  }
+  assert.deepEqual(missing, [])
+})
+
+test('言語解決: localStorage → navigator.languages → en', () => {
+  assert.equal(resolveLang({ stored: 'en', languages: ['ja-JP'] }), 'en')
+  assert.equal(resolveLang({ stored: 'ja', languages: ['en-US'] }), 'ja')
+  assert.equal(resolveLang({ stored: 'auto', languages: ['ja-JP', 'en-US'] }), 'ja')
+  assert.equal(resolveLang({ stored: 'auto', languages: ['en-US', 'ja-JP'] }), 'en')
+  assert.equal(resolveLang({ stored: null, languages: ['fr-FR'] }), 'en')
+  assert.equal(resolveLang({ stored: 'bogus', language: 'ja' }), 'ja')
+  assert.equal(resolveLang({}), 'en')
+})
+
+test('フォールバック: ja に無いキーは en、どちらにも無ければキー名', () => {
+  const realJa = DICTS.ja['nav.tasks']
+  try {
+    delete DICTS.ja['nav.tasks']
+    assert.equal(translate('ja', 'nav.tasks'), en['nav.tasks'])
+  } finally {
+    DICTS.ja['nav.tasks'] = realJa
+  }
+  assert.equal(translate('ja', 'no.such.key'), 'no.such.key')
+  assert.equal(translate('xx', 'nav.tasks'), en['nav.tasks'])
+})
+
+test('プレースホルダ展開: 値は置換、未知の名前は残す', () => {
+  assert.equal(formatMessage('{a} and {b}', { a: 1, b: 2 }), '1 and 2')
+  assert.equal(formatMessage('{a} and {b}', { a: 1 }), '1 and {b}')
+  assert.equal(formatMessage('no vars'), 'no vars')
+  assert.deepEqual(placeholders('{b} {a} {b}'), ['a', 'b'])
+  assert.equal(translate('ja', 'status.workers', { n: 3 }), '稼働 3')
+  assert.equal(translate('en', 'status.workers', { n: 3 }), 'Workers 3')
+})
+
+test('エラー応答の自言語化（§6.3 の {ok,code,error,params}）', () => {
+  setLang('ja')
+  assert.equal(localizeError({ code: 'NOT_WAITING', error: 'Task is not waiting for review', params: { status: 'ready' } }), 'レビュー待ちではありません（現在: ready）')
+  setLang('en')
+  assert.equal(localizeError({ code: 'NOT_WAITING', params: { status: 'ready' } }), 'Task is not waiting for review (status: ready)')
+  // 未知のコードはサーバーの英語メッセージをそのまま返す（画面を空にしない）
+  assert.equal(localizeError({ code: 'SOMETHING_NEW', error: 'boom' }), 'boom')
+  assert.equal(getLang(), 'en')
+  setLang('en')
+})
+
+test('フォーマッタは Intl で言語に追従する', () => {
+  setLocale('ja')
+  const jaRel = relTime(Date.now() - 3 * 60 * 1000)
+  assert.match(jaRel, /分前/)
+  assert.equal(fmtBytes(1572864), '1.5MB')
+  assert.equal(fmtNumber(1234567), '1,234,567')
+  setLocale('en')
+  const enRel = relTime(Date.now() - 3 * 60 * 1000)
+  assert.match(enRel, /min/)
+  assert.notEqual(enRel, jaRel)
+  const d = Date.parse('2026-11-13T22:40:00Z')
+  assert.notEqual(fmtDateTime(d, {}, 'ja'), fmtDateTime(d, {}, 'en'))
+  setLocale('en')
+})

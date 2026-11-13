@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { useInstallState, swState } from '../lib/useInstallState.js'
 import { diagnosePwa } from '../lib/pwaDiagnose.js'
-import { RefreshButton, Sheet, Spinner, fmtBytes, relTime } from '../components/Ui.jsx'
+import { RefreshButton, Sheet, Spinner, fmtBytes, fmtDateTime, relTime } from '../components/Ui.jsx'
 import { haptic, isHapticEnabled, setHapticEnabled } from '../lib/haptic.js'
 
 /**
@@ -425,7 +425,7 @@ export function SettingsPane({ overview, notify, refresh }) {
             <span className="row-main">
               <span className="row-title">{a.kind}</span>
               <span className="row-sub">
-                {new Date(a.at).toLocaleString('ja-JP')}
+                {fmtDateTime(a.at)}
                 {a.task ? ` ・ ${a.task}` : ''}
                 {a.action ? ` ・ ${a.action}` : ''}
                 {a.ok === false ? ' ・ 失敗' : ''}

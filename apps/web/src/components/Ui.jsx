@@ -301,21 +301,9 @@ export function HoldButton({ onFire, ms = 1500, label, sub, tone = 'danger', dis
   )
 }
 
-/** バイト数を読みやすく。 */
-export function fmtBytes(n) {
-  if (!Number.isFinite(n) || n <= 0) return '—'
-  if (n < 1024) return `${n}B`
-  if (n < 1048576) return `${(n / 1024).toFixed(0)}KB`
-  if (n < 1073741824) return `${(n / 1048576).toFixed(1)}MB`
-  return `${(n / 1073741824).toFixed(1)}GB`
-}
+/**
+ * バイト数・相対時刻・日時は `lib/format.js`（Intl 言語連動・SPEC §6）に移した。
+ * 既存の import 元（20 箇所以上）を壊さないよう、ここから再エクスポートする。
+ */
+export { fmtBytes, relTime, fmtNumber, fmtDateTime, fmtTime, fmtDate } from '../lib/format.js'
 
-/** 相対時刻。 */
-export function relTime(ts) {
-  if (!ts) return '—'
-  const s = Math.max(0, Math.round((Date.now() - ts) / 1000))
-  if (s < 60) return `${s}秒前`
-  if (s < 3600) return `${Math.round(s / 60)}分前`
-  if (s < 86400) return `${Math.round(s / 3600)}時間前`
-  return `${Math.round(s / 86400)}日前`
-}

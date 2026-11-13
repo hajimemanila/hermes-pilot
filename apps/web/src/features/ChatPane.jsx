@@ -31,7 +31,7 @@ import {
   toEpochMs,
   unreadSessions,
 } from '../lib/chatReports.js'
-import { Icon, Loader, RefreshButton, Sheet, relTime, fmtBytes } from '../components/Ui.jsx'
+import { Icon, Loader, RefreshButton, Sheet, fmtBytes, fmtDateTime, relTime } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
 
 /** 入力欄を内容に合わせて伸ばす（枠の分を足さないと 2px 溢れて縦棒が出る）。 */
@@ -1357,7 +1357,7 @@ export function ChatPane({
           if (item.kind === 'report') {
             const r = item.report
             return (
-              <div key={r.key} className="msg report" title={new Date(r.at).toLocaleString()}>
+              <div key={r.key} className="msg report" title={fmtDateTime(r.at)}>
                 <span className="report-body">🖊 {r.text}</span>
                 <button
                   type="button"

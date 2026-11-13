@@ -1,5 +1,5 @@
 import React from 'react'
-import { Sheet, relTime } from '../components/Ui.jsx'
+import { Sheet, fmtNumber, relTime } from '../components/Ui.jsx'
 import { fmtCost, fmtTokens, fmtPct } from '../lib/format.js'
 
 /**
@@ -37,7 +37,7 @@ export function UsageSheet({ data, hours = 24, onClose }) {
             </div>
             <div className="kv">
               <span>API呼び出し</span>
-              <b>{t.calls.toLocaleString('ja-JP')}</b>
+              <b>{fmtNumber(t.calls)}</b>
             </div>
             <div className="kv">
               <span>セッション</span>
