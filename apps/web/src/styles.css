@@ -314,6 +314,192 @@ button.stat:active {
   color: var(--warn);
 }
 
+/* ---------- コックピット計器盤（上部ステータスバー・SPEC §5.5） ---------- */
+/*
+ * どのタブにいても同じ位置に出す。横に流れる 1 行（狭い端末では横スクロール）にして、
+ * ページ全体が横に伸びないようにする（scrollWidth <= clientWidth を保つ）。
+ */
+.telemetry {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--glass);
+  overflow: hidden;
+}
+
+.telemetry::-webkit-scrollbar {
+  display: none;
+}
+
+.t-pill {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 64vw;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+button.t-pill:active {
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+}
+
+.t-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.t-dot.ok {
+  background: var(--good);
+}
+.t-dot.live {
+  background: var(--on-warn);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.t-pill.gw {
+  color: var(--good);
+}
+.t-pill.gw.offline,
+.t-pill.gw.error {
+  max-width: none;
+  color: var(--danger-fg);
+  background: var(--danger-bg);
+  border-color: var(--bad);
+  padding-inline: 8px;
+}
+
+.t-pill.run {
+  color: var(--rec-fg);
+  background: var(--rec-bg);
+  border-color: var(--accent);
+}
+
+.t-tool {
+  max-width: 26vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+  color: inherit;
+  opacity: 0.85;
+}
+
+.t-pill.gem {
+  color: var(--text-dim);
+}
+
+/* 🔔 判断待ちは琥珀で埋める（人間がボトルネックであることを 1 目で示す） */
+.t-pill.warn {
+  color: var(--on-warn);
+  background: var(--warn);
+  border-color: var(--warn);
+}
+
+.pill-warn-pulse {
+  animation: t-pill-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes t-pill-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.55);
+    opacity: 1;
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(245, 158, 11, 0);
+    opacity: 0.88;
+  }
+}
+
+/* ---------- Spec Launchpad（SPEC §5.4） ---------- */
+.spec-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--rec-bg);
+  background: var(--rec-bg);
+  color: var(--rec-fg);
+  font: inherit;
+  text-align: left;
+}
+
+.spec-bar:active {
+  border-color: var(--accent);
+}
+
+.spec-bar-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 1px;
+}
+
+.spec-bar-title {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.spec-bar-name {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spec-bar-n {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.spec-check {
+  flex: 0 0 auto;
+  width: 16px;
+  text-align: center;
+  color: var(--accent);
+}
+
+.spec-taken {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--good);
+  white-space: nowrap;
+}
+
+.list-item:disabled {
+  opacity: 0.55;
+}
+
+
 /* ---------- チップ ---------- */
 .chips {
   display: flex;

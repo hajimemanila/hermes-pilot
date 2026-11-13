@@ -1,0 +1,414 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import { execFile } from 'node:child_process'
+
+/**
+ * Spec Launchpad — `docs/SPEC-*.md` を検出し、バッチ見出しをカンバンへ一括起票する。
+ *
+ * 読み取りは**プレーンなファイル走査だけ**（カンバン DB は触らない）。起票は
+ * 正規コマンド `hermes kanban create` を実行する（カンバン DB に直接書かない。
+ * 盤面のロック・イベント・通知の整合性は本体に任せる）。
+ *
+ * 冪等性: 同じボードに `[<BatchID>]` で始まる**未完了**タスクがあれば起票しない。
+ * 二重タップ・再読み込み・再起動で同じバッチが積み上がらないようにするための規則。
+ */
+
+/** 走査するディレクトリ（リポジトリ直下と `docs/`）。 */
+export const SPEC_DIRS = ['docs', '']
+
+/** ファイル名の規則（`SPEC*.md`。大文字小文字は問わない）。 */
+export const SPEC_FILE_RE = /^SPEC.*\.md$/i
+
+/** バッチ ID の規則（英字始まり・16 文字まで）。`### 1.1 見出し` のような番号見出しを拾わない。 */
+export const BATCH_ID_RE = /^[A-Za-z][A-Za-z0-9._-]{0,15}$/
+
+/** 完了してよい状態（これ以外を「未完了」とみなして重複起票を止める）。 */
+export const CLOSED_STATUSES = new Set(['done', 'archived'])
+
+/** タスク本文の上限（カンバン側の実用上限に合わせる）。 */
+export const BODY_MAX = 6000
+
+/** `### Batch <ID>: <Title>` / `### <ID>: <Title>`。 */
+const BATCH_HEADING_RE = /^###\s+(?:Batch\s+)?([A-Za-z][A-Za-z0-9._-]{0,15})\s*[:：]\s*(.+?)\s*$/
+
+/** セクションの終わり（レベル 1〜3 の見出し。`####` はバッチ内の小見出しなので含める）。 */
+const SECTION_END_RE = /^#{1,3}\s/
+
+/** 目的の行（`- **目的**: …` / `**Objective**: …`）。 */
+const OBJECTIVE_RE = /^[-*]?\s*\*\*\s*(?:目的|Objective)\s*\*\*\s*[:：]\s*(.+)$/i
+
+/** タイトル行（`# …`）。 */
+const TITLE_RE = /^#\s+(.+?)\s*$/
+
+/**
+ * 仕様書 1 枚を解析してタイトルとバッチを返す（純粋関数）。
+ *
+ * @param {string} text Markdown
+ * @returns {{title: string, batches: Array<{id: string, title: string, objective: string, section: string}>, valid: boolean}} 解析結果
+ */
+export function parseSpec(text) {
+  const lines = String(text ?? '').split(/\r?\n/)
+  let title = ''
+  for (const line of lines) {
+    const m = TITLE_RE.exec(line)
+    if (m) {
+      title = m[1]
+      break
+    }
+  }
+
+  /** @type {Array<{id: string, title: string, objective: string, section: string}>} */
+  const batches = []
+  for (let i = 0; i < lines.length; i += 1) {
+    const m = BATCH_HEADING_RE.exec(lines[i])
+    if (!m || !BATCH_ID_RE.test(m[1])) continue
+    // 同じ ID が 2 回出たら最初のものを採る（目次・参照の重複見出し対策）
+    if (batches.some((b) => b.id === m[1])) continue
+    let end = lines.length
+    for (let j = i + 1; j < lines.length; j += 1) {
+      if (SECTION_END_RE.test(lines[j])) {
+        end = j
+        break
+      }
+    }
+    const body = lines.slice(i + 1, end)
+    batches.push({
+      id: m[1],
+      title: m[2].trim(),
+      objective: extractObjective(body),
+      // 末尾の区切り線（`---`）は本文に含めない
+      section: trimTrailingRule(body.join('\n')),
+    })
+  }
+
+  return { title, batches, valid: Boolean(title) || batches.length > 0 }
+}
+
+/**
+ * 抜粋から「目的」だけ取り出す。無ければ最初の意味のある行。
+ * @param {string[]} lines セクションの行
+ * @returns {string} 目的（無ければ空文字）
+ */
+function extractObjective(lines) {
+  for (const line of lines) {
+    const m = OBJECTIVE_RE.exec(line)
+    if (m) return m[1].trim()
+  }
+  for (const line of lines) {
+    const t = line.trim()
+    if (!t || t.startsWith('#') || t.startsWith('|') || t === '---') continue
+    return t.replace(/^[-*]\s*/, '').slice(0, 200)
+  }
+  return ''
+}
+
+/**
+ * 末尾の区切り線と空行を落とす。
+ * @param {string} text 本文
+ * @returns {string} 整形後
+ */
+function trimTrailingRule(text) {
+  const lines = String(text ?? '').split('\n')
+  while (lines.length && (/^\s*$/.test(lines[lines.length - 1]) || /^\s*-{3,}\s*$/.test(lines[lines.length - 1]))) {
+    lines.pop()
+  }
+  return lines.join('\n').trim()
+}
+
+/**
+ * リポジトリ内の SPEC を走査する。
+ *
+ * @param {string} repoPath リポジトリの絶対パス
+ * @param {{readdir?: Function, stat?: Function, read?: Function}} [deps] 差し替え（テスト用）
+ * @returns {Array<{path: string, title: string, mtime: number, batches: Array<object>, valid: boolean}>} mtime の新しい順
+ */
+export function listSpecs(repoPath, deps = {}) {
+  const readdir = deps.readdir ?? ((dir) => fs.readdirSync(dir))
+  const stat = deps.stat ?? ((file) => fs.statSync(file))
+  const read = deps.read ?? ((file) => fs.readFileSync(file, 'utf8'))
+  const root = path.resolve(String(repoPath ?? ''))
+  if (!root) return []
+
+  const out = []
+  const seen = new Set()
+  for (const dir of SPEC_DIRS) {
+    const abs = dir ? path.join(root, dir) : root
+    let names = []
+    try {
+      names = readdir(abs)
+    } catch {
+      continue
+    }
+    for (const name of names) {
+      if (!SPEC_FILE_RE.test(name)) continue
+      const file = path.join(abs, name)
+      let st
+      try {
+        st = stat(file)
+      } catch {
+        continue
+      }
+      // ディレクトリ（`SPEC-dir.md/` のような変な名前）は無視する
+      if (typeof st?.isFile === 'function' && !st.isFile()) continue
+      const rel = path.relative(root, file).split(path.sep).join('/')
+      if (seen.has(rel)) continue
+      let text = ''
+      try {
+        text = String(read(file))
+      } catch {
+        continue
+      }
+      const parsed = parseSpec(text)
+      seen.add(rel)
+      out.push({
+        path: rel,
+        title: parsed.title || name.replace(/\.md$/i, ''),
+        mtime: Number(st?.mtimeMs ?? st?.mtime ?? 0),
+        batches: parsed.batches,
+        valid: parsed.valid,
+      })
+    }
+  }
+
+  return out.sort((a, b) => b.mtime - a.mtime || a.path.localeCompare(b.path))
+}
+
+/**
+ * 起票するタスクのタイトル（`[<BatchID>] <BatchTitle>`）。
+ * @param {{id: string, title: string}} batch バッチ
+ * @returns {string} タイトル
+ */
+export function buildTaskTitle(batch) {
+  return `[${batch?.id ?? ''}] ${batch?.title ?? ''}`.trim().slice(0, 200)
+}
+
+/**
+ * 起票するタスクの本文（spec パス・target・抜粋・受入条件）。
+ *
+ * @param {{specRelPath: string, repoPath: string, board: string, batch: {id: string, title: string, objective: string, section: string}}} input 入力
+ * @returns {string} 本文
+ */
+export function buildTaskBody({ specRelPath, repoPath, board, batch }) {
+  const head = [
+    `Spec: ${specRelPath}`,
+    `Target: ${repoPath}`,
+    `Board: ${board}`,
+    `Batch: ${batch?.id ?? ''} — ${batch?.title ?? ''}`,
+    '',
+    '## 目的',
+    '',
+    batch?.objective || '（バッチ本文の抜粋を参照）',
+    '',
+    '## 抜粋（受入条件 / Verify を含む）',
+    '',
+    batch?.section || '',
+  ].join('\n')
+  return head.slice(0, BODY_MAX)
+}
+
+/**
+ * 既存タスクの中に同じバッチの未完了タスクがあるか。
+ *
+ * @param {Array<{title?: string, status?: string, id?: string}>} tasks 同じボードのタスク
+ * @param {string} batchId バッチ ID
+ * @returns {{id: string, title: string, status: string}|null} 見つかった未完了タスク
+ */
+export function findOpenBatchTask(tasks, batchId) {
+  const want = `[${String(batchId ?? '').trim()}]`
+  if (!want || want === '[]') return null
+  for (const t of Array.isArray(tasks) ? tasks : []) {
+    if (!t) continue
+    if (CLOSED_STATUSES.has(String(t.status ?? ''))) continue
+    if (!String(t.title ?? '').trim().startsWith(want)) continue
+    return { id: String(t.id ?? ''), title: String(t.title ?? ''), status: String(t.status ?? '') }
+  }
+  return null
+}
+
+/**
+ * `repoPath` 配下に収まる形で相対パスを解決する（`../` で外へ出る指定は拒否）。
+ *
+ * @param {string} repoPath リポジトリの絶対パス
+ * @param {string} relPath 相対パス
+ * @returns {string} 絶対パス
+ * @throws {Error} 不正なパス（statusCode 400）
+ */
+export function resolveSpecPath(repoPath, relPath) {
+  const root = path.resolve(String(repoPath ?? ''))
+  const rel = String(relPath ?? '').trim()
+  if (!rel) throw Object.assign(new Error('spec のパスがありません'), { statusCode: 400 })
+  if (path.isAbsolute(rel)) throw Object.assign(new Error('spec はリポジトリからの相対パスで指定してください'), { statusCode: 400 })
+  const abs = path.resolve(root, rel)
+  if (abs !== root && !abs.startsWith(root + path.sep)) {
+    throw Object.assign(new Error('spec がリポジトリの外を指しています'), { statusCode: 400 })
+  }
+  return abs
+}
+
+/**
+ * 起票の実行（既定は `hermes kanban create`、テストでは差し替え）。
+ *
+ * @param {object} cfg 設定（`hermesBin`）
+ * @param {Function} [runner] 差し替え
+ * @returns {Function} 実行関数
+ */
+function defaultRunner(cfg = {}, runner) {
+  if (runner) return runner
+  return (args) =>
+    new Promise((resolve) => {
+      execFile(
+        cfg.hermesBin ?? 'hermes',
+        args,
+        { timeout: 30_000, maxBuffer: 2_000_000, env: { ...process.env } },
+        (err, stdout, stderr) => {
+          resolve({ code: err ? (err.code ?? 1) : 0, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') })
+        },
+      )
+    })
+}
+
+/**
+ * `hermes kanban create` の出力からタスク ID を取り出す。
+ * @param {string} stdout 標準出力
+ * @returns {{id: string}|null} タスク（取れなければ null）
+ */
+export function parseCreatedTask(stdout) {
+  const text = String(stdout ?? '')
+  const at = text.indexOf('{')
+  if (at >= 0) {
+    try {
+      const obj = JSON.parse(text.slice(at))
+      if (obj?.id) return { id: String(obj.id), title: obj.title ?? null, status: obj.status ?? null }
+    } catch {
+      /* 下の正規表現へ */
+    }
+  }
+  const m = /Created (t_[0-9a-zA-Z]+)/.exec(text)
+  return m ? { id: m[1] } : null
+}
+
+/**
+ * Spec Launchpad（読み取り ＋ 起票）。
+ *
+ * @param {object} cfg 設定（`hermesBin`）
+ * @param {{
+ *   runner?: Function,
+ *   tasks?: (board: string) => Array<object>,
+ *   listSpecs?: Function,
+ * }} [deps] 差し替え（テスト用）
+ * @returns {{listSpecs: Function, launchSpec: Function, resolveSpecPath: Function}} 操作
+ */
+export function createSpecs(cfg = {}, deps = {}) {
+  const run = defaultRunner(cfg, deps.runner)
+  // 既存タスクの読み取り（サーバでは kanban.tasks を渡す。テストでは [] か一時 DB）
+  const readTasks = deps.tasks ?? (() => [])
+  const scan = deps.listSpecs ?? (() => [])
+
+  /**
+   * バッチをカンバンへ一括起票する。
+   *
+   * @param {{
+   *   repoPath: string,
+   *   board: string,
+   *   specRelPath: string,
+   *   batchIds?: string[],
+   *   assignee?: string,
+   *   dryRun?: boolean,
+   *   limit?: number,
+   * }} input 入力
+   * @returns {Promise<{ok: boolean, created: Array<object>, skipped: Array<object>, failed: Array<object>, spec?: string, board?: string, error?: string}>} 結果
+   */
+  async function launchSpec(input = {}) {
+    const board = String(input.board ?? '').trim()
+    if (!/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(board)) {
+      return { ok: false, created: [], skipped: [], failed: [], error: 'ボード名が不正です' }
+    }
+    const repoPath = String(input.repoPath ?? '').trim()
+    if (!repoPath || !path.isAbsolute(repoPath)) {
+      return { ok: false, created: [], skipped: [], failed: [], error: 'リポジトリのパスが不正です' }
+    }
+    const specRelPath = String(input.specRelPath ?? '').trim()
+    let file = ''
+    try {
+      file = resolveSpecPath(repoPath, specRelPath)
+    } catch (e) {
+      return { ok: false, created: [], skipped: [], failed: [], error: e.message }
+    }
+
+    let text = ''
+    try {
+      text = fs.readFileSync(file, 'utf8')
+    } catch {
+      return { ok: false, created: [], skipped: [], failed: [], error: `spec を読めません: ${specRelPath}` }
+    }
+    const parsed = parseSpec(text)
+    if (!parsed.batches.length) {
+      return { ok: false, created: [], skipped: [], failed: [], error: 'バッチ見出し（### Batch <ID>: <Title>）が見つかりません' }
+    }
+
+    const wanted = Array.isArray(input.batchIds) ? new Set(input.batchIds.map((x) => String(x ?? '').trim())) : null
+    const batches = parsed.batches.filter((b) => !wanted || wanted.size === 0 || wanted.has(b.id))
+    if (!batches.length) {
+      return { ok: false, created: [], skipped: [], failed: [], error: '選択したバッチが spec にありません' }
+    }
+
+    const assignee = String(input.assignee ?? '').trim()
+    const dryRun = Boolean(input.dryRun)
+
+    let existing = []
+    try {
+      existing = readTasks(board) ?? []
+    } catch {
+      existing = []
+    }
+
+    const created = []
+    const skipped = []
+    const failed = []
+    for (const batch of batches) {
+      const open = findOpenBatchTask(existing, batch.id)
+      if (open) {
+        skipped.push({ id: batch.id, title: batch.title, reason: 'exists', taskId: open.id, status: open.status })
+        continue
+      }
+      const title = buildTaskTitle(batch)
+      const body = buildTaskBody({ specRelPath, repoPath, board, batch })
+      if (dryRun) {
+        created.push({ id: batch.id, title, taskId: null, dryRun: true })
+        continue
+      }
+      const args = ['kanban', '--board', board, 'create', title, '--json', '--body', body]
+      if (assignee) args.push('--assignee', assignee)
+      const res = await run(args)
+      if (res.code !== 0) {
+        failed.push({
+          id: batch.id,
+          title,
+          error: (res.stderr || res.stdout || 'kanban create に失敗しました').trim().slice(0, 400),
+        })
+        continue
+      }
+      const task = parseCreatedTask(res.stdout)
+      if (!task?.id) {
+        failed.push({ id: batch.id, title, error: 'タスクIDを取得できませんでした' })
+        continue
+      }
+      created.push({ id: batch.id, title, taskId: task.id, status: task.status ?? 'ready' })
+      // 同じバッチを 2 回起票しないよう、今回作った分も既存扱いにする
+      existing = [...existing, { id: task.id, title, status: task.status ?? 'ready' }]
+    }
+
+    const ok = failed.length === 0
+    return {
+      ok,
+      spec: specRelPath,
+      board,
+      created,
+      skipped,
+      failed,
+      ...(ok ? {} : { error: failed.map((f) => `${f.id}: ${f.error}`).join(' / ') }),
+    }
+  }
+
+  return { listSpecs: scan, launchSpec, resolveSpecPath }
+}

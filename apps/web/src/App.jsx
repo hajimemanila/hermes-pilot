@@ -3,12 +3,15 @@ import { readDeepLink } from './lib/deeplink.js'
 
 import { api } from './api.js'
 import { navBadgeState, pendingCount, runningCount, unseenNotices, waitingCount } from './lib/reviewView.js'
+import { cachePercent, gwState, latestToolName, reviewJumpTarget, runningTotal } from './lib/telemetry.js'
 import { SEEN_MAP_KEY, SEEN_NAV_KEY, newerThan, otherUnreadReports, readActiveChatId, readSeenMap } from './lib/chatReports.js'
 import { TasksPane } from './features/TasksPane.jsx'
 import { ChatPane } from './features/ChatPane.jsx'
 import { SettingsPane } from './features/SettingsPane.jsx'
 import { ReviewPane } from './features/ReviewPane.jsx'
 import { SearchSheet } from './features/SearchSheet.jsx'
+import { UsageSheet } from './features/UsageSheet.jsx'
+import { LiveSheet } from './features/LiveSheet.jsx'
 import { Icon, Loader } from './components/Ui.jsx'
 import { haptic } from './lib/haptic.js'
 import { useI18n } from './i18n/index.js'
@@ -143,6 +146,10 @@ export function App() {
   const [chatStreaming, setChatStreaming] = useState(false)
   const [reviewFocus, setReviewFocus] = useState(null)
   const [pendingChatOpen, setPendingChatOpen] = useState(null)
+  // 計器盤（SPEC §5.5）: 使用量（60 秒キャッシュ）と、そこから開くシート
+  const [usageData, setUsageData] = useState(null)
+  const [usageOpen, setUsageOpen] = useState(false)
+  const [liveOpen, setLiveOpen] = useState(false)
   const chatMountedRef = useRef(chatMounted)
   chatMountedRef.current = chatMounted
   const chatSeenRef = useRef(0)
@@ -503,6 +510,52 @@ export function App() {
     }
   }, [])
 
+  /*
+   * 計器盤の 💎（キャッシュ燃費）。SPEC §5.5 — `/api/usage` の集計を 60 秒キャッシュで読む。
+   * サーバ側も 30 秒キャッシュなので、端末側は 60 秒で十分（毎秒叩かない）。
+   */
+  useEffect(() => {
+    let alive = true
+    const sync = async () => {
+      try {
+        const d = await api('/api/usage?hours=24')
+        if (alive) setUsageData(d)
+      } catch {
+        /* 補助情報。取れなくてもピルを出さないだけ */
+      }
+    }
+    sync()
+    const id = setInterval(() => document.visibilityState === 'visible' && sync(), 60_000)
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [])
+
+  // 計器盤の値（純関数で組み立てる。lib/telemetry.js）
+  const gw = gwState({ conn, bridge: overview?.bridge ?? null })
+  const waitingTotal = reviewWaiting + inboxPending
+  const running = runningTotal({ tasksRunning: overview?.runningTasks, turns: liveTurns })
+  const lastTool = latestToolName(liveTurnsList)
+  const cachePct = cachePercent(usageData?.cacheHitRate)
+
+  /**
+   * 🔔 タップ。判断待ちがあればそのタスクを Review タブで開き、
+   * 承認待ちしか無ければタスクタブのインボックスを開く（どこにいても 1 タップ）。
+   */
+  const jumpToWaiting = useCallback(() => {
+    haptic('tap')
+    const target = reviewJumpTarget({ reviewItems, inboxPending })
+    if (!target) return
+    if (target.kind === 'review') {
+      setTab('review')
+      setReviewFocus({ taskId: target.taskId, nonce: Date.now() })
+      return
+    }
+    setTab('tasks')
+    setTimeout(() => window.dispatchEvent(new CustomEvent('hm:open-inbox', { detail: { task: null } })), 120)
+  }, [reviewItems, inboxPending])
+
   // 殻は公開・データは認証の内側なので、未ログインならここでトークンを入れる
   if (authNeeded) {
     return (
@@ -550,6 +603,67 @@ export function App() {
           </span>
         </span>
       </header>
+
+      {/*
+        コックピット計器盤（SPEC §5.5 / D15⑤）。パイロットが 1 秒で状況を見て
+        ボトルネックへ飛べるようにする: GW / 判断待ち / 稼働 / キャッシュ燃費。
+        数字は 0 のとき出さない（0 のピルは「何かある」と誤読させる）。
+      */}
+      <div className="telemetry" role="status" aria-live="polite">
+        <button
+          className={`t-pill gw ${gw}`}
+          onClick={() => {
+            haptic('tap')
+            refresh()
+          }}
+          aria-label={gw === 'ok' ? t('app.gwOkAria') : t('app.gwDownAria')}
+          title={gw === 'ok' ? t('app.connected') : t('app.bridgeOffline')}
+        >
+          {gw === 'ok' ? (
+            <>
+              <i className="t-dot ok" aria-hidden="true" />
+              {t('status.gw')}
+            </>
+          ) : (
+            <span className="t-gw-bad">
+              {t('status.gw')} · {gw === 'offline' ? t('status.offline') : t('app.gwError')}
+            </span>
+          )}
+        </button>
+
+        {waitingTotal > 0 ? (
+          <button className="t-pill warn pill-warn-pulse" onClick={jumpToWaiting} aria-label={t('app.jumpWaitingAria', { n: waitingTotal })}>
+            🔔 {t('status.reviewWaiting', { n: waitingTotal })}
+          </button>
+        ) : null}
+
+        {running > 0 ? (
+          <button
+            className="t-pill run"
+            onClick={() => {
+              haptic('tap')
+              setLiveOpen(true)
+            }}
+            aria-label={t('app.jumpRunningAria', { n: running })}
+          >
+            <i className="t-dot live" aria-hidden="true" />⚡ {t('status.running', { n: running })}
+            {lastTool ? <span className="t-tool"> · {lastTool}</span> : null}
+          </button>
+        ) : null}
+
+        {cachePct !== null ? (
+          <button
+            className="t-pill gem"
+            onClick={() => {
+              haptic('tap')
+              setUsageOpen(true)
+            }}
+            aria-label={t('app.cacheAria', { pct: cachePct })}
+          >
+            💎 {cachePct}%
+          </button>
+        ) : null}
+      </div>
 
       {conn !== 'ok' ? (
         <div className="banner">
@@ -682,6 +796,10 @@ export function App() {
           }}
         />
       ) : null}
+
+      {/* 計器盤の ⚡ / 💎 から開くシート（どのタブにいても同じものが出る） */}
+      {liveOpen ? <LiveSheet notify={notify} onClose={() => setLiveOpen(false)} /> : null}
+      {usageOpen ? <UsageSheet data={usageData} hours={24} onClose={() => setUsageOpen(false)} /> : null}
     </div>
   )
 }

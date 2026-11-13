@@ -628,5 +628,21 @@
   "settings.pairingEmpty": "No reachable address was found. Connect Tailscale or join the same LAN, then reopen this sheet.",
   "settings.pairingCopy": "Copy",
   "settings.pairingCopied": "URL copied",
-  "settings.pairingNote": "The QR embeds the app token. Anyone who scans it can control this Hermes — do not share screenshots of it."
+  "settings.pairingNote": "The QR embeds the app token. Anyone who scans it can control this Hermes — do not share screenshots of it.",
+  "app.gwOkAria": "Gateway is healthy. Tap to re-check.",
+  "app.gwDownAria": "Gateway is not reachable. Tap to retry.",
+  "app.gwError": "error",
+  "app.jumpWaitingAria": "Jump to the first of {n} items waiting for you",
+  "app.jumpRunningAria": "Show what the {n} running workers are doing",
+  "app.cacheAria": "Cache hit rate {pct}% — open the usage breakdown",
+  "tasks.specLaunchpad": "Spec Launchpad",
+  "tasks.specBarAria": "Open the batch launcher for {name}",
+  "tasks.specBatchCount": "{n} batches",
+  "tasks.specSheetTitle": "Launch batches",
+  "tasks.specAlready": "filed",
+  "tasks.specFiledDone": "done",
+  "tasks.specLaunchBtn": "File {n} batches and start",
+  "tasks.specLaunching": "Filing…",
+  "tasks.specLaunched": "Filed {created} (skipped {skipped})",
+  "tasks.specNote": "Each batch becomes a kanban task titled [ID] Title with the spec path, target and Verify criteria. Batches already filed on this board are skipped."
 }

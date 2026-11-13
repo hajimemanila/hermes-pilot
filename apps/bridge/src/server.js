@@ -28,7 +28,8 @@ import { createCapture } from './capture.js'
 import { createUsage } from './usage.js'
 import { createLive } from './live.js'
 import { createInbox } from './inbox.js'
-import { createRepos } from './repos.js'
+import { createRepos, normalizePath } from './repos.js'
+import { createSpecs, listSpecs } from './specs.js'
 import { createPairCodes } from './pair-codes.js'
 import { getCapabilities } from './capabilities.js'
 import { errorBody } from './api-errors.js'
@@ -92,6 +93,8 @@ const kanban = createKanban(cfg)
 // リポジトリ（作業ディレクトリ）↔ ボード。一覧は repos.json ＋ 1 階層スキャン
 // ＋ ボードの default_workdir ＋ 直近セッション cwd の統合（SPEC §5.1）
 const repos = createRepos(cfg, { boards: () => kanban.boards() })
+// Spec Launchpad（`docs/SPEC-*.md` → バッチ → カンバン一括起票）。SPEC §5.4 / D15④
+const specs = createSpecs(cfg, { tasks: (board) => kanban.tasks(board, { limit: 200 }), listSpecs })
 const review = createReview(cfg, { targets: () => repos.targets() })
 // 完了・ブロックの記録はブリッジ内蔵（D7）。外部 cron は要らない。
 const reviewWatcher = createReviewWatcher(cfg, { review })
@@ -415,6 +418,38 @@ function tailLog(name, lines = 200) {
   return text.split('\n').slice(-Math.min(lines, 1000)).join('\n')
 }
 
+/**
+ * Spec Launchpad の対象リポジトリを決める（SPEC §5.4）。
+ *
+ * `?repo=<repoId>` は repos の 1 件。`?board=<slug>`（未指定なら現在のボード）は
+ * そのボードの `default_workdir` をリポジトリとして扱う。
+ *
+ * @param {{repoId?: string|null, boardSlug?: string|null}} q クエリ
+ * @returns {{repo: string, label: string, path: string, board: string|null}|null} 対象
+ */
+function resolveSpecRepo({ repoId = null, boardSlug = null } = {}) {
+  const list = repos.list()
+  const want = String(repoId ?? '').trim()
+  if (want) {
+    const hit = list.find((r) => r.id === want)
+    return hit
+      ? { repo: hit.id, label: hit.label, path: hit.path, board: hit.boards?.[0]?.slug ?? null }
+      : null
+  }
+  const boards = kanban.boards()
+  const slug = String(boardSlug ?? '').trim() || boards.find((b) => b.current)?.slug || ''
+  const board = boards.find((b) => b.slug === slug)
+  if (!board?.workdir) return null
+  const key = normalizePath(board.workdir)
+  const hit = list.find((r) => normalizePath(r.path) === key)
+  return {
+    repo: hit?.id ?? board.slug,
+    label: hit?.label ?? board.name ?? board.slug,
+    path: board.workdir,
+    board: board.slug,
+  }
+}
+
 /** API のルーティング。 */
 
 async function handleApi(req, res, url) {
@@ -517,6 +552,56 @@ async function handleApi(req, res, url) {
       auth.audit({ kind: 'repos.remove', repo: b, hidden: r.hidden ?? null, ok: Boolean(r.ok) })
       if (!r.ok) return sendFailure(res, 400, r)
       return sendJson(res, 200, { ...r, repos: repos.list({ force: true }) })
+    }
+    return sendError(res, 404, 'UNKNOWN_ENDPOINT', { path: url.pathname })
+  }
+
+  // --- Spec Launchpad -------------------------------------------------------
+  // GET  /api/specs?repo=<repoId> | ?board=<slug>       … SPEC とバッチ一覧（SPEC §5.4）
+  // POST /api/specs/launch { repo?, board?, specRelPath, batchIds?, assignee? }
+  //                                                      … バッチを一括起票（同一ボードの未完了はスキップ）
+  if (a === 'specs') {
+    if (!b && req.method === 'GET') {
+      const target = resolveSpecRepo({
+        repoId: url.searchParams.get('repo'),
+        boardSlug: url.searchParams.get('board'),
+      })
+      if (!target) return sendError(res, 404, 'NOT_FOUND', { resource: 'repo' })
+      return sendJson(res, 200, {
+        ok: true,
+        repo: target.repo,
+        label: target.label,
+        path: target.path,
+        board: target.board,
+        specs: specs.listSpecs(target.path),
+      })
+    }
+    if (b === 'launch' && req.method === 'POST') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendError(res, 429, 'RATE_LIMITED')
+      }
+      const body = await readJson(req)
+      const target = resolveSpecRepo({ repoId: body?.repo, boardSlug: body?.board })
+      if (!target) return sendError(res, 404, 'NOT_FOUND', { resource: 'repo' })
+      const board = String(body?.board ?? target.board ?? '').trim()
+      const r = await specs.launchSpec({
+        repoPath: target.path,
+        board,
+        specRelPath: body?.specRelPath,
+        batchIds: body?.batchIds,
+        assignee: String(body?.assignee ?? 'mobile').trim() || 'mobile',
+        dryRun: Boolean(body?.dryRun),
+      })
+      auth.audit({
+        kind: 'specs.launch',
+        board,
+        spec: String(body?.specRelPath ?? ''),
+        created: r.created?.length ?? 0,
+        skipped: r.skipped?.length ?? 0,
+        failed: r.failed?.length ?? 0,
+        ok: Boolean(r.ok),
+      })
+      return r.ok ? sendJson(res, 201, r) : sendFailure(res, 400, r)
     }
     return sendError(res, 404, 'UNKNOWN_ENDPOINT', { path: url.pathname })
   }

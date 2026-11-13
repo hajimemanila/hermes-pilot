@@ -58,6 +58,12 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
   const [liveTurns, setLiveTurns] = useState(0)
   const [inboxCount, setInboxCount] = useState(0)
   const [inboxOpen, setInboxOpen] = useState(false)
+  // Spec Launchpad（SPEC §5.4 / D15④）: ボードのリポジトリの SPEC とバッチ
+  const [specsInfo, setSpecsInfo] = useState(null)
+  const [specSheetOpen, setSpecSheetOpen] = useState(false)
+  const [specPath, setSpecPath] = useState(null)
+  const [specSel, setSpecSel] = useState([])
+  const [specBusy, setSpecBusy] = useState(false)
   // ウィジェットからのディープリンク（?open=inbox&task=…）を1回だけ反映
   const [inboxFocus, setInboxFocus] = useState(null)
 
@@ -236,6 +242,34 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
     return results[0] !== false
   }, [board, loadTasks, loadInbox, refresh])
 
+  /*
+   * Spec Launchpad 用の SPEC 検出（SPEC §5.4）。ボードを変えるたびに 1 回だけ問い合わせる
+   * （ファイル走査はサーバ側で安いが、タスク一覧のように 5 秒ごとに叩く必要は無い）。
+   * バッチが 1 つも無い SPEC（TOC だけ・別形式）はバーに出さない。
+   */
+  useEffect(() => {
+    let alive = true
+    if (!board) {
+      setSpecsInfo(null)
+      return () => {
+        alive = false
+      }
+    }
+    api(`/api/specs?board=${encodeURIComponent(board)}`)
+      .then((d) => {
+        if (!alive) return
+        const list = (Array.isArray(d?.specs) ? d.specs : []).filter((s) => (s.batches ?? []).length > 0)
+        setSpecsInfo(list.length ? { repo: d.repo ?? null, path: d.path ?? null, specs: list } : null)
+        setSpecPath((cur) => (cur && list.some((s) => s.path === cur) ? cur : list[0]?.path ?? null))
+      })
+      .catch(() => {
+        if (alive) setSpecsInfo(null)
+      })
+    return () => {
+      alive = false
+    }
+  }, [board])
+
   useEffect(() => {
     if (!board) return
     loadTasks(board)
@@ -353,6 +387,51 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
   const paused = overview?.paused ?? { engaged: false }
   // >=820px は 2 ペイン（詳細をシートではなく右ペインに出す。SPEC §7.2）
   const split = useSplitLayout()
+
+  /*
+   * Spec Launchpad（SPEC §5.4）。ボード上に同じ `[<ID>]` のタスクがあるバッチは
+   * 「起票済み」として先に見せる（サーバ側の冪等チェックと同じ規則）。
+   * 既定で選ぶのは**まだ一度も起票していない**バッチだけ — 完了済みのバッチを
+   * うっかり再起票しないため（選び直せば起票できる）。
+   */
+  const specList = specsInfo?.specs ?? []
+  const currentSpec = specList.find((s) => s.path === specPath) ?? specList[0] ?? null
+  const batchIdOf = (title) => /^\[([^\]]+)\]/.exec(String(title ?? ''))?.[1] ?? null
+  const filedBatchIds = new Set(tasks.map((x) => batchIdOf(x.title)).filter(Boolean))
+  const openBatchIds = new Set(
+    tasks.filter((x) => x.status !== 'done' && x.status !== 'archived').map((x) => batchIdOf(x.title)).filter(Boolean),
+  )
+  const defaultSelection = () =>
+    (currentSpec?.batches ?? []).filter((b) => !filedBatchIds.has(b.id)).map((b) => b.id)
+
+  /** バッチ選択シートを開く（未起票のバッチを既定で選択）。 */
+  const openSpecSheet = () => {
+    if (!currentSpec) return
+    haptic('tap')
+    setSpecSel(defaultSelection())
+    setSpecSheetOpen(true)
+  }
+
+  /** 選んだバッチを 1 タップで一括起票し、そのまま自走に乗せる。 */
+  const launchBatches = async () => {
+    if (!currentSpec || !specSel.length || !board) return
+    setSpecBusy(true)
+    try {
+      const r = await api('/api/specs/launch', {
+        method: 'POST',
+        body: { board, specRelPath: currentSpec.path, batchIds: specSel, assignee: 'mobile' },
+      })
+      haptic('success')
+      notify(t('tasks.specLaunched', { created: (r.created ?? []).length, skipped: (r.skipped ?? []).length }))
+      setSpecSheetOpen(false)
+      setSpecSel([])
+      loadTasks(board)
+    } catch (e) {
+      notify(e.message)
+    } finally {
+      setSpecBusy(false)
+    }
+  }
 
   // 詳細（右ペインと Sheet で同じ中身を使う。2 ペインのときは右ペインに常設する）
   const detailBody = detail
@@ -529,6 +608,22 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
         </button>
       ) : null}
 
+      {/* Spec Launchpad（SPEC §5.4）: ボードのリポジトリに SPEC があれば常設のバー */}
+      {currentSpec ? (
+        <button className="spec-bar" onClick={openSpecSheet} aria-label={t('tasks.specBarAria', { name: currentSpec.title })}>
+          <span className="spec-bar-main">
+            <span className="spec-bar-title">
+              🚀 {t('tasks.specLaunchpad')}
+            </span>
+            <span className="spec-bar-name">{currentSpec.title}</span>
+          </span>
+          <span className="spec-bar-n">
+            {t('tasks.specBatchCount', { n: currentSpec.batches.length })}
+            <Icon name="chevron" size={14} />
+          </span>
+        </button>
+      ) : null}
+
       <div className="strip">
         <div className={`stat ${bridge?.ok === false ? 'bad' : bridge ? 'good' : ''}`}>
           <span className="stat-k">{t('tasks.bridge')}</span>
@@ -623,6 +718,71 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
           </div>
         </Sheet>
       )}
+
+      {specSheetOpen && currentSpec ? (
+        <Sheet title={t('tasks.specSheetTitle')} onClose={() => !specBusy && setSpecSheetOpen(false)}>
+          {specList.length > 1 ? (
+            <div className="chips" style={{ marginBottom: 8 }}>
+              {specList.map((s) => (
+                <button
+                  key={s.path}
+                  className={`chip${s.path === currentSpec.path ? ' on' : ''}`}
+                  onClick={() => {
+                    setSpecPath(s.path)
+                    setSpecSel(s.batches.filter((b) => !filedBatchIds.has(b.id)).map((b) => b.id))
+                  }}
+                >
+                  {s.title}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <div className="row-sub mono" style={{ padding: '0 2px 8px' }}>
+            {currentSpec.path}
+          </div>
+          <div className="list">
+            {currentSpec.batches.map((b) => {
+              const filed = filedBatchIds.has(b.id)
+              const taken = openBatchIds.has(b.id)
+              const sel = specSel.includes(b.id)
+              return (
+                <button
+                  key={b.id}
+                  className={`list-item${sel ? ' on' : ''}`}
+                  onClick={() => {
+                    haptic('tap')
+                    setSpecSel((cur) => (cur.includes(b.id) ? cur.filter((x) => x !== b.id) : [...cur, b.id]))
+                  }}
+                >
+                  <span className="spec-check" aria-hidden="true">
+                    {sel ? '☑' : '☐'}
+                  </span>
+                  <span style={{ flex: '1 1 auto', minWidth: 0 }}>
+                    <span className="row-title">
+                      [{b.id}] {b.title}
+                    </span>
+                    {b.objective ? <span className="row-sub">{b.objective.slice(0, 140)}</span> : null}
+                  </span>
+                  {filed ? (
+                    <span className="spec-taken">{t(taken ? 'tasks.specAlready' : 'tasks.specFiledDone')}</span>
+                  ) : null}
+                </button>
+              )
+            })}
+          </div>
+          <button
+            className="btn primary"
+            style={{ marginTop: 12, width: '100%' }}
+            disabled={specBusy || !specSel.length}
+            onClick={launchBatches}
+          >
+            {specBusy ? t('tasks.specLaunching') : t('tasks.specLaunchBtn', { n: specSel.length })}
+          </button>
+          <div className="row-sub" style={{ padding: '8px 4px', lineHeight: 1.6 }}>
+            {t('tasks.specNote')}
+          </div>
+        </Sheet>
+      ) : null}
 
       <div className="list-head">
         <span>{t('tasks.tasks')}</span>

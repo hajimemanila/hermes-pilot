@@ -628,5 +628,21 @@
   "settings.pairingEmpty": "到達可能なアドレスが見つかりません。Tailscale に接続するか同じ LAN に入ってから開き直してください。",
   "settings.pairingCopy": "コピー",
   "settings.pairingCopied": "URL をコピーしました",
-  "settings.pairingNote": "QR にはアプリトークンが入っています。読み取った人はこの Hermes を操作できます。スクショの共有は避けてください。"
+  "settings.pairingNote": "QR にはアプリトークンが入っています。読み取った人はこの Hermes を操作できます。スクショの共有は避けてください。",
+  "app.gwOkAria": "ゲートウェイは正常です。タップで再確認。",
+  "app.gwDownAria": "ゲートウェイに繋がりません。タップで再試行。",
+  "app.gwError": "異常",
+  "app.jumpWaitingAria": "判断待ち {n} 件の最初の 1 件へ移動",
+  "app.jumpRunningAria": "稼働中 {n} 件の内容を表示",
+  "app.cacheAria": "キャッシュ率 {pct}% — 使用量の内訳を開く",
+  "tasks.specLaunchpad": "仕様ランチャー",
+  "tasks.specBarAria": "{name} のバッチ起票を開く",
+  "tasks.specBatchCount": "{n} バッチ",
+  "tasks.specSheetTitle": "バッチを起票",
+  "tasks.specAlready": "起票済み",
+  "tasks.specFiledDone": "完了済み",
+  "tasks.specLaunchBtn": "{n} バッチを起票して自走開始",
+  "tasks.specLaunching": "起票中…",
+  "tasks.specLaunched": "{created} 件起票（スキップ {skipped}）",
+  "tasks.specNote": "各バッチは「[ID] タイトル」のカンバンタスクになり、本文に spec パス・target・抜粋（Verify 受入条件）が入ります。このボードで起票済みのバッチはスキップします。"
 }
