@@ -68,7 +68,7 @@ PATH=/opt/homebrew/opt/node@24/bin:$PATH npm start
 - 書き込み系は `X-Client: mobile` ヘッダ必須（無いと 401）
 - キルスイッチは**長押し1.5秒 + 確認語**（API 側でも `confirm` を検査）
 - 実行結果は `~/.hermes/mobile-pwa/audit.jsonl` に追記（設定タブから閲覧）
-- レート制限: 書き込み 60 回/分
+- レート制限: 読み取り 120 回/分（エンドポイント別バケット）/ 書き込み 60 回/分
 
 ## API（このブリッジの口）
 
@@ -79,7 +79,14 @@ PATH=/opt/homebrew/opt/node@24/bin:$PATH npm start
 | GET | `/api/boards` | カンバン一覧（`current` フラグ付き） |
 | GET | `/api/boards/:slug/tasks` | タスク一覧 |
 | GET | `/api/boards/:slug/tasks/:id` | タスク詳細（events / runs / comments） |
+| POST | `/api/boards/:slug/tasks/:id/comment` | タスクにコメント |
+| POST | `/api/boards/:slug/tasks/:id/unblock` | blocked タスクを再開（`ready` へ戻す） |
+| POST | `/api/boards/:slug/tasks/:id/close` | タスクの完了・取消（archive） |
 | POST | `/api/boards/:slug/tasks/:id/abort` | 実行中タスクの中断（reclaim → block） |
+| GET | `/api/inbox` | ボード横断の blocked タスク一覧 |
+| GET / POST | `/api/akapen`, `/api/akapen/:id/*` | 赤ペン一覧・シート取得・回答・注釈保存 |
+| GET / POST | `/api/repos`, `/api/repos/:id/board` | リポジトリ一覧・リポジトリ用ボード作成 |
+| GET | `/api/usage`, `/api/live` | 24h 使用量集計・ライブ実行状況 |
 | POST | `/api/gateway/:action` | `drain` / `restart` / `stop` / `start`（`confirm` 必須） |
 | GET | `/api/sessions` | Hermes セッション一覧（整形） |
 | GET | `/api/logs?file=gateway&lines=200` | ログ末尾 |
@@ -1099,3 +1106,13 @@ npm run deploy     # ビルド → index.html と /assets/ 参照の検証 → d
 - 新しいビルドが検証を通ったときだけ `dist` を置き換える（直前の正常ビルドは `dist.prev`）
 - ブリッジは `dist` が無い／欠けているとき `dist.prev` を配るので、画面は落ちない
 - 検証だけなら `node scripts/deploy.mjs --check`
+
+## UX・パフォーマンス改善（2026-11-13 実装）
+
+- **TermPane 遅延ロード**: `TermPane.jsx`（`xterm` 同梱）を `React.lazy` + `Suspense` でコード分割し、初期バンドルサイズを削減
+- **ポーリングとレート制限の最適化**: タスク/赤ペンタブ表示中はグローバルの 15 秒ポーリング重複を抑制。ブリッジの読み取りレート制限はエンドポイント別バケットで計測
+- **ログ末尾読み取りの効率化**: `tail.js`（`readTailText`）により、ログ/フィード/チャット報告の取得時はファイル末尾のみを読み取り
+- **Android 戻るジェスチャー統一**: `Sheet` コンポーネントで `history.pushState` / `popstate` を管理し、すべてのシートで「戻る」で閉じられるように統一
+- **タスク再開・赤ペン全件・Object URL 解放**: `InboxSheet` に `unblock` 再開導線、赤ペン「完了」タブに「すべて表示」切替、`ChatPane` 添付プレビューに `URL.revokeObjectURL` を追加
+- **ハプティック・ローダー統一**: `haptic.js`（設定タブで ON/OFF 可）、`Spinner` / `Loader` / `RefreshButton` を全タブに導入
+- 検証: `npm run verify`（単体テスト 189 件、PWA チェック 34 項目、Vite ビルド）すべて通過

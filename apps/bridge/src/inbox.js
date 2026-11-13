@@ -292,5 +292,54 @@ export function createInbox(cfg, kanban) {
     }
   }
 
-  return { list, comment, close }
+  /**
+   * blocked のタスクを再開（ready へ戻す）。
+   * 下書きコメントがあれば先に記録してから unblock する。
+   * @param {string} board ボード
+   * @param {string} id タスクID
+   * @param {string} [note] コメント／理由（400字まで）
+   * @param {string} [by] 実行者
+   * @returns {Promise<object>} 結果
+   */
+  async function unblock(board, id, note = '', by = 'mobile') {
+    const b = assertBoard(board)
+    const tid = assertTaskId(id)
+    const before = statusOf(b, tid)
+    if (before == null) {
+      throw Object.assign(new Error('タスクが見つかりません'), { statusCode: 404 })
+    }
+    if (before === 'ready' || before === 'running') {
+      return { ok: true, board: b, id: tid, status: before, noop: true, at: Date.now() }
+    }
+    if (before !== 'blocked') {
+      throw Object.assign(new Error(`blocked ではないため再開できません (${before})`), { statusCode: 409 })
+    }
+    const actor = String(by ?? 'mobile').slice(0, 40)
+    const text = String(note ?? '').trim().slice(0, 400)
+    if (text) {
+      const cRes = await run(cfg, ['kanban', '--board', b, 'comment', tid, text, '--author', actor])
+      if (cRes.code !== 0) {
+        throw Object.assign(new Error((cRes.out || 'コメントに失敗しました').slice(0, 400)), { statusCode: 502 })
+      }
+    }
+    const res = await run(cfg, [
+      'kanban', '--board', b, 'unblock', tid,
+      '--reason', text || 'PWAから再開',
+    ])
+    if (res.code !== 0) {
+      throw Object.assign(new Error((res.out || '再開に失敗しました').slice(0, 400)), { statusCode: 502 })
+    }
+    const after = statusOf(b, tid)
+    return {
+      ok: true,
+      board: b,
+      id: tid,
+      status: after ?? null,
+      changed: after !== before,
+      output: res.out.slice(0, 400),
+      at: Date.now(),
+    }
+  }
+
+  return { list, comment, close, unblock }
 }

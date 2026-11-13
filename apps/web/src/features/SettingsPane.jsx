@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { useInstallState, swState } from '../lib/useInstallState.js'
 import { diagnosePwa } from '../lib/pwaDiagnose.js'
-import { Sheet, fmtBytes, relTime } from '../components/Ui.jsx'
+import { RefreshButton, Sheet, Spinner, fmtBytes, relTime } from '../components/Ui.jsx'
+import { haptic, isHapticEnabled, setHapticEnabled } from '../lib/haptic.js'
 
 /**
  * 設定タブ。状態の参照・ログ末尾・監査ログ（キルスイッチの履歴）を置く。
@@ -28,6 +29,7 @@ export function SettingsPane({ overview, notify, refresh }) {
   const [log, setLog] = useState(null)
   const [logName, setLogName] = useState('gateway')
   const [sessions, setSessions] = useState([])
+  const [hapticOn, setHapticOn] = useState(() => isHapticEnabled())
 
   // マイスニペット
   const [custom, setCustom] = useState([])
@@ -79,8 +81,10 @@ export function SettingsPane({ overview, notify, refresh }) {
     try {
       const d = await api('/api/audit?lines=80')
       setAudit(d.lines ?? [])
+      return true
     } catch (e) {
       notify(e.message)
+      return false
     }
   }, [notify])
 
@@ -144,11 +148,30 @@ export function SettingsPane({ overview, notify, refresh }) {
           <span>Service Worker</span>
           <b>{swState()}</b>
         </div>
+        <div className="kv" style={{ alignItems: 'center' }}>
+          <span>タップ時の振動</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={hapticOn}
+            aria-label="タップ時の振動"
+            className={`hm-switch${hapticOn ? ' on' : ''}`}
+            onClick={() => {
+              const next = setHapticEnabled(!hapticOn)
+              setHapticOn(next)
+              if (next) haptic('tap')
+            }}
+          >
+            <span className="hm-switch-knob" />
+          </button>
+        </div>
         <button
-          className="btn"
+          className="btn hm-btn-inner"
           style={{ marginTop: 8 }}
           disabled={diagBusy}
+          aria-busy={diagBusy}
           onClick={async () => {
+            haptic('tap')
             setDiagBusy(true)
             try {
               const rows = await diagnosePwa()
@@ -171,7 +194,8 @@ export function SettingsPane({ overview, notify, refresh }) {
             }
           }}
         >
-          {diagBusy ? '診断中…' : 'PWA 診断を実行'}
+          {diagBusy ? <Spinner size={14} /> : null}
+          <span>{diagBusy ? '診断中…' : 'PWA 診断を実行'}</span>
         </button>
         {diag && (
           <div className="diag" style={{ marginTop: 10, fontSize: 12, lineHeight: 1.5 }}>
@@ -198,9 +222,12 @@ export function SettingsPane({ overview, notify, refresh }) {
             アプリとしてインストール
           </button>
         )}
-        <button className="btn" onClick={() => refresh?.()} style={{ marginTop: 10 }}>
-          再取得
-        </button>
+        <RefreshButton
+          label="再取得"
+          ariaLabel="状態を再取得"
+          className="hm-btn-inner"
+          onRefresh={async () => Boolean(await refresh?.())}
+        />
       </div>
 
       <div className="list-head">
@@ -226,7 +253,15 @@ export function SettingsPane({ overview, notify, refresh }) {
       </div>
       <div className="row">
         {['gateway', 'errors', 'agent'].map((n) => (
-          <button key={n} className="chip" onClick={() => openLog(n)} style={{ marginRight: 6 }}>
+          <button
+            key={n}
+            className="chip"
+            onClick={() => {
+              haptic('tap')
+              openLog(n)
+            }}
+            style={{ marginRight: 6 }}
+          >
             {n}.log
           </button>
         ))}
@@ -234,9 +269,7 @@ export function SettingsPane({ overview, notify, refresh }) {
 
       <div className="list-head">
         <span>監査ログ（緊急操作・端末）</span>
-        <button className="link" onClick={loadAudit}>
-          更新
-        </button>
+        <RefreshButton variant="link" onRefresh={loadAudit} />
       </div>
       <div className="list">
         {(audit ?? []).slice().reverse().map((a, i) => (

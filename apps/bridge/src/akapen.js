@@ -4,6 +4,7 @@ import os from 'node:os'
 import crypto from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
+import { readTailText } from './tail.js'
 
 /**
  * 赤ペン（akapen）パイプラインのブリッジ側。
@@ -195,6 +196,51 @@ export function createAkapen(cfg, opts = {}) {
   const boardDir = path.join(cfg.kanbanRoot, 'boards', board)
   const dbPath = path.join(boardDir, 'kanban.db')
 
+  function homeDir() {
+    return path.dirname(cfg.kanbanRoot || path.join(os.homedir(), '.hermes', 'kanban'))
+  }
+
+  function sanitizeChatId(raw) {
+    return String(raw ?? '')
+      .trim()
+      .replace(/[^A-Za-z0-9_-]/g, '')
+      .slice(0, 128)
+  }
+
+  function taskChatsFile() {
+    return path.join(homeDir(), 'plugin-data', 'akapen', 'task-chats.json')
+  }
+
+  function readTaskChats() {
+    const obj = readJsonIfExists(taskChatsFile())
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return {}
+    const out = {}
+    for (const [k, v] of Object.entries(obj)) {
+      const c = sanitizeChatId(v)
+      if (k && c) out[k] = c
+    }
+    return out
+  }
+
+  function rememberTaskChat(taskId, rawChat) {
+    const id = String(taskId ?? '').trim()
+    const chat = sanitizeChatId(rawChat)
+    if (!id || !chat) return
+    try {
+      const file = taskChatsFile()
+      const cur = readTaskChats()
+      cur[id] = chat
+      const keys = Object.keys(cur)
+      if (keys.length > 500) {
+        for (const k of keys.slice(0, keys.length - 500)) delete cur[k]
+      }
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      fs.writeFileSync(file, JSON.stringify(cur, null, 2), 'utf8')
+    } catch {
+      /* 補助情報なので失敗しても本処理を止めない */
+    }
+  }
+
   /** ボードの default_workdir（シート置き場のルート）。 */
   function workdir() {
     if (opts.root) return path.resolve(opts.root.replace(/^~/, os.homedir()))
@@ -343,6 +389,7 @@ export function createAkapen(cfg, opts = {}) {
     const out = []
     const base = rows(limit)
     const events = lastEvents(base.map((r) => r.id))
+    const taskChats = readTaskChats()
     for (const r of base) {
       const ak = parseAkapenLine(r.body)
       if (!ak) continue
@@ -370,6 +417,9 @@ export function createAkapen(cfg, opts = {}) {
         akapen: {
           label: ak.label ?? null,
           image: ak.image ?? null,
+          target: ak.target ?? null,
+          repo: repoForTarget(ak.target),
+          chat: sanitizeChatId(ak.chat) || taskChats[r.id] || null,
           mode: ak.mode ?? 'standard',
           round: Number(ak.round ?? 1),
           sheet: ak.sheet ?? null,
@@ -456,6 +506,7 @@ export function createAkapen(cfg, opts = {}) {
     const answerFile = path.join(answerDir, path.basename(answerRel))
     const textFile = answerFile.replace(/\.answer\.json$/, '.answer.txt')
 
+    if (payload?.chat) rememberTaskChat(id, payload.chat)
     const existing = readJsonIfExists(answerFile)
     if (existing && existing.sha256 === hash) {
       // 回答は保存済み。遷移だけ未了なら（再送で）ここで進める — 冪等の本体はこの分岐
@@ -548,13 +599,19 @@ export function createAkapen(cfg, opts = {}) {
   }
 
 
-  /** 注釈の下地画像（image= で指定された shots/… の PNG/JPEG）。 */
-  function image(id) {
+  /** 注釈の下地画像（または annotated=true なら赤入れ済み画像）。 */
+  function image(id, opts = {}) {
     const b = bodyOf(id)
     if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
     const ak = parseAkapenLine(b.body)
     if (!ak?.image) return { ok: false, code: 'NO_IMAGE', message: 'このタスクには下地画像がありません' }
-    const abs = resolveInside(ak.image)
+    let abs = null
+    if (opts?.annotated) {
+      const jsonAbs = resolveInside(ak.image.replace(/\.(png|jpe?g)$/i, '.annotation.json'))
+      const data = jsonAbs ? readJsonIfExists(jsonAbs) : null
+      if (data?.annotated_image) abs = resolveInside(data.annotated_image)
+    }
+    if (!abs) abs = resolveInside(ak.image)
     if (!abs) return { ok: false, code: 'IMAGE_MISSING', message: '下地画像が見つかりません' }
     const ext = path.extname(abs).toLowerCase()
     const type = ext === '.png' ? 'image/png' : 'image/jpeg'
@@ -586,6 +643,7 @@ export function createAkapen(cfg, opts = {}) {
     if (b.status !== 'blocked') {
       return { ok: false, code: 'NOT_WAITING', status: b.status, message: `注釈待ちではありません（現在: ${b.status}）` }
     }
+    if (payload?.chat) rememberTaskChat(id, payload.chat)
 
     const raw = String(payload?.annotated_image || '')
     const m = /^data:(image\/(?:png|jpeg));base64,([A-Za-z0-9+/=]+)$/.exec(raw)
@@ -846,7 +904,7 @@ export function createAkapen(cfg, opts = {}) {
     const file = path.join(home, 'plugin-data', 'akapen', 'feed.jsonl')
     let raw = ''
     try {
-      raw = fs.readFileSync(file, 'utf8')
+      raw = readTailText(file, 128 * 1024)
     } catch {
       return [] // まだ 1 行も無い（cron が走っていない）だけなので空でよい
     }
@@ -875,14 +933,15 @@ export function createAkapen(cfg, opts = {}) {
    * @returns {Array<{at: number, sessionId: string, taskId: string, label: string|null, text: string}>} 古い順
    */
   function readChatReportRows() {
-    const home = path.dirname(cfg.kanbanRoot || path.join(os.homedir(), '.hermes', 'kanban'))
+    const home = homeDir()
     const file = path.join(home, 'plugin-data', 'akapen', 'chat-reports.jsonl')
     let raw = ''
     try {
-      raw = fs.readFileSync(file, 'utf8')
+      raw = readTailText(file, 256 * 1024)
     } catch {
       return []
     }
+    const taskChats = readTaskChats()
     const out = []
     for (const line of raw.split('\n')) {
       if (!line.trim()) continue
@@ -890,12 +949,16 @@ export function createAkapen(cfg, opts = {}) {
         const j = JSON.parse(line)
         const at = Date.parse(String(j.at ?? ''))
         if (!Number.isFinite(at)) continue
-        const sessionId = String(j.session_id ?? '')
+        const taskId = String(j.task_id ?? '')
+        let sessionId = String(j.session_id ?? '')
+        if (!sessionId && taskId) {
+          sessionId = taskChats[taskId] || sanitizeChatId(parseAkapenLine(bodyOf(taskId)?.body)?.chat) || ''
+        }
         if (!sessionId) continue
         out.push({
           at,
           sessionId,
-          taskId: String(j.task_id ?? ''),
+          taskId,
           label: j.label ?? null,
           text: String(j.text ?? ''),
         })
@@ -1022,10 +1085,7 @@ export function createAkapen(cfg, opts = {}) {
     // 起票した会話へ完了報告を返す宛先（赤ペン chat-badge-01 q1=A の「紐づけ」）。
     // 注釈タスクは bridge が本文を組み立てるので、端末が渡さないと `chat=` が付かず
     // 完了が会話に戻らない（従来の宛先つきは赤ペンシート経由だけだった）。
-    const chat = String(payload?.chat ?? '')
-      .trim()
-      .replace(/[^A-Za-z0-9_-]/g, '')
-      .slice(0, 128)
+    const chat = sanitizeChatId(payload?.chat)
     const body =
       `[akapen] label=${label} round=1 mode=annotation image=${relShot} target=${target}` + (chat ? ` chat=${chat}` : '')
     // assignee が無いと dispatcher が拾わない（実測: ready のまま止まる）
@@ -1035,6 +1095,7 @@ export function createAkapen(cfg, opts = {}) {
       return { ok: false, code: 'CREATE_FAILED', message: created.out.slice(0, 300) }
     }
     const taskId = m[0]
+    if (chat) rememberTaskChat(taskId, chat)
     const blocked = await runKanban(['block', taskId, '注釈待ち（画像から作成）', '--kind', 'needs_input'])
     return {
       ok: blocked.code === 0,

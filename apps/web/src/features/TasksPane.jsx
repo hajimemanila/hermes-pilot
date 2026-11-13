@@ -1,6 +1,7 @@
 import React, { useRef, useCallback, useEffect, useState } from 'react'
 import { api } from '../api.js'
-import { HoldButton, Icon, Sheet, relTime } from '../components/Ui.jsx'
+import { HoldButton, Icon, Loader, RefreshButton, Sheet, Spinner, relTime } from '../components/Ui.jsx'
+import { haptic } from '../lib/haptic.js'
 import { CaptureSheet } from './CaptureSheet.jsx'
 import { UsageSheet } from './UsageSheet.jsx'
 import { LiveSheet } from './LiveSheet.jsx'
@@ -138,13 +139,15 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
 
   const loadTasks = useCallback(
     async (slug) => {
-      if (!slug) return
+      if (!slug) return false
       try {
         const d = await api(`/api/boards/${encodeURIComponent(slug)}/tasks?limit=60`)
         setTasks(d.tasks ?? [])
+        return true
       } catch (e) {
         setTasks([])
         notify(e.message)
+        return false
       }
     },
     [notify],
@@ -206,6 +209,15 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
     const id = setInterval(() => document.visibilityState === 'visible' && loadInbox(), 15_000)
     return () => clearInterval(id)
   }, [loadInbox])
+
+  const refreshAll = useCallback(async () => {
+    const results = await Promise.all([
+      board ? loadTasks(board) : Promise.resolve(true),
+      loadInbox(),
+      refresh ? refresh() : Promise.resolve(true),
+    ])
+    return results[0] !== false
+  }, [board, loadTasks, loadInbox, refresh])
 
   useEffect(() => {
     if (!board) return
@@ -438,21 +450,32 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
       <div className="list-head">
         <span>タスク</span>
         <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <button className="link" onClick={() => setCaptureOpen(true)}>
+          <button
+            className="link"
+            onClick={() => {
+              haptic('tap')
+              setCaptureOpen(true)
+            }}
+          >
             ＋ 起票
           </button>
-          <button className="link" onClick={() => board && loadTasks(board)}>
-            更新
-          </button>
+          <RefreshButton variant="link" onRefresh={refreshAll} />
         </span>
       </div>
 
-      {loading ? <div className="empty">読み込み中…</div> : null}
+      {loading ? <Loader label="読み込み中…" /> : null}
       {!loading && !tasks.length ? <div className="empty">タスクがありません</div> : null}
 
       <div className="list">
         {tasks.map((t) => (
-          <button key={t.id} className="row" onClick={() => openTask(t)}>
+          <button
+            key={t.id}
+            className="row"
+            onClick={() => {
+              haptic('tap')
+              openTask(t)
+            }}
+          >
             <span className={`dot ${t.status}`} />
             <span className="row-main">
               <span className="row-title">{t.title}</span>
@@ -578,7 +601,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
           }}
         >
           {detail.loading ? (
-            <div className="empty">読み込み中…</div>
+            <Loader label="詳細を読み込み中…" />
           ) : (
             <>
               <div className="kv">
@@ -634,8 +657,9 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
                   </button>
                   {diff ? (
                     diff.loading ? (
-                      <div className="row-sub" style={{ padding: '6px 4px' }}>
-                        読み込み中…
+                      <div className="row-sub hm-btn-inner" style={{ padding: '6px 4px' }}>
+                        <Spinner size={12} />
+                        <span>読み込み中…</span>
                       </div>
                     ) : diff.ok ? (
                       <div className="diff-list">
@@ -658,8 +682,9 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
                             </button>
                             {patch?.path === f.path ? (
                               patch.loading ? (
-                                <div className="row-sub" style={{ padding: '6px 10px' }}>
-                                  読み込み中…
+                                <div className="row-sub hm-btn-inner" style={{ padding: '6px 10px' }}>
+                                  <Spinner size={12} />
+                                  <span>読み込み中…</span>
                                 </div>
                               ) : patch.ok ? (
                                 <pre className="patch">{patch.text}</pre>

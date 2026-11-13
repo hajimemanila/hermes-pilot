@@ -2,9 +2,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from '../api.js'
 import { CloseActions } from '../components/CloseActions.jsx'
-import { Sheet, relTime } from '../components/Ui.jsx'
+import { Loader, RefreshButton, Sheet, Spinner, relTime } from '../components/Ui.jsx'
+import { haptic } from '../lib/haptic.js'
+import { readActiveChatId } from '../lib/chatReports.js'
 import { AnnotationEditor } from './AnnotationEditor.jsx'
-import { answerRows, capturedLabel, doneHint, groupItems, isWaiting, nextWaiting, repoLabel, thumbCaption } from '../lib/akapenView.js'
+import { answerRows, capturedLabel, DONE_LIMIT, doneHint, groupItems, isWaiting, nextWaiting, repoLabel, thumbCaption } from '../lib/akapenView.js'
 
 /**
  * 挿絵の拡大用データ。キャプションは「Q2 A. 塗りのボタン」＋問いの文。
@@ -77,7 +79,14 @@ function ItemRow({ item, onOpen }) {
   const waiting = isWaiting(item)
   const age = item.completedAt || item.createdAt ? relTime(item.completedAt || item.createdAt) : ''
   return (
-    <button className="ak-row" onClick={() => onOpen(item)} type="button">
+    <button
+      className="ak-row"
+      onClick={() => {
+        haptic('tap')
+        onOpen(item)
+      }}
+      type="button"
+    >
       <div className="ak-row-main">
         <div className="ak-row-title">{ak.title || item.title}</div>
         <div className="ak-row-sub">
@@ -225,6 +234,7 @@ function StandardForm({ item, data, onSubmitted }) {
         })),
         global,
         by: 'mobile',
+        chat: readActiveChatId(),
       }
       const r = await api(`/api/akapen/${item.id}/answer`, { method: 'POST', body: payload })
       onSubmitted?.(r)
@@ -308,8 +318,18 @@ function StandardForm({ item, data, onSubmitted }) {
       </section>
       {error ? <div className="ak-error">{error}</div> : null}
       <div className="ak-actions">
-        <button className="btn primary" type="button" disabled={busy} onClick={submit}>
-          {busy ? '送信中…' : '赤ペンを送る'}
+        <button
+          className="btn primary hm-btn-inner"
+          type="button"
+          disabled={busy}
+          aria-busy={busy}
+          onClick={() => {
+            haptic('action')
+            submit()
+          }}
+        >
+          {busy ? <Spinner size={15} /> : null}
+          <span>{busy ? '送信中…' : '赤ペンを送る'}</span>
         </button>
       </div>
       <p className="ak-hint">未選択は推奨案で確定します。送信するとカンバンが ready に戻り、agent が反映します。</p>
@@ -354,7 +374,10 @@ function IframeForm({ item, onSubmitted, notify }) {
       setError(null)
       try {
         const parsed = parsePastedReply(d.text)
-        const r = await api(`/api/akapen/${item.id}/answer`, { method: 'POST', body: { ...parsed, by: 'mobile' } })
+        const r = await api(`/api/akapen/${item.id}/answer`, {
+          method: 'POST',
+          body: { ...parsed, by: 'mobile', chat: readActiveChatId() },
+        })
         notify?.(r?.duplicate ? '同じ回答が既に保存されています' : 'シートから回答を受け取りました')
         onSubmitted?.(r)
       } catch (e) {
@@ -373,7 +396,10 @@ function IframeForm({ item, onSubmitted, notify }) {
     setError(null)
     try {
       const parsed = parsePastedReply(pasted)
-      const r = await api(`/api/akapen/${item.id}/answer`, { method: 'POST', body: { ...parsed, by: 'mobile' } })
+      const r = await api(`/api/akapen/${item.id}/answer`, {
+        method: 'POST',
+        body: { ...parsed, by: 'mobile', chat: readActiveChatId() },
+      })
       onSubmitted?.(r)
     } catch (e) {
       setError(e?.message || '送信できませんでした')
@@ -399,8 +425,18 @@ function IframeForm({ item, onSubmitted, notify }) {
           rows={6}
         />
         {error ? <div className="ak-error">{error}</div> : null}
-        <button className="btn primary" type="button" disabled={busy || !pasted.trim()} onClick={submitPasted}>
-          {busy ? '送信中…' : '貼り付けた回答を送る'}
+        <button
+          className="btn primary hm-btn-inner"
+          type="button"
+          disabled={busy || !pasted.trim()}
+          aria-busy={busy}
+          onClick={() => {
+            haptic('action')
+            submitPasted()
+          }}
+        >
+          {busy ? <Spinner size={15} /> : null}
+          <span>{busy ? '送信中…' : '貼り付けた回答を送る'}</span>
         </button>
       </details>
     </div>
@@ -426,18 +462,58 @@ function SheetLink({ item }) {
 }
 
 /** 赤ペン待ち以外（進行中・完了）の読み取り専用ビュー。回答フォームは出さない。 */
-function ReadOnlyDetail({ item, data, answer }) {
+function ReadOnlyDetail({ item, data, answer, notify, onStartAnnotation, onReopened, onOpenChat }) {
   const ak = item.akapen || {}
   const label = STATUS_LABEL[item.status] || item.status
   const answered = ak.answeredAt ? relTime(Date.parse(ak.answeredAt)) : null
+  const [anno, setAnno] = useState(null)
+  const [zoomImg, setZoomImg] = useState(false)
+  const [reopenReason, setReopenReason] = useState('')
+  const [reopenBusy, setReopenBusy] = useState(false)
+
+  useEffect(() => {
+    setAnno(null)
+    setZoomImg(false)
+    setReopenReason('')
+    if (ak.mode !== 'annotation') return undefined
+    let alive = true
+    api(`/api/akapen/${item.id}/annotation`)
+      .then((r) => alive && setAnno(r?.data ?? null))
+      .catch(() => alive && setAnno(null))
+    return () => {
+      alive = false
+    }
+  }, [item.id, ak.mode])
+
+  async function submitReopen() {
+    if (reopenBusy) return
+    setReopenBusy(true)
+    try {
+      const r = await api(`/api/akapen/${item.id}/reopen`, {
+        method: 'POST',
+        body: { reason: reopenReason.trim() || 'PWA から再確認を依頼' },
+      })
+      if (!r?.ok) throw new Error('再確認依頼に失敗しました')
+      notify?.('再確認（review）へ戻しました')
+      onReopened?.()
+    } catch (e) {
+      notify?.(e?.message || '再確認依頼に失敗しました')
+    } finally {
+      setReopenBusy(false)
+    }
+  }
+
   // 回答の履歴（グローバル注記: 完了した赤ペン項目から回答内容を参照したい）
   const history = answerRows(data, answer)
   const hasHistory = history.rows.some((r) => r.choice || r.note) || Boolean(history.global)
+  const imgSrc = ak.image ? `/api/akapen/${item.id}/image?annotated=1` : null
+
   return (
     <div className="ak-form">
       <div className="ak-readonly">
         <Chip tone={item.status === 'done' ? 'good' : ''}>{label}</Chip>
         <span className="ak-label">{ak.label || item.id}</span>
+        {ak.repo ? <span>{repoLabel(ak.repo)}</span> : null}
         {ak.round ? <span>r{ak.round}</span> : null}
         {ak.questions ? <span>{ak.questions}問</span> : null}
         {answered ? <span>回答 {answered}</span> : null}
@@ -452,6 +528,26 @@ function ReadOnlyDetail({ item, data, answer }) {
           </>
         ) : null}
       </p>
+      {imgSrc ? (
+        <div className="ak-anno-preview">
+          <button
+            type="button"
+            className="ak-anno-preview-btn"
+            onClick={() => {
+              haptic('tap')
+              setZoomImg(true)
+            }}
+          >
+            <img src={imgSrc} alt={`${ak.title || item.title} の画像`} />
+          </button>
+          {anno ? (
+            <div className="ak-anno-preview-meta">
+              <span>注釈 {Array.isArray(anno.marks) ? anno.marks.length : 0} ストローク</span>
+              {anno.note ? <span> ・ メモ: {anno.note}</span> : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {hasHistory ? (
         <details className="ak-answers">
           <summary>赤ペン回答（履歴）</summary>
@@ -469,6 +565,81 @@ function ReadOnlyDetail({ item, data, answer }) {
           {history.global ? <div className="ak-answer-global">全体メモ: {history.global}</div> : null}
         </details>
       ) : null}
+
+      <div className="ak-followup">
+        <button
+          type="button"
+          className="btn"
+          onClick={() => {
+            haptic('tap')
+            onStartAnnotation?.(ak.target || '')
+          }}
+        >
+          🖊 スクショに赤入れして追加指示
+        </button>
+        {ak.chat ? (
+          <button
+            type="button"
+            className="btn ghost"
+            onClick={() => {
+              haptic('tap')
+              onOpenChat?.(ak.chat)
+            }}
+          >
+            💬 起票元のチャットを開く
+          </button>
+        ) : null}
+      </div>
+
+      {item.status === 'done' ? (
+        <details className="ak-reopen">
+          <summary>↩ 反映が不十分なとき（再確認を依頼）</summary>
+          <textarea
+            className="inp"
+            rows={2}
+            value={reopenReason}
+            onChange={(e) => setReopenReason(e.target.value.slice(0, 400))}
+            placeholder="再確認したい理由・修正点（任意）"
+          />
+          <button
+            type="button"
+            className="btn hm-btn-inner"
+            disabled={reopenBusy}
+            aria-busy={reopenBusy}
+            onClick={() => {
+              haptic('action')
+              submitReopen()
+            }}
+          >
+            {reopenBusy ? <Spinner size={14} /> : null}
+            <span>{reopenBusy ? '送信中…' : 'review へ差し戻す'}</span>
+          </button>
+        </details>
+      ) : null}
+
+      {zoomImg && imgSrc
+        ? createPortal(
+            <div
+              className="ak-zoom"
+              role="dialog"
+              aria-modal="true"
+              aria-label="注釈画像の拡大"
+              onClick={() => setZoomImg(false)}
+            >
+              <figure onClick={(e) => e.stopPropagation()}>
+                <img src={imgSrc} alt={`${ak.title || item.title} の拡大画像`} />
+                <figcaption>
+                  <b>{ak.title || item.title}</b>
+                  {anno?.note ? <span>{anno.note}</span> : null}
+                </figcaption>
+              </figure>
+              <button className="ak-zoom-close" type="button" onClick={() => setZoomImg(false)}>
+                閉じる
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   )
 }
@@ -500,10 +671,11 @@ function downscaleFile(file) {
 }
 
 /** 「＋ 注釈」: 端末の画像 / library・直近スクショ から注釈タスクを作る。 */
-function NewAnnotationSheet({ onCreated, onClose, notify }) {
+function NewAnnotationSheet({ onCreated, onClose, notify, initialTarget = '' }) {
   const [items, setItems] = useState(null)
   const [targets, setTargets] = useState([])
   const [target, setTarget] = useState('')
+  const [repoOnly, setRepoOnly] = useState(Boolean(initialTarget))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const fileRef = React.useRef(null)
@@ -519,24 +691,21 @@ function NewAnnotationSheet({ onCreated, onClose, notify }) {
       .then((r) => {
         const list = r.targets || []
         setTargets(list)
-        // 既定は hermes-mobile-pwa（サーバ側で先頭に並ぶ）
-        setTarget((prev) => prev || list[0]?.path || '')
+        const hit = initialTarget
+          ? list.find((x) => x.path.toLowerCase() === String(initialTarget).toLowerCase())
+          : null
+        // 既定は指定リポジトリまたは hermes-mobile-pwa（サーバ側で先頭に並ぶ）
+        setTarget((prev) => prev || hit?.path || list[0]?.path || '')
       })
       .catch(() => setTargets([]))
-  }, [])
+  }, [initialTarget])
 
   async function create(body) {
     setBusy(true)
     setError(null)
     try {
-      // 起票元の会話（完了報告を戻す宛先 `chat=`）。端末に残っている会話 ID を使う。
-      // これが無いと、この画面から作った注釈タスクの完了が会話に戻らない（赤ペン chat-badge-01 q1=A）。
-      let chat = ''
-      try {
-        chat = String(localStorage.getItem('hm.storedSid') || '')
-      } catch {
-        chat = ''
-      }
+      // 起票元の会話（完了報告を戻す宛先 `chat=`）。新規会話未送信中でも直前の会話 ID を引き継ぐ。
+      const chat = readActiveChatId()
       const r = await api('/api/akapen/from-image', { method: 'POST', body: { ...body, chat } })
       if (!r?.ok) throw new Error(r?.message || '作成できませんでした')
       notify?.(`注釈タスクを作りました（${r.image}）`)
@@ -562,6 +731,12 @@ function NewAnnotationSheet({ onCreated, onClose, notify }) {
     }
   }
 
+  const selectedTarget = targets.find((tg) => tg.path === target) || null
+  const shownItems =
+    repoOnly && selectedTarget && items
+      ? items.filter((it) => it.repo?.id === selectedTarget.id)
+      : items
+
   return (
     <Sheet title="注釈の下地を選ぶ" onClose={onClose}>
       <div className="ak-new">
@@ -579,11 +754,39 @@ function NewAnnotationSheet({ onCreated, onClose, notify }) {
             ))}
           </select>
         </label>
+        {selectedTarget && items?.length ? (
+          <div className="chips" style={{ padding: 0 }}>
+            <button
+              type="button"
+              className={`chip${repoOnly ? ' on' : ''}`}
+              onClick={() => {
+                haptic('tap')
+                setRepoOnly(true)
+              }}
+            >
+              {selectedTarget.id} のみ
+            </button>
+            <button
+              type="button"
+              className={`chip${!repoOnly ? ' on' : ''}`}
+              onClick={() => {
+                haptic('tap')
+                setRepoOnly(false)
+              }}
+            >
+              すべて
+            </button>
+          </div>
+        ) : null}
         {error ? <div className="ak-error">{error}</div> : null}
-        <div className="ak-new-sub">library と直近のスクショ（{items ? items.length : '…'} 件）</div>
-        {items && !items.length ? <div className="ak-worker-empty">まだ画像がありません</div> : null}
+        <div className="ak-new-sub">library と直近のスクショ（{shownItems ? shownItems.length : '…'} 件）</div>
+        {shownItems && !shownItems.length ? (
+          <div className="ak-worker-empty">
+            {repoOnly ? 'このリポジトリの画像はまだありません（「すべて」から選べます）' : 'まだ画像がありません'}
+          </div>
+        ) : null}
         <div className="ak-new-grid">
-          {(items || []).map((it) => (
+          {(shownItems || []).map((it) => (
             <button
               key={it.path}
               type="button"
@@ -614,23 +817,27 @@ function NewAnnotationSheet({ onCreated, onClose, notify }) {
   )
 }
 
-export function AkapenPane({ notify }) {
+export function AkapenPane({ notify, focusRequest = null, onConsumedFocus }) {
   const [state, setState] = useState({ loading: true, items: [], error: null })
   const [tab, setTab] = useState('waiting')
   const [open, setOpen] = useState(null)
   const [showNew, setShowNew] = useState(false)
+  const [newTarget, setNewTarget] = useState('')
   const [data, setData] = useState(null)
   const [answer, setAnswer] = useState(null)
   const [dataError, setDataError] = useState(null)
   const [closeNote, setCloseNote] = useState('')
+  const [showAllDone, setShowAllDone] = useState(false)
   // 作業フィード（監視 cron が書く 1 行ログ）。完了・停止を端末で気づくために出す。
   const [feed, setFeed] = useState([])
   const feedNotifiedRef = useRef(0)
 
+  const lastLoadOkRef = useRef(true)
   const load = useCallback(async () => {
     try {
       const r = await api('/api/akapen')
       const items = r.items || []
+      lastLoadOkRef.current = true
       setState({ loading: false, items, error: null })
       // 下部ナビの丸バッジ（注釈 1377.jpg の赤）を、この一覧と同じデータで同期する
       try {
@@ -640,10 +847,16 @@ export function AkapenPane({ notify }) {
       }
       return items
     } catch (e) {
+      lastLoadOkRef.current = false
       setState({ loading: false, items: [], error: e?.message || '取得できません' })
       return []
     }
   }, [])
+
+  const refreshAkapen = useCallback(async () => {
+    await load()
+    return lastLoadOkRef.current
+  }, [load])
 
   useEffect(() => {
     load()
@@ -653,10 +866,13 @@ export function AkapenPane({ notify }) {
     return () => clearInterval(id)
   }, [load])
 
-  const groups = useMemo(() => groupItems(state.items), [state.items])
+  const groups = useMemo(
+    () => groupItems(state.items, showAllDone ? Number.MAX_SAFE_INTEGER : DONE_LIMIT),
+    [state.items, showAllDone],
+  )
   const counts = { waiting: groups.waiting.length, active: groups.active.length }
 
-  async function openItem(item) {
+  const openItem = useCallback(async (item) => {
     setOpen(item)
     setData(null)
     setAnswer(null)
@@ -674,7 +890,30 @@ export function AkapenPane({ notify }) {
       // 赤ペン待ちなら理由を出す。読むだけの項目はシートが無いこともあるので黙る
       if (isWaiting(item)) setDataError(e?.message || 'sheet.json がありません')
     }
-  }
+  }, [])
+
+  // チャットの完了報告行など外部からの誘導（「この赤ペンタスク／注釈作成を開く」）を処理する
+  useEffect(() => {
+    if (!focusRequest || state.loading) return
+    if (focusRequest.openNewAnnotation) {
+      setNewTarget(focusRequest.target || '')
+      setShowNew(true)
+      onConsumedFocus?.()
+      return
+    }
+    const found = state.items.find(
+      (x) =>
+        (focusRequest.taskId && x.id === focusRequest.taskId) ||
+        (focusRequest.label && x.akapen?.label === focusRequest.label),
+    )
+    if (found) {
+      setTab(isWaiting(found) ? 'waiting' : found.status === 'done' ? 'done' : 'active')
+      openItem(found)
+    } else {
+      setTab('done')
+    }
+    onConsumedFocus?.()
+  }, [focusRequest, state.loading, state.items, openItem, onConsumedFocus])
 
   function closeSheet() {
     setOpen(null)
@@ -751,12 +990,18 @@ export function AkapenPane({ notify }) {
           </div>
         </div>
         <span className="ak-head-actions">
-          <button className="btn ak-new-btn" type="button" onClick={() => setShowNew(true)}>
+          <button
+            className="btn ak-new-btn"
+            type="button"
+            onClick={() => {
+              haptic('tap')
+              setNewTarget('')
+              setShowNew(true)
+            }}
+          >
             ＋ 注釈
           </button>
-          <button className="btn" type="button" onClick={load}>
-            更新
-          </button>
+          <RefreshButton onRefresh={refreshAkapen} />
         </span>
       </div>
 
@@ -782,7 +1027,10 @@ export function AkapenPane({ notify }) {
             role="tab"
             aria-selected={tab === t.id}
             className={`chip${tab === t.id ? ' on' : ''}`}
-            onClick={() => setTab(t.id)}
+            onClick={() => {
+              if (tab !== t.id) haptic('tap')
+              setTab(t.id)
+            }}
           >
             {t.label}
             {t.id !== 'done' && counts[t.id] ? ` ${counts[t.id]}` : null}
@@ -791,7 +1039,7 @@ export function AkapenPane({ notify }) {
       </div>
 
       {state.error ? <div className="ak-error">{state.error}</div> : null}
-      {state.loading ? <div className="empty">読み込み中…</div> : null}
+      {state.loading ? <Loader label="読み込み中…" /> : null}
 
       {!state.loading && !hasItems ? (
         <div className="empty">
@@ -837,7 +1085,9 @@ export function AkapenPane({ notify }) {
 
       {!state.loading && hasItems && tab === 'done' ? (
         <>
-          <div className="ak-group-title">{doneHint(groups.doneTotal)}</div>
+          <div className="ak-group-title">
+            {showAllDone ? `全 ${groups.doneTotal} 件` : doneHint(groups.doneTotal)}
+          </div>
           {groups.done.length ? (
             <section className="ak-group">
               {groups.done.map((it) => (
@@ -845,12 +1095,22 @@ export function AkapenPane({ notify }) {
               ))}
             </section>
           ) : null}
+          {groups.doneTotal > groups.done.length ? (
+            <button className="btn ghost" style={{ width: '100%', marginTop: 8 }} onClick={() => setShowAllDone(true)}>
+              すべて表示（残り {groups.doneTotal - groups.done.length} 件）
+            </button>
+          ) : showAllDone && groups.doneTotal > DONE_LIMIT ? (
+            <button className="btn ghost" style={{ width: '100%', marginTop: 8 }} onClick={() => setShowAllDone(false)}>
+              直近 {DONE_LIMIT} 件のみ表示
+            </button>
+          ) : null}
         </>
       ) : null}
 
       {showNew ? (
         <NewAnnotationSheet
           notify={notify}
+          initialTarget={newTarget}
           onClose={() => setShowNew(false)}
           onCreated={async (r) => {
             setShowNew(false)
@@ -860,21 +1120,18 @@ export function AkapenPane({ notify }) {
         />
       ) : null}
 
-      {open && open.akapen?.mode === 'annotation' ? (
+      {open && open.akapen?.mode === 'annotation' && isWaiting(open) ? (
         <AnnotationEditor
           item={open}
           notify={notify}
           onClose={() => setOpen(null)}
-          onSubmitted={() => {
-            load()
-            setTimeout(() => setOpen(null), 600)
-          }}
+          onSubmitted={(r) => handleSubmitted(open.id, r)}
         />
       ) : null}
 
-      {open && open.akapen?.mode !== 'annotation' ? (
+      {open && !(open.akapen?.mode === 'annotation' && isWaiting(open)) ? (
         <Sheet title={(open.akapen?.title || open.title) + ''} onClose={closeSheet}>
-          <SheetLink item={open} />
+          {open.akapen?.mode !== 'annotation' ? <SheetLink item={open} /> : null}
           {isWaiting(open) ? (
             <>
               {dataError ? <div className="ak-error">{dataError} — シートを直接開いてください</div> : null}
@@ -885,7 +1142,25 @@ export function AkapenPane({ notify }) {
               )}
             </>
           ) : (
-            <ReadOnlyDetail item={open} data={data} answer={answer} />
+            <ReadOnlyDetail
+              item={open}
+              data={data}
+              answer={answer}
+              notify={notify}
+              onStartAnnotation={(t) => {
+                closeSheet()
+                setNewTarget(t || '')
+                setShowNew(true)
+              }}
+              onReopened={async () => {
+                await load()
+                closeSheet()
+              }}
+              onOpenChat={(chatId) => {
+                closeSheet()
+                window.dispatchEvent(new CustomEvent('hm:open-session', { detail: { id: chatId } }))
+              }}
+            />
           )}
           {isWaiting(open) ? (
             <div className="ak-form">

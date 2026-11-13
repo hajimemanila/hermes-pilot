@@ -18,8 +18,19 @@ import { mergeProgress } from '../lib/toolProgress.js'
 import { api } from '../api.js'
 import { composerHeight } from '../lib/composerSize.js'
 import { shouldSendOnEnter } from '../lib/composerKey.js'
-import { SEEN_MAP_KEY, readSeenMap, reportLines, setSeen, unreadSessions } from '../lib/chatReports.js'
-import { Icon, Sheet, relTime, fmtBytes } from '../components/Ui.jsx'
+import {
+  LAST_CHAT_KEY,
+  SEEN_MAP_KEY,
+  mergeTimeline,
+  otherUnreadReports,
+  readSeenMap,
+  reportLines,
+  setSeen,
+  toEpochMs,
+  unreadSessions,
+} from '../lib/chatReports.js'
+import { Icon, Loader, RefreshButton, Sheet, relTime, fmtBytes } from '../components/Ui.jsx'
+import { haptic } from '../lib/haptic.js'
 
 /** 入力欄を内容に合わせて伸ばす（枠の分を足さないと 2px 溢れて縦棒が出る）。 */
 function fitComposer(el, cap = 120) {
@@ -38,7 +49,7 @@ function fitComposer(el, cap = 120) {
  *
  * 定型スニペットは `GET /api/snippets`（組み込み + マイ）。タップで挿入、長押しで即送信。
  */
-export function ChatPane({ notify, chatReports = [], active = false }) {
+export function ChatPane({ notify, chatReports = [], active = false, openRequest = null, onConsumedOpen }) {
   const [sessions, setSessions] = useState([])
   const [sid, setSid] = useState(null)
   const [storedSid, setStoredSid] = useState(null)
@@ -72,6 +83,7 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
   const [repoPick, setRepoPick] = useState(DEFAULT_PROFILE) // シートで選択中のプロファイル
   const [repoStep, setRepoStep] = useState(null) // {kind:'board'|'create'|'all', repo}
   const [repoBusy, setRepoBusy] = useState(false)
+  const [loadingChat, setLoadingChat] = useState(false)
 
   // 添付
   const [attached, setAttached] = useState([])
@@ -96,6 +108,15 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
   const taRef = useRef(null)
   const stickRef = useRef(true)
   const notifiedOffline = useRef(false)
+  const objectUrlsRef = useRef(new Set())
+
+  useEffect(() => {
+    const urls = objectUrlsRef.current
+    return () => {
+      for (const url of urls) URL.revokeObjectURL(url)
+      urls.clear()
+    }
+  }, [])
 
   sidRef.current = sid
   storedRef.current = storedSid
@@ -171,32 +192,41 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
   /** サーバのセッションに繋ぎ直す（履歴も置き換える）。`prof` は他プロファイルの時だけ渡す。 */
   const resumeInto = useCallback(
     async (rpc, target, prof = 'default') => {
-      const r = await rpc('session.resume', {
-        session_id: target,
-        ...(prof && prof !== 'default' ? { profile: prof } : {}),
-      })
-      const res = r?.result
-      if (!res?.session_id) return { ok: false, sid: null, error: r?.error ?? null }
-      writePendingRepo(globalThis.localStorage, null)
-      setSid(res.session_id)
-      setStoredSid(res.resumed ?? target)
-      setProfile(prof || 'default')
-      const cwd = res.info?.cwd ?? res.cwd ?? ''
-      if (cwd) {
-        ensureRepos().then((list) => {
-          if (sidRef.current === res.session_id) setRepo(matchRepoByCwd(list, cwd))
+      setLoadingChat(true)
+      try {
+        const r = await rpc('session.resume', {
+          session_id: target,
+          ...(prof && prof !== 'default' ? { profile: prof } : {}),
         })
-      } else {
-        setRepo(null)
+        const res = r?.result
+        if (!res?.session_id) return { ok: false, sid: null, error: r?.error ?? null }
+        writePendingRepo(globalThis.localStorage, null)
+        setSid(res.session_id)
+        setStoredSid(res.resumed ?? target)
+        setProfile(prof || 'default')
+        const cwd = res.info?.cwd ?? res.cwd ?? ''
+        if (cwd) {
+          ensureRepos().then((list) => {
+            if (sidRef.current === res.session_id) setRepo(matchRepoByCwd(list, cwd))
+          })
+        } else {
+          setRepo(null)
+        }
+        const msgs = Array.isArray(res.messages) ? res.messages : []
+        setBlocks(
+          msgs
+            .filter((m) => m.role === 'user' || m.role === 'assistant')
+            .map((m) => ({
+              role: m.role === 'user' ? 'user' : 'assistant',
+              text: String(m.text ?? ''),
+              at: toEpochMs(m.at ?? m.timestamp ?? m.created_at),
+            }))
+            .filter((m) => m.text.trim().length > 0),
+        )
+        return { ok: true, sid: res.session_id }
+      } finally {
+        setLoadingChat(false)
       }
-      const msgs = Array.isArray(res.messages) ? res.messages : []
-      setBlocks(
-        msgs
-          .filter((m) => m.role === 'user' || m.role === 'assistant')
-          .map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', text: String(m.text ?? '') }))
-          .filter((m) => m.text.trim().length > 0),
-      )
-      return { ok: true, sid: res.session_id }
     },
     [ensureRepos],
   )
@@ -229,7 +259,7 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
       setBlocks((prev) => {
         const last = prev[prev.length - 1]
         if (last?.role === 'assistant' && last.open && !last.text) return prev
-        return [...prev, { role: 'assistant', text: '', open: true }]
+        return [...prev, { role: 'assistant', text: '', open: true, at: Date.now() }]
       })
       return
     }
@@ -244,7 +274,7 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
         const next = [...prev]
         const last = next[next.length - 1]
         if (last?.role === 'assistant' && last.open) next[next.length - 1] = { ...last, text: last.text + chunk }
-        else next.push({ role: 'assistant', text: chunk, open: true })
+        else next.push({ role: 'assistant', text: chunk, open: true, at: Date.now() })
         return next
       })
       return
@@ -357,8 +387,12 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
   }, [])
   useEffect(() => {
     try {
-      if (storedSid) localStorage.setItem('hm.storedSid', storedSid)
-      else localStorage.removeItem('hm.storedSid')
+      if (storedSid) {
+        localStorage.setItem('hm.storedSid', storedSid)
+        localStorage.setItem(LAST_CHAT_KEY, storedSid)
+      } else {
+        localStorage.removeItem('hm.storedSid')
+      }
       localStorage.setItem(STORED_PROFILE_KEY, storedProfile || DEFAULT_PROFILE)
     } catch {
       /* noop */
@@ -371,8 +405,12 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
    * 依存は配列そのものではなく**最後の報告のキー** — 15 秒ごとの取得で配列が作り直される
    * たびにスクロールすると、上へ遡って読んでいる最中に勝手に飛ぶ。
    */
-  const reportTarget = storedSid ?? sid ?? readonly?.sessionId
-  const reports = useMemo(() => reportLines(chatReports, reportTarget), [chatReports, reportTarget])
+  const currentIds = useMemo(
+    () => [storedSid, sid, readonly?.sessionId].filter(Boolean).map(String),
+    [storedSid, sid, readonly?.sessionId],
+  )
+  const reports = useMemo(() => reportLines(chatReports, currentIds), [chatReports, currentIds])
+  const timeline = useMemo(() => mergeTimeline(blocks, reports), [blocks, reports])
   const lastReportKey = reports.length ? reports[reports.length - 1].key : ''
 
   useEffect(() => {
@@ -446,14 +484,27 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
   }, [])
 
   const unreadIds = useMemo(() => unreadSessions(chatReports, seenMap), [chatReports, seenMap])
+  const otherUnreads = useMemo(
+    () => otherUnreadReports(chatReports, seenMap, currentIds),
+    [chatReports, seenMap, currentIds],
+  )
 
-  // 開いている会話の新着は末尾に出ている＝見えている。既読にして点を残さない
-  // （タブを離れている間に届いた分だけが点になる）。
   useEffect(() => {
-    if (!active || !reportTarget) return
-    if (!unreadIds.includes(String(reportTarget))) return
-    markReportsSeen(reportTarget)
-  }, [active, reportTarget, unreadIds, markReportsSeen])
+    try {
+      window.dispatchEvent(new CustomEvent('hm:chat-unread', { detail: { count: otherUnreads.length } }))
+    } catch {
+      /* noop */
+    }
+  }, [otherUnreads.length])
+
+  // 開いている会話の新着はタイムラインに出ている＝見えている。既読にして点を残さない
+  // （タブを離れている間、または別の会話に届いた分だけが点になる）。
+  useEffect(() => {
+    if (!active || !currentIds.length) return
+    for (const id of currentIds) {
+      if (unreadIds.includes(id)) markReportsSeen(id)
+    }
+  }, [active, currentIds, unreadIds, markReportsSeen])
 
   // --- 添付の取り込み ------------------------------------------------------
 
@@ -499,6 +550,8 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
         }
         try {
           const file = isImage ? await shrinkImage(raw) : raw
+          const preview = isImage ? URL.createObjectURL(file) : null
+          if (preview) objectUrlsRef.current.add(preview)
           setAttached((prev) => [
             ...prev,
             {
@@ -507,7 +560,7 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
               name: raw.name || (isImage ? 'image' : 'file'),
               bytes: file.size,
               file,
-              preview: isImage ? URL.createObjectURL(file) : null,
+              preview,
             },
           ])
         } catch (e) {
@@ -586,21 +639,23 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
       }
       setAttached([])
       setStreaming(true)
+      const sentAt = Date.now()
       setBlocks((prev) => [
         ...prev,
         {
           role: 'user',
           text: shown,
+          at: sentAt,
           images: imgs.map((a) => ({ url: a.preview, name: a.name })),
           files: files.map((a) => ({ name: a.name, bytes: a.bytes })),
         },
-        { role: 'assistant', text: '', open: true },
+        { role: 'assistant', text: '', open: true, at: sentAt + 1 },
       ])
 
       const failed = (msg) => {
         setStreaming(false)
         notify(msg)
-        setBlocks((prev) => [...prev, { role: 'notice', text: msg }])
+        setBlocks((prev) => [...prev, { role: 'notice', text: msg, at: Date.now() }])
       }
 
       let target = sid
@@ -656,7 +711,7 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
         }
       }
       if (r?.error) failed(`送信に失敗: ${r.error.message}`)
-      navigator.vibrate?.(8)
+      haptic('action')
     },
     [text, attached, streaming, sid, rpc, notify, stageAttachments, resumeInto, profile],
   )
@@ -713,6 +768,7 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
   /** resume できない会話を読み取り専用で開く（カンバン作業ログなど）。 */
   const loadTranscript = useCallback(
     async (sessionId, focusId, title, profile = null) => {
+      setLoadingChat(true)
       try {
         const q = new URLSearchParams({ limit: '80' })
         // 他プロファイルの会話は state.db が別なので profile を渡す（読み取り専用で開く）
@@ -720,7 +776,7 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
         const d = await api(`/api/sessions/${encodeURIComponent(sessionId)}/transcript?${q}`)
         if (!d.ok) {
           notify(d.reason ?? 'この会話は開けません')
-          return
+          return false
         }
         setSid(null)
         setReadonly({
@@ -734,14 +790,19 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
             role: m.role === 'user' ? 'user' : 'assistant',
             text: m.text,
             mid: m.id,
+            at: toEpochMs(m.at ?? m.timestamp ?? m.created_at),
           })),
         )
         if (d.title || title) setTitle(d.title || title)
         if (focusId) {
           requestAnimationFrame(() => scrollToHit(focusId))
         }
+        return true
       } catch (e) {
         notify(e.message)
+        return false
+      } finally {
+        setLoadingChat(false)
       }
     },
     [notify, scrollToHit],
@@ -795,6 +856,12 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
     return () => window.removeEventListener('hm:open-session', onOpen)
   }, [openSessionSafe])
 
+  useEffect(() => {
+    if (!openRequest?.id) return
+    openSessionSafe(openRequest.id, openRequest.messageId ?? null, openRequest.profile || 'default')
+    onConsumedOpen?.()
+  }, [openRequest, openSessionSafe, onConsumedOpen])
+
   // --- スニペット ---------------------------------------------------------
 
   /** カーソル位置に挿入（{{...}} は選択状態にする）。 */
@@ -824,10 +891,35 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
         el.style.height = 'auto'
         fitComposer(el)
       })
-      navigator.vibrate?.(6)
+      haptic('tap')
     },
     [text, sendText],
   )
+
+  /** チャットタブの「更新」: 会話一覧・完了報告・現在開いている会話を最新化する。 */
+  const refreshChat = useCallback(async () => {
+    window.dispatchEvent(new CustomEvent('hm:refresh-reports'))
+    if (connRef.current !== 'ready') {
+      sockRef.current?.reconnectNow?.()
+      return true
+    }
+    const rpcFn = sockRef.current?.rpc
+    if (!rpcFn) return false
+    await loadSessions(rpcFn)
+    if (streaming) return true
+    if (readonly?.sessionId) {
+      return await loadTranscript(readonly.sessionId, readonly.focusId, readonly.title, readonly.profile || 'default')
+    }
+    const target = storedRef.current ?? sidRef.current
+    if (target) {
+      const r = await resumeInto(rpcFn, target, profile || DEFAULT_PROFILE)
+      if (!r?.ok) {
+        notify(r?.error?.message ? `更新できませんでした: ${r.error.message}` : '会話を更新できませんでした')
+        return false
+      }
+    }
+    return true
+  }, [loadSessions, streaming, readonly, loadTranscript, resumeInto, profile, notify])
 
   const openProfileSheet = useCallback(() => {
     setDrawer(false)
@@ -904,8 +996,16 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
   return (
     <div className="pane chat" data-conn={connState}>
       <div className="chat-head">
-        <button className="icon-btn" onClick={() => setDrawer(true)} aria-label="会話一覧">
+        <button
+          className="icon-btn"
+          onClick={() => {
+            haptic('tap')
+            setDrawer(true)
+          }}
+          aria-label={otherUnreads.length ? `会話一覧（未読の完了報告 ${otherUnreads.length} 件）` : '会話一覧'}
+        >
           <Icon name="grid" size={18} />
+          {otherUnreads.length ? <span className="nav-dot done" aria-hidden="true" /> : null}
         </button>
         <span className="chat-title">{title || 'チャット'}</span>
         <span
@@ -919,7 +1019,10 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
             className="prof-chip repo-chip"
             title={`この会話のリポジトリ: ${repo.id}（${repo.path}）`}
             aria-label={`この会話のリポジトリ: ${repo.id}`}
-            onClick={openProfileSheet}
+            onClick={() => {
+              haptic('tap')
+              openProfileSheet()
+            }}
           >
             {repo.id}
           </button>
@@ -929,18 +1032,58 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
             className="icon-btn dc-icon"
             title={`Discord: ${dcLink.chatName ?? ''}`}
             aria-label="Discord のスレッドを開く"
-            onClick={() => window.open(dcLink.url, '_blank', 'noopener')}
+            onClick={() => {
+              haptic('tap')
+              window.open(dcLink.url, '_blank', 'noopener')
+            }}
           >
             <span aria-hidden="true">#</span>
           </button>
         ) : null}
-        <button className="icon-btn" onClick={openProfileSheet} aria-label="新しい会話（プロファイルとリポジトリを選ぶ）">
+        <RefreshButton variant="icon" ariaLabel="会話を更新" onRefresh={refreshChat} />
+        <button
+          className="icon-btn"
+          onClick={() => {
+            haptic('tap')
+            openProfileSheet()
+          }}
+          aria-label="新しい会話（プロファイルとリポジトリを選ぶ）"
+        >
           <Icon name="plus" size={18} />
         </button>
       </div>
 
       {/* 切断直後（2秒未満）は出さない */}
       {showBanner ? <div className="banner">接続を回復しています…</div> : null}
+      {otherUnreads.length ? (
+        <div className="chat-report-banner" role="status">
+          <span className="chat-report-banner-text">
+            🖊 別の会話に完了報告: {otherUnreads[0].label || otherUnreads[0].taskId || otherUnreads[0].text.slice(0, 28)}
+          </span>
+          <button
+            type="button"
+            className="chat-report-btn primary"
+            onClick={() => {
+              haptic('tap')
+              const u = otherUnreads[0]
+              const found = sessions.find((s) => String(s.id) === u.sessionId)
+              openSessionSafe(u.sessionId, null, found?.profile || profile || DEFAULT_PROFILE)
+            }}
+          >
+            開く
+          </button>
+          <button
+            type="button"
+            className="chat-report-btn"
+            onClick={() => {
+              haptic('tap')
+              markReportsSeen(otherUnreads[0].sessionId)
+            }}
+          >
+            既読
+          </button>
+        </div>
+      ) : null}
       {readonly ? (
         <div className="banner ro">
           読み取り専用
@@ -958,7 +1101,9 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
           if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
         }}
       >
-        {!blocks.length ? (
+        {!blocks.length && (loadingChat || connState === 'connecting') ? (
+          <Loader label={connState === 'connecting' ? '接続中…' : '会話を読み込み中…'} />
+        ) : !blocks.length ? (
           <div className="empty">
             <div>メッセージを送って開始</div>
             {recentSessions(sessions, profile, 2).length ? (
@@ -980,8 +1125,32 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
             ) : null}
           </div>
         ) : null}
-        {blocks.map((b, i) =>
-          b.role === 'user' ? (
+        {timeline.map((item) => {
+          if (item.kind === 'report') {
+            const r = item.report
+            return (
+              <div key={r.key} className="msg report" title={new Date(r.at).toLocaleString()}>
+                <span className="report-body">🖊 {r.text}</span>
+                <button
+                  type="button"
+                  className="report-link"
+                  onClick={() => {
+                    haptic('tap')
+                    window.dispatchEvent(
+                      new CustomEvent('hm:open-akapen', {
+                        detail: { taskId: r.taskId, label: r.label },
+                      }),
+                    )
+                  }}
+                >
+                  確認・赤入れ ↗
+                </button>
+              </div>
+            )
+          }
+          const b = item.block
+          const i = item.index
+          return b.role === 'user' ? (
             <div
               key={i}
               data-mid={b.mid}
@@ -1024,13 +1193,8 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
             <div key={i} className="msg notice">
               {b.text}
             </div>
-          ),
-        )}
-        {reports.map((r) => (
-          <div key={r.key} className="msg report" title={new Date(r.at).toLocaleString()}>
-            🖊 {r.text}
-          </div>
-        ))}
+          )
+        })}
         {streaming ? (
           <div className="thinking">
             {(() => {
@@ -1080,7 +1244,13 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
               <button
                 className="attach-x"
                 aria-label="添付を外す"
-                onClick={() => setAttached((prev) => prev.filter((x) => x.id !== a.id))}
+                onClick={() => {
+                  if (a.preview) {
+                    URL.revokeObjectURL(a.preview)
+                    objectUrlsRef.current.delete(a.preview)
+                  }
+                  setAttached((prev) => prev.filter((x) => x.id !== a.id))
+                }}
               >
                 ×
               </button>

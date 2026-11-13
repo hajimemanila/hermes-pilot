@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
 import { CloseActions } from '../components/CloseActions.jsx'
+import { readActiveChatId } from '../lib/chatReports.js'
+import { haptic } from '../lib/haptic.js'
 
 /**
  * 注釈エディタ（Gemini アプリのペン入れ相当・最小セット）。
@@ -186,7 +188,7 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
       }))
       const r = await api(`/api/akapen/${item.id}/annotation`, {
         method: 'POST',
-        body: { annotated_image: exportDataUrl(), note, marks, by: 'mobile' },
+        body: { annotated_image: exportDataUrl(), note, marks, by: 'mobile', chat: readActiveChatId() },
       })
       notify?.(r?.duplicate ? '同じ注釈が既に保存されています' : '注釈を送信しました')
       onSubmitted?.(r)
@@ -200,14 +202,30 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
   return (
     <div className="ak-anno">
       <header className="ak-anno-head">
-        <button className="ak-anno-close" type="button" onClick={onClose} aria-label="閉じる">
+        <button
+          className="ak-anno-close"
+          type="button"
+          onClick={() => {
+            haptic('tap')
+            onClose()
+          }}
+          aria-label="閉じる"
+        >
           ✕
         </button>
         <div className="ak-anno-title">
           {item.akapen?.title || item.title}
           <span>赤を入れて「送信」</span>
         </div>
-        <button className="ak-anno-send" type="button" disabled={busy} onClick={submit}>
+        <button
+          className="ak-anno-send"
+          type="button"
+          disabled={busy}
+          onClick={() => {
+            haptic('action')
+            submit()
+          }}
+        >
           {busy ? '送信中…' : '送信'}
         </button>
       </header>
@@ -231,14 +249,25 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
             key={t.id}
             type="button"
             className={`ak-anno-tool${tool === t.id ? ' on' : ''}`}
-            onClick={() => setTool(t.id)}
+            onClick={() => {
+              haptic('tap')
+              setTool(t.id)
+            }}
             aria-pressed={tool === t.id}
           >
             <span aria-hidden="true">{t.icon}</span>
             {t.label}
           </button>
         ))}
-        <button type="button" className="ak-anno-tool" onClick={undo} disabled={!count}>
+        <button
+          type="button"
+          className="ak-anno-tool"
+          onClick={() => {
+            haptic('tap')
+            undo()
+          }}
+          disabled={!count}
+        >
           ↩ 戻す
         </button>
         <input

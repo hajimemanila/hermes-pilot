@@ -14,6 +14,19 @@ export const SEEN_MAP_KEY = 'hm.chatReportSeen'
 export const SEEN_MAP_LIMIT = 50
 /** 会話の末尾に出す行数（履歴を偽らないため直近だけ）。 */
 export const REPORT_LINES = 3
+/** 現在開いている会話 ID の保存キー。 */
+export const ACTIVE_CHAT_KEY = 'hm.storedSid'
+/** 新規会話未送信中でも引き継ぐ、直前の会話 ID の保存キー。 */
+export const LAST_CHAT_KEY = 'hm.lastStoredSid'
+
+/** 現在（または新規未送信時は直前）の会話セッション ID を返す。 */
+export function readActiveChatId(storage = globalThis.localStorage) {
+  try {
+    return String(storage?.getItem(ACTIVE_CHAT_KEY) || storage?.getItem(LAST_CHAT_KEY) || '').trim()
+  } catch {
+    return ''
+  }
+}
 
 /**
  * `since` より新しい報告だけ（古い順は保つ）。
@@ -57,19 +70,64 @@ export function unreadSessions(items, seen) {
 /**
  * その会話の末尾に出す 1 行（古い順・直近 `limit` 件）。
  *
- * @param {Array<{at: number, sessionId: string, taskId: string, text: string}>} items
- * @param {string} sessionId
+ * @param {Array<{at: number, sessionId: string, taskId: string, label?: string|null, text: string}>} items
+ * @param {string|string[]} sessionIdOrIds 単一 ID または ID 配列（`storedSid` / `sid` 等）
  * @param {number} [limit]
- * @returns {Array<{key: string, at: number, text: string}>}
+ * @returns {Array<{key: string, at: number, text: string, taskId: string, label: string|null}>}
  */
-export function reportLines(items, sessionId, limit = REPORT_LINES) {
-  const sid = String(sessionId ?? '')
-  if (!sid) return []
+export function reportLines(items, sessionIdOrIds, limit = REPORT_LINES) {
+  const ids = new Set(
+    (Array.isArray(sessionIdOrIds) ? sessionIdOrIds : [sessionIdOrIds])
+      .map((x) => String(x ?? '').trim())
+      .filter(Boolean),
+  )
+  if (!ids.size) return []
   const n = Math.max(1, Number(limit) || REPORT_LINES)
   return (Array.isArray(items) ? items : [])
-    .filter((i) => i && String(i.sessionId ?? '') === sid && Number.isFinite(Number(i.at)))
+    .filter((i) => i && ids.has(String(i.sessionId ?? '')) && Number.isFinite(Number(i.at)))
     .slice(-n)
-    .map((i) => ({ key: `${i.taskId ?? ''}:${i.at}`, at: Number(i.at), text: String(i.text ?? '') }))
+    .map((i) => ({
+      key: `${i.taskId ?? ''}:${i.at}`,
+      at: Number(i.at),
+      text: String(i.text ?? ''),
+      taskId: String(i.taskId ?? ''),
+      label: i.label ?? null,
+    }))
+}
+
+/**
+ * 現在開いている会話（`currentIds`）以外に届いている未読の完了報告（セッションごと最新 1 件・新しい順）。
+ *
+ * @param {Array<{at: number, sessionId: string, taskId: string, label?: string|null, text: string}>} items
+ * @param {Record<string, number>} seen 会話ごとの既読時刻
+ * @param {string|string[]} [currentIds] 現在開いている会話の ID 群
+ * @returns {Array<{sessionId: string, at: number, taskId: string, label: string|null, text: string}>}
+ */
+export function otherUnreadReports(items, seen, currentIds = []) {
+  const map = seen && typeof seen === 'object' ? seen : {}
+  const cur = new Set(
+    (Array.isArray(currentIds) ? currentIds : [currentIds])
+      .map((x) => String(x ?? '').trim())
+      .filter(Boolean),
+  )
+  const bySession = new Map()
+  for (const i of Array.isArray(items) ? items : []) {
+    const sid = String(i?.sessionId ?? '').trim()
+    const at = Number(i?.at)
+    if (!sid || cur.has(sid) || !Number.isFinite(at)) continue
+    if (at <= (Number(map[sid]) || 0)) continue
+    const prev = bySession.get(sid)
+    if (!prev || at >= prev.at) {
+      bySession.set(sid, {
+        sessionId: sid,
+        at,
+        taskId: String(i?.taskId ?? ''),
+        label: i?.label ?? null,
+        text: String(i?.text ?? ''),
+      })
+    }
+  }
+  return [...bySession.values()].sort((a, b) => b.at - a.at)
 }
 
 /**
@@ -114,5 +172,62 @@ export function setSeen(seen, sessionId, at) {
   const keep = rows.slice(-SEEN_MAP_LIMIT)
   const out = {}
   for (const [k, v] of keep) out[k] = v
+  return out
+}
+
+/**
+ * 時刻表現（epoch sec/ms・ISO文字列）を epoch ms に正規化する。解釈不能なら null。
+ *
+ * @param {number|string|null|undefined} raw
+ * @returns {number|null}
+ */
+export function toEpochMs(raw) {
+  if (raw == null || raw === '') return null
+  if (typeof raw === 'number') {
+    if (!Number.isFinite(raw) || raw <= 0) return null
+    return raw < 1e12 ? Math.round(raw * 1000) : Math.round(raw)
+  }
+  const s = String(raw).trim()
+  if (!s) return null
+  if (/^\d+(\.\d+)?$/.test(s)) {
+    const n = Number(s)
+    if (!Number.isFinite(n) || n <= 0) return null
+    return n < 1e12 ? Math.round(n * 1000) : Math.round(n)
+  }
+  const ms = Date.parse(s)
+  return Number.isFinite(ms) && ms > 0 ? ms : null
+}
+
+/**
+ * 会話ブロック列と赤ペン完了報告を時系列で統合する。
+ * 報告の時刻より後の発言（`b.at >= r.at`）が存在する場合、報告はその手前に差し込まれ、
+ * 新しい会話履歴が増えても完了通知が常に最下部に張り付かないようにする。
+ *
+ * @param {Array<{at?: number|null}>} blocks
+ * @param {Array<{key: string, at: number, text: string}>} reports 古い順
+ * @returns {Array<{kind: 'block', block: object, index: number}|{kind: 'report', report: object}>}
+ */
+export function mergeTimeline(blocks, reports) {
+  const bList = Array.isArray(blocks) ? blocks : []
+  const rList = Array.isArray(reports) ? reports : []
+  if (!rList.length) return bList.map((block, index) => ({ kind: 'block', block, index }))
+
+  const out = []
+  let ri = 0
+  for (let i = 0; i < bList.length; i += 1) {
+    const block = bList[i]
+    const bt = Number(block?.at)
+    if (Number.isFinite(bt) && bt > 0) {
+      while (ri < rList.length && rList[ri].at <= bt) {
+        out.push({ kind: 'report', report: rList[ri] })
+        ri += 1
+      }
+    }
+    out.push({ kind: 'block', block, index: i })
+  }
+  while (ri < rList.length) {
+    out.push({ kind: 'report', report: rList[ri] })
+    ri += 1
+  }
   return out
 }

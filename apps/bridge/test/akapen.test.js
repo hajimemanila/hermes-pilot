@@ -552,3 +552,77 @@ test('createFromImage は chat= を本文に付ける（注釈タスクの完了
   await api.createFromImage({ source: 'upload', image: png, target: repoA })
   assert.equal(calls.find((a) => a[0] === 'create').join(' ').includes('chat='), false)
 })
+
+test('answer は chat を task-chats.json に覚え、session_id 欠落の完了報告を補完する（list も chat/target を返す）', async () => {
+  const { root } = tempBoard()
+  const dbPath = path.join(root, 'kanban', 'boards', 'mobile', 'kanban.db')
+  // target を持つタスクを 1 件追加（body に chat= が無くても answer 時に紐づける）
+  const db = new DatabaseSync(dbPath)
+  db.prepare(
+    "INSERT INTO tasks (id, title, body, status, created_at) VALUES ('t_extra', '追加', '[akapen] label=extra-01 round=1 mode=standard sheet=sheets/x-01-1.html target=/tmp/repo-x', 'blocked', 1700000001)",
+  ).run()
+  db.close()
+
+  const api = createAkapen(
+    { kanbanRoot: path.join(root, 'kanban') },
+    { runKanban: async () => ({ code: 0, out: 'ok' }) },
+  )
+  const r = await api.answer('t_test1', {
+    answers: [{ id: 'q1', choice: 'A', note: '' }],
+    global: '',
+    by: 'mobile',
+    chat: 'chat_recovered_1',
+  })
+  assert.equal(r.ok, true)
+
+  // list が chat と target を返す
+  const items = api.list()
+  const t1 = items.find((x) => x.id === 't_test1')
+  const t2 = items.find((x) => x.id === 't_extra')
+  assert.equal(t1?.akapen?.chat, 'chat_recovered_1')
+  assert.equal(t2?.akapen?.target, '/tmp/repo-x')
+
+  // chat-reports.jsonl に session_id が無くても task-chats.json から補完して返す
+  const dir = path.join(root, 'plugin-data', 'akapen')
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(
+    path.join(dir, 'chat-reports.jsonl'),
+    JSON.stringify({ at: '2026-11-13T05:00:00+08:00', task_id: 't_test1', label: 'x-01', text: '補完テスト' }) + '\n',
+  )
+  const all = api.chatReports()
+  assert.equal(all.length, 1)
+  assert.equal(all[0].sessionId, 'chat_recovered_1')
+  assert.equal(api.chatReport('chat_recovered_1').length, 1)
+})
+
+test('image(id, { annotated: true }) は注釈済み画像があればそちらを返す', async () => {
+  const { root, workdir } = tempBoard()
+  const shotAbs = path.join(workdir, 'shots', 'demo-1.png')
+  fs.mkdirSync(path.dirname(shotAbs), { recursive: true })
+  fs.writeFileSync(shotAbs, Buffer.from('BASE'))
+
+  const dbPath = path.join(root, 'kanban', 'boards', 'mobile', 'kanban.db')
+  const db = new DatabaseSync(dbPath)
+  db.prepare(
+    "INSERT INTO tasks (id, title, body, status, created_at) VALUES ('t_img1', '画像注釈', '[akapen] label=demo round=1 mode=annotation image=shots/demo-1.png', 'blocked', 1700000002)",
+  ).run()
+  db.close()
+
+  const api = createAkapen(
+    { kanbanRoot: path.join(root, 'kanban') },
+    { runKanban: async () => ({ code: 0, out: 'ok' }) },
+  )
+  // 注釈前は下地画像にフォールバック
+  assert.equal(api.image('t_img1', { annotated: true }).data.toString(), 'BASE')
+
+  const annotatedDataUrl = 'data:image/png;base64,' + Buffer.from('ANNOTATED').toString('base64')
+  const saved = await api.saveAnnotation('t_img1', {
+    annotated_image: annotatedDataUrl,
+    note: 'ここを修正',
+    marks: [{ tool: 'pen', points: [[0.1, 0.1], [0.2, 0.2]] }],
+    chat: 'chat_anno_1',
+  })
+  assert.equal(saved.ok, true)
+  assert.equal(api.image('t_img1').data.toString(), 'BASE')
+  assert.equal(api.image('t_img1', { annotated: true }).data.toString(), 'ANNOTATED')
+})

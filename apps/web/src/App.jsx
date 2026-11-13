@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import { readDeepLink } from './lib/deeplink.js'
 
 import { api } from './api.js'
@@ -6,11 +6,13 @@ import { navBadgeState, pendingCount, runningCount, unseenNotices, waitingCount 
 import { SEEN_NAV_KEY, newerThan } from './lib/chatReports.js'
 import { TasksPane } from './features/TasksPane.jsx'
 import { ChatPane } from './features/ChatPane.jsx'
-import { TermPane } from './features/TermPane.jsx'
 import { SettingsPane } from './features/SettingsPane.jsx'
 import { AkapenPane } from './features/AkapenPane.jsx'
 import { SearchSheet } from './features/SearchSheet.jsx'
-import { Icon } from './components/Ui.jsx'
+import { Icon, Loader } from './components/Ui.jsx'
+import { haptic } from './lib/haptic.js'
+
+const TermPane = lazy(() => import('./features/TermPane.jsx').then((m) => ({ default: m.TermPane })))
 
 const TABS = [
   { id: 'tasks', label: 'タスク', icon: 'grid' },
@@ -115,6 +117,11 @@ export function App() {
    */
   const [chatReportItems, setChatReportItems] = useState([])
   const [chatUnread, setChatUnread] = useState(0)
+  const [otherChatUnread, setOtherChatUnread] = useState(0)
+  const [akapenFocus, setAkapenFocus] = useState(null)
+  const [pendingChatOpen, setPendingChatOpen] = useState(null)
+  const chatMountedRef = useRef(chatMounted)
+  chatMountedRef.current = chatMounted
   const chatSeenRef = useRef(0)
   // 直近に知らせた報告の時刻（同じ行で二度トーストを出さない）。
   // 初回の取得では 0 のまま入れ直すだけにして、過去の報告を「今来た」として出さない。
@@ -145,6 +152,27 @@ export function App() {
   useEffect(() => {
     if (tab === 'chat') markChatSeen()
   }, [tab, markChatSeen])
+
+  // ChatPane からの別会話未読数・赤ペンタブ誘導・セッション遷移イベントを連携する
+  useEffect(() => {
+    const onOtherUnread = (e) => setOtherChatUnread(Number(e.detail?.count) || 0)
+    const onOpenAkapen = (e) => {
+      setTab('akapen')
+      setAkapenFocus({ ...(e.detail || {}), nonce: Date.now() })
+    }
+    const onOpenSession = (e) => {
+      setTab('chat')
+      if (!chatMountedRef.current && e.detail) setPendingChatOpen(e.detail)
+    }
+    window.addEventListener('hm:chat-unread', onOtherUnread)
+    window.addEventListener('hm:open-akapen', onOpenAkapen)
+    window.addEventListener('hm:open-session', onOpenSession)
+    return () => {
+      window.removeEventListener('hm:chat-unread', onOtherUnread)
+      window.removeEventListener('hm:open-akapen', onOpenAkapen)
+      window.removeEventListener('hm:open-session', onOpenSession)
+    }
+  }, [])
 
   useEffect(() => {
     let alive = true
@@ -181,9 +209,12 @@ export function App() {
     const id = setInterval(() => {
       if (document.visibilityState === 'visible') sync()
     }, 15000)
+    const onManual = () => sync()
+    window.addEventListener('hm:refresh-reports', onManual)
     return () => {
       alive = false
       clearInterval(id)
+      window.removeEventListener('hm:refresh-reports', onManual)
     }
     // notify はこの useEffect より後で定義される（同一レンダー内で TDZ になるため deps に入れない）。
     // 値は useCallback([]) で固定なので、依存に入れなくても stale にはならない。
@@ -309,9 +340,9 @@ export function App() {
       }
     }
     const onItems = (e) => setAkapenWaiting(waitingCount(e.detail?.items))
-    sync()
+    if (tabRef.current !== 'akapen') sync()
     const id = setInterval(() => {
-      if (document.visibilityState === 'visible') sync()
+      if (document.visibilityState === 'visible' && tabRef.current !== 'akapen') sync()
     }, 15000)
     window.addEventListener('hm:akapen-items', onItems)
     return () => {
@@ -346,9 +377,9 @@ export function App() {
         /* 保存できなくても表示は続ける */
       }
     }
-    sync()
+    if (tabRef.current !== 'akapen') sync()
     const id = setInterval(() => {
-      if (document.visibilityState === 'visible') sync()
+      if (document.visibilityState === 'visible' && tabRef.current !== 'akapen') sync()
     }, 15000)
     window.addEventListener('hm:akapen-items', onItems)
     window.addEventListener('hm:akapen-seen', onSeen)
@@ -373,9 +404,9 @@ export function App() {
       }
     }
     const onItems = (e) => setInboxPending(pendingCount(e.detail?.items))
-    sync()
+    if (tabRef.current !== 'tasks') sync()
     const id = setInterval(() => {
-      if (document.visibilityState === 'visible') sync()
+      if (document.visibilityState === 'visible' && tabRef.current !== 'tasks') sync()
     }, 15000)
     window.addEventListener('hm:inbox-items', onItems)
     return () => {
@@ -417,7 +448,14 @@ export function App() {
       <header className="topbar">
         <span className="brand">Hermes<b>Mobile</b></span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <button className="icon-btn" aria-label="検索" onClick={() => setSearchOpen(true)}>
+          <button
+            className="icon-btn"
+            aria-label="検索"
+            onClick={() => {
+              haptic('tap')
+              setSearchOpen(true)
+            }}
+          >
             <Icon name="search" size={18} />
           </button>
           <span className={`conn ${conn}`} title={conn === 'ok' ? '接続中' : '接続できません'}>
@@ -429,14 +467,21 @@ export function App() {
       {conn !== 'ok' ? (
         <div className="banner">
           ブリッジに接続できません
-          <button onClick={() => refresh()}>再試行</button>
+          <button
+            onClick={() => {
+              haptic('tap')
+              refresh()
+            }}
+          >
+            再試行
+          </button>
         </div>
       ) : null}
 
       <main className="panes">
         <ErrorBoundary tab={tab}>
           {booting ? (
-            <div className="empty">読み込み中…</div>
+            <Loader label="読み込み中…" />
           ) : tab === 'tasks' ? (
             <TasksPane
               overview={overview}
@@ -445,9 +490,11 @@ export function App() {
               initialInbox={deepLink?.open === 'inbox' ? deepLink : null}
             />
           ) : tab === 'akapen' ? (
-            <AkapenPane notify={notify} />
+            <AkapenPane notify={notify} focusRequest={akapenFocus} onConsumedFocus={() => setAkapenFocus(null)} />
           ) : tab === 'term' ? (
-            <TermPane notify={notify} />
+            <Suspense fallback={<Loader label="端末を読み込み中…" />}>
+              <TermPane notify={notify} />
+            </Suspense>
           ) : tab === 'settings' ? (
             <SettingsPane overview={overview} notify={notify} refresh={refresh} />
           ) : null}
@@ -463,7 +510,13 @@ export function App() {
               aria-hidden={tab === 'chat' ? undefined : 'true'}
             >
               <ErrorBoundary tab="chat">
-                <ChatPane notify={notify} chatReports={chatReportItems} active={tab === 'chat'} />
+                <ChatPane
+                  notify={notify}
+                  chatReports={chatReportItems}
+                  active={tab === 'chat'}
+                  openRequest={pendingChatOpen}
+                  onConsumedOpen={() => setPendingChatOpen(null)}
+                />
               </ErrorBoundary>
             </div>
           ) : null}
@@ -482,7 +535,7 @@ export function App() {
             t.id === 'akapen'
               ? navBadgeState({ waiting: akapenWaiting, unseen: akapenUnseen, running: akapenRunning })
               : t.id === 'chat'
-                ? navBadgeState({ unseen: chatUnread })
+                ? navBadgeState({ unseen: Math.max(chatUnread, otherChatUnread) })
                 : null
           const dot = !badge && state === 'done' ? 'done' : !badge && state === 'running' ? 'running' : null
           const aria = badge
@@ -498,7 +551,10 @@ export function App() {
               className={`nav-item${tab === t.id ? ' on' : ''}`}
               aria-current={tab === t.id ? 'page' : undefined}
               aria-label={aria}
-              onClick={() => setTab(t.id)}
+              onClick={() => {
+                if (tab !== t.id) haptic('tap')
+                setTab(t.id)
+              }}
             >
               <span className="nav-icon">
                 <Icon name={t.icon} />

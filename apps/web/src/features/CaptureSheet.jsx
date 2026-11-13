@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
-import { Sheet } from '../components/Ui.jsx'
+import { Sheet, Spinner } from '../components/Ui.jsx'
+import { haptic } from '../lib/haptic.js'
 
 /**
  * クイック起票。1行（または音声）でカンバンにタスクを作る。
@@ -104,7 +105,7 @@ export function CaptureSheet({ board, boards, defaultBoard, onClose, onCreated, 
         return
       }
       notify?.(r.created ? `起票しました: ${r.task.id}` : `起票済みです: ${r.task.id}`)
-      navigator.vibrate?.(10)
+      haptic('action')
       onCreated?.(r.task)
       onClose?.()
     } catch (e) {
@@ -200,8 +201,15 @@ export function CaptureSheet({ board, boards, defaultBoard, onClose, onCreated, 
         </div>
       ) : null}
 
-      <button className="btn" onClick={submit} disabled={busy || !title.trim()} style={{ marginTop: 14 }}>
-        {busy ? '起票中…' : '起票する'}
+      <button
+        className="btn hm-btn-inner"
+        onClick={submit}
+        disabled={busy || !title.trim()}
+        aria-busy={busy}
+        style={{ marginTop: 14 }}
+      >
+        {busy ? <Spinner size={14} /> : null}
+        <span>{busy ? '起票中…' : '起票する'}</span>
       </button>
 
       <div className="row-sub" style={{ padding: '12px 2px 18px', lineHeight: 1.7 }}>

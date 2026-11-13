@@ -582,6 +582,7 @@ button.stat:active {
 }
 
 .icon-btn {
+  position: relative;
   border: none;
   background: var(--surface);
   color: var(--muted);
@@ -590,6 +591,11 @@ button.stat:active {
   border-radius: 10px;
   display: grid;
   place-items: center;
+}
+
+.icon-btn .nav-dot {
+  top: 3px;
+  right: 3px;
 }
 
 /* ---------- 詳細 ---------- */
@@ -776,12 +782,26 @@ button.stat:active {
 /* 赤ペンの完了報告（起票した会話へ流す 1 行）。エラーの notice と色を分ける —
    同じ赤で出すと「失敗した」と読まれる（赤ペン chat-report-01: q3=A の 1 行） */
 .msg.report {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: center;
+  gap: 6px;
   font-size: 11.5px;
   line-height: 1.5;
   color: var(--muted);
   text-align: center;
-  padding: 2px 12px;
+  padding: 4px 12px;
+}
+
+.report-link {
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--accent-2);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  cursor: pointer;
 }
 
 .dots {
@@ -1860,3 +1880,212 @@ button.stat:active {
 .tool-name { flex: none; font-weight: 600; }
 .tool-detail { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim, #9fb3b0); }
 .tool-ms { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* ---------- 共通フィードバック・ローダー・更新ボタン ---------- */
+.btn,
+.icon-btn,
+.chip,
+.link,
+.nav button,
+.row:not(.static),
+.ak-row {
+  transition: transform 90ms ease, opacity 90ms ease, background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.btn:active:not(:disabled),
+.icon-btn:active:not(:disabled),
+.chip:active:not(:disabled),
+.link:active:not(:disabled),
+.nav button:active:not(:disabled),
+.row:not(.static):active:not(:disabled),
+.ak-row:active:not(:disabled) {
+  transform: scale(0.96);
+  opacity: 0.82;
+}
+
+.btn:disabled,
+.icon-btn:disabled,
+.link:disabled {
+  opacity: 0.58;
+  cursor: default;
+}
+
+@keyframes hm-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.hm-spin {
+  animation: hm-spin 0.85s linear infinite;
+}
+
+.hm-loader {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 22px 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.hm-btn-inner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.hm-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.icon-btn.hm-refresh-btn {
+  display: grid;
+  place-items: center;
+}
+
+.hm-refresh-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.hm-refresh-btn.is-done {
+  color: var(--good);
+  border-color: rgba(52, 211, 153, 0.55);
+}
+
+.hm-refresh-btn.link.is-done {
+  border-color: transparent;
+}
+
+/* 設定トグルスイッチ */
+.hm-switch {
+  position: relative;
+  width: 44px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  padding: 0;
+  flex: 0 0 auto;
+  cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease;
+}
+
+.hm-switch.on {
+  background: rgba(45, 212, 191, 0.25);
+  border-color: var(--accent);
+}
+
+.hm-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 160ms ease, background-color 160ms ease;
+}
+
+.hm-switch.on .hm-switch-knob {
+  transform: translateX(18px);
+  background: var(--accent);
+}
+
+/* ---------- 別会話の赤ペン完了バナー & 赤ペン詳細フォローアップ ---------- */
+.chat-report-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(16, 185, 129, 0.1);
+  border-bottom: 1px solid rgba(52, 211, 153, 0.28);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.chat-report-banner-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-report-btn {
+  flex: 0 0 auto;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 11.5px;
+  padding: 4px 9px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.chat-report-btn.primary {
+  background: var(--good);
+  border-color: transparent;
+  color: #05261e;
+  font-weight: 700;
+}
+
+.ak-anno-preview {
+  margin: 4px 0 8px;
+}
+
+.ak-anno-preview-btn {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface-2);
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.ak-anno-preview-btn img {
+  display: block;
+  width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+}
+
+.ak-anno-preview-meta {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 5px;
+}
+
+.ak-followup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.ak-reopen {
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--surface);
+}
+
+.ak-reopen summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.ak-reopen .inp {
+  margin: 8px 0;
+}

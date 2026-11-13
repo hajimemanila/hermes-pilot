@@ -212,3 +212,72 @@ test('close は不正な入力・存在しないタスク・CLI 失敗を弾く'
   await assert.rejects(() => inbox.close('b1', 't_a1', 'cancel'), (e) => e.statusCode === 502)
 })
 
+test('unblock はメモをコメントしてから unblock CLI を呼ぶ', async () => {
+  const { root } = fixture()
+  const calls = []
+  const inbox = createInbox(
+    {
+      kanbanRoot: path.join(root, 'kanban'),
+      runner: async (args) => {
+        calls.push(args)
+        return { code: 0, out: 'Unblocked t_a1' }
+      },
+    },
+    fakeKanban,
+  )
+  const r = await inbox.unblock('b1', 't_a1', 'そのまま進めて', 'mobile')
+  assert.equal(r.ok, true)
+  assert.equal(r.noop, undefined)
+  assert.equal(calls.length, 2)
+  assert.deepEqual(calls[0], ['kanban', '--board', 'b1', 'comment', 't_a1', 'そのまま進めて', '--author', 'mobile'])
+  assert.deepEqual(calls[1], ['kanban', '--board', 'b1', 'unblock', 't_a1', '--reason', 'そのまま進めて'])
+})
+
+test('unblock はメモなしでも unblock CLI を呼ぶ', async () => {
+  const { root } = fixture()
+  const calls = []
+  const inbox = createInbox(
+    {
+      kanbanRoot: path.join(root, 'kanban'),
+      runner: async (args) => {
+        calls.push(args)
+        return { code: 0, out: 'Unblocked t_a3' }
+      },
+    },
+    fakeKanban,
+  )
+  const r = await inbox.unblock('b1', 't_a3', '', 'mobile')
+  assert.equal(r.ok, true)
+  assert.equal(calls.length, 1)
+  assert.deepEqual(calls[0], ['kanban', '--board', 'b1', 'unblock', 't_a3', '--reason', 'PWAから再開'])
+})
+
+test('unblock は既に ready なら CLI を呼ばず noop を返す', async () => {
+  const { root } = fixture()
+  const db = new DatabaseSync(path.join(root, 'kanban', 'boards', 'b1', 'kanban.db'))
+  db.prepare('UPDATE tasks SET status = ? WHERE id = ?').run('ready', 't_a1')
+  db.close()
+  const calls = []
+  const inbox = createInbox(
+    { kanbanRoot: path.join(root, 'kanban'), runner: async (args) => (calls.push(args), { code: 0, out: 'ok' }) },
+    fakeKanban,
+  )
+  const r = await inbox.unblock('b1', 't_a1', '', 'mobile')
+  assert.equal(r.ok, true)
+  assert.equal(r.noop, true)
+  assert.equal(calls.length, 0)
+})
+
+test('unblock は不正な入力・存在しないタスク・done タスク・CLI 失敗を弾く', async () => {
+  const { root } = fixture()
+  const inbox = createInbox(
+    { kanbanRoot: path.join(root, 'kanban'), runner: async () => ({ code: 1, out: 'boom' }) },
+    fakeKanban,
+  )
+  await assert.rejects(() => inbox.unblock('../etc', 't_a1', ''), (e) => e.statusCode === 400)
+  await assert.rejects(() => inbox.unblock('b1', '../../etc', ''), (e) => e.statusCode === 400)
+  await assert.rejects(() => inbox.unblock('b1', 't_ffff', ''), (e) => e.statusCode === 404)
+  await assert.rejects(() => inbox.unblock('b1', 't_a2', ''), (e) => e.statusCode === 409) // t_a2 は done
+  await assert.rejects(() => inbox.unblock('b1', 't_a1', ''), (e) => e.statusCode === 502)
+})
+

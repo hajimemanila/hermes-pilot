@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { api, openSocket } from '../api.js'
 import { Icon, Sheet } from '../components/Ui.jsx'
+import { haptic } from '../lib/haptic.js'
 
 /**
  * ターミナルタブ。ブリッジが持つ実 PTY（node-pty）に WebSocket で繋ぐ。
@@ -135,7 +136,7 @@ export function TermPane({ notify }) {
       // 実行は「入力中の行を捨ててから流す」（前のコマンドに連結される事故を防ぐ）
       ws.send(JSON.stringify({ t: 'in', d: exec ? `\x15${text}\r` : text }))
       termRef.current?.focus()
-      navigator.vibrate?.(exec ? 12 : 6)
+      haptic(exec ? 'action' : 'tap')
       return true
     },
     [notify],

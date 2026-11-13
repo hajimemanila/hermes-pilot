@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
-import { Sheet, relTime } from '../components/Ui.jsx'
+import { Sheet, Spinner, relTime } from '../components/Ui.jsx'
+import { haptic } from '../lib/haptic.js'
 
 /**
  * 全セッション横断検索。
@@ -66,8 +67,17 @@ export function SearchSheet({ onClose, onOpenSession, notify }) {
         enterKeyHint="search"
       />
 
-      <div className="row-sub" style={{ padding: '8px 4px 4px' }}>
-        {busy ? '検索中…' : res?.ok ? `${hits.length} 件 ・ ${Math.round(res.tookMs)}ms` : res?.reason ?? '2文字以上で絞り込まれます'}
+      <div className="row-sub" style={{ padding: '8px 4px 4px', display: 'flex', alignItems: 'center', gap: 6 }}>
+        {busy ? (
+          <>
+            <Spinner size={12} />
+            <span>検索中…</span>
+          </>
+        ) : res?.ok ? (
+          `${hits.length} 件 ・ ${Math.round(res.tookMs)}ms`
+        ) : (
+          res?.reason ?? '2文字以上で絞り込まれます'
+        )}
       </div>
 
       <div className="list">
@@ -76,6 +86,7 @@ export function SearchSheet({ onClose, onOpenSession, notify }) {
             key={`${h.profile ?? 'default'}:${h.messageId}`}
             className="list-item"
             onClick={() => {
+              haptic('tap')
               onOpenSession?.(h)
               onClose?.()
             }}

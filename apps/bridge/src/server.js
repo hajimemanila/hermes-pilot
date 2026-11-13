@@ -22,6 +22,7 @@ import { createLive } from './live.js'
 import { createInbox } from './inbox.js'
 import { createRepos } from './repos.js'
 import { checkFrame, rejectionFrame } from './chat-profile.js'
+import { readTailText } from './tail.js'
 
 const require = createRequire(import.meta.url)
 const pty = safeRequire('node-pty')
@@ -176,13 +177,18 @@ function writeAllowed(max = 60, windowMs = 60_000) {
   return true
 }
 
-/** 読み取り系（検索）の簡易レート制限。書き込みとは枠を分ける。 */
-const reads = []
-function readAllowed(max = 240, windowMs = 60_000) {
+/** 読み取り系の簡易レート制限（機能別バケットで分離）。書き込みとは枠を分ける。 */
+const readBuckets = new Map()
+function readAllowed(bucket = 'default', max = 240, windowMs = 60_000) {
   const now = Date.now()
-  while (reads.length && now - reads[0] > windowMs) reads.shift()
-  if (reads.length >= max) return false
-  reads.push(now)
+  let arr = readBuckets.get(bucket)
+  if (!arr) {
+    arr = []
+    readBuckets.set(bucket, arr)
+  }
+  while (arr.length && now - arr[0] > windowMs) arr.shift()
+  if (arr.length >= max) return false
+  arr.push(now)
   return true
 }
 
@@ -262,7 +268,7 @@ function tailLog(name, lines = 200) {
   const safe = String(name ?? 'gateway').replace(/[^a-z0-9._-]/gi, '')
   const file = path.join(cfg.logDir, safe.endsWith('.log') ? safe : `${safe}.log`)
   if (!file.startsWith(cfg.logDir)) throw Object.assign(new Error('invalid log'), { statusCode: 400 })
-  const text = fs.readFileSync(file, 'utf8')
+  const text = readTailText(file, 256 * 1024)
   return text.split('\n').slice(-Math.min(lines, 1000)).join('\n')
 }
 
@@ -370,6 +376,21 @@ async function handleApi(req, res, url) {
         board: b,
         task: d,
         action: body?.action ?? null,
+        status: out.status,
+        noop: Boolean(out.noop),
+      })
+      return sendJson(res, 200, out)
+    }
+    if (b && c === 'tasks' && d && e === 'unblock' && req.method === 'POST') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+      }
+      const body = await readJson(req)
+      const out = await inbox.unblock(b, d, body?.note ?? body?.reason ?? '', String(body?.by ?? 'mobile'))
+      auth.audit({
+        kind: 'kanban.unblock',
+        board: b,
+        task: d,
         status: out.status,
         noop: Boolean(out.noop),
       })
@@ -483,7 +504,7 @@ async function handleApi(req, res, url) {
       return sendJson(res, r.ok ? 201 : 400, r)
     }
     if (c === 'image' && req.method === 'GET') {
-      const r = akapen.image(b)
+      const r = akapen.image(b, { annotated: url.searchParams.get('annotated') === '1' })
       if (!r.ok) return sendJson(res, 404, { error: { code: r.code, message: r.message } })
       res.writeHead(200, { 'content-type': r.type, 'cache-control': 'private, max-age=120' })
       return res.end(r.data)
@@ -569,7 +590,7 @@ async function handleApi(req, res, url) {
   // --- 読み取り専用トランスクリプト ------------------------------------------
   // /api/sessions/:id/transcript  … カンバン作業ログなど resume できない会話
   if (a === 'sessions' && b && c === 'transcript' && req.method === 'GET') {
-    if (!readAllowed(cfg.rate.maxReads ?? 240, cfg.rate.windowMs)) {
+    if (!readAllowed('transcript', cfg.rate.maxReads ?? 240, cfg.rate.windowMs)) {
       return sendJson(res, 429, { error: { message: '読み取りが多すぎます' } })
     }
     const profileName = url.searchParams.get('profile')
@@ -585,7 +606,7 @@ async function handleApi(req, res, url) {
   // --- ライブ進捗（実行中ターンと実行中タスク）--------------------------------
   // /api/live  … 5秒ポーリング前提。全プロファイルの state.db のリースとカンバンを合成する
   if (a === 'live' && req.method === 'GET') {
-    if (!readAllowed(cfg.rate.maxReads ?? 240, cfg.rate.windowMs)) {
+    if (!readAllowed('live', cfg.rate.maxReads ?? 240, cfg.rate.windowMs)) {
       return sendJson(res, 429, { error: { message: '読み取りが多すぎます' } })
     }
     const r = live.snapshot({ dbs: await listStateDbs() })
@@ -602,7 +623,7 @@ async function handleApi(req, res, url) {
     const n = Math.min(Math.max(Number(url.searchParams.get('lines') ?? 40), 1), 200)
     let lines = []
     try {
-      const txt = fs.readFileSync(path.join(cfg.dataDir, 'asset-access.log'), 'utf8')
+      const txt = readTailText(path.join(cfg.dataDir, 'asset-access.log'), 128 * 1024)
       lines = txt.trim().split('\n').slice(-n)
     } catch {
       lines = []
@@ -613,7 +634,7 @@ async function handleApi(req, res, url) {
   // --- 承認待ちインボックス --------------------------------------------------
   // /api/inbox  … ボード横断の blocked タスク（読む＋コメントで答える）
   if (a === 'inbox' && req.method === 'GET') {
-    if (!readAllowed(cfg.rate.maxReads ?? 240, cfg.rate.windowMs)) {
+    if (!readAllowed('inbox', cfg.rate.maxReads ?? 240, cfg.rate.windowMs)) {
       return sendJson(res, 429, { error: { message: '読み取りが多すぎます' } })
     }
     return sendJson(res, 200, inbox.list())
@@ -631,7 +652,7 @@ async function handleApi(req, res, url) {
   if (a === 'search' && req.method === 'GET') {
     const q = String(url.searchParams.get('q') ?? '')
     if (!q.trim()) return sendJson(res, 400, { error: { message: 'q が必要です' } })
-    if (!readAllowed(cfg.rate.maxReads ?? 240, cfg.rate.windowMs)) {
+    if (!readAllowed('search', cfg.rate.maxReads ?? 240, cfg.rate.windowMs)) {
       return sendJson(res, 429, { error: { message: '検索が多すぎます' } })
     }
     const r = search.search({
@@ -755,12 +776,20 @@ async function handleApi(req, res, url) {
   if (a === 'audit') {
     let text = ''
     try {
-      text = fs.readFileSync(cfg.auditPath, 'utf8')
+      text = readTailText(cfg.auditPath, 128 * 1024)
     } catch {
       text = ''
     }
-    const lines = text.split('\n').filter(Boolean).slice(-Number(url.searchParams.get('lines') ?? 100))
-    return sendJson(res, 200, { lines: lines.map((l) => JSON.parse(l)) })
+    const rawLines = text.split('\n').filter(Boolean).slice(-Number(url.searchParams.get('lines') ?? 100))
+    const parsed = []
+    for (const l of rawLines) {
+      try {
+        parsed.push(JSON.parse(l))
+      } catch {
+        /* 壊れた行は捨てる */
+      }
+    }
+    return sendJson(res, 200, { lines: parsed })
   }
 
   sendJson(res, 404, { error: { message: `unknown endpoint: ${url.pathname}` } })

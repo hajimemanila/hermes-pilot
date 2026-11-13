@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { CloseActions } from '../components/CloseActions.jsx'
-import { Sheet, relTime } from '../components/Ui.jsx'
+import { Sheet, Spinner, relTime } from '../components/Ui.jsx'
+import { haptic } from '../lib/haptic.js'
 import { isAnswered } from '../lib/akapenView.js'
 
 const KIND_LABEL = {
@@ -52,6 +53,25 @@ export function InboxSheet({ onClose, notify, onChanged, focusTaskId = null }) {
       })
       setDrafts((d) => ({ ...d, [it.id]: '' }))
       notify?.('コメントしました')
+      await load()
+      onChanged?.()
+    } catch (e) {
+      notify?.(e.message)
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const unblock = async (it) => {
+    const note = (drafts[it.id] ?? '').trim()
+    setBusyId(it.id)
+    try {
+      await api(`/api/boards/${encodeURIComponent(it.board)}/tasks/${encodeURIComponent(it.id)}/unblock`, {
+        method: 'POST',
+        body: { note },
+      })
+      setDrafts((d) => ({ ...d, [it.id]: '' }))
+      notify?.(`再開しました: ${it.id}`)
       await load()
       onChanged?.()
     } catch (e) {
@@ -113,12 +133,31 @@ export function InboxSheet({ onClose, notify, onChanged, focusTaskId = null }) {
         onChange={(e) => setDrafts((d) => ({ ...d, [it.id]: e.target.value.slice(0, 2000) }))}
       />
       <button
-        className="btn"
+        className="btn hm-btn-inner"
         style={{ marginTop: 8, width: '100%' }}
         disabled={busyId === it.id || !(drafts[it.id] ?? '').trim()}
-        onClick={() => send(it)}
+        aria-busy={busyId === it.id}
+        onClick={() => {
+          haptic('action')
+          send(it)
+        }}
       >
-        {busyId === it.id ? '送信中…' : 'コメントして送る'}
+        {busyId === it.id ? <Spinner size={14} /> : null}
+        <span>{busyId === it.id ? '送信中…' : 'コメントして送る'}</span>
+      </button>
+
+      <button
+        className="btn primary hm-btn-inner"
+        style={{ marginTop: 6, width: '100%' }}
+        disabled={busyId === it.id}
+        aria-busy={busyId === it.id}
+        onClick={() => {
+          haptic('action')
+          unblock(it)
+        }}
+      >
+        {busyId === it.id ? <Spinner size={14} /> : null}
+        <span>{(drafts[it.id] ?? '').trim() ? '回答して再開（ready）' : '再開する（ready）'}</span>
       </button>
 
       <CloseActions

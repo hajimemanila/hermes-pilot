@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { haptic } from '../lib/haptic.js'
 
 /**
  * 最小限のアイコン（外部依存を増やさない）。
@@ -29,20 +30,188 @@ export function Icon({ name, size = 20 }) {
     bolt: <path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z" />,
     check: <path d="m4 12 5 5L20 6" />,
     pen: <><path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z" /><path d="m14 6 4 4" /></>,
+    refresh: <><path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" /></>,
   }
   return <svg {...common}>{paths[name] ?? paths.grid}</svg>
 }
 
 /**
+ * 軽量な回転スピナー。ボタン内や読み込み表示で共用する。
+ * @param {{size?: number, className?: string}} props
+ */
+export function Spinner({ size = 16, className = '' }) {
+  return (
+    <svg
+      className={`hm-spin ${className}`.trim()}
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.24" strokeWidth="2.4" />
+      <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+/**
+ * 待機中のシンプルなローダー表示（画面・シート・一覧の初期ロード向け）。
+ * @param {{label?: string, size?: number}} props
+ */
+export function Loader({ label = '読み込み中…', size = 18 }) {
+  return (
+    <div className="hm-loader" role="status" aria-live="polite">
+      <Spinner size={size} />
+      {label ? <span>{label}</span> : null}
+    </div>
+  )
+}
+
+/**
+ * 押下フィードバック・回転中・完了チェック（✓）を備えた共通更新ボタン。
+ * @param {{
+ *   onRefresh?: Function,
+ *   variant?: 'btn'|'link'|'icon',
+ *   label?: string,
+ *   ariaLabel?: string,
+ *   busy?: boolean,
+ *   disabled?: boolean,
+ *   className?: string,
+ * }} props
+ */
+export function RefreshButton({
+  onRefresh,
+  variant = 'btn',
+  label = '更新',
+  ariaLabel = '更新',
+  busy: externalBusy = false,
+  disabled = false,
+  className = '',
+}) {
+  const [running, setRunning] = useState(false)
+  const [done, setDone] = useState(false)
+  const timerRef = useRef(null)
+  const mountedRef = useRef(true)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      clearTimeout(timerRef.current)
+    }
+  }, [])
+
+  const busy = running || externalBusy
+
+  const handleClick = async () => {
+    if (busy || disabled || !onRefresh) return
+    haptic('tap')
+    clearTimeout(timerRef.current)
+    setDone(false)
+    setRunning(true)
+    const started = Date.now()
+    let ok = true
+    try {
+      const res = await onRefresh()
+      if (res === false) ok = false
+    } catch {
+      ok = false
+    }
+    // 一瞬で終わった場合でも、更新が走ったことを視認できるよう最低 260ms 回す
+    const wait = Math.max(0, 260 - (Date.now() - started))
+    if (wait) await new Promise((r) => setTimeout(r, wait))
+    if (!mountedRef.current) return
+    setRunning(false)
+    if (ok) {
+      setDone(true)
+      timerRef.current = setTimeout(() => {
+        if (mountedRef.current) setDone(false)
+      }, 1100)
+    } else {
+      haptic('error')
+    }
+  }
+
+  const baseClass = variant === 'icon' ? 'icon-btn' : variant === 'link' ? 'link' : 'btn'
+  const iconSize = variant === 'icon' ? 18 : 14
+
+  return (
+    <button
+      type="button"
+      className={`${baseClass} hm-refresh-btn${done ? ' is-done' : ''} ${className}`.trim()}
+      onClick={handleClick}
+      disabled={busy || disabled}
+      aria-busy={busy}
+      aria-label={ariaLabel}
+      title={ariaLabel}
+    >
+      <span className={`hm-refresh-ico${busy ? ' hm-spin' : ''}`} aria-hidden="true">
+        <Icon name={done ? 'check' : 'refresh'} size={iconSize} />
+      </span>
+      {variant !== 'icon' && label ? <span>{busy ? '更新中' : done ? '更新済' : label}</span> : null}
+    </button>
+  )
+}
+
+let sheetSeq = 0
+
+/**
  * スライドアップのシート。
+ * マウント時にブラウザ履歴を 1 段積み、Android の「戻る」で閉じられるようにする
+ * （`TasksPane` が `#inbox` で管理している場合は二重に積まない）。
  */
 export function Sheet({ title, onClose, children }) {
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.history?.pushState) return undefined
+    // InboxSheet は TasksPane 側で #inbox ハッシュと履歴を管理しているため重複させない
+    if (window.history.state?.hmSheet === 'inbox' || window.location.hash.startsWith('#inbox')) {
+      return undefined
+    }
+    const token = `s-${++sheetSeq}`
+    let pushed = false
+    let closedByPop = false
+    try {
+      window.history.pushState({ ...(window.history.state ?? {}), hmSheetId: token }, '', window.location.href)
+      pushed = true
+    } catch {
+      return undefined
+    }
+    const onPop = () => {
+      if (pushed && window.history.state?.hmSheetId !== token) {
+        closedByPop = true
+        pushed = false
+        onCloseRef.current?.()
+      }
+    }
+    window.addEventListener('popstate', onPop)
+    return () => {
+      window.removeEventListener('popstate', onPop)
+      if (pushed && !closedByPop && window.history.state?.hmSheetId === token) {
+        pushed = false
+        try {
+          window.history.back()
+        } catch {
+          /* noop */
+        }
+      }
+    }
+  }, [])
+
+  const handleClose = () => {
+    haptic('tap')
+    onClose?.()
+  }
+
   return (
-    <div className="sheet-wrap" onClick={onClose}>
+    <div className="sheet-wrap" onClick={handleClose}>
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
         <div className="sheet-head">
           <span>{title}</span>
-          <button className="icon-btn" onClick={onClose} aria-label="閉じる">
+          <button className="icon-btn" onClick={handleClose} aria-label="閉じる">
             <Icon name="close" size={18} />
           </button>
         </div>
@@ -79,7 +248,7 @@ export function HoldButton({ onFire, ms = 1500, label, sub, tone = 'danger', dis
     raf.current = requestAnimationFrame(tick)
     timer.current = setTimeout(() => {
       stop()
-      navigator.vibrate?.(20)
+      haptic('heavy')
       onFire()
     }, ms)
   }, [disabled, ms, onFire, stop])
