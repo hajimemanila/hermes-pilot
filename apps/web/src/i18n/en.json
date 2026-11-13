@@ -4,13 +4,11 @@
   "nav.chat": "Chat",
   "nav.term": "Term",
   "nav.settings": "Settings",
-
   "status.gw": "GW",
   "status.workers": "Workers {n}",
   "status.reviewWaiting": "Review {n}",
   "status.running": "Running {n}",
   "status.offline": "Offline",
-
   "review.title": "Review",
   "review.tab.waiting": "Waiting",
   "review.tab.active": "Active",
@@ -115,7 +113,6 @@
   "review.nextOpened": "{head} — opened the next waiting review",
   "review.noneLeft": "{head} — nothing else is waiting",
   "review.sheetMissing": "sheet.json is missing",
-
   "chat.working": "Working…",
   "chat.toolsRan": "🔧 Ran {count} tools",
   "chat.reviewWaitingTitle": "🖊 Waiting for Review",
@@ -241,7 +238,6 @@
   "chat.unreadReportTitle": "A review completion report has arrived",
   "chat.runningSuffix": " · running",
   "chat.reportAria": "Review completion report",
-
   "settings.language": "Language",
   "settings.theme": "Theme",
   "settings.languageAuto": "Auto",
@@ -311,8 +307,7 @@
   "settings.saved": "Saved",
   "settings.needNameAndText": "Enter a name and text",
   "settings.snippetLimit": "You can have up to {max} custom snippets",
-  "settings.about": "Hermes Mobile v{version} · the existing dashboard (9119) is untouched. Token:",
-
+  "settings.about": "Hermes Pilot v{version} · the existing dashboard (9119) is untouched. Token:",
   "common.ok": "OK",
   "common.cancel": "Cancel",
   "common.save": "Save",
@@ -326,7 +321,6 @@
   "common.unknown": "Unknown",
   "common.refreshing": "Updating…",
   "common.refreshed": "Updated",
-
   "close.title": "Clear this waiting review",
   "close.menuClose": "Close the cleanup menu",
   "close.help": "Removes it from the list. A reason in the field above is kept in the record. Press and hold to confirm.",
@@ -338,7 +332,6 @@
   "close.done": "Marked as done",
   "close.alreadyCancelled": "Already cancelled",
   "close.cancelled": "Cancelled (archived)",
-
   "usage.title": "Usage ({hours}h)",
   "usage.failed": "Could not load usage",
   "usage.cost": "Cost",
@@ -355,7 +348,6 @@
   "usage.none": "No records",
   "usage.topSessions": "Top sessions by cost",
   "usage.footnote": "Read-only aggregation of sessions / session_model_usage in ~/.hermes/state.db (30s cache). The cache rate is the share of cache reads in input + cache read.",
-
   "err.AUTH_REQUIRED": "Sign-in required",
   "err.BAD_REQUEST": "The request could not be processed",
   "err.CONFLICT": "The state changed. Reload and try again",
@@ -369,18 +361,14 @@
   "err.RATE_LIMITED": "Too many requests. Wait a moment and retry",
   "err.SESSION_REQUIRED": "session_id is required",
   "err.UNKNOWN_ENDPOINT": "Unknown endpoint: {path}",
-
   "repo.noBoard": "No boards",
   "repo.boardMore": " +{rest} more",
   "repo.boardCount": "{count} boards: {names}{tail}",
-
   "install.swUnsupported": "unsupported",
   "install.swControlled": "controlling",
   "install.swWaiting": "not controlling (reload to activate)",
-
   "socket.notConnected": "Not connected (reconnecting)",
   "socket.disconnected": "Connection lost (reconnecting)",
-
   "term.title": "Terminal",
   "term.snippets": "Snippets",
   "term.snippetsTitle": "Terminal snippets",
@@ -397,7 +385,6 @@
   "term.state.open": "connected",
   "term.state.closed": "closed",
   "term.state.error": "error",
-
   "search.title": "Search (all sessions)",
   "search.placeholder": "e.g. drain / PWA / kanban",
   "search.searching": "Searching…",
@@ -407,7 +394,6 @@
   "search.you": "You",
   "search.none": "No matches",
   "search.note": "Covers Discord, CLI and kanban messages (read-only from ~/.hermes/state.db). Tap a row to open that conversation.",
-
   "live.title": "Live (updates every 5s)",
   "live.turns": "Running turns",
   "live.tasks": "Running tasks",
@@ -423,7 +409,6 @@
   "live.abortAll": "Abort {count} running tasks",
   "live.abortAllSub": "long-press · reclaim → block",
   "live.note": "Combines state.db turn leases with kanban running tasks (read-only). Abort a turn with the chat stop button; abort tasks with the long-press above.",
-
   "inbox.kind.needsInput": "Needs input",
   "inbox.kind.dependency": "Waiting on dependency",
   "inbox.kind.failure": "Failed",
@@ -449,7 +434,6 @@
   "inbox.hideAnswered": "Hide answered",
   "inbox.showAnswered": "Show {n} answered",
   "inbox.note": "Comments are recorded with hermes kanban comment. Items you no longer need can be removed with Clear (done / cancel) — either way the history stays on the board. Refreshes every 15s.",
-
   "capture.title": "New task",
   "capture.noSpeech": "This device does not support voice input",
   "capture.speechStopped": "Voice input stopped ({error})",
@@ -473,7 +457,6 @@
   "capture.submitting": "Creating…",
   "capture.submit": "Create task",
   "capture.note": "Runs `hermes kanban create` (never writes the DB directly). Repeated taps with the same content collapse into one task for 10 minutes. Voice input uses the device's speech recognition.",
-
   "annot.tool.pen": "Pen",
   "annot.tool.arrow": "Arrow",
   "annot.tool.rect": "Box",
@@ -487,7 +470,6 @@
   "annot.sending": "Sending…",
   "annot.submit": "Send",
   "annot.notePlaceholder": "Note (optional)",
-
   "diag.manifestLink": "manifest link",
   "diag.linkMissing": "no link tag",
   "diag.manifestFetch": "fetch manifest",
@@ -513,14 +495,13 @@
   "diag.unknown": "(unknown)",
   "diag.empty": "(none)",
   "diag.decodeError": "cannot decode",
-
   "app.tabError": "Something went wrong in this tab",
   "app.tabErrorLog": "The report is written to ~/.hermes/mobile-pwa/client-errors.log",
   "app.reviewDone": "Review done",
   "app.reviewDoneLabel": "Review done: {label}",
   "app.loginPrompt": "Enter the app token",
   "app.loginButton": "Sign in",
-  "app.loginHint": "The token is in ~/.hermes/mobile-pwa/token (0600).",
+  "app.loginHint": "The token is in ~/.hermes/plugin-data/hermes-pilot/token (0600).",
   "app.search": "Search",
   "app.connected": "Connected",
   "app.disconnected": "Cannot connect",
@@ -531,7 +512,6 @@
   "app.navDone": "{label} (completion report)",
   "app.navReflecting": "{label} (reflecting)",
   "app.navRunning": "{label} (running)",
-
   "tasks.status.running": "Running",
   "tasks.status.ready": "Queued",
   "tasks.status.done": "Done",
@@ -607,5 +587,15 @@
   "tasks.abortTask": "Abort this task",
   "tasks.abortSub": "reclaim → block (stops re-runs)",
   "tasks.events": "Events",
-  "tasks.noEvents": "No events"
+  "tasks.noEvents": "No events",
+  "settings.pairing": "Pair a device",
+  "settings.pairingHint": "Show a QR code for a second phone or tablet. Opening it signs that device in, so the long token never has to be typed.",
+  "settings.showPairingQr": "Show Pairing QR",
+  "settings.pairingLoading": "Loading…",
+  "settings.pairingTitle": "Pairing QR",
+  "settings.pairingScanHint": "Scan this with the camera of the device you want to pair.",
+  "settings.pairingEmpty": "No reachable address was found. Connect Tailscale or join the same LAN, then reopen this sheet.",
+  "settings.pairingCopy": "Copy",
+  "settings.pairingCopied": "URL copied",
+  "settings.pairingNote": "The QR embeds the app token. Anyone who scans it can control this Hermes — do not share screenshots of it."
 }

@@ -4,13 +4,11 @@
   "nav.chat": "チャット",
   "nav.term": "端末",
   "nav.settings": "設定",
-
   "status.gw": "GW",
   "status.workers": "稼働 {n}",
   "status.reviewWaiting": "判断待ち {n}",
   "status.running": "実行中 {n}",
   "status.offline": "オフライン",
-
   "review.title": "レビュー",
   "review.tab.waiting": "判断待ち",
   "review.tab.active": "進行中",
@@ -115,7 +113,6 @@
   "review.nextOpened": "{head} — 次の判断待ちを開きました",
   "review.noneLeft": "{head} — 判断待ちは残っていません",
   "review.sheetMissing": "sheet.json がありません",
-
   "chat.working": "実行中…",
   "chat.toolsRan": "🔧 ツール {count} 件を実行",
   "chat.reviewWaitingTitle": "🖊 レビュー判断待ち",
@@ -241,7 +238,6 @@
   "chat.unreadReportTitle": "レビューの完了報告が届いています",
   "chat.runningSuffix": " ・ 稼働中",
   "chat.reportAria": "レビューの完了報告あり",
-
   "settings.language": "表示言語",
   "settings.theme": "テーマ",
   "settings.languageAuto": "自動",
@@ -311,8 +307,7 @@
   "settings.saved": "保存しました",
   "settings.needNameAndText": "名前と文言を入れてください",
   "settings.snippetLimit": "マイスニペットは{max}個までです",
-  "settings.about": "Hermes Mobile v{version} ・ 既存ダッシュボード（9119）は変更していません。トークンは",
-
+  "settings.about": "Hermes Pilot v{version} ・ 既存ダッシュボード（9119）は変更していません。トークンは",
   "common.ok": "OK",
   "common.cancel": "キャンセル",
   "common.save": "保存",
@@ -326,7 +321,6 @@
   "common.unknown": "不明",
   "common.refreshing": "更新中",
   "common.refreshed": "更新済",
-
   "close.title": "この判断待ちを片付ける",
   "close.menuClose": "片付けメニューを閉じる",
   "close.help": "一覧から外します。上の欄に理由を書いておくと記録に残ります。押しっぱなしで確定します。",
@@ -338,7 +332,6 @@
   "close.done": "完了にしました",
   "close.alreadyCancelled": "すでに取消済みです",
   "close.cancelled": "取消（アーカイブ）しました",
-
   "usage.title": "使用量（{hours}h）",
   "usage.failed": "取得できませんでした",
   "usage.cost": "コスト",
@@ -355,7 +348,6 @@
   "usage.none": "記録なし",
   "usage.topSessions": "コスト上位",
   "usage.footnote": "~/.hermes/state.db の sessions / session_model_usage を読み取り専用で集計（30秒キャッシュ）。キャッシュ率は「入力＋キャッシュ読取」に占めるキャッシュ読取の割合です。",
-
   "err.AUTH_REQUIRED": "認証が必要です",
   "err.BAD_REQUEST": "リクエストを処理できませんでした",
   "err.CONFLICT": "状態が変わりました。再読み込みしてやり直してください",
@@ -369,18 +361,14 @@
   "err.RATE_LIMITED": "操作が多すぎます。少し待ってから再試行してください",
   "err.SESSION_REQUIRED": "session_id が必要です",
   "err.UNKNOWN_ENDPOINT": "不明なエンドポイント: {path}",
-
   "repo.noBoard": "ボードなし",
   "repo.boardMore": " ほか {rest}",
   "repo.boardCount": "ボード {count} つ: {names}{tail}",
-
   "install.swUnsupported": "非対応",
   "install.swControlled": "制御中",
   "install.swWaiting": "未制御（再読込で有効化）",
-
   "socket.notConnected": "未接続（再接続中）",
   "socket.disconnected": "切断されました（再接続中）",
-
   "term.title": "ターミナル",
   "term.snippets": "定型",
   "term.snippetsTitle": "ターミナルの定型コマンド",
@@ -397,7 +385,6 @@
   "term.state.open": "接続済",
   "term.state.closed": "切断",
   "term.state.error": "エラー",
-
   "search.title": "検索（全セッション）",
   "search.placeholder": "例: ドレイン / PWA / カンバン",
   "search.searching": "検索中…",
@@ -407,7 +394,6 @@
   "search.you": "あなた",
   "search.none": "該当なし",
   "search.note": "Discord・CLI・カンバンすべての発言が対象（~/.hermes/state.db を読み取り専用で参照）。行をタップするとその会話を開きます。",
-
   "live.title": "ライブ（5秒更新）",
   "live.turns": "実行中ターン",
   "live.tasks": "実行中タスク",
@@ -423,7 +409,6 @@
   "live.abortAll": "実行中タスク {count} 件を中断",
   "live.abortAllSub": "長押し ・ reclaim → block",
   "live.note": "state.db のターンリースとカンバンの running を合成しています（読み取り専用）。ターンの中断はチャットの停止ボタン、タスクは上の長押しで中断します。",
-
   "inbox.kind.needsInput": "回答待ち",
   "inbox.kind.dependency": "依存待ち",
   "inbox.kind.failure": "失敗",
@@ -449,7 +434,6 @@
   "inbox.hideAnswered": "回答済みを隠す",
   "inbox.showAnswered": "回答済み {n} 件を表示",
   "inbox.note": "コメントは hermes kanban comment で記録します。不要になった項目は「片付ける」から完了・取消で一覧から外せます（どちらも履歴はボードに残ります）。15秒ごとに更新します。",
-
   "capture.title": "起票",
   "capture.noSpeech": "この端末は音声入力に対応していません",
   "capture.speechStopped": "音声入力を止めました（{error}）",
@@ -473,7 +457,6 @@
   "capture.submitting": "起票中…",
   "capture.submit": "起票する",
   "capture.note": "`hermes kanban create` を実行します（DB 直接書き込みはしません）。同じ内容の連打は10分間まとめて1件になります。音声は端末の認識機能を使います。",
-
   "annot.tool.pen": "ペン",
   "annot.tool.arrow": "矢印",
   "annot.tool.rect": "矩形",
@@ -487,7 +470,6 @@
   "annot.sending": "送信中…",
   "annot.submit": "送信",
   "annot.notePlaceholder": "ひとこと（任意）",
-
   "diag.manifestLink": "manifest の link",
   "diag.linkMissing": "link タグが無い",
   "diag.manifestFetch": "manifest 取得",
@@ -513,14 +495,13 @@
   "diag.unknown": "(不明)",
   "diag.empty": "(なし)",
   "diag.decodeError": "デコード不能",
-
   "app.tabError": "このタブでエラーが発生しました",
   "app.tabErrorLog": "記録は ~/.hermes/mobile-pwa/client-errors.log",
   "app.reviewDone": "レビュー完了",
   "app.reviewDoneLabel": "レビュー完了: {label}",
   "app.loginPrompt": "アプリトークンを入力してください",
   "app.loginButton": "入る",
-  "app.loginHint": "トークンは ~/.hermes/mobile-pwa/token（0600）にあります。",
+  "app.loginHint": "トークンは ~/.hermes/plugin-data/hermes-pilot/token（0600）にあります。",
   "app.search": "検索",
   "app.connected": "接続中",
   "app.disconnected": "接続できません",
@@ -531,7 +512,6 @@
   "app.navDone": "{label}（完了の報告あり）",
   "app.navReflecting": "{label}（反映中）",
   "app.navRunning": "{label}（稼働中）",
-
   "tasks.status.running": "実行中",
   "tasks.status.ready": "待機",
   "tasks.status.done": "完了",
@@ -607,5 +587,15 @@
   "tasks.abortTask": "このタスクを中断",
   "tasks.abortSub": "reclaim → block（再実行を止める）",
   "tasks.events": "イベント",
-  "tasks.noEvents": "イベントなし"
+  "tasks.noEvents": "イベントなし",
+  "settings.pairing": "端末を追加",
+  "settings.pairingHint": "2 台目のスマホ／タブレット用の QR を表示します。読み取るだけでログインできるので、長いトークンを打ち直す必要はありません。",
+  "settings.showPairingQr": "ペアリング QR を表示",
+  "settings.pairingLoading": "読み込み中…",
+  "settings.pairingTitle": "ペアリング QR",
+  "settings.pairingScanHint": "追加したい端末のカメラで読み取ってください。",
+  "settings.pairingEmpty": "到達可能なアドレスが見つかりません。Tailscale に接続するか同じ LAN に入ってから開き直してください。",
+  "settings.pairingCopy": "コピー",
+  "settings.pairingCopied": "URL をコピーしました",
+  "settings.pairingNote": "QR にはアプリトークンが入っています。読み取った人はこの Hermes を操作できます。スクショの共有は避けてください。"
 }

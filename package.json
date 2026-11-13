@@ -1,8 +1,24 @@
 {
-  "name": "hermes-mobile-pwa",
+  "name": "hermes-pilot",
   "private": true,
   "version": "0.1.0",
+  "description": "Drive an autonomous Hermes Agent from your phone or tablet: Quick Review, annotation, kanban and chat in one installable PWA.",
+  "license": "MIT",
   "type": "module",
+  "bin": {
+    "hermes-pilot": "bin/hermes-pilot.mjs"
+  },
+  "files": [
+    "bin/",
+    "plugin.json",
+    "skills/",
+    "apps/bridge/src/",
+    "apps/web/dist/",
+    "scripts/deploy.mjs",
+    "scripts/migrate-to-hermes-pilot.mjs",
+    "README.md",
+    "README.ja.md"
+  ],
   "engines": {
     "node": ">=22.19.0"
   },

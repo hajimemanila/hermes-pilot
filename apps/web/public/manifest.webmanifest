@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "Hermes Mobile",
-  "short_name": "Hermes",
+  "name": "Hermes Pilot",
+  "short_name": "Pilot",
   "description": "Hermes Agent を外出先から見る・止める・話す（別オリジン PWA）",
   "start_url": "/",
   "scope": "/",

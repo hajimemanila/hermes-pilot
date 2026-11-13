@@ -1,0 +1,51 @@
+{
+  "name": "hermes-pilot",
+  "displayName": "Hermes Pilot",
+  "version": "0.1.0",
+  "description": "Drive an autonomous Hermes Agent from your phone or tablet: Quick Review sheets, visual annotation, kanban, chat and terminal in one installable PWA.",
+  "author": "Hermes Pilot contributors",
+  "license": "MIT",
+  "kind": "app",
+  "homepage": "https://github.com/hajimenakagawa/hermes-pilot",
+  "entrypoints": {
+    "cli": "bin/hermes-pilot.mjs",
+    "bridge": "apps/bridge/src/server.js",
+    "ui": "apps/web/dist/index.html"
+  },
+  "commands": {
+    "init": "First-run setup: data directories, 256-bit token (0600), bundled skills, pairing QR",
+    "start": "Build the UI when needed and run the bridge (--port, --host, --tls-port)",
+    "qr": "Print the pairing URL candidates and a terminal QR code",
+    "service": "install | uninstall | restart | status (launchd on macOS, systemd --user on Linux)",
+    "migrate": "Copy data from the legacy akapen / mobile-pwa layout"
+  },
+  "skills": [
+    "skills/quick-review/SKILL.md",
+    "skills/annotation/SKILL.md"
+  ],
+  "storage": {
+    "data": "~/.hermes/plugin-data/hermes-pilot",
+    "review": "~/.hermes/plugin-data/hermes-pilot/review",
+    "env": ["HP_DATA_DIR", "HM_DATA", "HM_PORT", "HM_HOST", "HERMES_HOME"]
+  },
+  "service": {
+    "darwin": {
+      "label": "ai.hermes.pilot",
+      "plist": "~/Library/LaunchAgents/ai.hermes.pilot.plist"
+    },
+    "linux": {
+      "unit": "hermes-pilot.service",
+      "path": "~/.config/systemd/user/hermes-pilot.service"
+    },
+    "legacy": "ai.hermes.hermes-mobile is intentionally left running during migration; see README"
+  },
+  "api": {
+    "auth": ["POST /api/auth/login", "GET /api/auth/pairing"],
+    "review": "/api/review/*",
+    "capabilities": "GET /api/capabilities"
+  },
+  "i18n": ["en", "ja"],
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

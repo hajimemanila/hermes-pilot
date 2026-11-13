@@ -1742,6 +1742,25 @@ button.stat:active {
   word-break: break-all;
 }
 
+/* ---------- ペアリング QR（SPEC §8.2） ---------- */
+/* 390px 幅でもシートからはみ出さないよう、SVG は幅 100%・最大 260px に抑える */
+.pair-qr {
+  display: flex;
+  justify-content: center;
+  margin: 12px 0 4px;
+  min-width: 0;
+}
+
+.pair-qr svg {
+  width: 100%;
+  max-width: 260px;
+  height: auto;
+  box-sizing: border-box;
+  padding: 8px;
+  border-radius: 10px;
+  background: #fff;
+}
+
 /* ---------- ナビ ---------- */
 .nav {
   flex: 0 0 auto;

@@ -27,9 +27,39 @@ import { errorBody } from './api-errors.js'
 import { resolveLang } from './lang.js'
 import { checkFrame, rejectionFrame } from './chat-profile.js'
 import { readTailText } from './tail.js'
+import { collectPairing, qrSvg, tailscaleCommandCandidates } from './qr.js'
 
 const require = createRequire(import.meta.url)
 const pty = safeRequire('node-pty')
+
+/**
+ * `tailscale status --json` を 1 回だけ叩いて 60 秒キャッシュする。
+ *
+ * Tailscale が無い・ログインしていない環境では素直に null（LAN 候補だけ出す）。
+ * ここで失敗してもペアリングは成立させる（QR が出ない理由にしない）。
+ * @returns {Promise<string|null>} 生の JSON 文字列
+ */
+let tailscaleCache = { at: 0, json: null }
+async function tailscaleStatusJson() {
+  const now = Date.now()
+  if (now - tailscaleCache.at < 60_000) return tailscaleCache.json
+  const { execFile } = await import('node:child_process')
+  let json = null
+  for (const bin of tailscaleCommandCandidates()) {
+    json = await new Promise((resolve) => {
+      try {
+        execFile(bin, ['status', '--json'], { timeout: 1500, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) =>
+          resolve(err ? null : String(stdout)),
+        )
+      } catch {
+        resolve(null)
+      }
+    })
+    if (json) break
+  }
+  tailscaleCache = { at: now, json }
+  return json
+}
 
 /**
  * node-pty はネイティブモジュール。無くても他は動かす。
@@ -225,6 +255,19 @@ function writeAllowed(max = 60, windowMs = 60_000) {
   return true
 }
 
+/**
+ * ペアリング（`POST /api/auth/login`）専用の簡易レート制限。
+ * アプリの書き込み枠と混ぜない（混ぜると通常操作が 10 回で詰まる）。
+ */
+const loginAttempts = []
+function loginAllowed(max = 12, windowMs = 60_000) {
+  const now = Date.now()
+  while (loginAttempts.length && now - loginAttempts[0] > windowMs) loginAttempts.shift()
+  if (loginAttempts.length >= max) return false
+  loginAttempts.push(now)
+  return true
+}
+
 /** 読み取り系の簡易レート制限（機能別バケットで分離）。書き込みとは枠を分ける。 */
 const readBuckets = new Map()
 function readAllowed(bucket = 'default', max = 240, windowMs = 60_000) {
@@ -242,16 +285,16 @@ function readAllowed(bucket = 'default', max = 240, windowMs = 60_000) {
 
 const LOGIN_HTML = `<!doctype html><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Hermes Mobile — ログイン</title>
+<title>Hermes Pilot — ログイン</title>
 <style>body{background:#07171b;color:#e6f4f1;font:15px/1.6 system-ui;margin:0;display:grid;place-items:center;height:100vh}
 form{background:#0d242a;padding:24px;border-radius:16px;border:1px solid #1d3a41;width:min(88vw,360px)}
 h1{font-size:16px;margin:0 0 12px}input{width:100%;padding:12px;border-radius:10px;border:1px solid #24515a;background:#081e23;color:#e6f4f1;font-size:15px;box-sizing:border-box}
 button{margin-top:12px;width:100%;padding:12px;border-radius:10px;border:0;background:#13807f;color:#fff;font-size:15px}
 p{color:#7fa6a3;font-size:12px;margin:10px 0 0}</style>
-<form method="get" action="/auth"><h1>Hermes Mobile</h1>
+<form method="get" action="/auth"><h1>Hermes Pilot</h1>
 <input name="t" placeholder="アプリトークン" autocomplete="off" autocapitalize="off" spellcheck="false">
 <button>入る</button>
-<p>トークンは <code>~/.hermes/mobile-pwa/token</code> またはブリッジの起動ログにあります。</p></form>`
+<p>トークンは <code>~/.hermes/plugin-data/hermes-pilot/token</code> またはブリッジの起動ログにあります。</p></form>`
 
 /**
  * 静的配信。`dist` が無い／ビルド途中なら直前の正常ビルド（`dist.prev`）で配る。
@@ -340,6 +383,23 @@ async function handleApi(req, res, url) {
   // 実行環境の Capability（OS・サービス管理・CLI の有無）。SPEC §5.3
   if (a === 'capabilities') {
     return sendJson(res, 200, capabilities)
+  }
+
+  // ワンタップ QR ペアリング（SPEC §8.2）。認証済みセッションから 2 台目を迎える。
+  // 接続先候補（Tailscale HTTPS / LAN / localhost）と QR(SVG) を返す。
+  if (a === 'auth' && b === 'pairing' && req.method === 'GET') {
+    const ts = await tailscaleStatusJson()
+    const info = collectPairing({ token: auth.token, port: cfg.port, tailscaleJson: ts })
+    auth.audit({ kind: 'auth.pairing', target: info.best?.kind ?? null })
+    return sendJson(res, 200, {
+      ok: true,
+      port: cfg.port,
+      tailscale: Boolean(info.dnsName),
+      dnsName: info.dnsName,
+      lanIp: info.lanIp,
+      targets: info.targets,
+      qrSvg: info.best ? qrSvg(info.best.url) : null,
+    })
   }
 
   // --- リポジトリ（作業ディレクトリ）とボード -------------------------------
@@ -938,6 +998,35 @@ const server = http.createServer(async (req, res) => {
     }
     res.writeHead(302, { 'set-cookie': auth.cookieHeader(value), location: '/' }).end()
     return
+  }
+
+  // ワンタップ QR ペアリング: `?token=` を HttpOnly Cookie に交換する（SPEC §8.2）。
+  // 殻（/ と /assets）は公開なので、未ログインでもこの 1 本だけは叩ける。
+  // 照合は auth.exchange（定数時間比較）に任せ、成功時だけ Cookie を返す。
+  if (url.pathname === '/api/auth/login') {
+    if (req.method !== 'POST') return sendError(res, 405, 'METHOD_NOT_ALLOWED')
+    if (!loginAllowed()) return sendError(res, 429, 'RATE_LIMITED')
+    let body = {}
+    try {
+      body = await readJson(req, 4096)
+    } catch {
+      body = {}
+    }
+    const given = typeof body?.token === 'string' ? body.token : (url.searchParams.get('token') ?? '')
+    const value = auth.exchange(given)
+    if (!value) {
+      auth.audit({ kind: 'auth.login', ok: false })
+      return sendError(res, 401, 'AUTH_REQUIRED')
+    }
+    auth.audit({ kind: 'auth.login', ok: true })
+    const payload = JSON.stringify({ ok: true })
+    res.writeHead(200, {
+      'content-type': 'application/json; charset=utf-8',
+      'content-length': Buffer.byteLength(payload),
+      'cache-control': 'no-store',
+      'set-cookie': auth.cookieHeader(value),
+    })
+    return res.end(payload)
   }
 
   if (!isPublicPath(url.pathname) && !auth.authorized(req)) {

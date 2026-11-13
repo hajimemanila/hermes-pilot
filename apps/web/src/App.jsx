@@ -14,6 +14,7 @@ import { haptic } from './lib/haptic.js'
 import { useI18n } from './i18n/index.js'
 import { t as tGlobal } from './i18n/lang.js'
 import { initTheme } from './lib/theme.js'
+import { consumePairToken } from './lib/pairing.js'
 
 const TermPane = lazy(() => import('./features/TermPane.jsx').then((m) => ({ default: m.TermPane })))
 
@@ -337,7 +338,18 @@ export function App() {
 
   useEffect(() => {
     let alive = true
-    refresh().finally(() => alive && setBooting(false))
+    ;(async () => {
+      // QR ペアリング（`?token=` / `#token=`）: Cookie を確立してから URL を掃除する（SPEC §8.2）。
+      // 失敗しても素のログイン画面に落ちるだけで、他は今までどおり動く。
+      try {
+        await consumePairToken()
+      } catch {
+        /* ペアリングは補助経路 */
+      }
+      if (!alive) return
+      await refresh()
+      if (alive) setBooting(false)
+    })()
     const id = setInterval(() => {
       if (!alive) return
       if (document.visibilityState === 'visible') refresh()
@@ -495,12 +507,12 @@ export function App() {
   if (authNeeded) {
     return (
       <div className="login">
-        <h1>Hermes Mobile</h1>
+        <h1>Hermes Pilot</h1>
         <p>{t('app.loginPrompt')}</p>
         <input
           value={tokenInput}
           onChange={(e) => setTokenInput(e.target.value)}
-          placeholder="~/.hermes/mobile-pwa/token"
+          placeholder="~/.hermes/plugin-data/hermes-pilot/token"
           autoCapitalize="off"
           autoCorrect="off"
           spellCheck={false}
@@ -521,7 +533,7 @@ export function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <span className="brand">Hermes<b>Mobile</b></span>
+        <span className="brand">Hermes<b>Pilot</b></span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <button
             className="icon-btn"

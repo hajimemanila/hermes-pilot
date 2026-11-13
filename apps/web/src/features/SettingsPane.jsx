@@ -66,6 +66,35 @@ export function SettingsPane({ overview, notify, refresh }) {
   const [draftHot, setDraftHot] = useState(false)
   const [saving, setSaving] = useState(false)
 
+  // ペアリング QR（SPEC §8.2）。認証済みセッションから 2 台目を迎える。
+  const [pairing, setPairing] = useState(null)
+  const [pairBusy, setPairBusy] = useState(false)
+
+  const openPairing = useCallback(async () => {
+    haptic('tap')
+    setPairBusy(true)
+    try {
+      const d = await api('/api/auth/pairing')
+      setPairing(d)
+    } catch (e) {
+      notify?.(e.message)
+    } finally {
+      setPairBusy(false)
+    }
+  }, [notify])
+
+  const copyPairUrl = useCallback(
+    async (url) => {
+      try {
+        await navigator.clipboard.writeText(url)
+        notify?.(t('settings.pairingCopied'))
+      } catch {
+        notify?.(url)
+      }
+    },
+    [notify, t],
+  )
+
   const loadSnippets = useCallback(async () => {
     try {
       const d = await api('/api/snippets')
@@ -364,6 +393,17 @@ export function SettingsPane({ overview, notify, refresh }) {
         />
       </div>
 
+      <div className="card" style={{ marginTop: 10 }}>
+        <div className="row-title">{t('settings.pairing')}</div>
+        <div className="row-sub" style={{ marginTop: 4, lineHeight: 1.6 }}>
+          {t('settings.pairingHint')}
+        </div>
+        <button className="btn hm-btn-inner" style={{ marginTop: 10 }} disabled={pairBusy} onClick={openPairing}>
+          {pairBusy ? <Spinner size={14} /> : null}
+          <span>{pairBusy ? t('settings.pairingLoading') : t('settings.showPairingQr')}</span>
+        </button>
+      </div>
+
       <div className="list-head">
         <span>{t('settings.recentSessions')}</span>
       </div>
@@ -587,13 +627,47 @@ export function SettingsPane({ overview, notify, refresh }) {
       <div className="card" style={{ marginTop: 16 }}>
         <div className="row-sub" style={{ lineHeight: 1.7 }}>
           {t('settings.about', { version: '0.1.0' })}{' '}
-          <span className="mono">~/.hermes/mobile-pwa/token</span>
+          <span className="mono">~/.hermes/plugin-data/hermes-pilot/token</span>
         </div>
       </div>
 
       {log ? (
         <Sheet title={log.name} onClose={() => setLog(null)}>
           <pre className="logbox">{log.text}</pre>
+        </Sheet>
+      ) : null}
+
+      {pairing ? (
+        <Sheet title={t('settings.pairingTitle')} onClose={() => setPairing(null)}>
+          <div className="row-sub" style={{ lineHeight: 1.6 }}>
+            {t('settings.pairingScanHint')}
+          </div>
+          {pairing.qrSvg ? (
+            <div className="pair-qr" dangerouslySetInnerHTML={{ __html: pairing.qrSvg }} />
+          ) : (
+            <div className="empty">{t('settings.pairingEmpty')}</div>
+          )}
+          <div className="list" style={{ marginTop: 10 }}>
+            {(pairing.targets ?? []).map((target) => (
+              <div key={target.url} className="row static">
+                <span className="row-main" style={{ minWidth: 0 }}>
+                  <span className="row-title">{target.label}</span>
+                  <span
+                    className="row-sub mono"
+                    style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                  >
+                    {target.url}
+                  </span>
+                </span>
+                <button className="link" onClick={() => copyPairUrl(target.url)}>
+                  {t('settings.pairingCopy')}
+                </button>
+              </div>
+            ))}
+          </div>
+          <div className="row-sub" style={{ marginTop: 10, lineHeight: 1.6 }}>
+            {t('settings.pairingNote')}
+          </div>
         </Sheet>
       ) : null}
     </div>
