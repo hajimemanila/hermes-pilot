@@ -379,6 +379,294 @@ a.hp-url {
   min-width: 0;
 }
 
+/* --------------------------------------------------------- repositories */
+
+.hp-input {
+  box-sizing: border-box;
+  padding: 7px 10px;
+  border: 1px solid var(--hp-border);
+  border-radius: 8px;
+  background: var(--hp-surface-2);
+  color: var(--hp-text);
+  font-size: 12.5px;
+  font-family: inherit;
+  min-width: 0;
+}
+
+.hp-input:focus {
+  outline: 2px solid var(--hp-primary);
+  outline-offset: 1px;
+}
+
+.hp-input-sm {
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.hp-textarea {
+  width: 100%;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.hp-add-row .hp-input {
+  flex: 1 1 180px;
+}
+
+.hp-scanhint {
+  overflow-wrap: anywhere;
+}
+
+.hp-scanhint-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--hp-text);
+}
+
+.hp-repos {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hp-repo {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  border: 1px solid var(--hp-border);
+  border-radius: 8px;
+  background: var(--hp-surface-2);
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.hp-repo-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1 1 180px;
+}
+
+.hp-repo-label {
+  font-size: 13px;
+}
+
+.hp-repo-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--hp-muted);
+  overflow-wrap: anywhere;
+  background: none;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.hp-repo-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.hp-badge {
+  align-self: flex-start;
+  font-size: 10.5px;
+  padding: 1px 7px;
+  border: 1px solid var(--hp-border);
+  border-radius: 999px;
+  color: var(--hp-muted);
+}
+
+.hp-badge-ok {
+  color: var(--hp-ok);
+  border-color: var(--hp-ok);
+}
+
+.hp-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hp-sub h3 {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--hp-muted);
+}
+
+/* A single action inside a column should not stretch into a full-width bar. */
+.hp-sub > .hp-btn {
+  align-self: flex-start;
+}
+
+/* ------------------------------------------------------------ tabs/chips */
+
+.hp-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.hp-tab {
+  appearance: none;
+  border: 1px solid var(--hp-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--hp-muted);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 5px 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.hp-tab-active {
+  background: var(--hp-primary);
+  border-color: var(--hp-primary);
+  color: #04201d;
+  font-weight: 600;
+}
+
+.hp-select {
+  border: 1px solid var(--hp-border);
+  border-radius: 8px;
+  background: var(--hp-surface-2);
+  color: var(--hp-text);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 5px 8px;
+}
+
+/* -------------------------------------------------------------- snippets */
+
+.hp-snippets {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hp-snippet {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border: 1px solid var(--hp-border);
+  border-radius: 8px;
+  background: var(--hp-surface-2);
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.hp-snippet-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.hp-snippet-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  color: var(--hp-muted);
+  background: none;
+  padding: 0;
+  border: 0;
+}
+
+.hp-snippet-toggles {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.hp-snippet-text {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--hp-muted);
+  overflow-wrap: anywhere;
+}
+
+.hp-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--hp-muted);
+  border: 1px solid var(--hp-border);
+  border-radius: 999px;
+  padding: 2px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.hp-toggle input {
+  margin: 0;
+  accent-color: var(--hp-primary);
+}
+
+.hp-toggle-on {
+  color: var(--hp-primary);
+  border-color: var(--hp-primary);
+}
+
+.hp-custom {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--hp-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.hp-custom-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.hp-custom-row .hp-input-sm {
+  flex: 1 1 130px;
+}
+
+/* ------------------------------------------------------------------ logs */
+
+.hp-log-meta {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
+.hp-log {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  background: var(--hp-surface-2);
+  border: 1px solid var(--hp-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
 /* ------------------------------------------------------------ responsive */
 
 /* The dashboard is also opened from a phone: stack the QR above its steps and

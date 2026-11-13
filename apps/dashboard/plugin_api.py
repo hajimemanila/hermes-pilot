@@ -15,10 +15,15 @@ Response contract
 ``GET /status``    → ``{ok, service:{manager,unit,state}, port, dataDir, lanUrl,
                        tailscaleUrl, bridge:{reachable,version}, capabilities}``
 ``GET /pairing``   → ``{ok, qrPng, targets, expiresAt, port, tlsPort, tailscale}``
-``GET /config``    → ``{ok, config, dataDir}``
-``PUT /config``    → ``{ok, config}`` or ``400 {ok:false, code:"INVALID_CONFIG",
+``GET /config``    → ``{ok, config, dataDir, scanDirsSource, reposPath}``
+``PUT /config``    → ``{ok, config, sync?}`` or ``400 {ok:false, code:"INVALID_CONFIG",
                        errors:{field:code}, messages:{field:text}}``
 ``POST /service/{install|restart|status}`` → ``{ok, action, code, stdout}``
+``GET /repos``     → ``{ok, source:"bridge"|"file", repos, scanDirs}``
+``POST /repos``    → ``{ok, action, repos, scanDirs}`` (``add|hide|unhide|pin|unpin|createBoard``)
+``GET /snippets?kind=chat|term&lang=en|ja`` → ``{ok, source, kind, lang, allSnippets, custom, ...}``
+``PUT /snippets?kind=…&lang=…``             → same shape, after saving
+``GET /logs?file=gateway|errors|pilot|audit&lines=120`` → ``{ok, file, lines, shown, missing, path}``
 
 The app token is never part of any response — see ``pilot_dashboard.redact``.
 """
@@ -30,7 +35,7 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Query
 from fastapi.responses import JSONResponse
 
 _DIR = Path(__file__).resolve().parent
@@ -91,13 +96,8 @@ def get_pairing() -> Any:
 
 @router.get("/config")
 def get_config() -> Any:
-    """Current ``config.json`` with defaults filled in."""
-    paths = logic.resolve_paths()
-    return {
-        "ok": True,
-        "config": logic.read_config(paths["configPath"]),
-        "dataDir": str(paths["dataDir"]),
-    }
+    """Current config, with ``repos.json``'s ``scanDirs`` as the source of truth (G3)."""
+    return logic.build_config()
 
 
 @router.put("/config")
@@ -105,10 +105,11 @@ def put_config(payload: Optional[dict] = Body(default=None)) -> Any:
     """Validate then write atomically (tmp → rename, 0600).
 
     A partial body is merged onto the current file, so the tab can save one field
-    without shipping the whole document back.
+    without shipping the whole document back. When ``scanDirs`` changes it is
+    pushed to the bridge and ``repos.json`` in the same request (G3).
     """
     paths = logic.resolve_paths()
-    current = logic.read_config(paths["configPath"])
+    current = logic.build_config(paths)["config"]
     merged: dict[str, Any] = dict(current)
     if isinstance(payload, dict):
         merged.update(payload)
@@ -124,10 +125,82 @@ def put_config(payload: Optional[dict] = Body(default=None)) -> Any:
             status_code=400,
         )
     try:
-        saved = logic.write_config_atomic(paths["configPath"], result["value"])
+        logic.write_config_atomic(paths["configPath"], result["value"])
     except OSError as exc:
         return fail(500, "WRITE_FAILED", str(exc))
-    return {"ok": True, "config": saved}
+    body: dict[str, Any] = {"ok": True, "config": logic.build_config(paths)["config"]}
+    if isinstance(payload, dict) and "scanDirs" in payload:
+        try:
+            body["sync"] = logic.sync_scan_dirs(paths, result["value"].get("scanDirs"))
+        except OSError as exc:
+            body["sync"] = {"ok": False, "error": f"repos.json could not be written: {exc}"}
+    return body
+
+
+@router.get("/repos")
+def get_repos() -> Any:
+    """Merged repository list + ``scanDirs`` (bridge when up, ``repos.json`` when not)."""
+    try:
+        return logic.build_repos()
+    except Exception as exc:  # health: surface the reason instead of a 500 traceback
+        return fail(500, "REPOS_FAILED", str(exc))
+
+
+@router.post("/repos")
+def post_repos(payload: Optional[dict] = Body(default=None)) -> Any:
+    """``add|hide|unhide|pin|unpin|createBoard`` — then return the fresh list."""
+    try:
+        result = logic.repos_action(payload=payload)
+    except Exception as exc:
+        return fail(500, "REPOS_FAILED", str(exc))
+    if not result.get("ok"):
+        return JSONResponse(result, status_code=400)
+    return result
+
+
+@router.get("/snippets")
+def get_snippets(
+    kind: str = Query("chat", pattern="^(chat|term)$"),
+    lang: str = Query("en", pattern="^(en|ja)$"),
+) -> Any:
+    """Chat/terminal snippets through the bridge, or the saved store when it is down."""
+    try:
+        return logic.build_snippets(kind=kind, lang=lang)
+    except ValueError as exc:
+        return fail(400, "INVALID_KIND", str(exc))
+    except Exception as exc:
+        return fail(500, "SNIPPETS_FAILED", str(exc))
+
+
+@router.put("/snippets")
+def put_snippets(
+    payload: Optional[dict] = Body(default=None),
+    kind: str = Query("chat", pattern="^(chat|term)$"),
+    lang: str = Query("en", pattern="^(en|ja)$"),
+) -> Any:
+    """Save Hot/Hidden overrides and custom snippets (`reset:true` restores defaults)."""
+    try:
+        return logic.save_snippets(kind=kind, lang=lang, payload=payload)
+    except ValueError as exc:
+        return fail(400, "INVALID_KIND", str(exc))
+    except OSError as exc:
+        return fail(500, "WRITE_FAILED", str(exc))
+    except Exception as exc:
+        return fail(500, "SNIPPETS_FAILED", str(exc))
+
+
+@router.get("/logs")
+def get_logs(
+    file_name: str = Query("gateway", alias="file", pattern="^(gateway|errors|pilot|audit)$"),
+    lines: int = Query(120, ge=1, le=1000),
+) -> Any:
+    """Tail of one whitelisted log — redacted before it leaves the process."""
+    try:
+        return logic.build_logs(name=file_name, lines=lines)
+    except ValueError as exc:
+        return fail(400, "INVALID_FILE", str(exc))
+    except Exception as exc:
+        return fail(500, "LOGS_FAILED", str(exc))
 
 
 @router.post("/service/{action}")

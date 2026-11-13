@@ -315,3 +315,198 @@ test('init: dashboard.json に CLI の絶対パスを記録する（サービス
   assert.ok(fs.existsSync(meta.cli))
   assert.equal(fs.statSync(metaPath).mode & 0o777, 0o600)
 })
+
+// ------------------------------------------- 4. P4: repos / snippets / logs
+
+test('plugin_api.py: /repos・/snippets・/logs のルートを持つ（scanDirs 同期・秘匿）', () => {
+  const py = read('plugin_api.py')
+  for (const route of [
+    '@router.get("/repos")',
+    '@router.post("/repos")',
+    '@router.get("/snippets")',
+    '@router.put("/snippets")',
+    '@router.get("/logs")',
+  ]) {
+    assert.ok(py.includes(route), `${route} が必要`)
+  }
+  assert.match(py, /alias="file"/, '`file` クエリは alias で受ける')
+  assert.match(py, /pattern="\^\(gateway\|errors\|pilot\|audit\)\$"/, 'ログ名はホワイトリスト')
+  assert.match(py, /logic\.sync_scan_dirs\(/, 'PUT /config が scanDirs を同期する')
+  assert.doesNotMatch(py, /[0-9a-f]{64}/i, '64 文字 hex を置かない')
+})
+
+test('index.js / style.css: Repositories・Snippets・Logs のカードを持つ', () => {
+  const js = read('index.js')
+  for (const section of ['RepositoriesSection', 'SnippetsSection', 'LogsSection']) {
+    assert.ok(js.includes(`function ${section}`), `${section} があること`)
+    assert.ok(js.includes(`h(${section},`), `${section} が App に載っていること`)
+  }
+  assert.match(js, /var LOG_FILES = \["gateway", "errors", "pilot", "audit"\]/)
+  assert.match(js, /request\("\/repos"\)/)
+  assert.match(js, /\/snippets\?kind=" \+ kind \+ "&lang=" \+ lang/)
+  assert.match(js, /\/logs\?file=" \+ name \+ "&lines=" \+ lines/)
+  assert.doesNotMatch(js, /[.\w]fetch\(/, '生の fetch( は使わない')
+
+  const css = read('style.css')
+  for (const cls of ['.hp-repo', '.hp-tab', '.hp-toggle', '.hp-log', '.hp-snippet']) {
+    assert.ok(css.includes(cls), `${cls} のスタイルがあること`)
+  }
+})
+
+test('pilot_dashboard.py: scanDirs を repos.json へ同期し、repos/*/snippets/logs を返す（トークン非混入）', () => {
+  const script = `
+import importlib.util, json, os, sys, tempfile
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location("pd_probe4", ${JSON.stringify(path.join(DASH, 'pilot_dashboard.py'))})
+m = importlib.util.module_from_spec(spec); sys.modules["pd_probe4"] = m; spec.loader.exec_module(m)
+
+tmp = Path(tempfile.mkdtemp())
+(tmp / "Projects" / "alpha" / ".git").mkdir(parents=True)
+(tmp / "Projects" / "beta" / ".git").mkdir(parents=True)
+(tmp / "logs").mkdir()
+token = "0123456789abcdef" * 4
+(tmp / "token").write_text(token)
+(tmp / "config.json").write_text(json.dumps({"lang": "en", "scanDirs": ["~/Projects"], "servicePort": 4097}))
+paths = {"home": tmp, "hermesHome": tmp / ".hermes", "dataDir": tmp,
+         "configPath": tmp / "config.json", "tokenPath": tmp / "token",
+         "dashboardMetaPath": tmp / "dashboard.json", "reposPath": tmp / "repos.json",
+         "snippetsPath": tmp / "snippets.json", "termSnippetsPath": tmp / "term-snippets.json",
+         "auditPath": tmp / "audit.jsonl", "logDir": tmp / "logs"}
+
+def down(*a, **k):
+    raise m.BridgeUnavailable("bridge down")
+
+calls = []
+def bridge(base, path, tok, **kw):
+    calls.append({"path": path, "method": kw.get("method", "GET"), "body": kw.get("body")})
+    method = kw.get("method", "GET")
+    if path == "/api/repos" and method == "POST":
+        return {"ok": True, "scanDirs": (kw.get("body") or {}).get("scanDirs")}
+    if path == "/api/repos" and method == "GET":
+        return {"repos": [{"id": "alpha", "label": "alpha", "path": str(tmp / "Projects" / "alpha"),
+                           "source": "scan", "pinned": False, "boards": []}],
+                "scanDirs": ["~/Projects"]}
+    if path.startswith("/api/snippets"):
+        return {"snippets": [], "allSnippets": [{"id": "review", "label": "Bug Review", "text": "x",
+                                                 "hot": True, "hidden": False, "custom": False}],
+                "overrides": {"review": {"hidden": True}},
+                "custom": [{"id": "c-1", "label": "L", "text": "T", "hot": False, "custom": True}],
+                "customMax": 16, "hotLimit": 8}
+    if path == "/api/repos/scan":
+        return {"ok": True, "repos": [], "scanDirs": []}
+    raise AssertionError(path)
+
+cfg_before = m.build_config(paths)
+sync_file = m.sync_scan_dirs(paths, ["~/Projects", "~/projects"], request=down)
+repos_path_body = json.loads((tmp / "repos.json").read_text())
+repos_file = m.build_repos(paths, request=down)
+pin = m.repos_action(paths, {"action": "pin", "id": "alpha"}, request=down)
+hidden = m.repos_action(paths, {"action": "hide", "id": "beta"}, request=down)
+unhide = m.repos_action(paths, {"action": "unhide", "id": "beta"}, request=down)
+add_bad = m.repos_action(paths, {"action": "add", "path": str(tmp / "logs")}, request=down)
+bad_action = m.repos_action(paths, {"action": "nope"}, request=down)
+
+sync_bridge = m.sync_scan_dirs(paths, ["~/Projects"], request=bridge)
+repos_bridge = m.build_repos(paths, request=bridge)
+snippets = m.build_snippets(paths, "chat", "ja", request=bridge)
+term_saved = m.save_snippets(paths, "term", "en",
+                             {"custom": [{"label": "端末", "text": "ls -la", "run": False}],
+                              "overrides": {"uptime": {"hot": True}}}, request=down)
+chat_reset = m.save_snippets(paths, "chat", "en", {"reset": True}, request=down)
+
+(tmp / "logs" / "gateway.log").write_text("boot\\nGET /api/me?t=%s\\npair http://127.0.0.1:4097/?token=E8Z3CP4H\\n" % token)
+logs = m.build_logs(paths, "gateway", 50)
+audit = m.build_logs(paths, "audit", 5)
+
+try:
+    m.build_logs(paths, "../../etc/passwd", 5)
+    traversal = False
+except ValueError:
+    traversal = True
+
+blob = json.dumps([sync_file, repos_file, pin, hidden, unhide, snippets, term_saved, chat_reset,
+                   logs, audit, m.build_config(paths)])
+print(json.dumps({
+  "configSourceBefore": cfg_before["scanDirsSource"],
+  "configSourceAfter": m.build_config(paths)["scanDirsSource"],
+  "syncFile": sync_file,
+  "reposPathBody": repos_path_body,
+  "reposFileSource": repos_file["source"],
+  "reposFileIds": [r["id"] for r in repos_file["repos"]],
+  "reposFileHidden": repos_file["config"]["hidden"],
+  "pinPinned": [r["pinned"] for r in pin["repos"]],
+  "afterHide": [r["id"] for r in hidden["repos"]],
+  "afterUnhide": [r["id"] for r in unhide["repos"]],
+  "addBadCode": add_bad.get("code"),
+  "badActionCode": bad_action.get("code"),
+  "syncBridgeSource": sync_bridge["source"],
+  "bridgeCalls": calls,
+  "reposBridgeSource": repos_bridge["source"],
+  "snippets": {"source": snippets["source"], "all": len(snippets["allSnippets"]),
+               "overrides": snippets["overrides"], "custom": len(snippets["custom"])},
+  "termStore": json.loads((tmp / "term-snippets.json").read_text()),
+  "chatStore": json.loads((tmp / "snippets.json").read_text()),
+  "logs": {"shown": logs["shown"], "lines": logs["lines"], "missing": logs["missing"]},
+  "auditMissing": audit["missing"],
+  "traversalRejected": traversal,
+  "tokenInBlob": token in blob,
+  "mode": oct(os.stat(tmp / "repos.json").st_mode & 0o777),
+  "leftovers": [p.name for p in tmp.iterdir() if p.name.startswith(".")],
+}))
+`
+  const out = runPython(script)
+
+  // G3: repos.json が scanDirs の正になる
+  assert.equal(out.configSourceBefore, 'config.json', 'repos.json が無いうちは config.json')
+  assert.equal(out.configSourceAfter, 'repos.json')
+  assert.equal(out.syncFile.source, 'file', 'ブリッジ停止時はファイルへ直接書く')
+  assert.deepEqual(out.syncFile.scanDirs, ['~/Projects', '~/projects'])
+  assert.deepEqual(out.reposPathBody.scanDirs, ['~/Projects', '~/projects'])
+  assert.equal(out.mode, '0o600')
+  assert.deepEqual(out.leftovers, [])
+
+  // リポジトリ操作（ブリッジ停止時はファイル）
+  assert.equal(out.reposFileSource, 'file')
+  assert.deepEqual(out.reposFileIds, ['alpha', 'beta'])
+  assert.deepEqual(out.pinPinned, [true, false])
+  assert.deepEqual(out.afterHide, ['alpha'])
+  assert.deepEqual(out.afterUnhide, ['alpha', 'beta'])
+  assert.equal(out.addBadCode, 'not_git_repo')
+  assert.equal(out.badActionCode, 'invalid_action')
+  assert.deepEqual(out.reposFileHidden, out.reposPathBody.hidden)
+
+  // ブリッジ経由の同期は source:"bridge" で、POST が飛ぶ
+  assert.equal(out.syncBridgeSource, 'bridge')
+  assert.ok(
+    out.bridgeCalls.some((c) => c.path === '/api/repos' && c.method === 'POST'),
+    'ブリッジ /api/repos へ POST すること',
+  )
+  assert.equal(out.reposBridgeSource, 'bridge')
+
+  // スニペット
+  assert.equal(out.snippets.source, 'bridge')
+  assert.equal(out.snippets.all, 1)
+  assert.deepEqual(out.snippets.overrides, { review: { hidden: true } })
+  assert.equal(out.termStore.version, 2)
+  assert.deepEqual(out.termStore.overrides, { uptime: { hot: true } })
+  assert.equal(out.termStore.custom[0].text, 'ls -la')
+  assert.equal(out.termStore.custom[0].run, false)
+  assert.match(out.termStore.custom[0].id, /^c-/)
+  assert.deepEqual(out.chatStore, { version: 2, overrides: {}, custom: [] })
+
+  // ログ: トークンは必ず伏せる
+  assert.equal(out.logs.shown, 3)
+  assert.ok(out.logs.lines.some((l) => l.includes('<redacted>')), 'トークンを伏せること')
+  assert.ok(
+    out.logs.lines.some((l) => l.includes('token=<redacted>')),
+    'ペアリングコードもクエリごと伏せること',
+  )
+  assert.ok(!out.logs.lines.some((l) => l.includes('E8Z3CP4H')), 'ペアリングコードを残さない')
+  const rawLog = JSON.stringify(out.logs)
+  assert.ok(!rawLog.includes('E8Z3CP4H'), '生のコードが混ざらない')
+  assert.equal(out.auditMissing, true, '無いログは missing:true')
+  assert.equal(out.traversalRejected, true)
+  assert.equal(out.tokenInBlob, false, 'どのレスポンスにも 64 文字トークンが入らない')
+})
+
