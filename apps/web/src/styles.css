@@ -140,6 +140,7 @@ body {
   flex-direction: column;
   padding: 0;
   overflow: hidden;
+  position: relative;
 }
 
 /* ---------- 状態ストリップ ---------- */
@@ -744,8 +745,13 @@ button.stat:active {
   gap: 8px;
 }
 
+.chat-scroll > * {
+  flex-shrink: 0;
+}
+
 .msg {
   display: flex;
+  flex-shrink: 0;
 }
 
 .msg.user {
@@ -809,6 +815,7 @@ button.stat:active {
 }
 
 .thinking {
+  flex-shrink: 0;
   font-size: 11px;
   color: #6f8f8d;
   padding: 2px 8px 6px;
@@ -821,6 +828,218 @@ button.stat:active {
 }
 .thinking > b { font-style: normal; }
 .thinking .tool-rows { margin-top: 5px; }
+
+.thinking-card {
+  padding: 9px 11px;
+  border-radius: 12px;
+  border: 1px solid rgba(45, 212, 191, 0.28);
+  border-left: 3px solid var(--accent);
+  background: rgba(12, 37, 48, 0.85);
+}
+
+.working-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.working-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 0 rgba(45, 212, 191, 0.55);
+  animation: hm-working-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes hm-working-pulse {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(45, 212, 191, 0.55);
+  }
+  50% {
+    opacity: 0.45;
+    box-shadow: 0 0 0 5px rgba(45, 212, 191, 0);
+  }
+}
+
+@keyframes hm-shimmer {
+  0% { background-position: 120% 0; }
+  100% { background-position: -120% 0; }
+}
+
+.working-shimmer {
+  flex: none;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-2);
+  background: linear-gradient(90deg, var(--accent) 0%, #c7fff7 45%, var(--accent) 90%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: hm-shimmer 2.1s linear infinite;
+}
+
+.working-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* 完了メッセージ上の折りたたみツール履歴・コードブロック */
+.msg-tools {
+  margin-bottom: 6px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(8, 32, 42, 0.72);
+  padding: 5px 8px;
+  font-size: 11.5px;
+}
+
+.msg-tools summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11.5px;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.msg-tools summary::after {
+  content: '▾';
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.msg-tools[open] summary::after {
+  content: '▴';
+}
+
+.code-block {
+  margin: 6px 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: rgba(6, 20, 24, 0.92);
+  overflow: hidden;
+}
+
+.code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: 10.5px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.code-copy {
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--accent-2);
+  border-radius: 6px;
+  padding: 1px 7px;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.code-block pre {
+  margin: 0;
+  padding: 8px 10px;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  word-break: normal;
+}
+
+/* Akapen 判断待ち・自律ワーカー稼働中のライブカード */
+.chat-live-card {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px 11px;
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+}
+
+.chat-live-card.warn {
+  border-color: rgba(245, 185, 66, 0.48);
+  border-left: 3px solid var(--warn);
+  background: rgba(245, 185, 66, 0.1);
+}
+
+.chat-live-card.running {
+  border-color: rgba(45, 212, 191, 0.36);
+  border-left: 3px solid var(--accent);
+  background: rgba(12, 37, 48, 0.9);
+}
+
+.chat-live-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.chat-live-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--warn);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-live-card.running .working-shimmer {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-live-sub {
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+/* 上へスクロールしている時の「↓ 最新へ」ピル */
+.chat-jump-bottom {
+  position: absolute;
+  right: 12px;
+  bottom: 68px;
+  z-index: 15;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: rgba(12, 37, 48, 0.96);
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 600;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+
+.chat-jump-bottom.active {
+  border-color: var(--accent);
+  color: var(--accent-2);
+}
 
 .usage {
   align-self: flex-end;
@@ -1888,14 +2107,19 @@ button.stat:active {
 }
 .empty-recent-when { flex: none; font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .empty-recent-mark { flex: none; color: var(--accent-2); font-size: 14px; line-height: 1; }
-.thinking-text { margin-top: 4px; font-size: 11.5px; color: var(--muted); max-height: 3.2em; overflow: hidden; }
+.thinking-text { margin-top: 5px; font-size: 11.5px; color: var(--muted); white-space: pre-wrap; word-break: break-word; line-height: 1.45; cursor: pointer; }
 /* チャットのツール進捗（Discord のツール表示に相当する行） */
-.tool-rows { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.tool-rows { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .tool-rows li { display: flex; gap: 6px; align-items: baseline; font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.tool-rows li.tappable { cursor: pointer; }
 .tool-rows li.run .tool-name { color: var(--accent-2); }
 .tool-rows li.done .tool-name { color: var(--muted); }
+.tool-state { flex: none; width: 11px; display: inline-flex; align-items: center; justify-content: center; color: var(--good); font-size: 10px; }
+.tool-spin { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid rgba(45, 212, 191, 0.35); border-top-color: var(--accent-2); animation: hm-spin 0.8s linear infinite; display: inline-block; }
 .tool-name { flex: none; font-weight: 600; }
 .tool-detail { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim, #9fb3b0); }
+.tool-rows li.expanded { align-items: flex-start; }
+.tool-rows li.expanded .tool-detail { white-space: pre-wrap; word-break: break-all; overflow: visible; color: var(--text); }
 .tool-ms { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* ---------- 共通フィードバック・ローダー・更新ボタン ---------- */

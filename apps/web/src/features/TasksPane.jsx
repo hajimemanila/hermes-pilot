@@ -177,7 +177,20 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
     let alive = true
     const load = () =>
       api('/api/live')
-        .then((d) => alive && setLiveTurns(Number(d?.counts?.turns ?? 0)))
+        .then((d) => {
+          if (!alive) return
+          const turns = Number(d?.counts?.turns ?? 0)
+          setLiveTurns(turns)
+          try {
+            window.dispatchEvent(
+              new CustomEvent('hm:live-turns', {
+                detail: { turns, items: Array.isArray(d?.turns) ? d.turns : [] },
+              }),
+            )
+          } catch {
+            /* noop */
+          }
+        })
         .catch(() => {})
     load()
     const id = setInterval(() => document.visibilityState === 'visible' && load(), 10_000)

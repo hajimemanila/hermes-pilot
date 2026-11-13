@@ -598,6 +598,7 @@ async function handleApi(req, res, url) {
     const r = transcript.read(decodeURIComponent(b), {
       limit: Number(url.searchParams.get('limit') ?? 80),
       before: Number(url.searchParams.get('before') ?? 0),
+      includeTools: url.searchParams.get('tools') === '1',
       dbPath: profileName ? stateDbFor(profiles, profileName) : undefined,
     })
     return sendJson(res, r.ok ? 200 : 404, r)

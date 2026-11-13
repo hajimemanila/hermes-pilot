@@ -14,7 +14,8 @@ import {
   writePendingRepo,
 } from '../lib/repoPicker.js'
 import { pickResumeTarget, recentSessions } from '../lib/chatResume.js'
-import { mergeProgress } from '../lib/toolProgress.js'
+import { foldTranscriptMessages, mergeProgress, shortenPath } from '../lib/toolProgress.js'
+import { isWaiting } from '../lib/akapenView.js'
 import { api } from '../api.js'
 import { composerHeight } from '../lib/composerSize.js'
 import { shouldSendOnEnter } from '../lib/composerKey.js'
@@ -39,6 +40,103 @@ function fitComposer(el, cap = 120) {
   el.style.height = `${composerHeight({ scrollHeight: el.scrollHeight, clientHeight: el.clientHeight, offsetHeight: el.offsetHeight, cap })}px`
 }
 
+/** ツール実行行を直近のアシスタント発話へ畳み込んで保持する。 */
+function commitProgressToBlocks(prev, toolRows) {
+  if (!toolRows?.length) return prev
+  const closed = toolRows.map((r) => ({ ...r, done: true }))
+  const next = prev.slice()
+  for (let i = next.length - 1; i >= 0; i -= 1) {
+    if (next[i].role === 'assistant') {
+      next[i] = { ...next[i], tools: [...(next[i].tools ?? []), ...closed] }
+      return next
+    }
+    if (next[i].role === 'user') break
+  }
+  return [...next, { role: 'assistant', text: '', open: false, tools: closed, at: Date.now() }]
+}
+
+/**
+ * メッセージ本文の ```code``` フェンスをモバイル用スクロール枠＋コピーボタン付きで描画する。
+ * @param {string} raw 本文
+ * @param {(code:string)=>void} onCopy コピー処理
+ */
+function renderFormattedText(raw, onCopy) {
+  const s = String(raw ?? '')
+  if (!s.includes('```')) return s
+  const parts = []
+  const re = /```([a-zA-Z0-9_-]*)\n?([\s\S]*?)```/g
+  let last = 0
+  let m
+  let idx = 0
+  while ((m = re.exec(s)) !== null) {
+    if (m.index > last) parts.push(s.slice(last, m.index))
+    const lang = m[1] || 'code'
+    const code = m[2].replace(/\n$/, '')
+    parts.push(
+      <div className="code-block" key={`c-${idx++}`}>
+        <div className="code-head">
+          <span>{lang}</span>
+          <button
+            type="button"
+            className="code-copy"
+            onClick={(e) => {
+              e.stopPropagation()
+              onCopy(code)
+            }}
+          >
+            コピー
+          </button>
+        </div>
+        <pre>
+          <code>{code}</code>
+        </pre>
+      </div>,
+    )
+    last = m.index + m[0].length
+  }
+  if (last < s.length) parts.push(s.slice(last))
+  return parts.length ? parts : s
+}
+
+/** ツール行の一覧（タップで省略前の全文を展開）。 */
+function ToolRows({ rows, prefix, expandedMap, onToggle }) {
+  return (
+    <ol className="tool-rows">
+      {rows.map((r, idx) => {
+        const key = `${prefix}-${r.id || ''}-${idx}`
+        const expanded = Boolean(expandedMap[key])
+        const text = expanded ? r.full || r.detail : r.detail || r.full
+        const hasMore = Boolean(r.full && r.full !== r.detail)
+        return (
+          <li
+            key={key}
+            className={`${r.done ? 'done' : 'run'}${expanded ? ' expanded' : ''}${hasMore ? ' tappable' : ''}`}
+            onClick={
+              hasMore
+                ? (e) => {
+                    e.stopPropagation()
+                    onToggle(key)
+                  }
+                : undefined
+            }
+          >
+            <span className="tool-state" aria-hidden="true">
+              {r.done ? '✓' : <span className="tool-spin" />}
+            </span>
+            <span className="tool-name">{r.name}</span>
+            {text ? <span className="tool-detail">{text}</span> : null}
+            {r.done ? (
+              <span className="tool-ms">{r.ms ? `${(r.ms / 1000).toFixed(1)}s` : ''}</span>
+            ) : (
+              <span className="tool-ms">…</span>
+            )}
+          </li>
+        )
+      })}
+    </ol>
+  )
+}
+
 /**
  * チャットタブ。ブリッジの /ws/chat 経由で Hermes の JSON-RPC（/api/ws）を話す。
  *
@@ -49,7 +147,15 @@ function fitComposer(el, cap = 120) {
  *
  * 定型スニペットは `GET /api/snippets`（組み込み + マイ）。タップで挿入、長押しで即送信。
  */
-export function ChatPane({ notify, chatReports = [], active = false, openRequest = null, onConsumedOpen }) {
+export function ChatPane({
+  notify,
+  chatReports = [],
+  akapenItems = [],
+  liveTurns = [],
+  active = false,
+  openRequest = null,
+  onConsumedOpen,
+}) {
   const [sessions, setSessions] = useState([])
   const [sid, setSid] = useState(null)
   const [storedSid, setStoredSid] = useState(null)
@@ -62,6 +168,10 @@ export function ChatPane({ notify, chatReports = [], active = false, openRequest
   const [nowTick, setNowTick] = useState(Date.now())
   // ツール呼び出しの進捗（Discord と同じ「動いている」が見える行）
   const [progress, setProgress] = useState([])
+  const [expandedTools, setExpandedTools] = useState({})
+  const [thinkingExpanded, setThinkingExpanded] = useState(false)
+  const [atBottom, setAtBottom] = useState(true)
+  const [workerFeed, setWorkerFeed] = useState(null)
   const [usage, setUsage] = useState(null)
   const [drawer, setDrawer] = useState(false)
   const [thinking, setThinking] = useState('')
@@ -107,6 +217,8 @@ export function ChatPane({ notify, chatReports = [], active = false, openRequest
   const listRef = useRef(null)
   const taRef = useRef(null)
   const stickRef = useRef(true)
+  const progressRef = useRef([])
+  progressRef.current = progress
   const notifiedOffline = useRef(false)
   const objectUrlsRef = useRef(new Set())
 
@@ -189,6 +301,28 @@ export function ChatPane({ notify, chatReports = [], active = false, openRequest
     return () => window.removeEventListener('hm:snippets', onUpdate)
   }, [loadSnippets])
 
+  /** state.db のツール実行履歴を会話ブロックへ復元する（再接続・切替後も足跡を残す）。 */
+  const hydrateTranscriptTools = useCallback(async (sessionId, prof = 'default') => {
+    if (!sessionId) return
+    try {
+      const q = new URLSearchParams({ limit: '100', tools: '1' })
+      if (prof && prof !== 'default') q.set('profile', prof)
+      const d = await api(`/api/sessions/${encodeURIComponent(sessionId)}/transcript?${q}`)
+      if (!d?.ok || !Array.isArray(d.messages)) return
+      if (storedRef.current !== sessionId && sidRef.current !== sessionId) return
+      const { blocks: folded } = foldTranscriptMessages(d.messages, toEpochMs)
+      if (!folded.length) return
+      setBlocks((prev) => {
+        // ストリーミング中で最後の開いた気泡がある場合は壊さない
+        const lastPrev = prev[prev.length - 1]
+        if (lastPrev?.open) return prev
+        return folded
+      })
+    } catch {
+      /* ツール履歴復元は補助情報 */
+    }
+  }, [])
+
   /** サーバのセッションに繋ぎ直す（履歴も置き換える）。`prof` は他プロファイルの時だけ渡す。 */
   const resumeInto = useCallback(
     async (rpc, target, prof = 'default') => {
@@ -202,7 +336,8 @@ export function ChatPane({ notify, chatReports = [], active = false, openRequest
         if (!res?.session_id) return { ok: false, sid: null, error: r?.error ?? null }
         writePendingRepo(globalThis.localStorage, null)
         setSid(res.session_id)
-        setStoredSid(res.resumed ?? target)
+        const resolvedSid = res.resumed ?? target
+        setStoredSid(resolvedSid)
         setProfile(prof || 'default')
         const cwd = res.info?.cwd ?? res.cwd ?? ''
         if (cwd) {
@@ -223,12 +358,13 @@ export function ChatPane({ notify, chatReports = [], active = false, openRequest
             }))
             .filter((m) => m.text.trim().length > 0),
         )
+        hydrateTranscriptTools(resolvedSid, prof)
         return { ok: true, sid: res.session_id }
       } finally {
         setLoadingChat(false)
       }
     },
-    [ensureRepos],
+    [ensureRepos, hydrateTranscriptTools],
   )
 
   /** 通知の処理。 */
@@ -252,14 +388,17 @@ export function ChatPane({ notify, chatReports = [], active = false, openRequest
       return
     }
     if (type === 'message.start') {
+      const carried = progressRef.current
       setStreaming(true)
       setRunStartedAt(Date.now())
       setThinking('')
+      setThinkingExpanded(false)
       setProgress([])
       setBlocks((prev) => {
-        const last = prev[prev.length - 1]
-        if (last?.role === 'assistant' && last.open && !last.text) return prev
-        return [...prev, { role: 'assistant', text: '', open: true, at: Date.now() }]
+        const folded = carried.length ? commitProgressToBlocks(prev, carried) : prev
+        const last = folded[folded.length - 1]
+        if (last?.role === 'assistant' && last.open && !last.text) return folded
+        return [...folded, { role: 'assistant', text: '', open: true, at: Date.now() }]
       })
       return
     }
@@ -280,14 +419,27 @@ export function ChatPane({ notify, chatReports = [], active = false, openRequest
       return
     }
     if (type === 'message.complete') {
+      const finishedTools = progressRef.current
       setRunStartedAt(null)
       setStreaming(false)
       setThinking('')
+      setThinkingExpanded(false)
+      setProgress([])
       setUsage(p.usage ?? null)
       setBlocks((prev) => {
         const next = [...prev]
         const last = next[next.length - 1]
-        if (last?.role === 'assistant') next[next.length - 1] = { ...last, text: p.text ?? last.text, open: false }
+        const closedTools = finishedTools.map((r) => ({ ...r, done: true }))
+        if (last?.role === 'assistant') {
+          next[next.length - 1] = {
+            ...last,
+            text: p.text ?? last.text,
+            open: false,
+            tools: closedTools.length ? [...(last.tools ?? []), ...closedTools] : last.tools,
+          }
+        } else if (closedTools.length) {
+          next.push({ role: 'assistant', text: String(p.text ?? ''), open: false, tools: closedTools, at: Date.now() })
+        }
         return next
       })
       return
@@ -340,12 +492,6 @@ export function ChatPane({ notify, chatReports = [], active = false, openRequest
       }
     }
   }, [loadSessions, notify, resumeInto])
-
-  useEffect(() => {
-    if (!streaming) return undefined
-    const id = setInterval(() => setNowTick(Date.now()), 1000)
-    return () => clearInterval(id)
-  }, [streaming])
 
   const onState = useCallback((s) => {
     if (s === 'closed' || s === 'error') {
@@ -409,9 +555,61 @@ export function ChatPane({ notify, chatReports = [], active = false, openRequest
     () => [storedSid, sid, readonly?.sessionId].filter(Boolean).map(String),
     [storedSid, sid, readonly?.sessionId],
   )
+  const activeLiveTurn = useMemo(
+    () => liveTurns.find((t) => t?.sessionId && currentIds.includes(String(t.sessionId))) ?? null,
+    [liveTurns, currentIds],
+  )
+  const linkedAkapen = useMemo(() => {
+    const activeOnes = (akapenItems ?? []).filter((it) => it && it.status !== 'done')
+    const byChat = activeOnes.find((it) => it.akapen?.chat && currentIds.includes(String(it.akapen.chat)))
+    if (byChat) return byChat
+    if (!repo) return null
+    const repoPathLow = repo.path ? String(repo.path).toLowerCase() : ''
+    return (
+      activeOnes.find(
+        (it) =>
+          !it.akapen?.chat &&
+          (it.akapen?.repo === repo.id ||
+            (repoPathLow && it.akapen?.target && String(it.akapen.target).toLowerCase().startsWith(repoPathLow))),
+      ) ?? null
+    )
+  }, [akapenItems, currentIds, repo])
+  const isWorking = Boolean(streaming || activeLiveTurn)
   const reports = useMemo(() => reportLines(chatReports, currentIds), [chatReports, currentIds])
   const timeline = useMemo(() => mergeTimeline(blocks, reports), [blocks, reports])
   const lastReportKey = reports.length ? reports[reports.length - 1].key : ''
+
+  useEffect(() => {
+    if (!isWorking) return undefined
+    const id = setInterval(() => setNowTick(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [isWorking])
+
+  // 紐づいた Akapen 自律ワーカーが実行中の間は直近ツールステップを 4 秒ごとに取得する
+  const linkedWorkerId = linkedAkapen && (linkedAkapen.status === 'running' || linkedAkapen.status === 'ready') ? linkedAkapen.id : null
+  useEffect(() => {
+    if (!linkedWorkerId) {
+      setWorkerFeed(null)
+      return undefined
+    }
+    let alive = true
+    const load = async () => {
+      try {
+        const r = await api(`/api/akapen/${encodeURIComponent(linkedWorkerId)}/worker?limit=8`)
+        if (alive) setWorkerFeed(r)
+      } catch {
+        /* 補助情報 */
+      }
+    }
+    load()
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') load()
+    }, 4000)
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [linkedWorkerId])
 
   useEffect(() => {
     const el = listRef.current
@@ -421,7 +619,7 @@ export function ChatPane({ notify, chatReports = [], active = false, openRequest
     // 進捗行と thinking も「新しい内容」なので追従対象。ここを deps に入れ忘れると
     // ツール行が増えてもスクロールせず、最後の行が下端（入力欄の裏）に隠れる（実測）。
     if (stickRef.current) el.scrollTop = el.scrollHeight
-  }, [blocks, streaming, progress, thinking, readonly?.focusId, lastReportKey])
+  }, [blocks, isWorking, progress, thinking, linkedAkapen, workerFeed, readonly?.focusId, lastReportKey])
 
   /** ヒットした発言を画面の上寄りに出す（offsetTop ではなく実測差分で合わせる）。 */
   const scrollToHit = useCallback((mid) => {
@@ -496,6 +694,32 @@ export function ChatPane({ notify, chatReports = [], active = false, openRequest
       /* noop */
     }
   }, [otherUnreads.length])
+
+  useEffect(() => {
+    try {
+      window.dispatchEvent(new CustomEvent('hm:chat-streaming', { detail: { streaming: isWorking } }))
+    } catch {
+      /* noop */
+    }
+  }, [isWorking])
+
+  const toggleToolExpand = useCallback((key) => {
+    setExpandedTools((prev) => ({ ...prev, [key]: !prev[key] }))
+  }, [])
+
+  const copyCode = useCallback(
+    async (code) => {
+      try {
+        if (!navigator.clipboard?.writeText) throw new Error('このブラウザはコピーに未対応です')
+        await navigator.clipboard.writeText(code)
+        haptic('tap')
+        notify('コードをコピーしました')
+      } catch (e) {
+        notify(e?.message || 'コピーできませんでした')
+      }
+    },
+    [notify],
+  )
 
   // 開いている会話の新着はタイムラインに出ている＝見えている。既読にして点を残さない
   // （タブを離れている間、または別の会話に届いた分だけが点になる）。
@@ -770,7 +994,7 @@ export function ChatPane({ notify, chatReports = [], active = false, openRequest
     async (sessionId, focusId, title, profile = null) => {
       setLoadingChat(true)
       try {
-        const q = new URLSearchParams({ limit: '80' })
+        const q = new URLSearchParams({ limit: '100', tools: '1' })
         // 他プロファイルの会話は state.db が別なので profile を渡す（読み取り専用で開く）
         if (profile && profile !== 'default') q.set('profile', profile)
         const d = await api(`/api/sessions/${encodeURIComponent(sessionId)}/transcript?${q}`)
@@ -785,14 +1009,8 @@ export function ChatPane({ notify, chatReports = [], active = false, openRequest
           title: d.title ?? title ?? '',
           profile: profile && profile !== 'default' ? profile : null,
         })
-        setBlocks(
-          (d.messages ?? []).map((m) => ({
-            role: m.role === 'user' ? 'user' : 'assistant',
-            text: m.text,
-            mid: m.id,
-            at: toEpochMs(m.at ?? m.timestamp ?? m.created_at),
-          })),
-        )
+        const { blocks: folded } = foldTranscriptMessages(d.messages ?? [], toEpochMs)
+        setBlocks(folded)
         if (d.title || title) setTitle(d.title || title)
         if (focusId) {
           requestAnimationFrame(() => scrollToHit(focusId))
@@ -1098,7 +1316,10 @@ export function ChatPane({ notify, chatReports = [], active = false, openRequest
         ref={listRef}
         onScroll={() => {
           const el = listRef.current
-          if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+          if (!el) return
+          const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+          stickRef.current = near
+          setAtBottom(near)
         }}
       >
         {!blocks.length && (loadingChat || connState === 'connecting') ? (
@@ -1195,7 +1416,20 @@ export function ChatPane({ notify, chatReports = [], active = false, openRequest
               data-mid={b.mid}
               className={`msg bot${readonly?.focusId && b.mid === readonly.focusId ? ' hit' : ''}`}
             >
-              <div className="bubble">{b.text || (b.open ? <span className="dots">…</span> : '')}</div>
+              <div className="bubble">
+                {b.tools?.length ? (
+                  <details className="msg-tools">
+                    <summary>🔧 ツール {b.tools.length} 件を実行</summary>
+                    <ToolRows
+                      rows={b.tools}
+                      prefix={`msg-${i}`}
+                      expandedMap={expandedTools}
+                      onToggle={toggleToolExpand}
+                    />
+                  </details>
+                ) : null}
+                {b.text ? renderFormattedText(b.text, copyCode) : b.open ? <span className="dots">…</span> : ''}
+              </div>
             </div>
           ) : (
             <div key={i} className="msg notice">
@@ -1203,32 +1437,128 @@ export function ChatPane({ notify, chatReports = [], active = false, openRequest
             </div>
           )
         })}
-        {streaming ? (
-          <div className="thinking">
+        {isWorking ? (
+          <div className="thinking thinking-card" role="status">
             {(() => {
-              const sec = runStartedAt ? Math.max(0, Math.floor((nowTick - runStartedAt) / 1000)) : 0
+              const started = runStartedAt || activeLiveTurn?.startedAt
+              const sec = started ? Math.max(0, Math.floor((nowTick - started) / 1000)) : 0
               const mm = String(Math.floor(sec / 60)).padStart(2, '0')
               const ss = String(sec % 60).padStart(2, '0')
+              const liveFallbackRows =
+                !progress.length && activeLiveTurn?.lastTool?.name
+                  ? [{ id: 'live-last', name: activeLiveTurn.lastTool.name, detail: activeLiveTurn.lastActivity || '', full: activeLiveTurn.lastActivity || '', done: false }]
+                  : []
+              const rowsToShow = progress.length ? progress : liveFallbackRows
+              const thinkingLines = thinking ? thinking.trim().split('\n') : []
+              const thinkingShown = thinkingExpanded ? thinking.trim() : thinkingLines.slice(-3).join('\n')
               return (
                 <>
-                  <b>実行中 {mm}:{ss}</b>
-                  <span className="m"> ・{progress.length ? `ツール ${progress.length} 件` : 'ツールを動かしています'}</span>
-                  {progress.length ? (
-                    <ol className="tool-rows">
-                      {progress.map((r) => (
-                        <li key={r.id + r.name} className={r.done ? 'done' : 'run'}>
-                          <span className="tool-name">{r.name}</span>
-                          {r.detail ? <span className="tool-detail">{r.detail}</span> : null}
-                          {r.done ? <span className="tool-ms">{r.ms ? (r.ms / 1000).toFixed(1) + 's' : '✓'}</span> : <span className="tool-ms">…</span>}
-                        </li>
-                      ))}
-                    </ol>
+                  <div className="working-head">
+                    <span className="working-dot" aria-hidden="true" />
+                    <b className="working-shimmer">Working… {mm}:{ss}</b>
+                    <span className="working-meta">
+                      {progress.length
+                        ? `ツール ${progress.length} 件`
+                        : activeLiveTurn?.lastTool?.name
+                          ? `直近: ${activeLiveTurn.lastTool.name}`
+                          : '思考・ツール実行中'}
+                    </span>
+                  </div>
+                  {rowsToShow.length ? (
+                    <ToolRows
+                      rows={rowsToShow}
+                      prefix="live"
+                      expandedMap={expandedTools}
+                      onToggle={toggleToolExpand}
+                    />
                   ) : null}
-                  {thinking ? <div className="thinking-text">{thinking}</div> : null}
+                  {thinkingShown ? (
+                    <div
+                      className={`thinking-text${thinkingExpanded ? ' expanded' : ''}`}
+                      onClick={() => setThinkingExpanded((v) => !v)}
+                    >
+                      {thinkingShown}
+                    </div>
+                  ) : null}
                 </>
               )
             })()}
           </div>
+        ) : null}
+        {linkedAkapen ? (
+          isWaiting(linkedAkapen) ? (
+            <div className="chat-live-card warn" role="status">
+              <div className="chat-live-head">
+                <span className="chat-live-title">
+                  🖊 赤ペン判断待ち: {linkedAkapen.akapen?.title || linkedAkapen.title}
+                </span>
+                <button
+                  type="button"
+                  className="chat-report-btn primary"
+                  onClick={() => {
+                    haptic('tap')
+                    window.dispatchEvent(
+                      new CustomEvent('hm:open-akapen', {
+                        detail: { taskId: linkedAkapen.id, label: linkedAkapen.akapen?.label },
+                      }),
+                    )
+                  }}
+                >
+                  赤ペンで回答 ↗
+                </button>
+              </div>
+              <div className="chat-live-sub">
+                あなたの回答待ちです。回答すると自律ワーカーが作業を再開します。
+              </div>
+            </div>
+          ) : (
+            <div className="chat-live-card running" role="status">
+              <div className="chat-live-head">
+                <span className="working-dot" aria-hidden="true" />
+                <b className="working-shimmer">
+                  {linkedAkapen.status === 'running' ? 'Working… 自律ワーカー稼働中' : '自律ワーカー起動待ち'}
+                </b>
+                <button
+                  type="button"
+                  className="chat-report-btn"
+                  onClick={() => {
+                    haptic('tap')
+                    window.dispatchEvent(
+                      new CustomEvent('hm:open-akapen', {
+                        detail: { taskId: linkedAkapen.id, label: linkedAkapen.akapen?.label },
+                      }),
+                    )
+                  }}
+                >
+                  進行を見る ↗
+                </button>
+              </div>
+              <div className="chat-live-sub">{linkedAkapen.akapen?.title || linkedAkapen.title}</div>
+              {(() => {
+                const steps = (workerFeed?.feed?.messages || [])
+                  .filter((m) => m.role !== 'user')
+                  .slice(-4)
+                if (!steps.length) return null
+                return (
+                  <ToolRows
+                    rows={steps.map((m, idx) => {
+                      const raw = String(m.text || '').replace(/\s+/g, ' ').trim()
+                      return {
+                        id: String(m.id ?? idx),
+                        name: m.role === 'tool' ? m.toolName || 'tool' : 'agent',
+                        detail: shortenPath(raw, 56),
+                        full: raw.slice(0, 300),
+                        done: idx < steps.length - 1,
+                      }
+                    })}
+                    prefix={`worker-${linkedAkapen.id}`}
+                    expandedMap={expandedTools}
+                    onToggle={toggleToolExpand}
+                  />
+                )
+              })()}
+            </div>
+          )
         ) : null}
         {usage ? (
           <div className="usage">
@@ -1237,6 +1567,24 @@ export function ChatPane({ notify, chatReports = [], active = false, openRequest
           </div>
         ) : null}
       </div>
+
+      {!atBottom && timeline.length > 0 ? (
+        <button
+          type="button"
+          className={`chat-jump-bottom${isWorking || linkedAkapen ? ' active' : ''}`}
+          onClick={() => {
+            haptic('tap')
+            const el = listRef.current
+            if (el) {
+              el.scrollTop = el.scrollHeight
+              stickRef.current = true
+              setAtBottom(true)
+            }
+          }}
+        >
+          {isWorking || linkedAkapen ? '↓ Working・最新へ' : '↓ 最下部へ'}
+        </button>
+      ) : null}
 
       {attached.length ? (
         <div className="attach-rail">

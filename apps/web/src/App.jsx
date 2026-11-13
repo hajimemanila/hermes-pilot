@@ -3,7 +3,7 @@ import { readDeepLink } from './lib/deeplink.js'
 
 import { api } from './api.js'
 import { navBadgeState, pendingCount, runningCount, unseenNotices, waitingCount } from './lib/akapenView.js'
-import { SEEN_NAV_KEY, newerThan } from './lib/chatReports.js'
+import { SEEN_MAP_KEY, SEEN_NAV_KEY, newerThan, otherUnreadReports, readActiveChatId, readSeenMap } from './lib/chatReports.js'
 import { TasksPane } from './features/TasksPane.jsx'
 import { ChatPane } from './features/ChatPane.jsx'
 import { SettingsPane } from './features/SettingsPane.jsx'
@@ -118,6 +118,10 @@ export function App() {
   const [chatReportItems, setChatReportItems] = useState([])
   const [chatUnread, setChatUnread] = useState(0)
   const [otherChatUnread, setOtherChatUnread] = useState(0)
+  const [liveTurns, setLiveTurns] = useState(0)
+  const [liveTurnsList, setLiveTurnsList] = useState([])
+  const [akapenItems, setAkapenItems] = useState([])
+  const [chatStreaming, setChatStreaming] = useState(false)
   const [akapenFocus, setAkapenFocus] = useState(null)
   const [pendingChatOpen, setPendingChatOpen] = useState(null)
   const chatMountedRef = useRef(chatMounted)
@@ -153,9 +157,10 @@ export function App() {
     if (tab === 'chat') markChatSeen()
   }, [tab, markChatSeen])
 
-  // ChatPane からの別会話未読数・赤ペンタブ誘導・セッション遷移イベントを連携する
+  // ChatPane からの別会話未読数・応答中状態・赤ペンタブ誘導・セッション遷移イベントを連携する
   useEffect(() => {
     const onOtherUnread = (e) => setOtherChatUnread(Number(e.detail?.count) || 0)
+    const onChatStreaming = (e) => setChatStreaming(Boolean(e.detail?.streaming))
     const onOpenAkapen = (e) => {
       setTab('akapen')
       setAkapenFocus({ ...(e.detail || {}), nonce: Date.now() })
@@ -165,10 +170,12 @@ export function App() {
       if (!chatMountedRef.current && e.detail) setPendingChatOpen(e.detail)
     }
     window.addEventListener('hm:chat-unread', onOtherUnread)
+    window.addEventListener('hm:chat-streaming', onChatStreaming)
     window.addEventListener('hm:open-akapen', onOpenAkapen)
     window.addEventListener('hm:open-session', onOpenSession)
     return () => {
       window.removeEventListener('hm:chat-unread', onOtherUnread)
+      window.removeEventListener('hm:chat-streaming', onChatStreaming)
       window.removeEventListener('hm:open-akapen', onOpenAkapen)
       window.removeEventListener('hm:open-session', onOpenSession)
     }
@@ -185,6 +192,15 @@ export function App() {
         if (tabRef.current === 'chat') markChatSeen()
         setChatReportItems(items)
         setChatUnread(newerThan(items, chatSeenRef.current).length)
+        if (!chatMountedRef.current) {
+          try {
+            const seenMap = readSeenMap(localStorage.getItem(SEEN_MAP_KEY))
+            const activeId = readActiveChatId(localStorage)
+            setOtherChatUnread(otherUnreadReports(items, seenMap, activeId ? [activeId] : []).length)
+          } catch {
+            /* noop */
+          }
+        }
         /*
          * チャットタブを開いたままでも気づけるように、新しい報告が届いたらトーストを出す
          * （点は「開いている間は既読」で消えるため、開いたまま待つと何も出なかった。実測）。
@@ -327,20 +343,29 @@ export function App() {
     }
   }, [overview?.runningTasks])
 
-  // 赤ペン待ちの件数をナビのバッジに出す。AkapenPane が一覧を取り直したら
+  // 赤ペン待ちの件数と進行中件数をナビのバッジに出す。AkapenPane が一覧を取り直したら
   // `hm:akapen-items` で同じ items を流してくるので、15 秒待たずに同期する。
   useEffect(() => {
     let alive = true
     const sync = async () => {
       try {
         const r = await api('/api/akapen')
-        if (alive) setAkapenWaiting(waitingCount(r.items))
+        if (!alive) return
+        const items = Array.isArray(r.items) ? r.items : []
+        setAkapenItems(items)
+        setAkapenWaiting(waitingCount(items))
+        setAkapenRunning(runningCount(items))
       } catch {
         /* 取れないときは前の値を保つ（バッジは補助情報なので画面を壊さない） */
       }
     }
-    const onItems = (e) => setAkapenWaiting(waitingCount(e.detail?.items))
-    if (tabRef.current !== 'akapen') sync()
+    const onItems = (e) => {
+      const items = Array.isArray(e.detail?.items) ? e.detail.items : []
+      setAkapenItems(items)
+      setAkapenWaiting(waitingCount(items))
+      setAkapenRunning(runningCount(items))
+    }
+    sync()
     const id = setInterval(() => {
       if (document.visibilityState === 'visible' && tabRef.current !== 'akapen') sync()
     }, 15000)
@@ -377,7 +402,7 @@ export function App() {
         /* 保存できなくても表示は続ける */
       }
     }
-    if (tabRef.current !== 'akapen') sync()
+    sync()
     const id = setInterval(() => {
       if (document.visibilityState === 'visible' && tabRef.current !== 'akapen') sync()
     }, 15000)
@@ -404,7 +429,7 @@ export function App() {
       }
     }
     const onItems = (e) => setInboxPending(pendingCount(e.detail?.items))
-    if (tabRef.current !== 'tasks') sync()
+    sync()
     const id = setInterval(() => {
       if (document.visibilityState === 'visible' && tabRef.current !== 'tasks') sync()
     }, 15000)
@@ -413,6 +438,37 @@ export function App() {
       alive = false
       clearInterval(id)
       window.removeEventListener('hm:inbox-items', onItems)
+    }
+  }, [])
+
+  // 稼働中のライブターン数をタスクタブの進行中ドットに出す。
+  // TasksPane の /api/live ポーリングとも `hm:live-turns` で同期する。
+  useEffect(() => {
+    let alive = true
+    const sync = async () => {
+      try {
+        const d = await api('/api/live')
+        if (!alive) return
+        setLiveTurns(Number(d?.counts?.turns ?? 0))
+        setLiveTurnsList(Array.isArray(d?.turns) ? d.turns : [])
+      } catch {
+        /* 補助情報 */
+      }
+    }
+    const onTurns = (e) => {
+      if (!alive) return
+      setLiveTurns(Number(e.detail?.turns ?? 0))
+      if (Array.isArray(e.detail?.items)) setLiveTurnsList(e.detail.items)
+    }
+    sync()
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible' && tabRef.current !== 'tasks') sync()
+    }, 15000)
+    window.addEventListener('hm:live-turns', onTurns)
+    return () => {
+      alive = false
+      clearInterval(id)
+      window.removeEventListener('hm:live-turns', onTurns)
     }
   }, [])
 
@@ -513,6 +569,8 @@ export function App() {
                 <ChatPane
                   notify={notify}
                   chatReports={chatReportItems}
+                  akapenItems={akapenItems}
+                  liveTurns={liveTurnsList}
                   active={tab === 'chat'}
                   openRequest={pendingChatOpen}
                   onConsumedOpen={() => setPendingChatOpen(null)}
@@ -529,21 +587,25 @@ export function App() {
           // タブ内の表示とは別物で、ここは下部ナビのアイコン右上の小さな丸。
           const badge = t.id === 'akapen' ? akapenWaiting : t.id === 'tasks' ? inboxPending : 0
           const badgeLabel = t.id === 'akapen' ? '判断待ち' : '承認待ち'
+          const tasksRunning = (Number(overview?.runningTasks) || 0) + liveTurns
           // 赤ペンタブは「判断待ち（数字） > 未読の完了（緑の点） > 反映中（青の点）」の順で 1 つだけ出す。
-          // チャットタブは赤ペンの完了報告の新着（q2=A）を**点だけ**で出す（q3=B・数字は判断待ち専用）。
+          // タスクタブは「承認待ち（数字） > 稼働中（青の点）」、チャットタブは「未読完了（緑の点） > 応答中（青の点）」。
           const state =
             t.id === 'akapen'
               ? navBadgeState({ waiting: akapenWaiting, unseen: akapenUnseen, running: akapenRunning })
-              : t.id === 'chat'
-                ? navBadgeState({ unseen: Math.max(chatUnread, otherChatUnread) })
-                : null
+              : t.id === 'tasks'
+                ? navBadgeState({ waiting: inboxPending, running: tasksRunning })
+                : t.id === 'chat'
+                  ? navBadgeState({ unseen: Math.max(chatUnread, otherChatUnread), running: chatStreaming ? 1 : 0 })
+                  : null
           const dot = !badge && state === 'done' ? 'done' : !badge && state === 'running' ? 'running' : null
+          const runningLabel = t.id === 'akapen' ? '反映中' : '稼働中'
           const aria = badge
             ? `${t.label}（${badgeLabel} ${badge} 件）`
             : dot === 'done'
               ? `${t.label}（完了の報告あり）`
               : dot === 'running'
-                ? `${t.label}（反映中）`
+                ? `${t.label}（${runningLabel}）`
                 : undefined
           return (
             <button

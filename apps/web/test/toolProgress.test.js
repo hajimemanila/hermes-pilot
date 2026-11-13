@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { toolDetail, mergeProgress } from '../src/lib/toolProgress.js'
+import { toolDetail, toolFullDetail, mergeProgress, shortenPath, foldTranscriptMessages } from '../src/lib/toolProgress.js'
 
 test('toolDetail は引数から短い説明を作る', () => {
   assert.equal(toolDetail('terminal', { command: 'npm test' }), 'npm test')
@@ -32,4 +32,32 @@ test('mergeProgress は 8 行で頭を落とす', () => {
 test('complete だけ来ても壊れない（対応する start が無い）', () => {
   const rows = mergeProgress([], { kind: 'complete', id: 'ghost', name: 'terminal' })
   assert.deepEqual(rows, [])
+})
+
+test('shortenPath は長いパスの末尾 2 セグメントを残す', () => {
+  const longPath = '/Users/hajimenakagawa/projects/hermes-mobile-pwa/apps/web/src/features/ChatPane.jsx'
+  assert.equal(shortenPath(longPath, 30), '…/features/ChatPane.jsx')
+  assert.equal(toolDetail('read_file', { path: longPath }), '…/features/ChatPane.jsx')
+  assert.equal(toolFullDetail('read_file', { path: longPath }), longPath)
+})
+
+test('mergeProgress は full 詳細も保持する', () => {
+  const cmd = 'npm run verify && node --test apps/web/test/toolProgress.test.js'
+  const rows = mergeProgress([], { kind: 'start', id: 'c1', name: 'terminal', args: { command: cmd } })
+  assert.equal(rows[0].full, cmd)
+  assert.match(rows[0].detail, /…$/)
+})
+
+test('foldTranscriptMessages は tool 行を assistant ブロックへ畳む', () => {
+  const { blocks, trailingTools } = foldTranscriptMessages([
+    { id: 1, role: 'user', text: '調べて', at: 1000 },
+    { id: 2, role: 'tool', toolName: 'read_file', text: 'ok', at: 1100 },
+    { id: 3, role: 'tool', toolName: 'terminal', text: 'pass', at: 1200 },
+    { id: 4, role: 'assistant', text: '完了です', at: 1300 },
+  ])
+  assert.equal(blocks.length, 2)
+  assert.equal(blocks[1].role, 'assistant')
+  assert.equal(blocks[1].tools.length, 2)
+  assert.equal(blocks[1].tools[0].name, 'read_file')
+  assert.equal(trailingTools.length, 0)
 })

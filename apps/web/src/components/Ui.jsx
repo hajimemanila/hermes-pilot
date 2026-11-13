@@ -155,6 +155,25 @@ export function RefreshButton({
 }
 
 let sheetSeq = 0
+const activeSheets = []
+let sheetHistoryActive = false
+let pendingBackTimer = null
+let ignoringNextPop = false
+let popListenerBound = false
+
+function onGlobalSheetPop() {
+  if (ignoringNextPop) {
+    ignoringNextPop = false
+    return
+  }
+  if (!activeSheets.length) {
+    sheetHistoryActive = false
+    return
+  }
+  const top = activeSheets.pop()
+  if (!activeSheets.length) sheetHistoryActive = false
+  top?.close?.()
+}
 
 /**
  * スライドアップのシート。
@@ -171,32 +190,43 @@ export function Sheet({ title, onClose, children }) {
     if (window.history.state?.hmSheet === 'inbox' || window.location.hash.startsWith('#inbox')) {
       return undefined
     }
-    const token = `s-${++sheetSeq}`
-    let pushed = false
-    let closedByPop = false
-    try {
-      window.history.pushState({ ...(window.history.state ?? {}), hmSheetId: token }, '', window.location.href)
-      pushed = true
-    } catch {
-      return undefined
+    if (!popListenerBound) {
+      window.addEventListener('popstate', onGlobalSheetPop)
+      popListenerBound = true
     }
-    const onPop = () => {
-      if (pushed && window.history.state?.hmSheetId !== token) {
-        closedByPop = true
-        pushed = false
-        onCloseRef.current?.()
+    if (pendingBackTimer !== null) {
+      clearTimeout(pendingBackTimer)
+      pendingBackTimer = null
+    }
+    const token = `s-${++sheetSeq}`
+    const entry = { token, close: () => onCloseRef.current?.() }
+    activeSheets.push(entry)
+    if (!sheetHistoryActive) {
+      try {
+        window.history.pushState({ ...(window.history.state ?? {}), hmSheetId: token }, '', window.location.href)
+        sheetHistoryActive = true
+      } catch {
+        const idx = activeSheets.indexOf(entry)
+        if (idx !== -1) activeSheets.splice(idx, 1)
+        return undefined
       }
     }
-    window.addEventListener('popstate', onPop)
     return () => {
-      window.removeEventListener('popstate', onPop)
-      if (pushed && !closedByPop && window.history.state?.hmSheetId === token) {
-        pushed = false
-        try {
-          window.history.back()
-        } catch {
-          /* noop */
-        }
+      const idx = activeSheets.indexOf(entry)
+      if (idx !== -1) activeSheets.splice(idx, 1)
+      if (activeSheets.length === 0 && sheetHistoryActive && pendingBackTimer === null) {
+        pendingBackTimer = setTimeout(() => {
+          pendingBackTimer = null
+          if (activeSheets.length === 0 && sheetHistoryActive) {
+            sheetHistoryActive = false
+            ignoringNextPop = true
+            try {
+              window.history.back()
+            } catch {
+              ignoringNextPop = false
+            }
+          }
+        }, 0)
       }
     }
   }, [])
