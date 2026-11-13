@@ -3,7 +3,10 @@
  *
  * `This site cannot be installed` の原因を推測せずに特定するためのもの。
  * 各項目を ✓ / ✗ で出し、✗ が残った項目が Chrome の落としている条件。
+ * 文面は i18n の `diag.*`（英語が既定・SPEC §6）。
  */
+
+import { t } from '../i18n/lang.js'
 
 const OK = (v) => (v ? '✓' : '✗')
 
@@ -37,7 +40,7 @@ async function imageSize(url) {
         })
         return { ok: true, w: img.naturalWidth, h: img.naturalHeight, bytes: blob.size, mime: blob.type }
       } catch {
-        return { ok: false, why: 'デコード不能', w: 0, h: 0 }
+        return { ok: false, why: t('diag.decodeError'), w: 0, h: 0 }
       } finally {
         URL.revokeObjectURL(url2)
       }
@@ -53,26 +56,26 @@ export async function diagnosePwa() {
 
   // 1) manifest の発見と取得
   const link = document.querySelector('link[rel="manifest"]')
-  add('manifest の link', Boolean(link), link ? link.getAttribute('href') : 'link タグが無い')
+  add(t('diag.manifestLink'), Boolean(link), link ? link.getAttribute('href') : t('diag.linkMissing'))
   if (!link) return rows
 
   const mUrl = new URL(link.getAttribute('href'), location.href).href
   const mr = await headStatus(mUrl)
-  add('manifest 取得', mr.status === 200, `HTTP ${mr.status} / ${mr.type}`)
+  add(t('diag.manifestFetch'), mr.status === 200, `HTTP ${mr.status} / ${mr.type}`)
   if (!mr.res || !mr.res.ok) return rows
 
   let m
   try {
     m = JSON.parse(await mr.res.text())
   } catch (e) {
-    add('manifest の JSON', false, e.message)
+    add(t('diag.manifestJson'), false, e.message)
     return rows
   }
-  add('manifest の JSON', true, `${Object.keys(m).length} 項目`)
+  add(t('diag.manifestJson'), true, t('diag.entries', { count: Object.keys(m).length }))
 
   // 2) name / short_name
-  add('name', Boolean(m.name), m.name ?? 'なし')
-  add('short_name', Boolean(m.short_name), m.short_name ?? 'なし')
+  add('name', Boolean(m.name), m.name ?? t('diag.none'))
+  add('short_name', Boolean(m.short_name), m.short_name ?? t('diag.none'))
 
   // 3) start_url / scope / id
   const startUrl = new URL(m.start_url ?? '.', mUrl).href
@@ -81,9 +84,9 @@ export async function diagnosePwa() {
   const idUrl = idRaw == null ? null : new URL(idRaw, mUrl).href
   add('start_url', true, startUrl)
   add('scope', true, scope)
-  add('id', true, idUrl ?? '（未指定＝start_url と同じ）')
-  add('start_url が scope 内', startUrl.startsWith(scope), `${startUrl} ⊂ ${scope}`)
-  add('id が同一オリジン', !idUrl || new URL(idUrl).origin === location.origin, idUrl ?? '-')
+  add('id', true, idUrl ?? t('diag.idUnset'))
+  add(t('diag.startInScope'), startUrl.startsWith(scope), `${startUrl} ⊂ ${scope}`)
+  add(t('diag.idSameOrigin'), !idUrl || new URL(idUrl).origin === location.origin, idUrl ?? '-')
 
   // 4) display
   const disp = m.display ?? 'browser'
@@ -92,7 +95,7 @@ export async function diagnosePwa() {
 
   // 5) icons（宣言と実体の両方を見る）
   const icons = m.icons ?? []
-  add('icons 件数', icons.length > 0, `${icons.length} 件`)
+  add(t('diag.iconCount'), icons.length > 0, t('diag.iconCountValue', { count: icons.length }))
   let has192 = false
   let has512 = false
   let hasMaskable = false
@@ -109,32 +112,34 @@ export async function diagnosePwa() {
     add(
       `icon ${ic.src.split('/').pop()}`,
       sz.ok && sizeOk,
-      sz.ok ? `${sz.w}x${sz.h} ${sz.bytes}B ${purpose}（宣言 ${declared}）` : `${sz.why}`,
+      sz.ok
+        ? t('diag.iconLine', { w: sz.w, h: sz.h, bytes: sz.bytes, purpose, declared })
+        : `${sz.why}`,
     )
   }
-  add('192px 以上の any アイコン', has192, has192 ? 'あり' : 'なし → インストール不可')
-  add('512px 以上の any アイコン', has512, has512 ? 'あり' : 'なし → インストール不可')
-  add('maskable アイコン', hasMaskable, hasMaskable ? 'あり' : 'なし（白枠の原因になる）')
+  add(t('diag.any192'), has192, has192 ? t('diag.present') : t('diag.missingInstall'))
+  add(t('diag.any512'), has512, has512 ? t('diag.present') : t('diag.missingInstall'))
+  add(t('diag.maskable'), hasMaskable, hasMaskable ? t('diag.present') : t('diag.maskableMissing'))
 
   // 6) Service Worker が start_url を制御しているか
   const ctrl = navigator.serviceWorker?.controller
-  add('Service Worker 制御', Boolean(ctrl), ctrl ? ctrl.scriptURL : '未制御')
+  add(t('diag.swControl'), Boolean(ctrl), ctrl ? ctrl.scriptURL : t('diag.swNone'))
   try {
     const regs = await navigator.serviceWorker.getRegistrations()
     const covering = regs.find((r) => startUrl.startsWith(r.scope))
-    add('scope をカバーする SW', Boolean(covering), covering ? covering.scope : 'なし')
+    add(t('diag.swCovering'), Boolean(covering), covering ? covering.scope : t('diag.none'))
   } catch (e) {
-    add('scope をカバーする SW', false, e.message)
+    add(t('diag.swCovering'), false, e.message)
   }
 
   // 7) 表示モード
   const modes = ['standalone', 'minimal-ui', 'fullscreen', 'browser']
   add(
-    '今の表示モード',
+    t('diag.viewMode'),
     true,
-    modes.filter((x) => matchMedia(`(display-mode: ${x})`).matches).join(', ') || '(不明)',
+    modes.filter((x) => matchMedia(`(display-mode: ${x})`).matches).join(', ') || t('diag.unknown'),
   )
-  add('referrer', true, document.referrer || '(なし)')
+  add('referrer', true, document.referrer || t('diag.empty'))
   add('UA', true, navigator.userAgent.slice(0, 80))
 
   return rows

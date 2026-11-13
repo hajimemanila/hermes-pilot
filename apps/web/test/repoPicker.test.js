@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setLang } from '../src/i18n/lang.js'
 import {
   BOARD_KEY,
   PENDING_REPO_KEY,
@@ -46,6 +47,7 @@ const REPOS = [
 ]
 
 test('boardSummary は板の数を偽らない（sheet repo-picker-01 Q2=A の文言）', () => {
+  setLang('ja')
   assert.equal(boardSummary([{ slug: 'hermes-mobile-pwa' }]), 'ボード 1 つ: hermes-mobile-pwa')
   assert.equal(
     boardSummary([{ slug: 'custom-launcher' }, { slug: 'nanokvm-custom-launcher' }, { slug: 'nanokvm-dev-env' }]),
@@ -53,6 +55,11 @@ test('boardSummary は板の数を偽らない（sheet repo-picker-01 Q2=A の�
   )
   assert.equal(boardSummary([]), 'ボードなし', '板が無いリポジトリは「ボードなし」')
   assert.equal(boardSummary([{ slug: 'a' }, { slug: 'b' }, { slug: 'c' }, { slug: 'd' }]), 'ボード 4 つ: a / b / c ほか 1')
+  // 英語が既定（SPEC §6.1）。日本語と同じ意味で、件数は偽らない
+  setLang('en')
+  assert.equal(boardSummary([{ slug: 'hermes-mobile-pwa' }]), '1 boards: hermes-mobile-pwa')
+  assert.equal(boardSummary([]), 'No boards')
+  setLang('en')
 })
 
 test('defaultBoard は current を優先し、無ければ先頭', () => {

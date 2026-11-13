@@ -8,15 +8,17 @@ import { LiveSheet } from './LiveSheet.jsx'
 import { InboxSheet } from './InboxSheet.jsx'
 import { pendingCount } from '../lib/reviewView.js'
 import { fmtCost } from '../lib/format.js'
+import { useI18n } from '../i18n/index.js'
 
-const STATUS_LABEL = {
-  running: '実行中',
-  ready: '待機',
-  done: '完了',
-  blocked: '停止',
-  failed: '失敗',
-  archived: '保管',
-  todo: 'TODO',
+/** タスク状態 → 辞書キー（未知は生の値）。 */
+const STATUS_KEY = {
+  running: 'tasks.status.running',
+  ready: 'tasks.status.ready',
+  done: 'tasks.status.done',
+  blocked: 'tasks.status.blocked',
+  failed: 'tasks.status.failed',
+  archived: 'tasks.status.archived',
+  todo: 'tasks.status.todo',
 }
 
 /**
@@ -34,6 +36,7 @@ function readStoredBoard() {
 }
 
 export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
+  const { t } = useI18n()
   const [boards, setBoards] = useState([])
   const [board, setBoard] = useState(null)
   const [tasks, setTasks] = useState([])
@@ -239,12 +242,12 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
     return () => clearInterval(id)
   }, [board, loadTasks])
 
-  const openTask = async (t) => {
-    setDetail({ loading: true, ...t })
+  const openTask = async (task) => {
+    setDetail({ loading: true, ...task })
     setDiff(null)
     setPatch(null)
     try {
-      const d = await api(`/api/boards/${encodeURIComponent(board)}/tasks/${encodeURIComponent(t.id)}`)
+      const d = await api(`/api/boards/${encodeURIComponent(board)}/tasks/${encodeURIComponent(task.id)}`)
       setDetail(d)
     } catch (e) {
       notify(e.message)
@@ -281,14 +284,14 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
     }
   }
 
-  const abortTask = async (t) => {
+  const abortTask = async (task) => {
     setBusy(true)
     try {
-      const r = await api(`/api/boards/${encodeURIComponent(board)}/tasks/${encodeURIComponent(t.id)}/abort`, {
+      const r = await api(`/api/boards/${encodeURIComponent(board)}/tasks/${encodeURIComponent(task.id)}/abort`, {
         method: 'POST',
-        body: { reason: 'モバイルから中断' },
+        body: { reason: t('tasks.abortReason') },
       })
-      notify(`中断しました（reclaim=${r.reclaimed} / block=${r.blocked}）`)
+      notify(t('tasks.aborted', { reclaim: r.reclaimed, block: r.blocked }))
       setDetail(null)
       loadTasks(board)
     } catch (e) {
@@ -302,7 +305,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
     setBusy(true)
     try {
       const r = await api(`/api/gateway/${action}`, { method: 'POST', body: { confirm: action.toUpperCase() } })
-      notify(`${action} を実行しました`)
+      notify(t('tasks.actionRan', { action }))
       setKillOpen(false)
       setConfirmText('')
       refresh?.()
@@ -319,7 +322,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
     setBusy(true)
     try {
       await api('/api/gateway/pause', { method: 'POST', body: { confirm: 'PAUSE', reason: 'mobile' } })
-      notify('一時停止しました（新規のみ）')
+      notify(t('tasks.pausedDone'))
       refresh?.()
     } catch (e) {
       notify(e.message)
@@ -333,7 +336,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
     setBusy(true)
     try {
       await api('/api/gateway/resume', { method: 'POST', body: { confirm: 'RESUME' } })
-      notify('再開しました')
+      notify(t('tasks.resumed'))
       refresh?.()
     } catch (e) {
       notify(e.message)
@@ -345,51 +348,52 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
   const bridge = overview?.bridge
   const mem = overview?.system?.memory
   const disk = overview?.system?.disk
-  const running = tasks.filter((t) => t.status === 'running').length
+  const running = tasks.filter((task) => task.status === 'running').length
   const paused = overview?.paused ?? { engaged: false }
 
   return (
     <div className="pane">
       {paused.engaged ? (
         <div className="banner paused">
-          一時停止中（新規の受付を止めています{paused.reason ? ` ・ ${paused.reason}` : ''}）
+          {t('tasks.pausedBanner', { reason: paused.reason ? ` ・ ${paused.reason}` : '' })}
           <button onClick={resumeAction} disabled={busy}>
-            再開
+            {t('tasks.resume')}
           </button>
         </div>
       ) : null}
 
       {inboxCount ? (
         <button className="inbox-bar" onClick={() => openInbox(null)}>
-          <span>承認待ち {inboxCount} 件</span>
-          <span className="inbox-bar-go">回答する ›</span>
+          <span>{t('tasks.inboxBar', { n: inboxCount })}</span>
+          <span className="inbox-bar-go">{t('tasks.inboxBarGo')}</span>
         </button>
       ) : null}
 
       <div className="strip">
         <div className={`stat ${bridge?.ok === false ? 'bad' : bridge ? 'good' : ''}`}>
-          <span className="stat-k">ブリッジ</span>
-          <span className="stat-v">{bridge ? (bridge.ok ? '正常' : '切断') : '—'}</span>
+          <span className="stat-k">{t('tasks.bridge')}</span>
+          <span className="stat-v">{bridge ? (bridge.ok ? t('tasks.ok') : t('tasks.disconnected')) : '—'}</span>
         </div>
-        <button className="stat" onClick={() => setUsageOpen(true)} aria-label="使用量の内訳">
+        <button className="stat" onClick={() => setUsageOpen(true)} aria-label={t('tasks.usageAria')}>
           <span className="stat-k">24h</span>
           <span className="stat-v">{usageData?.ok ? fmtCost(usageData.totals.cost) : '—'}</span>
         </button>
         <div className="stat">
-          <span className="stat-k">メモリ</span>
+          <span className="stat-k">{t('tasks.memory')}</span>
           <span className="stat-v">{mem ? `${mem.percent}%` : '—'}</span>
         </div>
         <div className="stat">
-          <span className="stat-k">ディスク</span>
+          <span className="stat-k">{t('tasks.disk')}</span>
           <span className="stat-v">{disk ? `${disk.percent}%` : '—'}</span>
         </div>
         <button
           className={`stat ${running ? 'warn' : ''}`}
           onClick={() => setLiveOpen(true)}
-          aria-label="いま動いているもの"
+          aria-label={t('tasks.liveAria')}
         >
           <span className="stat-k">
-            稼働{liveTurns ? <i className="live-dot" title={`ターン ${liveTurns} 件`} /> : null}
+            {t('tasks.runningLabel')}
+            {liveTurns ? <i className="live-dot" title={t('tasks.turnTitle', { n: liveTurns })} /> : null}
           </span>
           <span className="stat-v">{running + liveTurns}</span>
         </button>
@@ -399,8 +403,8 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
         <button
           className="chip-more"
           onClick={() => setBoardSheetOpen(true)}
-          aria-label="ボード一覧を開く"
-          title="ボード一覧"
+          aria-label={t('tasks.boardOpenAria')}
+          title={t('tasks.boardList')}
         >
           <Icon name="chevron" size={16} />
         </button>
@@ -419,7 +423,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
       </div>
 
       {boardSheetOpen && (
-        <Sheet title="ボード" onClose={() => setBoardSheetOpen(false)}>
+        <Sheet title={t('tasks.board')} onClose={() => setBoardSheetOpen(false)}>
           <div className="list">
             {boards.map((b) => (
               <button
@@ -445,9 +449,9 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
                 </span>
                 <span style={{ flex: '0 0 auto', color: 'var(--muted)', fontSize: 11, whiteSpace: 'nowrap' }}>
                   {[
-                    b.counts?.running ? `実行中 ${b.counts.running}` : null,
-                    b.counts?.blocked ? `停止 ${b.counts.blocked}` : null,
-                    b.archived ? '保管' : null,
+                    b.counts?.running ? t('tasks.boardRunning', { n: b.counts.running }) : null,
+                    b.counts?.blocked ? t('tasks.boardBlocked', { n: b.counts.blocked }) : null,
+                    b.archived ? t('tasks.boardArchived') : null,
                     b.lastActivityAt ? relTime(b.lastActivityAt * 1000) : null,
                   ]
                     .filter(Boolean)
@@ -461,7 +465,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
       )}
 
       <div className="list-head">
-        <span>タスク</span>
+        <span>{t('tasks.tasks')}</span>
         <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <button
             className="link"
@@ -470,53 +474,55 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
               setCaptureOpen(true)
             }}
           >
-            ＋ 起票
+            {t('tasks.newTask')}
           </button>
           <RefreshButton variant="link" onRefresh={refreshAll} />
         </span>
       </div>
 
-      {loading ? <Loader label="読み込み中…" /> : null}
-      {!loading && !tasks.length ? <div className="empty">タスクがありません</div> : null}
+      {loading ? <Loader label={t('common.loading')} /> : null}
+      {!loading && !tasks.length ? <div className="empty">{t('tasks.empty')}</div> : null}
 
       <div className="list">
-        {tasks.map((t) => (
+        {tasks.map((task) => (
           <button
-            key={t.id}
+            key={task.id}
             className="row"
             onClick={() => {
               haptic('tap')
-              openTask(t)
+              openTask(task)
             }}
           >
-            <span className={`dot ${t.status}`} />
+            <span className={`dot ${task.status}`} />
             <span className="row-main">
-              <span className="row-title">{t.title}</span>
+              <span className="row-title">{task.title}</span>
               <span className="row-sub">
-                {STATUS_LABEL[t.status] ?? t.status}
-                {t.status === 'running' && t.elapsedSec != null ? ` ・ ${Math.floor(t.elapsedSec / 60)}分` : ''}
-                {t.failures ? ` ・ 失敗${t.failures}` : ''}
-                {t.completedAt ? ` ・ ${relTime(t.completedAt)}` : ''}
+                {STATUS_KEY[task.status] ? t(STATUS_KEY[task.status]) : task.status}
+                {task.status === 'running' && task.elapsedSec != null
+                  ? ` ・ ${t('tasks.elapsedMin', { n: Math.floor(task.elapsedSec / 60) })}`
+                  : ''}
+                {task.failures ? ` ・ ${t('tasks.failures', { n: task.failures })}` : ''}
+                {task.completedAt ? ` ・ ${relTime(task.completedAt)}` : ''}
               </span>
-              {t.git?.head ? (
+              {task.git?.head ? (
                 <span className="git-badge">
-                  <span className="git-sha">{t.git.head}</span>
-                  <span className="git-subject">{t.git.subject || '(メッセージなし)'}</span>
-                  {t.git.dirty ? <span className="git-dirty">未コミット</span> : null}
-                  {t.discord ? (
+                  <span className="git-sha">{task.git.head}</span>
+                  <span className="git-subject">{task.git.subject || t('tasks.noMessage')}</span>
+                  {task.git.dirty ? <span className="git-dirty">{t('tasks.uncommitted')}</span> : null}
+                  {task.discord ? (
                     <span
                       className="git-dc"
                       role="link"
                       tabIndex={0}
-                      title="Discord で開く"
+                      title={t('tasks.openInDiscord')}
                       onClick={(e) => {
                         e.stopPropagation()
-                        window.open(t.discord.url, '_blank', 'noopener')
+                        window.open(task.discord.url, '_blank', 'noopener')
                       }}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {
                           e.stopPropagation()
-                          window.open(t.discord.url, '_blank', 'noopener')
+                          window.open(task.discord.url, '_blank', 'noopener')
                         }
                       }}
                     >
@@ -533,28 +539,26 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
 
       <button className="kill-open" onClick={() => setKillOpen(true)}>
         <Icon name="bolt" size={18} />
-        緊急操作
+        {t('tasks.emergency')}
       </button>
 
       {killOpen ? (
-        <Sheet title="緊急操作（長押しで実行）" onClose={() => !busy && setKillOpen(false)}>
-          <div className="warn-card">
-            実行中 {running} 件。restart は実行中ターンの完了を待ってから再起動します（最大30分）。
-          </div>
+        <Sheet title={t('tasks.emergencyTitle')} onClose={() => !busy && setKillOpen(false)}>
+          <div className="warn-card">{t('tasks.emergencyNote', { n: running })}</div>
           <div className="warn-card" style={{ marginTop: 8 }}>
             {paused.engaged
-              ? `一時停止中です（${paused.engagedAt ?? '時刻不明'}）。実行中のターンは完走しています。`
-              : '「一時停止」は新しい仕事だけを止めます。実行中のターンは完走し、再開は1タップです。'}
+              ? t('tasks.pausedNow', { at: paused.engagedAt ?? t('tasks.unknownTime') })
+              : t('tasks.pauseHelp')}
           </div>
           {paused.engaged ? (
             <button className="btn" style={{ marginTop: 10, width: '100%' }} onClick={resumeAction} disabled={busy}>
-              再開する（ESTOP 解除）
+              {t('tasks.resumeEstop')}
             </button>
           ) : (
             <div className="hold-grid" style={{ marginTop: 10 }}>
               <HoldButton
-                label="一時停止（新規のみ）"
-                sub="長押し ・ hermes pause"
+                label={t('tasks.pauseLabel')}
+                sub={t('tasks.pauseSub')}
                 tone="safe"
                 disabled={busy}
                 onFire={pauseAction}
@@ -562,13 +566,37 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
             </div>
           )}
           <div className="hold-grid">
-            <HoldButton label="新規受付を停止" sub="drain（実行中は完走）" tone="safe" disabled={busy} onFire={() => gatewayAction('drain')} />
-            <HoldButton label="ゲートウェイ再起動" sub="restart（Bot が数秒落ちる）" tone="danger" disabled={busy} onFire={() => gatewayAction('restart')} />
-            <HoldButton label="強制停止" sub="stop（実行中も切る）" tone="danger" disabled={busy} onFire={() => gatewayAction('stop')} />
-            <HoldButton label="受付を再開" sub="start" tone="safe" disabled={busy} onFire={() => gatewayAction('start')} />
+            <HoldButton
+              label={t('tasks.drainLabel')}
+              sub={t('tasks.drainSub')}
+              tone="safe"
+              disabled={busy}
+              onFire={() => gatewayAction('drain')}
+            />
+            <HoldButton
+              label={t('tasks.restartLabel')}
+              sub={t('tasks.restartSub')}
+              tone="danger"
+              disabled={busy}
+              onFire={() => gatewayAction('restart')}
+            />
+            <HoldButton
+              label={t('tasks.stopLabel')}
+              sub={t('tasks.stopSub')}
+              tone="danger"
+              disabled={busy}
+              onFire={() => gatewayAction('stop')}
+            />
+            <HoldButton
+              label={t('tasks.startLabel')}
+              sub={t('tasks.startSub')}
+              tone="safe"
+              disabled={busy}
+              onFire={() => gatewayAction('start')}
+            />
           </div>
           <div className="row-sub" style={{ padding: '10px 4px' }}>
-            実行結果は設定タブの監査ログに残ります。
+            {t('tasks.auditNote')}
           </div>
         </Sheet>
       ) : null}
@@ -614,23 +642,23 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
           }}
         >
           {detail.loading ? (
-            <Loader label="詳細を読み込み中…" />
+            <Loader label={t('tasks.detailLoading')} />
           ) : (
             <>
               <div className="kv">
-                <span>状態</span>
+                <span>{t('tasks.status')}</span>
                 <b>
-                  {STATUS_LABEL[detail.status] ?? detail.status}
+                  {STATUS_KEY[detail.status] ? t(STATUS_KEY[detail.status]) : detail.status}
                   {detail.workerPid ? ` ・ pid ${detail.workerPid}` : ''}
                 </b>
               </div>
               <div className="kv">
-                <span>開始</span>
+                <span>{t('tasks.started')}</span>
                 <b>{detail.startedAt ? relTime(detail.startedAt) : '—'}</b>
               </div>
               {detail.branch ? (
                 <div className="kv">
-                  <span>ブランチ</span>
+                  <span>{t('tasks.branch')}</span>
                   <b className="mono">{detail.branch}</b>
                 </div>
               ) : null}
@@ -640,14 +668,14 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
               {detail.git?.head ? (
                 <>
                   <div className="kv">
-                    <span>コミット</span>
+                    <span>{t('tasks.commit')}</span>
                     <b className="mono">
                       {detail.git.head}
                       {detail.git.branch ? ` (${detail.git.branch})` : ''}
                     </b>
                   </div>
                   <div className="kv">
-                    <span>メッセージ</span>
+                    <span>{t('tasks.message')}</span>
                     <b className="git-msg">{detail.git.subject || '—'}</b>
                   </div>
                   <button
@@ -659,7 +687,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
                     }}
                   >
                     <span className="acc-title">
-                      変更ファイル
+                      {t('tasks.changedFiles')}
                       {diff?.ok ? (
                         <span className="diff-sum">
                           <span className="add">+{diff.total.add}</span> <span className="del">−{diff.total.del}</span>
@@ -672,7 +700,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
                     diff.loading ? (
                       <div className="row-sub hm-btn-inner" style={{ padding: '6px 4px' }}>
                         <Spinner size={12} />
-                        <span>読み込み中…</span>
+                        <span>{t('common.loading')}</span>
                       </div>
                     ) : diff.ok ? (
                       <div className="diff-list">
@@ -697,7 +725,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
                               patch.loading ? (
                                 <div className="row-sub hm-btn-inner" style={{ padding: '6px 10px' }}>
                                   <Spinner size={12} />
-                                  <span>読み込み中…</span>
+                                  <span>{t('common.loading')}</span>
                                 </div>
                               ) : patch.ok ? (
                                 <pre className="patch">{patch.text}</pre>
@@ -709,11 +737,9 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
                             ) : null}
                           </div>
                         ))}
-                        {!(diff.files ?? []).length ? <div className="empty">差分なし</div> : null}
-                        {diff.truncated ? <div className="row-sub">（100ファイルまで表示）</div> : null}
-                        {diff.dirty ? (
-                          <div className="row-sub">未コミットの変更があります（表示はコミット分のみ）</div>
-                        ) : null}
+                        {!(diff.files ?? []).length ? <div className="empty">{t('tasks.noDiff')}</div> : null}
+                        {diff.truncated ? <div className="row-sub">{t('tasks.diffLimit')}</div> : null}
+                        {diff.dirty ? <div className="row-sub">{t('tasks.dirtyNote')}</div> : null}
                       </div>
                     ) : (
                       <div className="row-sub" style={{ padding: '6px 4px' }}>
@@ -729,15 +755,15 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
                   className="btn dc-btn"
                   onClick={() => window.open(detail.discord.url, '_blank', 'noopener')}
                 >
-                  Discord スレッドで開く
+                  {t('tasks.openThread')}
                 </button>
               ) : null}
 
               {detail.status === 'running' || detail.workerPid ? (
                 <div style={{ marginTop: 12 }}>
                   <HoldButton
-                    label="このタスクを中断"
-                    sub="reclaim → block（再実行を止める）"
+                    label={t('tasks.abortTask')}
+                    sub={t('tasks.abortSub')}
                     tone="danger"
                     disabled={busy}
                     onFire={() => abortTask(detail)}
@@ -746,7 +772,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
               ) : null}
 
               <div className="list-head" style={{ marginTop: 16 }}>
-                <span>イベント</span>
+                <span>{t('tasks.events')}</span>
               </div>
               <div className="timeline">
                 {(detail.events ?? []).map((e, i) => (
@@ -758,7 +784,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
                     </span>
                   </div>
                 ))}
-                {!(detail.events ?? []).length ? <div className="empty">イベントなし</div> : null}
+                {!(detail.events ?? []).length ? <div className="empty">{t('tasks.noEvents')}</div> : null}
               </div>
             </>
           )}

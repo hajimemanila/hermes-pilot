@@ -10,6 +10,8 @@
  * React にも localStorage にも依存させない（テストは Map 相当を渡す）。
  */
 
+import { t } from '../i18n/lang.js'
+
 /** 直近に選んだリポジトリ（次回の初期値）。 */
 export const REPO_KEY = 'hm.repo'
 
@@ -35,13 +37,13 @@ export const PINNED_ROWS = 4
  */
 export function boardSummary(boards) {
   const list = Array.isArray(boards) ? boards.filter(Boolean) : []
-  if (!list.length) return 'ボードなし'
+  if (!list.length) return t('repo.noBoard')
   const names = list.map((b) => String(b.slug ?? b.name ?? '')).filter(Boolean)
-  if (!names.length) return 'ボードなし'
+  if (!names.length) return t('repo.noBoard')
   const shown = names.slice(0, 3)
   const rest = names.length - shown.length
-  const tail = rest > 0 ? ` ほか ${rest}` : ''
-  return `ボード ${names.length} つ: ${shown.join(' / ')}${tail}`
+  const tail = rest > 0 ? t('repo.boardMore', { rest }) : ''
+  return t('repo.boardCount', { count: names.length, names: shown.join(' / '), tail })
 }
 
 /**

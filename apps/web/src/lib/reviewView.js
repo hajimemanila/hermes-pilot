@@ -11,6 +11,8 @@
  * bridge 側 `review.answer()` も同じ条件でしか受け付けない（二重の守り）。
  */
 
+import { t } from '../i18n/lang.js'
+
 /** 完了タブに出す件数（契約: 直近 8 件）。 */
 export const DONE_LIMIT = 8
 
@@ -143,8 +145,8 @@ export function navBadgeState({ waiting = 0, unseen = 0, running = 0 } = {}) {
 /** 完了タブの見出し（件数を偽らない: 直近 N 件、とだけ言う）。 */
 export function doneHint(doneTotal) {
   const n = Number(doneTotal) || 0
-  if (!n) return '完了はまだありません'
-  return `直近 ${Math.min(n, DONE_LIMIT)} 件`
+  if (!n) return t('review.doneEmpty')
+  return t('review.doneRecent', { n: Math.min(n, DONE_LIMIT) })
 }
 
 /**

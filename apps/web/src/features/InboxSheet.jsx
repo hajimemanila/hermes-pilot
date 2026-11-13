@@ -4,12 +4,14 @@ import { CloseActions } from '../components/CloseActions.jsx'
 import { Sheet, Spinner, relTime } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
 import { isAnswered } from '../lib/reviewView.js'
+import { useI18n } from '../i18n/index.js'
 
-const KIND_LABEL = {
-  needs_input: '回答待ち',
-  dependency: '依存待ち',
-  failure: '失敗',
-  untyped: '停止',
+/** `blockKind` → 辞書キー（未知は生の値）。 */
+const KIND_KEY = {
+  needs_input: 'inbox.kind.needsInput',
+  dependency: 'inbox.kind.dependency',
+  failure: 'inbox.kind.failure',
+  untyped: 'inbox.kind.untyped',
 }
 
 /**
@@ -20,6 +22,7 @@ const KIND_LABEL = {
  * 回答済みは既定で折りたたみ、未回答を先に出す（件数も未回答基準）。
  */
 export function InboxSheet({ onClose, notify, onChanged, focusTaskId = null }) {
+  const { t } = useI18n()
   const [data, setData] = useState(null)
   const [drafts, setDrafts] = useState({})
   const [busyId, setBusyId] = useState(null)
@@ -42,7 +45,7 @@ export function InboxSheet({ onClose, notify, onChanged, focusTaskId = null }) {
   const send = async (it) => {
     const body = (drafts[it.id] ?? '').trim()
     if (!body) {
-      notify?.('コメントを入力してください')
+      notify?.(t('inbox.needComment'))
       return
     }
     setBusyId(it.id)
@@ -52,7 +55,7 @@ export function InboxSheet({ onClose, notify, onChanged, focusTaskId = null }) {
         body: { body },
       })
       setDrafts((d) => ({ ...d, [it.id]: '' }))
-      notify?.('コメントしました')
+      notify?.(t('inbox.commented'))
       await load()
       onChanged?.()
     } catch (e) {
@@ -71,7 +74,7 @@ export function InboxSheet({ onClose, notify, onChanged, focusTaskId = null }) {
         body: { note },
       })
       setDrafts((d) => ({ ...d, [it.id]: '' }))
-      notify?.(`再開しました: ${it.id}`)
+      notify?.(t('inbox.reopened', { id: it.id }))
       await load()
       onChanged?.()
     } catch (e) {
@@ -94,9 +97,9 @@ export function InboxSheet({ onClose, notify, onChanged, focusTaskId = null }) {
   // 指定タスクが回答済みなら、そのグループは開いた状態で見せる
   const answeredVisible = showAnswered || (focused && answered.some((it) => it.id === focusTaskId))
 
-  const title = `承認待ち（未回答 ${pending.length}${
-    answeredAll.length ? `／回答済み ${answeredAll.length}` : ''
-  }）`
+  const title = answeredAll.length
+    ? t('inbox.titleWithAnswered', { pending: pending.length, answered: answeredAll.length })
+    : t('inbox.title', { pending: pending.length })
 
   const card = (it, done) => (
     <div
@@ -108,17 +111,17 @@ export function InboxSheet({ onClose, notify, onChanged, focusTaskId = null }) {
         {it.title}
       </div>
       <div className="row-sub" style={{ marginTop: 4 }}>
-        {it.boardName} ・ {KIND_LABEL[it.blockKind ?? 'untyped'] ?? it.blockKind}
-        {it.recurrences ? ` ・ 再発${it.recurrences}` : ''}
+        {it.boardName} ・ {KIND_KEY[it.blockKind ?? 'untyped'] ? t(KIND_KEY[it.blockKind ?? 'untyped']) : it.blockKind}
+        {it.recurrences ? ` ・ ${t('inbox.recurrences', { n: it.recurrences })}` : ''}
         {it.blockedAt ? ` ・ ${relTime(it.blockedAt)}` : ''}
-        {done ? ' ・ 回答済み（再開待ち）' : ''}
+        {done ? ` ・ ${t('inbox.answeredWaiting')}` : ''}
       </div>
 
       {it.reason ? <div className="body-text" style={{ marginTop: 8 }}>{it.reason}</div> : null}
 
       {it.lastComment ? (
         <div className="row-sub" style={{ marginTop: 8, lineHeight: 1.6 }}>
-          直前のコメント（{it.lastComment.author || '—'} ・ {relTime(it.lastComment.at)}）
+          {t('inbox.lastComment', { author: it.lastComment.author || '—', at: relTime(it.lastComment.at) })}
           <br />
           {it.lastComment.body}
         </div>
@@ -128,7 +131,7 @@ export function InboxSheet({ onClose, notify, onChanged, focusTaskId = null }) {
         className="inp"
         rows={2}
         style={{ marginTop: 10, resize: 'vertical', fontFamily: 'inherit' }}
-        placeholder={done ? '追加の指示があれば書く（コメントとして記録）' : '回答・指示を書く（コメントとして記録）'}
+        placeholder={done ? t('inbox.placeholderAnswered') : t('inbox.placeholder')}
         value={drafts[it.id] ?? ''}
         onChange={(e) => setDrafts((d) => ({ ...d, [it.id]: e.target.value.slice(0, 2000) }))}
       />
@@ -143,7 +146,7 @@ export function InboxSheet({ onClose, notify, onChanged, focusTaskId = null }) {
         }}
       >
         {busyId === it.id ? <Spinner size={14} /> : null}
-        <span>{busyId === it.id ? '送信中…' : 'コメントして送る'}</span>
+        <span>{busyId === it.id ? t('inbox.sending') : t('inbox.sendComment')}</span>
       </button>
 
       <button
@@ -157,7 +160,7 @@ export function InboxSheet({ onClose, notify, onChanged, focusTaskId = null }) {
         }}
       >
         {busyId === it.id ? <Spinner size={14} /> : null}
-        <span>{(drafts[it.id] ?? '').trim() ? '回答して再開（ready）' : '再開する（ready）'}</span>
+        <span>{(drafts[it.id] ?? '').trim() ? t('inbox.answerResume') : t('inbox.resume')}</span>
       </button>
 
       <CloseActions
@@ -176,18 +179,18 @@ export function InboxSheet({ onClose, notify, onChanged, focusTaskId = null }) {
 
   return (
     <Sheet title={title} onClose={onClose}>
-      {data && !data.ok ? <div className="empty">{data.reason ?? '取得できませんでした'}</div> : null}
-      {!allItems.length && data?.ok ? <div className="empty">承認待ちはありません</div> : null}
+      {data && !data.ok ? <div className="empty">{data.reason ?? t('inbox.failed')}</div> : null}
+      {!allItems.length && data?.ok ? <div className="empty">{t('inbox.empty')}</div> : null}
       {focused ? (
         <div className="row-sub" style={{ marginBottom: 8 }}>
-          ウィジェットから開いたタスクを先頭に表示しています
+          {t('inbox.focused')}
         </div>
       ) : null}
 
       {pending.map((it) => card(it, false))}
 
       {!pending.length && answeredAll.length && data?.ok ? (
-        <div className="empty">未回答はありません（回答済み {answeredAll.length} 件）</div>
+        <div className="empty">{t('inbox.allAnswered', { n: answeredAll.length })}</div>
       ) : null}
 
       {answeredAll.length ? (
@@ -196,14 +199,13 @@ export function InboxSheet({ onClose, notify, onChanged, focusTaskId = null }) {
           style={{ width: '100%', marginBottom: 10 }}
           onClick={() => setShowAnswered((v) => !v)}
         >
-          {answeredVisible ? '回答済みを隠す' : `回答済み ${answeredAll.length} 件を表示`}
+          {answeredVisible ? t('inbox.hideAnswered') : t('inbox.showAnswered', { n: answeredAll.length })}
         </button>
       ) : null}
       {answeredVisible ? answered.map((it) => card(it, true)) : null}
 
       <div className="row-sub" style={{ padding: '6px 2px 18px', lineHeight: 1.7 }}>
-        コメントは hermes kanban comment で記録します。不要になった項目は「片付ける」から完了・取消で一覧から外せます
-        （どちらも履歴はボードに残ります）。15秒ごとに更新します。
+        {t('inbox.note')}
       </div>
     </Sheet>
   )

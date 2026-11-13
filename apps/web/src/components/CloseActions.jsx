@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { api } from '../api.js'
 import { HoldButton } from './Ui.jsx'
+import { useI18n } from '../i18n/index.js'
 
 /**
  * 判断待ち・承認待ちを閉じる操作（完了 / 取消）。
@@ -12,7 +13,8 @@ import { HoldButton } from './Ui.jsx'
  * @param {{board: string, taskId: string, note?: string, notify?: Function,
  *          onClosed?: Function, label?: string}} props 対象と通知
  */
-export function CloseActions({ board, taskId, note = '', notify, onClosed, label = 'この判断待ちを片付ける' }) {
+export function CloseActions({ board, taskId, note = '', notify, onClosed, label }) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(null)
 
@@ -23,8 +25,8 @@ export function CloseActions({ board, taskId, note = '', notify, onClosed, label
         method: 'POST',
         body: { action, note: String(note ?? '').slice(0, 400) },
       })
-      const doneMsg = res?.noop ? 'すでに完了です' : '完了にしました'
-      const cancelMsg = res?.noop ? 'すでに取消済みです' : '取消（アーカイブ）しました'
+      const doneMsg = res?.noop ? t('close.alreadyDone') : t('close.done')
+      const cancelMsg = res?.noop ? t('close.alreadyCancelled') : t('close.cancelled')
       notify?.(action === 'done' ? doneMsg : cancelMsg)
       setOpen(false)
       onClosed?.(res)
@@ -38,25 +40,25 @@ export function CloseActions({ board, taskId, note = '', notify, onClosed, label
   return (
     <div className="close-actions">
       <button className="btn" type="button" onClick={() => setOpen((v) => !v)}>
-        {open ? '片付けメニューを閉じる' : label}
+        {open ? t('close.menuClose') : (label ?? t('close.title'))}
       </button>
       {open ? (
         <>
           <div className="row-sub" style={{ marginTop: 8, lineHeight: 1.6 }}>
-            一覧から外します。上の欄に理由を書いておくと記録に残ります。押しっぱなしで確定します。
+            {t('close.help')}
           </div>
           <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
             <HoldButton
               tone="safe"
-              label="完了にする"
-              sub="done — 結果として記録して一覧から外す"
+              label={t('close.doneLabel')}
+              sub={t('close.doneSub')}
               disabled={Boolean(busy)}
               onFire={() => fire('done')}
             />
             <HoldButton
               tone="danger"
-              label="取消（アーカイブ）"
-              sub="一覧から消す — 履歴はボードに残る"
+              label={t('close.cancelLabel')}
+              sub={t('close.cancelSub')}
               disabled={Boolean(busy)}
               onFire={() => fire('cancel')}
             />

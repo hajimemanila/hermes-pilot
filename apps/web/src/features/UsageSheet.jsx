@@ -1,57 +1,57 @@
 import React from 'react'
 import { Sheet, fmtNumber, relTime } from '../components/Ui.jsx'
 import { fmtCost, fmtTokens, fmtPct } from '../lib/format.js'
+import { useI18n } from '../i18n/index.js'
 
 /**
  * 使用量シート。期間内のコスト・トークン・キャッシュ率とモデル別内訳。
  * データはブリッジの /api/usage（state.db を読み取り専用で集計）。
  */
 export function UsageSheet({ data, hours = 24, onClose }) {
-  const t = data?.totals
+  const { t } = useI18n()
+  const totals = data?.totals
   const ok = Boolean(data?.ok)
 
   return (
-    <Sheet title={`使用量（${hours}h）`} onClose={onClose}>
+    <Sheet title={t('usage.title', { hours })} onClose={onClose}>
       {!ok ? (
-        <div className="empty">{data?.reason ?? '取得できませんでした'}</div>
+        <div className="empty">{data?.reason ?? t('usage.failed')}</div>
       ) : (
         <>
           <div className="card" style={{ marginBottom: 10 }}>
             <div className="kv">
-              <span>コスト</span>
-              <b>{fmtCost(t.cost)}</b>
+              <span>{t('usage.cost')}</span>
+              <b>{fmtCost(totals.cost)}</b>
             </div>
             <div className="kv">
-              <span>入力</span>
-              <b>{fmtTokens(t.input)}</b>
+              <span>{t('usage.input')}</span>
+              <b>{fmtTokens(totals.input)}</b>
             </div>
             <div className="kv">
-              <span>出力</span>
-              <b>{fmtTokens(t.output)}</b>
+              <span>{t('usage.output')}</span>
+              <b>{fmtTokens(totals.output)}</b>
             </div>
             <div className="kv">
-              <span>キャッシュ読取</span>
+              <span>{t('usage.cacheRead')}</span>
               <b>
-                {fmtTokens(t.cacheRead)}（{fmtPct(data.cacheHitRate)}）
+                {fmtTokens(totals.cacheRead)} ({fmtPct(data.cacheHitRate)})
               </b>
             </div>
             <div className="kv">
-              <span>API呼び出し</span>
-              <b>{fmtNumber(t.calls)}</b>
+              <span>{t('usage.apiCalls')}</span>
+              <b>{fmtNumber(totals.calls)}</b>
             </div>
             <div className="kv">
-              <span>セッション</span>
-              <b>
-                {t.sessions} 件 ・ {t.messages} msg ・ tool {t.tools}
-              </b>
+              <span>{t('usage.sessions')}</span>
+              <b>{t('usage.sessionSummary', { sessions: totals.sessions, messages: totals.messages, tools: totals.tools })}</b>
             </div>
           </div>
 
           <div className="list-head">
-            <span>モデル別</span>
+            <span>{t('usage.byModel')}</span>
           </div>
           <div className="row-sub" style={{ padding: '0 2px 6px', lineHeight: 1.6 }}>
-            API呼び出し記録からの集計。セッションの見積りとは端数がずれることがあります。
+            {t('usage.byModelNote')}
           </div>
           <div className="list">
             {(data.models ?? []).map((m) => (
@@ -59,8 +59,12 @@ export function UsageSheet({ data, hours = 24, onClose }) {
                 <span className="row-main">
                   <span className="row-title">{m.model}</span>
                   <span className="row-sub">
-                    in {fmtTokens(m.input)} ・ out {fmtTokens(m.output)} ・ cache {fmtTokens(m.cacheRead)} ・{' '}
-                    {m.calls} calls
+                    {t('usage.modelLine', {
+                      input: fmtTokens(m.input),
+                      output: fmtTokens(m.output),
+                      cache: fmtTokens(m.cacheRead),
+                      calls: m.calls,
+                    })}
                   </span>
                 </span>
                 <span className="mono" style={{ fontSize: 12 }}>
@@ -68,11 +72,11 @@ export function UsageSheet({ data, hours = 24, onClose }) {
                 </span>
               </div>
             ))}
-            {!(data.models ?? []).length ? <div className="empty">記録なし</div> : null}
+            {!(data.models ?? []).length ? <div className="empty">{t('usage.none')}</div> : null}
           </div>
 
           <div className="list-head">
-            <span>コスト上位</span>
+            <span>{t('usage.topSessions')}</span>
           </div>
           <div className="list">
             {(data.topSessions ?? []).map((s) => (
@@ -80,9 +84,13 @@ export function UsageSheet({ data, hours = 24, onClose }) {
                 <span className="row-main">
                   <span className="row-title">{s.title}</span>
                   <span className="row-sub">
-                    {s.source || '—'}
-                    {s.profile && s.profile !== 'default' ? ` ・ ${s.profile}` : ''} ・ in {fmtTokens(s.input)} ・ out{' '}
-                    {fmtTokens(s.output)} ・ {relTime(s.at)}
+                    {t('usage.sessionLine', {
+                      source: s.source || '—',
+                      profile: s.profile && s.profile !== 'default' ? ` ・ ${s.profile}` : '',
+                      input: fmtTokens(s.input),
+                      output: fmtTokens(s.output),
+                      at: relTime(s.at),
+                    })}
                   </span>
                 </span>
                 <span className="mono" style={{ fontSize: 12 }}>
@@ -90,12 +98,11 @@ export function UsageSheet({ data, hours = 24, onClose }) {
                 </span>
               </div>
             ))}
-            {!(data.topSessions ?? []).length ? <div className="empty">記録なし</div> : null}
+            {!(data.topSessions ?? []).length ? <div className="empty">{t('usage.none')}</div> : null}
           </div>
 
           <div className="row-sub" style={{ padding: '12px 4px 18px', lineHeight: 1.7 }}>
-            ~/.hermes/state.db の sessions / session_model_usage を読み取り専用で集計（30秒キャッシュ）。
-            キャッシュ率は「入力＋キャッシュ読取」に占めるキャッシュ読取の割合です。
+            {t('usage.footnote')}
           </div>
         </>
       )}

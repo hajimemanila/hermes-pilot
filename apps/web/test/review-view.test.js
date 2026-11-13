@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setLang } from '../src/i18n/lang.js'
 import { answerRows, capturedLabel, DONE_LIMIT, doneHint, groupItems, isAnswered, isWaiting, navBadgeState, nextWaiting, pendingCount, repoLabel, runningCount, thumbCaption, unseenNotices, waitingCount } from '../src/lib/reviewView.js'
 
 /** レビュー待ち（blocked + label）。 */
@@ -54,10 +55,15 @@ test('nextWaiting: 送信後は次を返し、最後の 1 件では null（閉�
 })
 
 test('doneHint は「直近 8 件」しか言わない（件数を偽らない）', () => {
+  setLang('ja')
   assert.equal(doneHint(0), '完了はまだありません')
   assert.equal(doneHint(3), '直近 3 件')
   assert.equal(doneHint(10), '直近 8 件')
   assert.equal(doneHint(undefined), '完了はまだありません')
+  setLang('en')
+  assert.equal(doneHint(0), 'No completed reviews yet')
+  assert.equal(doneHint(3), 'Last 3')
+  assert.equal(doneHint(10), 'Last 8')
 })
 
 // 注釈「この文言はなんですか？」: ラベルだけでは何の話か分からないので問番号と問いの文を添える

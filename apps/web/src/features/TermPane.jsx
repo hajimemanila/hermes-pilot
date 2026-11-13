@@ -5,6 +5,7 @@ import '@xterm/xterm/css/xterm.css'
 import { api, openSocket } from '../api.js'
 import { Icon, Sheet } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
+import { useI18n } from '../i18n/index.js'
 
 /**
  * ターミナルタブ。ブリッジが持つ実 PTY（node-pty）に WebSocket で繋ぐ。
@@ -15,6 +16,9 @@ import { haptic } from '../lib/haptic.js'
  *   長押し = 挿入して実行（`run: true` のものだけ）
  */
 export function TermPane({ notify }) {
+  const { t } = useI18n()
+  const tRef = useRef(t)
+  tRef.current = t
   const hostRef = useRef(null)
   const termRef = useRef(null)
   const fitRef = useRef(null)
@@ -54,7 +58,7 @@ export function TermPane({ notify }) {
     wsRef.current = ws
     ws.onopen = () => {
       setState('open')
-      term.write('\r\n\x1b[2m── 接続しました ──\x1b[0m\r\n')
+      term.write(`\r\n\x1b[2m${tRef.current('term.connected')}\x1b[0m\r\n`)
       try {
         fit.fit()
       } catch {
@@ -87,13 +91,13 @@ export function TermPane({ notify }) {
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'resize', c: term.cols, r: term.rows }))
     }
     window.addEventListener('resize', onResize)
-    const t = setTimeout(() => {
+    const focusTimer = setTimeout(() => {
       term.focus()
       onResize()
     }, 120)
 
     return () => {
-      clearTimeout(t)
+      clearTimeout(focusTimer)
       window.removeEventListener('resize', onResize)
       sub.dispose()
       ws.close()
@@ -110,7 +114,7 @@ export function TermPane({ notify }) {
 
   /** バーが増減したら PTY の桁数を合わせ直す。 */
   useEffect(() => {
-    const t = setTimeout(() => {
+    const fitTimer = setTimeout(() => {
       try {
         fitRef.current?.fit()
       } catch {
@@ -122,7 +126,7 @@ export function TermPane({ notify }) {
         ws.send(JSON.stringify({ t: 'resize', c: term.cols, r: term.rows }))
       }
     }, 80)
-    return () => clearTimeout(t)
+    return () => clearTimeout(fitTimer)
   }, [snippets.length])
 
   /** 端末へ送る（exec=true で「現在の行を消して Enter まで」）。 */
@@ -130,7 +134,7 @@ export function TermPane({ notify }) {
     (text, exec) => {
       const ws = wsRef.current
       if (ws?.readyState !== WebSocket.OPEN) {
-        notify('ターミナルが未接続です。タブを切り替えて再接続してください')
+        notify(t('term.notConnected'))
         return false
       }
       // 実行は「入力中の行を捨ててから流す」（前のコマンドに連結される事故を防ぐ）
@@ -139,19 +143,19 @@ export function TermPane({ notify }) {
       haptic(exec ? 'action' : 'tap')
       return true
     },
-    [notify],
+    [notify, t],
   )
 
   const useSnippet = useCallback(
     (s, exec = false) => {
       setSheet(false)
       if (exec && !s.run) {
-        notify('このコマンドは挿入のみです')
+        notify(t('term.insertOnly'))
         return
       }
-      if (sendToPty(s.text, exec)) notify(exec ? `実行: ${s.label}` : `挿入: ${s.label}`)
+      if (sendToPty(s.text, exec)) notify(exec ? t('term.ran', { label: s.label }) : t('term.inserted', { label: s.label }))
     },
-    [sendToPty, notify],
+    [sendToPty, notify, t],
   )
 
   const hot = snippets.filter((s) => s.hot)
@@ -160,10 +164,10 @@ export function TermPane({ notify }) {
     <div className="pane term">
       <div className="chat-head">
         <span className="chat-title">
-          ターミナル <span className={`term-state ${state}`}>{state}</span>
+          {t('term.title')} <span className={`term-state ${state}`}>{t(`term.state.${state}`)}</span>
         </span>
         <button className="link" onClick={() => setSheet(true)}>
-          定型
+          {t('term.snippets')}
         </button>
       </div>
 
@@ -203,10 +207,10 @@ export function TermPane({ notify }) {
       ) : null}
 
       <div className="term-host" ref={hostRef} />
-      <div className="term-hint">タップで挿入 / 長押しで実行。ログインシェル（フルシェル）、操作は監査ログに残ります。</div>
+      <div className="term-hint">{t('term.hint')}</div>
 
       {sheet ? (
-        <Sheet title="ターミナルの定型コマンド" onClose={() => setSheet(false)}>
+        <Sheet title={t('term.snippetsTitle')} onClose={() => setSheet(false)}>
           <div className="list">
             {snippets.map((s) => (
               <div
@@ -222,7 +226,7 @@ export function TermPane({ notify }) {
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span className="row-title" style={{ display: 'block' }}>
                     {s.label}
-                    {s.hot ? <span className="pill" style={{ marginLeft: 8 }}>バー</span> : null}
+                    {s.hot ? <span className="pill" style={{ marginLeft: 8 }}>{t('term.bar')}</span> : null}
                   </span>
                   <span
                     className="row-sub mono"
@@ -244,7 +248,7 @@ export function TermPane({ notify }) {
                       useSnippet(s, true)
                     }}
                   >
-                    実行
+                    {t('term.run')}
                   </button>
                 ) : (
                   <Icon name="chevron" />
@@ -253,8 +257,7 @@ export function TermPane({ notify }) {
             ))}
           </div>
           <div className="row-sub" style={{ padding: '12px 6px 18px', lineHeight: 1.7 }}>
-            タップで入力欄に挿入（Enter は送らない）。長押し、または右の「実行」で Enter まで送ります。
-            再起動系はターミナル（ai.hermes.hermes-mobile）と別プロセスなので、この画面は切れません。
+            {t('term.sheetNote')}
           </div>
         </Sheet>
       ) : null}

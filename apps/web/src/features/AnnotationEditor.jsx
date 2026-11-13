@@ -3,6 +3,7 @@ import { api } from '../api.js'
 import { CloseActions } from '../components/CloseActions.jsx'
 import { readActiveChatId } from '../lib/chatReports.js'
 import { haptic } from '../lib/haptic.js'
+import { useI18n } from '../i18n/index.js'
 
 /**
  * 注釈エディタ（Gemini アプリのペン入れ相当・最小セット）。
@@ -16,14 +17,15 @@ import { haptic } from '../lib/haptic.js'
  */
 
 const TOOLS = [
-  { id: 'pen', label: 'ペン', icon: '✏️' },
-  { id: 'arrow', label: '矢印', icon: '↗' },
-  { id: 'rect', label: '矩形', icon: '▭' },
+  { id: 'pen', key: 'annot.tool.pen', icon: '✏️' },
+  { id: 'arrow', key: 'annot.tool.arrow', icon: '↗' },
+  { id: 'rect', key: 'annot.tool.rect', icon: '▭' },
 ]
 
 const RED = '#e11d48'
 
 export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
+  const { t } = useI18n()
   const canvasRef = useRef(null)
   const imgRef = useRef(null)
   const drawingRef = useRef(null)
@@ -90,7 +92,7 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
       setReady(true)
       requestAnimationFrame(() => scheduleRedraw())
     }
-    img.onerror = () => setError('下地画像を読み込めませんでした')
+    img.onerror = () => setError(t('annot.loadFailed'))
     img.src = `/api/review/${item.id}/image`
     const onResize = () => scheduleRedraw()
     window.addEventListener('resize', onResize)
@@ -170,7 +172,7 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
 
   async function submit() {
     if (!strokesRef.current.length) {
-      setError('まず赤を入れてください（ペン・矢印・矩形）')
+      setError(t('annot.needMarks'))
       return
     }
     setBusy(true)
@@ -190,10 +192,10 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
         method: 'POST',
         body: { annotated_image: exportDataUrl(), note, marks, by: 'mobile', chat: readActiveChatId() },
       })
-      notify?.(r?.duplicate ? '同じ注釈が既に保存されています' : '注釈を送信しました')
+      notify?.(r?.duplicate ? t('annot.duplicate') : t('annot.sent'))
       onSubmitted?.(r)
     } catch (e) {
-      setError(e?.message || '送信できませんでした（画像が大きい可能性があります）')
+      setError(e?.message || t('annot.sendFailed'))
     } finally {
       setBusy(false)
     }
@@ -209,13 +211,13 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
             haptic('tap')
             onClose()
           }}
-          aria-label="閉じる"
+          aria-label={t('common.close')}
         >
           ✕
         </button>
         <div className="ak-anno-title">
           {item.review?.title || item.title}
-          <span>赤を入れて「送信」</span>
+          <span>{t('annot.instruction')}</span>
         </div>
         <button
           className="ak-anno-send"
@@ -226,7 +228,7 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
             submit()
           }}
         >
-          {busy ? '送信中…' : '送信'}
+          {busy ? t('annot.sending') : t('annot.submit')}
         </button>
       </header>
 
@@ -244,19 +246,19 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
       {error ? <div className="ak-error ak-anno-error">{error}</div> : null}
 
       <div className="ak-anno-tools">
-        {TOOLS.map((t) => (
+        {TOOLS.map((toolDef) => (
           <button
-            key={t.id}
+            key={toolDef.id}
             type="button"
-            className={`ak-anno-tool${tool === t.id ? ' on' : ''}`}
+            className={`ak-anno-tool${tool === toolDef.id ? ' on' : ''}`}
             onClick={() => {
               haptic('tap')
-              setTool(t.id)
+              setTool(toolDef.id)
             }}
-            aria-pressed={tool === t.id}
+            aria-pressed={tool === toolDef.id}
           >
-            <span aria-hidden="true">{t.icon}</span>
-            {t.label}
+            <span aria-hidden="true">{toolDef.icon}</span>
+            {t(toolDef.key)}
           </button>
         ))}
         <button
@@ -268,13 +270,13 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
           }}
           disabled={!count}
         >
-          ↩ 戻す
+          {t('annot.undo')}
         </button>
         <input
           className="ak-anno-note"
           value={note}
           onChange={(e) => setNote(e.target.value)}
-          placeholder="ひとこと（任意）"
+          placeholder={t('annot.notePlaceholder')}
           maxLength={200}
         />
       </div>

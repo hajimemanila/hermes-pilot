@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
 import { Sheet, Spinner, relTime } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
+import { useI18n } from '../i18n/index.js'
 
 /**
  * 全セッション横断検索。
@@ -9,6 +10,7 @@ import { haptic } from '../lib/haptic.js'
  * 行をタップすると、そのセッションをチャットタブで開く。
  */
 export function SearchSheet({ onClose, onOpenSession, notify }) {
+  const { t } = useI18n()
   const [q, setQ] = useState('')
   const [res, setRes] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -16,8 +18,8 @@ export function SearchSheet({ onClose, onOpenSession, notify }) {
   const seqRef = useRef(0)
 
   useEffect(() => {
-    const t = setTimeout(() => inputRef.current?.focus(), 120)
-    return () => clearTimeout(t)
+    const focusTimer = setTimeout(() => inputRef.current?.focus(), 120)
+    return () => clearTimeout(focusTimer)
   }, [])
 
   const run = useCallback(
@@ -46,20 +48,20 @@ export function SearchSheet({ onClose, onOpenSession, notify }) {
 
   // 入力のたびに 280ms 待ってから投げる
   useEffect(() => {
-    const t = setTimeout(() => run(q), 280)
-    return () => clearTimeout(t)
+    const debounceTimer = setTimeout(() => run(q), 280)
+    return () => clearTimeout(debounceTimer)
   }, [q, run])
 
   const hits = res?.hits ?? []
 
   return (
-    <Sheet title="検索（全セッション）" onClose={onClose}>
+    <Sheet title={t('search.title')} onClose={onClose}>
       <input
         ref={inputRef}
         className="inp"
         value={q}
         onChange={(e) => setQ(e.target.value)}
-        placeholder="例: ドレイン / PWA / カンバン"
+        placeholder={t('search.placeholder')}
         autoCapitalize="off"
         autoCorrect="off"
         spellCheck={false}
@@ -71,12 +73,12 @@ export function SearchSheet({ onClose, onOpenSession, notify }) {
         {busy ? (
           <>
             <Spinner size={12} />
-            <span>検索中…</span>
+            <span>{t('search.searching')}</span>
           </>
         ) : res?.ok ? (
-          `${hits.length} 件 ・ ${Math.round(res.tookMs)}ms`
+          t('search.resultCount', { count: hits.length, ms: Math.round(res.tookMs) })
         ) : (
-          res?.reason ?? '2文字以上で絞り込まれます'
+          (res?.reason ?? t('search.hint'))
         )}
       </div>
 
@@ -93,10 +95,10 @@ export function SearchSheet({ onClose, onOpenSession, notify }) {
           >
             <span style={{ flex: 1, minWidth: 0 }}>
               <span className="row-title" style={{ fontSize: 12.5 }}>
-                {h.snippet || '(空)'}
+                {h.snippet || t('search.emptySnippet')}
               </span>
               <span className="row-sub">
-                {h.role === 'user' ? 'あなた' : h.role === 'assistant' ? 'Hermes' : h.role}
+                {h.role === 'user' ? t('search.you') : h.role === 'assistant' ? 'Hermes' : h.role}
                 {` ・ ${relTime(h.at)}`}
                 {h.sessionTitle ? ` ・ ${String(h.sessionTitle).slice(0, 28)}` : ''}
                 {h.profile && h.profile !== 'default' ? ` ・ ${h.profile}` : ''}
@@ -105,12 +107,11 @@ export function SearchSheet({ onClose, onOpenSession, notify }) {
             </span>
           </button>
         ))}
-        {!busy && res?.ok && !hits.length ? <div className="empty">該当なし</div> : null}
+        {!busy && res?.ok && !hits.length ? <div className="empty">{t('search.none')}</div> : null}
       </div>
 
       <div className="row-sub" style={{ padding: '12px 4px 18px', lineHeight: 1.7 }}>
-        Discord・CLI・カンバンすべての発言が対象（~/.hermes/state.db を読み取り専用で参照）。
-        行をタップするとその会話を開きます。
+        {t('search.note')}
       </div>
     </Sheet>
   )

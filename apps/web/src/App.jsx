@@ -11,16 +11,39 @@ import { ReviewPane } from './features/ReviewPane.jsx'
 import { SearchSheet } from './features/SearchSheet.jsx'
 import { Icon, Loader } from './components/Ui.jsx'
 import { haptic } from './lib/haptic.js'
+import { useI18n } from './i18n/index.js'
+import { t as tGlobal } from './i18n/lang.js'
 
 const TermPane = lazy(() => import('./features/TermPane.jsx').then((m) => ({ default: m.TermPane })))
 
 const TABS = [
-  { id: 'tasks', label: 'タスク', icon: 'grid' },
-  { id: 'review', label: 'レビュー', icon: 'pen' },
-  { id: 'chat', label: 'チャット', icon: 'chat' },
-  { id: 'term', label: 'ターミナル', icon: 'term' },
-  { id: 'settings', label: '設定', icon: 'gear' },
+  { id: 'tasks', key: 'nav.tasks', icon: 'grid' },
+  { id: 'review', key: 'nav.review', icon: 'pen' },
+  { id: 'chat', key: 'nav.chat', icon: 'chat' },
+  { id: 'term', key: 'nav.term', icon: 'term' },
+  { id: 'settings', key: 'nav.settings', icon: 'gear' },
 ]
+
+/** タブ内の描画エラー画面（フックを使うため関数コンポーネントに切り出す）。 */
+function TabError({ error, onRetry }) {
+  const { t } = useI18n()
+  return (
+    <div className="pane">
+      <div className="card">
+        <div className="row-title">{t('app.tabError')}</div>
+        <div className="row-sub" style={{ marginTop: 6, lineHeight: 1.7 }}>
+          {String(error?.message ?? error)}
+        </div>
+        <button className="btn" style={{ marginTop: 12 }} onClick={onRetry}>
+          {t('common.retry')}
+        </button>
+        <div className="row-sub" style={{ marginTop: 8 }}>
+          {t('app.tabErrorLog')}
+        </div>
+      </div>
+    </div>
+  )
+}
 
 /**
  * タブ内の描画エラーを1画面に閉じ込める（下部ナビは絶対に残す）。
@@ -58,28 +81,14 @@ class ErrorBoundary extends React.Component {
 
   render() {
     if (this.state.error) {
-      return (
-        <div className="pane">
-          <div className="card">
-            <div className="row-title">このタブでエラーが発生しました</div>
-            <div className="row-sub" style={{ marginTop: 6, lineHeight: 1.7 }}>
-              {String(this.state.error?.message ?? this.state.error)}
-            </div>
-            <button className="btn" style={{ marginTop: 12 }} onClick={() => this.setState({ error: null })}>
-              再試行
-            </button>
-            <div className="row-sub" style={{ marginTop: 8 }}>
-              記録は ~/.hermes/mobile-pwa/client-errors.log
-            </div>
-          </div>
-        </div>
-      )
+      return <TabError error={this.state.error} onRetry={() => this.setState({ error: null })} />
     }
     return this.props.children
   }
 }
 
 export function App() {
+  const { t } = useI18n()
   const [deepLink] = useState(() => readDeepLink())
 
   const [tab, setTab] = useState(
@@ -213,7 +222,8 @@ export function App() {
         } else if (tabRef.current === 'chat' && newestAt > chatReportedAtRef.current) {
           chatReportedAtRef.current = newestAt
           const label = newest.label || newest.taskId || ''
-          notify(`レビュー完了${label ? `: ${label}` : ''}`)
+          // 15 秒ごとの interval から呼ばれるので、翻訳は現在の言語を読む tGlobal を使う
+          notify(label ? tGlobal('app.reviewDoneLabel', { label }) : tGlobal('app.reviewDone'))
         } else if (newestAt > chatReportedAtRef.current) {
           chatReportedAtRef.current = newestAt
         }
@@ -477,7 +487,7 @@ export function App() {
     return (
       <div className="login">
         <h1>Hermes Mobile</h1>
-        <p>アプリトークンを入力してください</p>
+        <p>{t('app.loginPrompt')}</p>
         <input
           value={tokenInput}
           onChange={(e) => setTokenInput(e.target.value)}
@@ -488,13 +498,13 @@ export function App() {
         />
         <button
           onClick={() => {
-            const t = tokenInput.trim()
-            if (t) location.href = `/auth?t=${encodeURIComponent(t)}`
+            const clean = tokenInput.trim()
+            if (clean) location.href = `/auth?t=${encodeURIComponent(clean)}`
           }}
         >
-          入る
+          {t('app.loginButton')}
         </button>
-        <p className="hint">トークンは ~/.hermes/mobile-pwa/token（0600）にあります。</p>
+        <p className="hint">{t('app.loginHint')}</p>
       </div>
     )
   }
@@ -506,7 +516,7 @@ export function App() {
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <button
             className="icon-btn"
-            aria-label="検索"
+            aria-label={t('app.search')}
             onClick={() => {
               haptic('tap')
               setSearchOpen(true)
@@ -514,7 +524,7 @@ export function App() {
           >
             <Icon name="search" size={18} />
           </button>
-          <span className={`conn ${conn}`} title={conn === 'ok' ? '接続中' : '接続できません'}>
+          <span className={`conn ${conn}`} title={conn === 'ok' ? t('app.connected') : t('app.disconnected')}>
             {conn === 'ok' ? '●' : '○'}
           </span>
         </span>
@@ -522,14 +532,14 @@ export function App() {
 
       {conn !== 'ok' ? (
         <div className="banner">
-          ブリッジに接続できません
+          {t('app.bridgeOffline')}
           <button
             onClick={() => {
               haptic('tap')
               refresh()
             }}
           >
-            再試行
+            {t('common.retry')}
           </button>
         </div>
       ) : null}
@@ -537,7 +547,7 @@ export function App() {
       <main className="panes">
         <ErrorBoundary tab={tab}>
           {booting ? (
-            <Loader label="読み込み中…" />
+            <Loader label={t('common.loading')} />
           ) : tab === 'tasks' ? (
             <TasksPane
               overview={overview}
@@ -548,7 +558,7 @@ export function App() {
           ) : tab === 'review' ? (
             <ReviewPane notify={notify} focusRequest={reviewFocus} onConsumedFocus={() => setReviewFocus(null)} />
           ) : tab === 'term' ? (
-            <Suspense fallback={<Loader label="端末を読み込み中…" />}>
+            <Suspense fallback={<Loader label={t('app.termLoading')} />}>
               <TermPane notify={notify} />
             </Suspense>
           ) : tab === 'settings' ? (
@@ -582,44 +592,43 @@ export function App() {
       </main>
 
       <nav className="nav" ref={navRef}>
-        {TABS.map((t) => {
+        {TABS.map((item) => {
           // 丸バッジはタスクタブ（承認待ち）とレビュータブ（判断待ち）にだけ出す。
           // タブ内の表示とは別物で、ここは下部ナビのアイコン右上の小さな丸。
-          const badge = t.id === 'review' ? reviewWaiting : t.id === 'tasks' ? inboxPending : 0
-          const badgeLabel = t.id === 'review' ? '判断待ち' : '承認待ち'
+          const label = t(item.key)
+          const badge = item.id === 'review' ? reviewWaiting : item.id === 'tasks' ? inboxPending : 0
           const tasksRunning = (Number(overview?.runningTasks) || 0) + liveTurns
           // レビュータブは「判断待ち（数字） > 未読の完了（緑の点） > 反映中（青の点）」の順で 1 つだけ出す。
           // タスクタブは「承認待ち（数字） > 稼働中（青の点）」、チャットタブは「未読完了（緑の点） > 応答中（青の点）」。
           const state =
-            t.id === 'review'
+            item.id === 'review'
               ? navBadgeState({ waiting: reviewWaiting, unseen: reviewUnseen, running: reviewRunning })
-              : t.id === 'tasks'
+              : item.id === 'tasks'
                 ? navBadgeState({ waiting: inboxPending, running: tasksRunning })
-                : t.id === 'chat'
+                : item.id === 'chat'
                   ? navBadgeState({ unseen: Math.max(chatUnread, otherChatUnread), running: chatStreaming ? 1 : 0 })
                   : null
           const dot = !badge && state === 'done' ? 'done' : !badge && state === 'running' ? 'running' : null
-          const runningLabel = t.id === 'review' ? '反映中' : '稼働中'
           const aria = badge
-            ? `${t.label}（${badgeLabel} ${badge} 件）`
+            ? t(item.id === 'review' ? 'app.navWaiting' : 'app.navApproval', { label, n: badge })
             : dot === 'done'
-              ? `${t.label}（完了の報告あり）`
+              ? t('app.navDone', { label })
               : dot === 'running'
-                ? `${t.label}（${runningLabel}）`
+                ? t(item.id === 'review' ? 'app.navReflecting' : 'app.navRunning', { label })
                 : undefined
           return (
             <button
-              key={t.id}
-              className={`nav-item${tab === t.id ? ' on' : ''}`}
-              aria-current={tab === t.id ? 'page' : undefined}
+              key={item.id}
+              className={`nav-item${tab === item.id ? ' on' : ''}`}
+              aria-current={tab === item.id ? 'page' : undefined}
               aria-label={aria}
               onClick={() => {
-                if (tab !== t.id) haptic('tap')
-                setTab(t.id)
+                if (tab !== item.id) haptic('tap')
+                setTab(item.id)
               }}
             >
               <span className="nav-icon">
-                <Icon name={t.icon} />
+                <Icon name={item.icon} />
                 {badge ? (
                   <span className="nav-badge" aria-hidden="true">
                     {badge}
@@ -627,7 +636,7 @@ export function App() {
                 ) : null}
                 {dot ? <span className={`nav-dot ${dot}`} aria-hidden="true" /> : null}
               </span>
-              <span>{t.label}</span>
+              <span>{label}</span>
             </button>
           )
         })}

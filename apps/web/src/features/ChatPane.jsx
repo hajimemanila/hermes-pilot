@@ -33,6 +33,8 @@ import {
 } from '../lib/chatReports.js'
 import { Icon, Loader, RefreshButton, Sheet, fmtBytes, fmtDateTime, relTime } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
+import { useI18n } from '../i18n/index.js'
+import { t } from '../i18n/lang.js'
 
 /** 入力欄を内容に合わせて伸ばす（枠の分を足さないと 2px 溢れて縦棒が出る）。 */
 function fitComposer(el, cap = 120) {
@@ -85,7 +87,7 @@ function renderFormattedText(raw, onCopy) {
               onCopy(code)
             }}
           >
-            コピー
+            {t('chat.copy')}
           </button>
         </div>
         <pre>
@@ -157,6 +159,8 @@ export function ChatPane({
   openRequest = null,
   onConsumedOpen,
 }) {
+  // 言語切替で再描画させるための購読（翻訳はモジュール側の t が現在の言語を読む）
+  useI18n()
   const [sessions, setSessions] = useState([])
   const [sid, setSid] = useState(null)
   const [storedSid, setStoredSid] = useState(null)
@@ -461,7 +465,7 @@ export function ChatPane({
     if (!rpc) return
     if (notifiedOffline.current) {
       notifiedOffline.current = false
-      notify('再接続しました')
+      notify(t('chat.reconnected'))
     }
     await loadSessions(rpc)
     // 検索結果などから「開く」を先に頼まれていたら、接続後にそれを優先する
@@ -486,7 +490,7 @@ export function ChatPane({
         // **捨てない**: 一時的な失敗（実行中で resume 不可など）で会話への導線を失うと
         // 以後ずっと空画面になる（実測）。残して次の ready で再試行する。
         setSid(null)
-        notify('直前の会話を開けませんでした（もう一度お試しください）')
+        notify(t('chat.previousChatFailed'))
       } else {
         const found = sessionsRef.current.find((x) => x.id === pick.sid)
         if (found?.title) setTitle(found.title)
@@ -711,12 +715,12 @@ export function ChatPane({
   const copyCode = useCallback(
     async (code) => {
       try {
-        if (!navigator.clipboard?.writeText) throw new Error('このブラウザはコピーに未対応です')
+        if (!navigator.clipboard?.writeText) throw new Error(t('chat.copyUnsupported'))
         await navigator.clipboard.writeText(code)
         haptic('tap')
-        notify('コードをコピーしました')
+        notify(t('chat.copied'))
       } catch (e) {
-        notify(e?.message || 'コピーできませんでした')
+        notify(e?.message || t('chat.copyFailed'))
       }
     },
     [notify],
@@ -763,14 +767,19 @@ export function ChatPane({
       if (!picked.length) return
       const room = 6 - attached.length
       if (room <= 0) {
-        notify('添付は1メッセージ6個までです')
+        notify(t('chat.maxAttachments'))
         return
       }
       for (const raw of picked.slice(0, room)) {
         const isImage = (raw.type || '').startsWith('image/')
         const limit = isImage ? 10 * 1024 * 1024 : 25 * 1024 * 1024
         if (raw.size > limit) {
-          notify(`${raw.name || 'ファイル'} は大きすぎます（上限 ${Math.round(limit / 1048576)}MB）`)
+          notify(
+            t('chat.tooLarge', {
+              name: raw.name || t('chat.fileFallback'),
+              mb: Math.round(limit / 1048576),
+            }),
+          )
           continue
         }
         try {
@@ -799,17 +808,17 @@ export function ChatPane({
   /** クリップボードの画像を取り込む。 */
   const pasteFromClipboard = useCallback(async () => {
     try {
-      if (!navigator.clipboard?.read) throw new Error('このブラウザはクリップボード読み取りに未対応です')
+      if (!navigator.clipboard?.read) throw new Error(t('chat.clipReadUnsupported'))
       const items = await navigator.clipboard.read()
       const files = []
       for (const it of items) {
-        const type = (it.types ?? []).find((t) => t.startsWith('image/'))
+        const type = (it.types ?? []).find((x) => x.startsWith('image/'))
         if (!type) continue
         const blob = await it.getType(type)
         const ext = type === 'image/jpeg' ? 'jpg' : type.split('/')[1]
         files.push(new File([blob], `clipboard-${Date.now()}.${ext}`, { type }))
       }
-      if (!files.length) throw new Error('クリップボードに画像がありません')
+      if (!files.length) throw new Error(t('chat.clipNoImage'))
       await addFiles(files)
       setAttachSheet(false)
     } catch (e) {
@@ -823,7 +832,7 @@ export function ChatPane({
     new Promise((resolve, reject) => {
       const fr = new FileReader()
       fr.onload = () => resolve(String(fr.result))
-      fr.onerror = () => reject(new Error('読み込みに失敗しました'))
+      fr.onerror = () => reject(new Error(t('chat.readFailed')))
       fr.readAsDataURL(file)
     })
 
@@ -835,11 +844,11 @@ export function ChatPane({
         const dataUrl = await fileToDataUrl(a.file)
         const b64 = dataUrl.split(',')[1] ?? ''
         const r = await rpc('image.attach_bytes', { session_id: sessionId, content_base64: b64, filename: a.name })
-        if (r?.error) throw new Error(`画像を添付できません: ${r.error.message}`)
+        if (r?.error) throw new Error(t('chat.attachImageFailed', { message: r.error.message }))
       } else {
         const dataUrl = await fileToDataUrl(a.file)
         const r = await rpc('file.attach', { session_id: sessionId, data_url: dataUrl, name: a.name })
-        if (r?.error) throw new Error(`ファイルを添付できません: ${r.error.message}`)
+        if (r?.error) throw new Error(t('chat.attachFailed', { message: r.error.message }))
         if (r?.result?.ref_text) refs.push(r.result.ref_text)
       }
     }
@@ -854,7 +863,7 @@ export function ChatPane({
       const items = attached
       const imgs = items.filter((a) => a.kind === 'image')
       const files = items.filter((a) => a.kind === 'file')
-      const shown = body || (items.length ? '添付を確認して。' : '')
+      const shown = body || (items.length ? t('chat.checkAttachments') : '')
 
       // スニペットの長押し送信では、書きかけの下書きを消さない
       if (override == null) {
@@ -894,14 +903,16 @@ export function ChatPane({
         target = r?.result?.session_id
         setStoredSid(r?.result?.stored_session_id ?? null)
         setStoredProfile(profile || DEFAULT_PROFILE)
-        if (!target) return failed('セッションを作成できませんでした')
+        if (!target) return failed(t('chat.sessionCreateFailed'))
         writePendingRepo(globalThis.localStorage, null)
         setSid(target)
         setTitle(shown.slice(0, 24))
       }
 
       const compose = (refs) =>
-        refs.length ? `${shown}\n\n添付ファイル:\n${refs.map((x) => `- ${x}`).join('\n')}\n必要なら読んでから答えて。` : shown
+        refs.length
+          ? `${shown}${t('chat.attachmentsHeader')}${refs.map((x) => `- ${x}`).join('\n')}${t('chat.attachInstruction')}`
+          : shown
 
       let refs = []
       if (items.length) {
@@ -935,7 +946,7 @@ export function ChatPane({
           }
         }
       }
-      if (r?.error) failed(`送信に失敗: ${r.error.message}`)
+      if (r?.error) failed(t('chat.sendFailed', { message: r.error.message }))
       haptic('action')
     },
     [text, attached, streaming, sid, rpc, notify, stageAttachments, resumeInto, profile],
@@ -948,7 +959,7 @@ export function ChatPane({
     await rpc('session.interrupt', { session_id: sid })
     setStreaming(false)
     setThinking('')
-    notify('中断しました')
+    notify(t('chat.interrupted'))
   }, [sid, rpc, notify])
 
   /**
@@ -982,7 +993,7 @@ export function ChatPane({
       if (chosen) {
         rememberRepo(globalThis.localStorage, { id: chosen.id, board: boardSlug ? { slug: boardSlug } : null })
         writePendingRepo(globalThis.localStorage, { repoId: chosen.id, profile: next })
-        notify(`${repoLabel(chosen)}${boardSlug ? ` ・ ${boardSlug}` : ''} で新しい会話`)
+        notify(t('chat.newChatWith', { target: `${repoLabel(chosen)}${boardSlug ? ` ・ ${boardSlug}` : ''}` }))
       } else {
         writePendingRepo(globalThis.localStorage, null)
       }
@@ -1000,7 +1011,7 @@ export function ChatPane({
         if (profile && profile !== 'default') q.set('profile', profile)
         const d = await api(`/api/sessions/${encodeURIComponent(sessionId)}/transcript?${q}`)
         if (!d.ok) {
-          notify(d.reason ?? 'この会話は開けません')
+          notify(d.reason ?? t('chat.cannotOpen'))
           return false
         }
         setSid(null)
@@ -1047,7 +1058,7 @@ export function ChatPane({
         }
         setSid(null)
         setStoredSid(null)
-        notify(err?.message ? `開けませんでした: ${err.message}` : 'セッションを復元できませんでした')
+        notify(err?.message ? t('chat.openFailed', { message: err.message }) : t('chat.resumeFailed'))
       }
     },
     [rpc, resumeInto, sessions, notify, loadTranscript],
@@ -1133,7 +1144,7 @@ export function ChatPane({
     if (target) {
       const r = await resumeInto(rpcFn, target, profile || DEFAULT_PROFILE)
       if (!r?.ok) {
-        notify(r?.error?.message ? `更新できませんでした: ${r.error.message}` : '会話を更新できませんでした')
+        notify(r?.error?.message ? t('chat.updateFailed', { message: r.error.message }) : t('chat.updateChatFailed'))
         return false
       }
     }
@@ -1179,10 +1190,10 @@ export function ChatPane({
     try {
       const res = await api(`/api/repos/${encodeURIComponent(r.id)}/board`, { method: 'POST', body: {} })
       if (!res?.ok || !res.board) {
-        notify(res?.error ?? 'ボードを作成できませんでした')
+        notify(res?.error ?? t('chat.boardCreateFailed'))
         return
       }
-      notify(`ボード ${res.board.slug} を作りました`)
+      notify(t('chat.boardCreated', { slug: res.board.slug }))
       // 作った板を一覧に反映してから開始（次の会話では「ボード 1 つ」と出る）
       setRepos((prev) =>
         prev.map((x) => (x.id === r.id ? { ...x, boards: [{ slug: res.board.slug, name: res.board.name ?? res.board.slug }] } : x)),
@@ -1219,23 +1230,23 @@ export function ChatPane({
             haptic('tap')
             setDrawer(true)
           }}
-          aria-label={otherUnreads.length ? `会話一覧（未読の完了報告 ${otherUnreads.length} 件）` : '会話一覧'}
+          aria-label={otherUnreads.length ? t('chat.sessionsAria', { n: otherUnreads.length }) : t('chat.sessions')}
         >
           <Icon name="grid" size={18} />
           {otherUnreads.length ? <span className="nav-dot done" aria-hidden="true" /> : null}
         </button>
-        <span className="chat-title">{title || 'チャット'}</span>
+        <span className="chat-title">{title || t('chat.title')}</span>
         <span
           className={`prof-chip${profile !== DEFAULT_PROFILE ? ' on' : ''}`}
-          title={`この会話のプロファイル: ${profile}`}
+          title={t('chat.profileTitle', { profile })}
         >
           {profile}
         </span>
         {repo ? (
           <button
             className="prof-chip repo-chip"
-            title={`この会話のリポジトリ: ${repo.id}（${repo.path}）`}
-            aria-label={`この会話のリポジトリ: ${repo.id}`}
+            title={t('chat.repoTitle', { id: repo.id, path: repo.path })}
+            aria-label={t('chat.repoTitleShort', { id: repo.id })}
             onClick={() => {
               haptic('tap')
               openProfileSheet()
@@ -1248,7 +1259,7 @@ export function ChatPane({
           <button
             className="icon-btn dc-icon"
             title={`Discord: ${dcLink.chatName ?? ''}`}
-            aria-label="Discord のスレッドを開く"
+            aria-label={t('chat.discordAria')}
             onClick={() => {
               haptic('tap')
               window.open(dcLink.url, '_blank', 'noopener')
@@ -1257,25 +1268,27 @@ export function ChatPane({
             <span aria-hidden="true">#</span>
           </button>
         ) : null}
-        <RefreshButton variant="icon" ariaLabel="会話を更新" onRefresh={refreshChat} />
+        <RefreshButton variant="icon" ariaLabel={t('chat.refreshChatAria')} onRefresh={refreshChat} />
         <button
           className="icon-btn"
           onClick={() => {
             haptic('tap')
             openProfileSheet()
           }}
-          aria-label="新しい会話（プロファイルとリポジトリを選ぶ）"
+          aria-label={t('chat.newChatAria')}
         >
           <Icon name="plus" size={18} />
         </button>
       </div>
 
       {/* 切断直後（2秒未満）は出さない */}
-      {showBanner ? <div className="banner">接続を回復しています…</div> : null}
+      {showBanner ? <div className="banner">{t('chat.recovering')}</div> : null}
       {otherUnreads.length ? (
         <div className="chat-report-banner" role="status">
           <span className="chat-report-banner-text">
-            🖊 別の会話に完了報告: {otherUnreads[0].label || otherUnreads[0].taskId || otherUnreads[0].text.slice(0, 28)}
+            {t('chat.otherReport', {
+              label: otherUnreads[0].label || otherUnreads[0].taskId || otherUnreads[0].text.slice(0, 28),
+            })}
           </span>
           <button
             type="button"
@@ -1287,7 +1300,7 @@ export function ChatPane({
               openSessionSafe(u.sessionId, null, found?.profile || profile || DEFAULT_PROFILE)
             }}
           >
-            開く
+            {t('chat.open')}
           </button>
           <button
             type="button"
@@ -1297,16 +1310,16 @@ export function ChatPane({
               markReportsSeen(otherUnreads[0].sessionId)
             }}
           >
-            既読
+            {t('chat.seen')}
           </button>
         </div>
       ) : null}
       {readonly ? (
         <div className="banner ro">
-          読み取り専用
+          {t('chat.readonly')}
           {readonly.profile
-            ? ` ・ ${readonly.profile} プロファイルの会話（resume できないため記録を表示中）`
-            : ' ・ カンバンの作業ログはこのアプリから再開できません（ボードで操作）'}
+            ? t('chat.readonlyProfileSuffix', { profile: readonly.profile })
+            : t('chat.readonlyBoardSuffix')}
         </div>
       ) : null}
 
@@ -1322,13 +1335,13 @@ export function ChatPane({
         }}
       >
         {!blocks.length && (loadingChat || connState === 'connecting') ? (
-          <Loader label={connState === 'connecting' ? '接続中…' : '会話を読み込み中…'} />
+          <Loader label={connState === 'connecting' ? t('chat.connecting') : t('chat.loadingChat')} />
         ) : !blocks.length ? (
           <div className="empty">
-            <div>メッセージを送って開始</div>
+            <div>{t('chat.sendToStart')}</div>
             {recentSessions(sessions, profile, 2).length ? (
-              <div className="empty-recent" aria-label="直前に開いていた会話">
-                <div className="empty-recent-head">直前に開いていた会話</div>
+              <div className="empty-recent" aria-label={t('chat.recentAria')}>
+                <div className="empty-recent-head">{t('chat.recentHead')}</div>
                 {recentSessions(sessions, profile, 2).map((x) => (
                   <button
                     key={x.id}
@@ -1371,7 +1384,7 @@ export function ChatPane({
                     )
                   }}
                 >
-                  確認・赤入れ ↗
+                  {t('chat.reviewAndAnnotate')}
                 </button>
               </div>
             )
@@ -1390,7 +1403,7 @@ export function ChatPane({
                     {b.images.map((img, k) =>
                       img.url ? (
                         <span className="bubble-img" key={k}>
-                          <img src={img.url} alt={img.name ?? '添付画像'} />
+                          <img src={img.url} alt={img.name ?? t('chat.attachedImage')} />
                         </span>
                       ) : null,
                     )}
@@ -1418,7 +1431,7 @@ export function ChatPane({
               <div className="bubble">
                 {b.tools?.length ? (
                   <details className="msg-tools">
-                    <summary>🔧 ツール {b.tools.length} 件を実行</summary>
+                    <summary>{t('chat.toolsRan', { count: b.tools.length })}</summary>
                     <ToolRows
                       rows={b.tools}
                       prefix={`msg-${i}`}
@@ -1457,10 +1470,10 @@ export function ChatPane({
                     <b className="working-shimmer">Working… {mm}:{ss}</b>
                     <span className="working-meta">
                       {progress.length
-                        ? `ツール ${progress.length} 件`
+                        ? t('chat.toolProgress', { n: progress.length })
                         : activeLiveTurn?.lastTool?.name
-                          ? `直近: ${activeLiveTurn.lastTool.name}`
-                          : '思考・ツール実行中'}
+                          ? t('chat.lastTool', { name: activeLiveTurn.lastTool.name })
+                          : t('chat.thinking')}
                     </span>
                   </div>
                   {rowsToShow.length ? (
@@ -1489,7 +1502,7 @@ export function ChatPane({
             <div className="chat-live-card warn" role="status">
               <div className="chat-live-head">
                 <span className="chat-live-title">
-                  🖊 レビュー判断待ち: {linkedReview.review?.title || linkedReview.title}
+                  {t('chat.reviewLabel', { title: linkedReview.review?.title || linkedReview.title })}
                 </span>
                 <button
                   type="button"
@@ -1503,11 +1516,11 @@ export function ChatPane({
                     )
                   }}
                 >
-                  レビューで回答 ↗
+                  {t('chat.openInReview')}
                 </button>
               </div>
               <div className="chat-live-sub">
-                あなたの回答待ちです。回答すると自律ワーカーが作業を再開します。
+                {t('chat.linkedWaiting')}
               </div>
             </div>
           ) : (
@@ -1515,7 +1528,7 @@ export function ChatPane({
               <div className="chat-live-head">
                 <span className="working-dot" aria-hidden="true" />
                 <b className="working-shimmer">
-                  {linkedReview.status === 'running' ? 'Working… 自律ワーカー稼働中' : '自律ワーカー起動待ち'}
+                  {linkedReview.status === 'running' ? t('chat.workerRunning') : t('chat.workerQueued')}
                 </b>
                 <button
                   type="button"
@@ -1529,7 +1542,7 @@ export function ChatPane({
                     )
                   }}
                 >
-                  進行を見る ↗
+                  {t('chat.watchProgress')}
                 </button>
               </div>
               <div className="chat-live-sub">{linkedReview.review?.title || linkedReview.title}</div>
@@ -1581,7 +1594,7 @@ export function ChatPane({
             }
           }}
         >
-          {isWorking || linkedReview ? '↓ Working・最新へ' : '↓ 最下部へ'}
+          {isWorking || linkedReview ? t('chat.jumpLatest') : t('chat.jumpBottomPlain')}
         </button>
       ) : null}
 
@@ -1598,7 +1611,7 @@ export function ChatPane({
               )}
               <button
                 className="attach-x"
-                aria-label="添付を外す"
+                aria-label={t('chat.removeAttachment')}
                 onClick={() => {
                   if (a.preview) {
                     URL.revokeObjectURL(a.preview)
@@ -1646,17 +1659,17 @@ export function ChatPane({
               </button>
             ))}
           </div>
-          <button className="snippet-chip add" onClick={() => setSnippetSheet(true)} aria-label="定型スニペット一覧">
+          <button className="snippet-chip add" onClick={() => setSnippetSheet(true)} aria-label={t('chat.snippetListAria')}>
             ＋
           </button>
         </div>
       ) : null}
 
-      {readonly ? <div className="composer-ro">読み取り専用 ・ 再開するにはボードで操作してください</div> : null}
+      {readonly ? <div className="composer-ro">{t('chat.readonlyComposer')}</div> : null}
       <div className="composer" style={readonly ? { display: 'none' } : undefined}>
         <button
           className="plus"
-          aria-label="画像・ファイルを添付"
+          aria-label={t('chat.attachAria')}
           onClick={() => setAttachSheet(true)}
           disabled={streaming}
         >
@@ -1666,7 +1679,7 @@ export function ChatPane({
           ref={taRef}
           rows={1}
           value={text}
-          placeholder="Hermes に送る…"
+          placeholder={t('chat.composerPlaceholder')}
           onChange={(e) => {
             setText(e.target.value)
             fitComposer(e.target)
@@ -1688,7 +1701,7 @@ export function ChatPane({
           }}
         />
         {streaming ? (
-          <button className="send stop" onClick={interrupt} aria-label="中断">
+          <button className="send stop" onClick={interrupt} aria-label={t('chat.interrupt')}>
             <Icon name="stop" size={18} />
           </button>
         ) : (
@@ -1696,7 +1709,7 @@ export function ChatPane({
             className="send"
             onClick={send}
             disabled={(!text.trim() && !attached.length) || attachBusy}
-            aria-label="送信"
+            aria-label={t('chat.sendAria')}
           >
             <Icon name="send" size={18} />
           </button>
@@ -1737,7 +1750,7 @@ export function ChatPane({
       />
 
       {attachSheet ? (
-        <Sheet title="添付" onClose={() => setAttachSheet(false)}>
+        <Sheet title={t('chat.attachSheetTitle')} onClose={() => setAttachSheet(false)}>
           <div className="list">
             <button
               className="list-item"
@@ -1747,8 +1760,8 @@ export function ChatPane({
               }}
             >
               <span style={{ flex: 1 }}>
-                <span className="row-title">画像を選ぶ</span>
-                <span className="row-sub" style={{ display: 'block' }}>ギャラリーから（PNG / JPEG / WebP / GIF）</span>
+                <span className="row-title">{t('chat.pickImage')}</span>
+                <span className="row-sub" style={{ display: 'block' }}>{t('chat.pickImageSub')}</span>
               </span>
               <Icon name="chevron" />
             </button>
@@ -1760,8 +1773,8 @@ export function ChatPane({
               }}
             >
               <span style={{ flex: 1 }}>
-                <span className="row-title">カメラで撮る</span>
-                <span className="row-sub" style={{ display: 'block' }}>その場で撮影して添付</span>
+                <span className="row-title">{t('chat.takePhoto')}</span>
+                <span className="row-sub" style={{ display: 'block' }}>{t('chat.takePhotoSub')}</span>
               </span>
               <Icon name="chevron" />
             </button>
@@ -1773,37 +1786,37 @@ export function ChatPane({
               }}
             >
               <span style={{ flex: 1 }}>
-                <span className="row-title">ファイルを選ぶ</span>
+                <span className="row-title">{t('chat.pickFile')}</span>
                 <span className="row-sub" style={{ display: 'block' }}>
-                  PDF・CSV・コードなど（セッションのワークスペースに置いて @file 参照を渡す）
+                  {t('chat.pickFileSub')}
                 </span>
               </span>
               <Icon name="chevron" />
             </button>
             <button className="list-item" onClick={pasteFromClipboard}>
               <span style={{ flex: 1 }}>
-                <span className="row-title">クリップボードから</span>
-                <span className="row-sub" style={{ display: 'block' }}>コピー中のスクショを貼る（許可ダイアログあり）</span>
+                <span className="row-title">{t('chat.fromClipboard')}</span>
+                <span className="row-sub" style={{ display: 'block' }}>{t('chat.fromClipboardSub')}</span>
               </span>
               <Icon name="chevron" />
             </button>
           </div>
           <div className="row-sub" style={{ padding: '12px 6px 18px', lineHeight: 1.7 }}>
-            1メッセージ 6 個まで。画像は長辺1600pxに縮小して送ります。入力欄へのペーストでも画像を取り込めます。
+            {t('chat.attachNote')}
           </div>
         </Sheet>
       ) : null}
 
       {snippetSheet ? (
-        <Sheet title="定型スニペット" onClose={() => setSnippetSheet(false)}>
+        <Sheet title={t('chat.snippetsTitle')} onClose={() => setSnippetSheet(false)}>
           <div className="list">
             {snippets.map((s) => (
               <button key={s.id} className="list-item" onClick={() => insertSnippet(s)}>
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span className="row-title" style={{ display: 'block' }}>
                     {s.label}
-                    {s.hot ? <span className="pill" style={{ marginLeft: 8 }}>バー</span> : null}
-                    {s.custom ? <span className="pill" style={{ marginLeft: 6 }}>マイ</span> : null}
+                    {s.hot ? <span className="pill" style={{ marginLeft: 8 }}>{t('chat.bar')}</span> : null}
+                    {s.custom ? <span className="pill" style={{ marginLeft: 6 }}>{t('chat.mine')}</span> : null}
                   </span>
                   <span
                     className="row-sub"
@@ -1817,8 +1830,8 @@ export function ChatPane({
             ))}
           </div>
           <div className="row-sub" style={{ padding: '12px 6px 18px', lineHeight: 1.7 }}>
-            タップで入力欄に挿入（送信はしない）。バーのチップは<b>長押しで即送信</b>。
-            マイスニペットは設定タブで追加できます。
+            {t('chat.snippetNote')}
+            {t('chat.snippetCustomNote')}
           </div>
         </Sheet>
       ) : null}
@@ -1827,12 +1840,12 @@ export function ChatPane({
         <Sheet
           title={
             repoStep?.kind === 'board'
-              ? 'ボードを選ぶ'
+              ? t('chat.chooseBoard')
               : repoStep?.kind === 'create'
-                ? 'ボードを作る'
+                ? t('chat.createBoard')
                 : repoStep?.kind === 'all'
-                  ? 'すべてのリポジトリ'
-                  : '新しい会話'
+                  ? t('chat.allRepos')
+                  : t('chat.newChat')
           }
           onClose={() => (repoStep ? setRepoStep(null) : setProfileSheet(false))}
         >
@@ -1848,33 +1861,33 @@ export function ChatPane({
                   <span className="row-main">
                     <span className="row-title">
                       {p}
-                      {p === DEFAULT_PROFILE ? <span className="prof-chip">既定</span> : null}
-                      {repoPick === p ? <span className="prof-chip on">選択</span> : null}
+                      {p === DEFAULT_PROFILE ? <span className="prof-chip">{t('chat.defaultChip')}</span> : null}
+                      {repoPick === p ? <span className="prof-chip on">{t('chat.selectedChip')}</span> : null}
                     </span>
                     <span className="row-sub">
                       {p === 'default'
-                        ? '普段の作業（Discord と同じプロファイル）'
+                        ? t('chat.usualWork')
                         : p === DEFAULT_PROFILE
-                          ? 'この端末の既定プロファイル'
-                          : `${p} プロファイル`}
+                          ? t('chat.thisDeviceDefault')
+                          : t('chat.profileSuffix', { p })}
                     </span>
                   </span>
                   <Icon name={repoPick === p ? 'check' : 'chevron'} size={16} />
                 </button>
               ))}
 
-              <div className="sec">リポジトリ（作業ディレクトリ）</div>
+              <div className="sec">{t('chat.repoSection')}</div>
               {pinned.rows.map((r) => (
                 <button
                   key={r.id}
                   className={`row${lastRepo === r.id ? ' on' : ''}`}
                   onClick={() => pickRepo(r)}
-                  title={`${r.label}（${r.path}）`}
+                  title={t('chat.repoRowTitle', { label: r.label, path: r.path })}
                 >
                   <span className="row-main">
                     <span className="row-title">
                       {repoLabel(r)}
-                      {lastRepo === r.id ? <span className="prof-chip">前回</span> : null}
+                      {lastRepo === r.id ? <span className="prof-chip">{t('chat.lastChip')}</span> : null}
                     </span>
                     <span className="row-sub">
                       {boardSummary(r.boards)}
@@ -1886,15 +1899,15 @@ export function ChatPane({
               ))}
               {!repos.length ? (
                 <div className="row-sub" style={{ padding: '6px 6px 10px', lineHeight: 1.7 }}>
-                  リポジトリ一覧を取得中…（取れないときは「リポジトリを選ばない」で始められます）
+                  {t('chat.reposLoading')}
                 </div>
               ) : null}
               {pinned.hidden > 0 ? (
                 <button className="row" onClick={() => setRepoStep({ kind: 'all' })}>
                   <span className="row-main">
-                    <span className="row-title">すべてのリポジトリ</span>
+                    <span className="row-title">{t('chat.allReposRow')}</span>
                     <span className="row-sub">
-                      残り {pinned.hidden} 件（全 {pinned.total} 件）
+                      {t('chat.reposHidden', { n: pinned.hidden, total: pinned.total })}
                     </span>
                   </span>
                   <Icon name="chevron" size={16} />
@@ -1902,23 +1915,28 @@ export function ChatPane({
               ) : null}
               <button className="row" onClick={() => startSession(repoPick, null, null)}>
                 <span className="row-main">
-                  <span className="row-title">リポジトリを選ばない</span>
-                  <span className="row-sub">作業ディレクトリを決めずに始める</span>
+                  <span className="row-title">{t('chat.noRepo')}</span>
+                  <span className="row-sub">{t('chat.noRepoSub')}</span>
                 </span>
                 <Icon name="chevron" size={16} />
               </button>
               <div className="row-sub" style={{ padding: '10px 6px 18px', lineHeight: 1.7 }}>
-                プロファイルを選んでから<b>リポジトリ</b>を押すと、その会話が始まります。
-                板があるリポジトリは、タスクタブと起票の既定ボードもその板に切り替わります。
+                {t('chat.pickProfileThenRepo')}
+                {t('chat.boardBecomesDefault')}
               </div>
             </>
           ) : null}
 
           {repoStep?.kind === 'all' ? (
             <>
-              <div className="sec">すべてのリポジトリ（{repos.length} 件）</div>
+              <div className="sec">{t('chat.allReposSection', { n: repos.length })}</div>
               {repos.map((r) => (
-                <button key={r.id} className="row" onClick={() => pickRepo(r)} title={`${r.label}（${r.path}）`}>
+                <button
+                  key={r.id}
+                  className="row"
+                  onClick={() => pickRepo(r)}
+                  title={t('chat.repoRowTitle', { label: r.label, path: r.path })}
+                >
                   <span className="row-main">
                     <span className="row-title">{repoLabel(r)}</span>
                     <span className="row-sub">
@@ -1934,42 +1952,44 @@ export function ChatPane({
 
           {repoStep?.kind === 'board' ? (
             <>
-              <div className="sec">{repoLabel(repoStep.repo)} のボード</div>
+              <div className="sec">{t('chat.repoBoards', { repo: repoLabel(repoStep.repo) })}</div>
               {(repoStep.repo.boards ?? []).map((b) => (
                 <button key={b.slug} className="row" onClick={() => startSession(repoPick, repoStep.repo, b)}>
                   <span className="row-main">
                     <span className="row-title">{b.name || b.slug}</span>
                     <span className="row-sub">
                       {b.slug}
-                      {b.current ? ' ・ 現在のボード' : ''}
+                      {b.current ? t('chat.currentBoard') : ''}
                     </span>
                   </span>
                   <Icon name="chevron" size={16} />
                 </button>
               ))}
               <div className="row-sub" style={{ padding: '10px 6px 18px', lineHeight: 1.7 }}>
-                押した板が起票の宛先になります（このリポジトリには板が {repoStep.repo.boards.length} つあります）。
+                {t('chat.boardPickNote', { n: repoStep.repo.boards.length })}
               </div>
             </>
           ) : null}
 
           {repoStep?.kind === 'create' ? (
             <>
-              <div className="sec">ボードがありません</div>
+              <div className="sec">{t('chat.noBoardsSection')}</div>
               <div className="row-sub" style={{ padding: '6px 6px 12px', lineHeight: 1.7 }}>
-                <b>{repoLabel(repoStep.repo)}</b> にはボードがありません。ボードを作ると、この会話からの起票がその板に載ります。
+                {t('chat.noBoardsBody', { repo: repoLabel(repoStep.repo) })}
               </div>
               <button className="row" onClick={createRepoBoard} disabled={repoBusy} aria-busy={repoBusy}>
                 <span className="row-main">
-                  <span className="row-title">{repoBusy ? '作成中…' : `ボード ${repoStep.repo.id} を作る`}</span>
+                  <span className="row-title">
+                    {repoBusy ? t('chat.creating') : t('chat.createBoardRow', { id: repoStep.repo.id })}
+                  </span>
                   <span className="row-sub">{repoStep.repo.path}</span>
                 </span>
                 <Icon name="check" size={16} />
               </button>
               <button className="row" onClick={() => setRepoStep(null)}>
                 <span className="row-main">
-                  <span className="row-title">作らない</span>
-                  <span className="row-sub">リポジトリの選択に戻る（板は増えません）</span>
+                  <span className="row-title">{t('chat.dontCreate')}</span>
+                  <span className="row-sub">{t('chat.dontCreateSub')}</span>
                 </span>
                 <Icon name="chevron" size={16} />
               </button>
@@ -1979,11 +1999,11 @@ export function ChatPane({
       ) : null}
 
       {drawer ? (
-        <Sheet title="会話" onClose={() => setDrawer(false)}>
+        <Sheet title={t('chat.drawerTitle')} onClose={() => setDrawer(false)}>
           <button className="row" onClick={openProfileSheet}>
             <span className="row-main">
-              <span className="row-title">新しい会話</span>
-              <span className="row-sub">プロファイルとリポジトリを選んで作る</span>
+              <span className="row-title">{t('chat.newChat')}</span>
+              <span className="row-sub">{t('chat.newChatRowSub')}</span>
             </span>
             <Icon name="plus" size={16} />
           </button>
@@ -1995,7 +2015,7 @@ export function ChatPane({
               <button
                 key={`${s.profile ?? 'default'}:${s.id}`}
                 className={`row${s.id === storedSid ? ' on' : ''}`}
-                title={unread ? 'レビューの完了報告が届いています' : undefined}
+                title={unread ? t('chat.unreadReportTitle') : undefined}
                 onClick={() => openSessionSafe(s.id, null, s.profile ?? 'default')}
               >
                 <span className="row-main">
@@ -2005,10 +2025,10 @@ export function ChatPane({
                       <span className="prof-chip on">{s.profile}</span>
                     ) : null}
                     {s.source ?? 'cli'} ・ {s.message_count ?? 0} msg ・ {relTime((s.started_at ?? 0) * 1000)}
-                    {s.is_active ? ' ・ 稼働中' : ''}
+                    {s.is_active ? t('chat.runningSuffix') : ''}
                   </span>
                 </span>
-                {unread ? <span className="row-dot done" aria-label="レビューの完了報告あり" /> : null}
+                {unread ? <span className="row-dot done" aria-label={t('chat.reportAria')} /> : null}
                 <Icon name="chevron" size={16} />
               </button>
             )

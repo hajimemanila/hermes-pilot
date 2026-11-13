@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { openSocket } from '../api.js'
+import { t } from '../i18n/lang.js'
 
 /**
  * Hermes の JSON-RPC（/ws/chat 経由）クライアント。
@@ -58,15 +59,15 @@ export function useChatSocket({ onEvent, onReady, onState }) {
     const id = idRef.current++
     return new Promise((resolve) => {
       if (!ws || ws.readyState !== WebSocket.OPEN) {
-        resolve({ id, error: { message: '未接続（再接続中）' } })
+        resolve({ id, error: { message: t('socket.notConnected') } })
         return
       }
-      const t = setTimeout(() => {
+      const timeoutId = setTimeout(() => {
         pending.current.delete(id)
         resolve({ id, error: { message: 'timeout' } })
       }, timeoutMs)
       pending.current.set(id, (m) => {
-        clearTimeout(t)
+        clearTimeout(timeoutId)
         resolve(m)
       })
       ws.send(JSON.stringify({ jsonrpc: '2.0', id, method, params }))
@@ -116,7 +117,7 @@ export function useChatSocket({ onEvent, onReady, onState }) {
       if (!offlineSince.current) offlineSince.current = Date.now()
       setState('closed')
       stateRef.current?.('closed')
-      failPending('切断されました（再接続中）')
+      failPending(t('socket.disconnected'))
       if (closedByUs.current) return
       const delay = Math.min(15000, 1000 * 2 ** retryRef.current)
       retryRef.current += 1

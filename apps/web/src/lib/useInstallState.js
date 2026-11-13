@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { t } from '../i18n/lang.js'
 
 /**
  * PWA のインストール可否を端末側で判定する。
@@ -57,9 +58,9 @@ export function useInstallState() {
 /** Service Worker が今このページを制御しているか（インストール要件のひとつ）。 */
 export function swState() {
   try {
-    if (!('serviceWorker' in navigator)) return '非対応'
-    if (navigator.serviceWorker.controller) return '制御中'
-    return '未制御（再読込で有効化）'
+    if (!('serviceWorker' in navigator)) return t('install.swUnsupported')
+    if (navigator.serviceWorker.controller) return t('install.swControlled')
+    return t('install.swWaiting')
   } catch {
     return '—'
   }

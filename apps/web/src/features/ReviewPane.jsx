@@ -7,6 +7,11 @@ import { haptic } from '../lib/haptic.js'
 import { readActiveChatId } from '../lib/chatReports.js'
 import { AnnotationEditor } from './AnnotationEditor.jsx'
 import { answerRows, capturedLabel, DONE_LIMIT, doneHint, groupItems, isWaiting, nextWaiting, repoLabel, thumbCaption } from '../lib/reviewView.js'
+import { parsePastedReply } from '../lib/reviewPaste.js'
+import { t } from '../i18n/lang.js'
+import { useI18n } from '../i18n/index.js'
+
+export { parsePastedReply }
 
 /**
  * 挿絵の拡大用データ。キャプションは「Q2 A. 塗りのボタン」＋問いの文。
@@ -31,18 +36,19 @@ function toZoom(taskId, option, qIndex, question, thumb) {
  * 既定は「判断待ち」だけを見せ、送信後は次の判断待ちへ移る。
  */
 
-const STATUS_LABEL = {
-  review: 'レビュー中',
-  ready: '反映待ち',
-  running: '生成中',
-  blocked: '停止',
-  done: '完了',
+/** 状態 → 辞書キー（未知は生の値）。 */
+const STATUS_KEY = {
+  review: 'review.status.review',
+  ready: 'review.status.ready',
+  running: 'review.status.running',
+  blocked: 'review.status.blocked',
+  done: 'review.status.done',
 }
 
 const TABS = [
-  { id: 'waiting', label: '判断待ち' },
-  { id: 'active', label: '進行中' },
-  { id: 'done', label: '完了' },
+  { id: 'waiting', key: 'review.tab.waiting' },
+  { id: 'active', key: 'review.tab.active' },
+  { id: 'done', key: 'review.tab.done' },
 ]
 
 /** 進行状況の1行（「動いているのか」を数字で示す）。 */
@@ -52,21 +58,25 @@ function progressText(item) {
   const ago = (ts) => {
     if (!ts) return null
     const s = Math.max(0, Math.round((now - ts) / 1000))
-    if (s < 90) return `${s}秒前`
-    if (s < 3600) return `${Math.round(s / 60)}分前`
-    return `${Math.round(s / 3600)}時間前`
+    if (s < 90) return t('review.ago.seconds', { n: s })
+    if (s < 3600) return t('review.ago.minutes', { n: Math.round(s / 60) })
+    return t('review.ago.hours', { n: Math.round(s / 3600) })
   }
   if (item.status === 'running') {
     const beat = ago(pr.heartbeatAt)
     const since = ago(pr.startedAt)
-    return `反映中${since ? `（開始 ${since}）` : ''}${beat ? ` ・ 心拍 ${beat}` : ''}`
+    return [
+      t('review.progress.reflecting'),
+      since ? t('review.progress.since', { ago: since }) : '',
+      beat ? t('review.progress.beat', { ago: beat }) : '',
+    ].join('')
   }
-  if (item.status === 'ready') return '反映待ち（worker の起動待ち）'
+  if (item.status === 'ready') return t('review.progress.ready')
   if (item.status === 'blocked' && item.review?.label) {
     const at = ago(pr.lastEventAt)
-    return `レビュー待ち${at ? ` ・ 提示 ${at}` : ''}`
+    return t('review.progress.waiting') + (at ? t('review.progress.presented', { ago: at }) : '')
   }
-  if (item.status === 'done') return `完了${pr.lastEventAt ? ` ・ ${ago(pr.lastEventAt)}` : ''}`
+  if (item.status === 'done') return t('review.progress.done') + (pr.lastEventAt ? ` ・ ${ago(pr.lastEventAt)}` : '')
   return ''
 }
 
@@ -75,6 +85,7 @@ function Chip({ tone, children }) {
 }
 
 function ItemRow({ item, onOpen }) {
+  const { t } = useI18n()
   const ak = item.review || {}
   const waiting = isWaiting(item)
   const age = item.completedAt || item.createdAt ? relTime(item.completedAt || item.createdAt) : ''
@@ -92,7 +103,7 @@ function ItemRow({ item, onOpen }) {
         <div className="ak-row-sub">
           <span className="ak-label">{ak.label || item.id}</span>
           {ak.round ? <span>r{ak.round}</span> : null}
-          {ak.questions ? <span>{ak.questions}問</span> : null}
+          {ak.questions ? <span>{t('review.questionsCount', { n: ak.questions })}</span> : null}
           {ak.mode && ak.mode !== 'standard' ? <span>{ak.mode}</span> : null}
           <span>{age}</span>
         </div>
@@ -100,48 +111,22 @@ function ItemRow({ item, onOpen }) {
       </div>
       <div className="ak-row-side">
         <Chip tone={waiting ? 'warn' : item.status === 'done' ? 'good' : ''}>
-          {waiting ? 'レビュー待ち' : STATUS_LABEL[item.status] || item.status}
+          {waiting ? t('review.progress.waiting') : STATUS_KEY[item.status] ? t(STATUS_KEY[item.status]) : item.status}
         </Chip>
       </div>
     </button>
   )
 }
 
-/** 【レビュー回答】の貼り付けを最小限パースする（iframe モードのフォールバック）。 */
-export function parsePastedReply(text) {
-  const out = { answers: [], global: '' }
-  const lines = String(text || '').split('\n')
-  let inGlobal = false
-  for (const line of lines) {
-    const q = /^Q(\d+)\.\s*(.*?):\s*(.*)$/.exec(line)
-    if (q) {
-      const rest = q[3]
-      const m = /^(.*?)(?:\s*\/\s*補足:\s*(.*))?$/.exec(rest)
-      const choice = (m?.[1] || '').trim()
-      out.answers.push({
-        id: `q${q[1]}`,
-        choice: choice.startsWith('(未選択') ? null : choice,
-        note: (m?.[2] || '').trim(),
-      })
-      inGlobal = false
-      continue
-    }
-    const g = /^全体へのレビュー:\s*(.*)$/.exec(line)
-    if (g) {
-      out.global = g[1] || ''
-      inGlobal = true
-      continue
-    }
-    if (line.trim() === '---') break
-    if (inGlobal) out.global += `\n${line}`
-  }
-  out.global = out.global.trim()
-  return out
-}
+/**
+ * 貼り付け回答の解析は `lib/reviewPaste.js` に移した（形式は外部と共有するデータなので
+ * 日本語のまま。互換のためここから再エクスポートする）。
+ */
 
 
 /** worker（profile mobile）の進行。反映中でも「何をしているか」が見えるようにする。 */
 function WorkerFeed({ taskId, open }) {
+  const { t } = useI18n()
   const [feed, setFeed] = useState(null)
   const [error, setError] = useState(null)
   const boxRef = React.useRef(null)
@@ -155,7 +140,7 @@ function WorkerFeed({ taskId, open }) {
         setFeed(r)
         setError(null)
       } catch (e) {
-        if (alive) setError(e?.message || '取得できません')
+        if (alive) setError(e?.message || t('review.loadFailed'))
       }
     }
     load()
@@ -180,12 +165,12 @@ function WorkerFeed({ taskId, open }) {
   return (
     <details className="ak-worker" open={open}>
       <summary>
-        worker の進行
-        {feed?.status ? `（${feed.status === 'running' ? '実行中' : feed.status}）` : ''}
-        {msgs.length ? ` ・ ${msgs.length} ステップ` : ''}
+        {t('review.workerProgress')}
+        {feed?.status ? t('review.workerStatus', { status: feed.status === 'running' ? t('review.status.running') : feed.status }) : ''}
+        {msgs.length ? t('review.workerSteps', { n: msgs.length }) : ''}
       </summary>
       {error ? <div className="ak-error">{error}</div> : null}
-      {!error && !msgs.length ? <div className="ak-worker-empty">まだ出力がありません</div> : null}
+      {!error && !msgs.length ? <div className="ak-worker-empty">{t('review.workerEmpty')}</div> : null}
       <div className="ak-worker-log" ref={boxRef}>
         {msgs.map((m) => {
           const time = fmtTime(m.at)
@@ -205,6 +190,7 @@ function WorkerFeed({ taskId, open }) {
 }
 
 function StandardForm({ item, data, onSubmitted }) {
+  const { t } = useI18n()
   const questions = data.questions || []
   const [answers, setAnswers] = useState(() => {
     const init = {}
@@ -239,7 +225,7 @@ function StandardForm({ item, data, onSubmitted }) {
       const r = await api(`/api/review/${item.id}/answer`, { method: 'POST', body: payload })
       onSubmitted?.(r)
     } catch (e) {
-      setError(e?.message || '送信できませんでした')
+      setError(e?.message || t('review.sendFailed'))
     } finally {
       setBusy(false)
     }
@@ -266,7 +252,7 @@ function StandardForm({ item, data, onSubmitted }) {
                   <span className="ak-opt-head">
                     <b>{o.id}</b>
                     <span>{o.label}</span>
-                    {o.recommended ? <Chip tone="rec">推奨</Chip> : null}
+                    {o.recommended ? <Chip tone="rec">{t('review.recommended')}</Chip> : null}
                     <span className="ak-opt-check" aria-hidden="true">✓</span>
                   </span>
                   {o.detail ? <span className="ak-opt-detail">{o.detail}</span> : null}
@@ -275,7 +261,7 @@ function StandardForm({ item, data, onSubmitted }) {
                       className="ak-thumb-btn"
                       role="button"
                       tabIndex={0}
-                      aria-label={`${thumbCaption(`Q${i + 1}`, o).head} の挿絵を拡大`}
+                      aria-label={t('review.thumbZoomAria', { head: thumbCaption(`Q${i + 1}`, o).head })}
                       onClick={(e) => {
                         e.preventDefault()
                         e.stopPropagation()
@@ -299,20 +285,20 @@ function StandardForm({ item, data, onSubmitted }) {
             className="ak-note"
             value={answers[q.id]?.note || ''}
             onChange={(e) => setNote(q.id, e.target.value)}
-            placeholder="補足（任意）"
+            placeholder={t('review.notePlaceholder')}
           />
         </section>
       ))}
       <section className="ak-q">
         <div className="ak-q-head">
-          <span className="ak-q-no">全</span>
-          <span className="ak-q-text">全体へのレビュー（任意）</span>
+          <span className="ak-q-no">{t('review.globalNo')}</span>
+          <span className="ak-q-text">{t('review.globalTitle')}</span>
         </div>
         <textarea
           className="ak-global"
           value={global}
           onChange={(e) => setGlobal(e.target.value)}
-          placeholder="方針・優先度・気になる点を自由に"
+          placeholder={t('review.globalPlaceholder')}
           rows={3}
         />
       </section>
@@ -329,28 +315,28 @@ function StandardForm({ item, data, onSubmitted }) {
           }}
         >
           {busy ? <Spinner size={15} /> : null}
-          <span>{busy ? '送信中…' : 'レビューを送る'}</span>
+          <span>{busy ? t('review.sending') : t('review.submitAnswer')}</span>
         </button>
       </div>
-      <p className="ak-hint">未選択は推奨案で確定します。送信するとカンバンが ready に戻り、agent が反映します。</p>
+      <p className="ak-hint">{t('review.formHint')}</p>
       {zoom
         ? createPortal(
             <div
               className="ak-zoom"
               role="dialog"
               aria-modal="true"
-              aria-label={`${zoom.head} の挿絵`}
+              aria-label={t('review.thumbAlt', { head: zoom.head })}
               onClick={() => setZoom(null)}
             >
               <figure onClick={(e) => e.stopPropagation()}>
-                <img src={zoom.src} alt={`${zoom.head} の挿絵`} />
+                <img src={zoom.src} alt={t('review.thumbAlt', { head: zoom.head })} />
                 <figcaption>
                   <b>{zoom.head}</b>
                   {zoom.sub ? <span>{zoom.sub}</span> : null}
                 </figcaption>
               </figure>
               <button className="ak-zoom-close" type="button" onClick={() => setZoom(null)}>
-                閉じる
+                {t('common.close')}
               </button>
             </div>,
             document.body,
@@ -361,6 +347,7 @@ function StandardForm({ item, data, onSubmitted }) {
 }
 
 function IframeForm({ item, onSubmitted, notify }) {
+  const { t } = useI18n()
   const [pasted, setPasted] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
@@ -379,10 +366,10 @@ function IframeForm({ item, onSubmitted, notify }) {
           method: 'POST',
           body: { ...parsed, by: 'mobile', chat: readActiveChatId() },
         })
-        notify?.(r?.duplicate ? '同じ回答が既に保存されています' : 'シートから回答を受け取りました')
+        notify?.(r?.duplicate ? t('review.duplicate') : t('review.receivedFromSheet'))
         onSubmitted?.(r)
       } catch (e) {
-        setError(e?.message || '送信できませんでした')
+        setError(e?.message || t('review.sendFailed'))
       } finally {
         setBusy(false)
       }
@@ -403,7 +390,7 @@ function IframeForm({ item, onSubmitted, notify }) {
       })
       onSubmitted?.(r)
     } catch (e) {
-      setError(e?.message || '送信できませんでした')
+      setError(e?.message || t('review.sendFailed'))
     } finally {
       setBusy(false)
     }
@@ -413,16 +400,16 @@ function IframeForm({ item, onSubmitted, notify }) {
     <div className="ak-form">
       <iframe
         className="ak-iframe"
-        title="レビューシート"
+        title={t('review.sheetIframeTitle')}
         src={`/api/review/${item.id}/sheet`}
         sandbox="allow-scripts allow-forms"
       />
       <details className="ak-paste">
-        <summary>回答テキストを貼り付けて送る</summary>
+        <summary>{t('review.pasteSummary')}</summary>
         <textarea
           value={pasted}
           onChange={(e) => setPasted(e.target.value)}
-          placeholder="【レビュー回答】… をそのまま貼り付け"
+          placeholder={t('review.pastePlaceholder')}
           rows={6}
         />
         {error ? <div className="ak-error">{error}</div> : null}
@@ -437,7 +424,7 @@ function IframeForm({ item, onSubmitted, notify }) {
           }}
         >
           {busy ? <Spinner size={15} /> : null}
-          <span>{busy ? '送信中…' : '貼り付けた回答を送る'}</span>
+          <span>{busy ? t('review.sending') : t('review.submitPasted')}</span>
         </button>
       </details>
     </div>
@@ -453,10 +440,11 @@ function IframeForm({ item, onSubmitted, notify }) {
  * 完了（ReadOnlyDetail）でも同じ位置に出す — 同じ操作は同じ場所に置く。
  */
 function SheetLink({ item }) {
+  const { t } = useI18n()
   return (
     <div className="ak-sheetlink">
       <a className="ak-link" href={`/api/review/${item.id}/sheet`} target="_blank" rel="noreferrer">
-        シート全体を開く ↗
+        {t('review.openSheet')}
       </a>
     </div>
   )
@@ -464,8 +452,9 @@ function SheetLink({ item }) {
 
 /** レビュー待ち以外（進行中・完了）の読み取り専用ビュー。回答フォームは出さない。 */
 function ReadOnlyDetail({ item, data, answer, notify, onStartAnnotation, onReopened, onOpenChat }) {
+  const { t } = useI18n()
   const ak = item.review || {}
-  const label = STATUS_LABEL[item.status] || item.status
+  const label = STATUS_KEY[item.status] ? t(STATUS_KEY[item.status]) : item.status
   const answered = ak.answeredAt ? relTime(Date.parse(ak.answeredAt)) : null
   const [anno, setAnno] = useState(null)
   const [zoomImg, setZoomImg] = useState(false)
@@ -492,13 +481,13 @@ function ReadOnlyDetail({ item, data, answer, notify, onStartAnnotation, onReope
     try {
       const r = await api(`/api/review/${item.id}/reopen`, {
         method: 'POST',
-        body: { reason: reopenReason.trim() || 'PWA から再確認を依頼' },
+        body: { reason: reopenReason.trim() || t('review.reopenReasonDefault') },
       })
-      if (!r?.ok) throw new Error('再確認依頼に失敗しました')
-      notify?.('再確認（review）へ戻しました')
+      if (!r?.ok) throw new Error(t('review.reopenFailed'))
+      notify?.(t('review.reopened'))
       onReopened?.()
     } catch (e) {
-      notify?.(e?.message || '再確認依頼に失敗しました')
+      notify?.(e?.message || t('review.reopenFailed'))
     } finally {
       setReopenBusy(false)
     }
@@ -516,12 +505,12 @@ function ReadOnlyDetail({ item, data, answer, notify, onStartAnnotation, onReope
         <span className="ak-label">{ak.label || item.id}</span>
         {ak.repo ? <span>{repoLabel(ak.repo)}</span> : null}
         {ak.round ? <span>r{ak.round}</span> : null}
-        {ak.questions ? <span>{ak.questions}問</span> : null}
-        {answered ? <span>回答 {answered}</span> : null}
-        {item.completedAt ? <span>完了 {relTime(item.completedAt)}</span> : null}
+        {ak.questions ? <span>{t('review.questionsCount', { n: ak.questions })}</span> : null}
+        {answered ? <span>{t('review.answeredAtLabel', { time: answered })}</span> : null}
+        {item.completedAt ? <span>{t('review.completedLabel', { time: relTime(item.completedAt) })}</span> : null}
       </div>
       <p className="ak-hint">
-        レビューを送れるのは「レビュー待ち」のシートだけです（このシートは{label}）。
+        {t('review.readonlyHint', { label })}
         {item.result ? (
           <>
             <br />
@@ -539,31 +528,31 @@ function ReadOnlyDetail({ item, data, answer, notify, onStartAnnotation, onReope
               setZoomImg(true)
             }}
           >
-            <img src={imgSrc} alt={`${ak.title || item.title} の画像`} />
+            <img src={imgSrc} alt={t('review.imageAlt', { title: ak.title || item.title })} />
           </button>
           {anno ? (
             <div className="ak-anno-preview-meta">
-              <span>注釈 {Array.isArray(anno.marks) ? anno.marks.length : 0} ストローク</span>
-              {anno.note ? <span> ・ メモ: {anno.note}</span> : null}
+              <span>{t('review.annotationMeta', { n: Array.isArray(anno.marks) ? anno.marks.length : 0 })}</span>
+              {anno.note ? <span>{t('review.annotationNote', { note: anno.note })}</span> : null}
             </div>
           ) : null}
         </div>
       ) : null}
       {hasHistory ? (
         <details className="ak-answers">
-          <summary>レビュー回答（履歴）</summary>
+          <summary>{t('review.answersSummary')}</summary>
           <ol className="ak-answer-list">
             {history.rows.map((r, i) => (
               <li key={r.id || i}>
                 <div className="ak-answer-q">{r.question || r.id}</div>
                 <div className="ak-answer-a">
-                  {r.choice ? `${r.choice}. ${r.label}` : 'お任せ（既定の案で反映）'}
+                  {r.choice ? `${r.choice}. ${r.label}` : t('review.delegated')}
                 </div>
                 {r.note ? <div className="ak-answer-note">{r.note}</div> : null}
               </li>
             ))}
           </ol>
-          {history.global ? <div className="ak-answer-global">全体メモ: {history.global}</div> : null}
+          {history.global ? <div className="ak-answer-global">{t('review.globalNote', { text: history.global })}</div> : null}
         </details>
       ) : null}
 
@@ -576,7 +565,7 @@ function ReadOnlyDetail({ item, data, answer, notify, onStartAnnotation, onReope
             onStartAnnotation?.(ak.target || '')
           }}
         >
-          🖊 スクショに赤入れして追加指示
+          {t('review.addAnnotation')}
         </button>
         {ak.chat ? (
           <button
@@ -587,20 +576,20 @@ function ReadOnlyDetail({ item, data, answer, notify, onStartAnnotation, onReope
               onOpenChat?.(ak.chat)
             }}
           >
-            💬 起票元のチャットを開く
+            {t('review.openOriginChat')}
           </button>
         ) : null}
       </div>
 
       {item.status === 'done' ? (
         <details className="ak-reopen">
-          <summary>↩ 反映が不十分なとき（再確認を依頼）</summary>
+          <summary>{t('review.reopenSummary')}</summary>
           <textarea
             className="inp"
             rows={2}
             value={reopenReason}
             onChange={(e) => setReopenReason(e.target.value.slice(0, 400))}
-            placeholder="再確認したい理由・修正点（任意）"
+            placeholder={t('review.reopenPlaceholder')}
           />
           <button
             type="button"
@@ -613,7 +602,7 @@ function ReadOnlyDetail({ item, data, answer, notify, onStartAnnotation, onReope
             }}
           >
             {reopenBusy ? <Spinner size={14} /> : null}
-            <span>{reopenBusy ? '送信中…' : 'review へ差し戻す'}</span>
+            <span>{reopenBusy ? t('review.sending') : t('review.reopenSubmit')}</span>
           </button>
         </details>
       ) : null}
@@ -624,18 +613,18 @@ function ReadOnlyDetail({ item, data, answer, notify, onStartAnnotation, onReope
               className="ak-zoom"
               role="dialog"
               aria-modal="true"
-              aria-label="注釈画像の拡大"
+              aria-label={t('review.zoomAria')}
               onClick={() => setZoomImg(false)}
             >
               <figure onClick={(e) => e.stopPropagation()}>
-                <img src={imgSrc} alt={`${ak.title || item.title} の拡大画像`} />
+                <img src={imgSrc} alt={t('review.zoomAlt', { title: ak.title || item.title })} />
                 <figcaption>
                   <b>{ak.title || item.title}</b>
                   {anno?.note ? <span>{anno.note}</span> : null}
                 </figcaption>
               </figure>
               <button className="ak-zoom-close" type="button" onClick={() => setZoomImg(false)}>
-                閉じる
+                {t('common.close')}
               </button>
             </div>,
             document.body,
@@ -665,7 +654,7 @@ function downscaleFile(file) {
     }
     img.onerror = () => {
       URL.revokeObjectURL(url)
-      reject(new Error('画像を読み込めませんでした'))
+      reject(new Error(t('review.imageLoadFailed')))
     }
     img.src = url
   })
@@ -673,6 +662,7 @@ function downscaleFile(file) {
 
 /** 「＋ 注釈」: 端末の画像 / library・直近スクショ から注釈タスクを作る。 */
 function NewAnnotationSheet({ onCreated, onClose, notify, initialTarget = '' }) {
+  const { t } = useI18n()
   const [items, setItems] = useState(null)
   const [targets, setTargets] = useState([])
   const [target, setTarget] = useState('')
@@ -686,7 +676,7 @@ function NewAnnotationSheet({ onCreated, onClose, notify, initialTarget = '' }) 
       .then((r) => setItems(r.items || []))
       .catch((e) => {
         setItems([])
-        setError(e?.message || '一覧を取得できません')
+        setError(e?.message || t('review.listFailed'))
       })
     api('/api/review/targets')
       .then((r) => {
@@ -708,11 +698,11 @@ function NewAnnotationSheet({ onCreated, onClose, notify, initialTarget = '' }) 
       // 起票元の会話（完了報告を戻す宛先 `chat=`）。新規会話未送信中でも直前の会話 ID を引き継ぐ。
       const chat = readActiveChatId()
       const r = await api('/api/review/annotation/new', { method: 'POST', body: { ...body, chat } })
-      if (!r?.ok) throw new Error(r?.message || '作成できませんでした')
-      notify?.(`注釈タスクを作りました（${r.image}）`)
+      if (!r?.ok) throw new Error(r?.message || t('review.createFailed'))
+      notify?.(t('review.createdAnno', { image: r.image }))
       onCreated?.(r)
     } catch (e) {
-      setError(e?.message || '作成できませんでした')
+      setError(e?.message || t('review.createFailed'))
     } finally {
       setBusy(false)
     }
@@ -727,7 +717,7 @@ function NewAnnotationSheet({ onCreated, onClose, notify, initialTarget = '' }) 
       const dataUrl = await downscaleFile(f)
       await create({ source: 'upload', image: dataUrl, title: f.name.replace(/\.[a-z]+$/i, ''), slug: f.name, target })
     } catch (e) {
-      setError(e?.message || '取り込めませんでした')
+      setError(e?.message || t('review.importFailed'))
       setBusy(false)
     }
   }
@@ -739,18 +729,18 @@ function NewAnnotationSheet({ onCreated, onClose, notify, initialTarget = '' }) 
       : items
 
   return (
-    <Sheet title="注釈の下地を選ぶ" onClose={onClose}>
+    <Sheet title={t('review.newAnnoTitle')} onClose={onClose}>
       <div className="ak-new">
         <button className="btn primary" type="button" disabled={busy} onClick={() => fileRef.current?.click()}>
-          端末の画像（ギャラリー / カメラ）
+          {t('review.pickFromDevice')}
         </button>
         <input ref={fileRef} type="file" accept="image/*" hidden onChange={onPick} />
         <label className="ak-new-target-row">
-          <span>対象</span>
+          <span>{t('review.target')}</span>
           <select className="ak-new-target" value={target} onChange={(e) => setTarget(e.target.value)}>
             {targets.map((tg) => (
               <option key={tg.path} value={tg.path}>
-                {tg.label}（{tg.id}）
+                {t('review.targetOption', { label: tg.label, id: tg.id })}
               </option>
             ))}
           </select>
@@ -765,7 +755,7 @@ function NewAnnotationSheet({ onCreated, onClose, notify, initialTarget = '' }) 
                 setRepoOnly(true)
               }}
             >
-              {selectedTarget.id} のみ
+              {t('review.onlyRepo', { id: selectedTarget.id })}
             </button>
             <button
               type="button"
@@ -775,15 +765,15 @@ function NewAnnotationSheet({ onCreated, onClose, notify, initialTarget = '' }) 
                 setRepoOnly(false)
               }}
             >
-              すべて
+              {t('review.all')}
             </button>
           </div>
         ) : null}
         {error ? <div className="ak-error">{error}</div> : null}
-        <div className="ak-new-sub">library と直近のスクショ（{shownItems ? shownItems.length : '…'} 件）</div>
+        <div className="ak-new-sub">{t('review.librarySub', { n: shownItems ? shownItems.length : '…' })}</div>
         {shownItems && !shownItems.length ? (
           <div className="ak-worker-empty">
-            {repoOnly ? 'このリポジトリの画像はまだありません（「すべて」から選べます）' : 'まだ画像がありません'}
+            {repoOnly ? t('review.repoEmpty') : t('review.libraryEmpty')}
           </div>
         ) : null}
         <div className="ak-new-grid">
@@ -809,16 +799,14 @@ function NewAnnotationSheet({ onCreated, onClose, notify, initialTarget = '' }) 
             </button>
           ))}
         </div>
-        <p className="ak-hint">
-          端末の画像は長辺1600px / JPEG 0.85 に縮小して送ります。チャットに貼った画像は
-          agent が <code>library/chat/</code> へ取り込んだものがここに出ます。
-        </p>
+        <p className="ak-hint">{t('review.newAnnoHint')}</p>
       </div>
     </Sheet>
   )
 }
 
 export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
+  const { t } = useI18n()
   const [state, setState] = useState({ loading: true, items: [], error: null })
   const [tab, setTab] = useState('waiting')
   const [open, setOpen] = useState(null)
@@ -849,7 +837,7 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
       return items
     } catch (e) {
       lastLoadOkRef.current = false
-      setState({ loading: false, items: [], error: e?.message || '取得できません' })
+      setState({ loading: false, items: [], error: e?.message || t('review.loadFailed') })
       return []
     }
   }, [])
@@ -889,7 +877,7 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
       setAnswer(r.answer ?? null)
     } catch (e) {
       // レビュー待ちなら理由を出す。読むだけの項目はシートが無いこともあるので黙る
-      if (isWaiting(item)) setDataError(e?.message || 'sheet.json がありません')
+      if (isWaiting(item)) setDataError(e?.message || t('review.sheetMissing'))
     }
   }, [])
 
@@ -943,11 +931,13 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
       } catch {
         /* noop */
       }
-      const done = items.filter((n) => /完了/.test(n.text || ''))
+      const done = items.filter((n) => n.kind === 'done' || /^✅/.test(String(n.text || '')))
       const latest = done[done.length - 1]
       if (latest && latest.at > feedNotifiedRef.current) {
         // 初回読み込みでは出さない（過去の完了を今の通知として見せない）
-        if (feedNotifiedRef.current) notify?.(`レビュー: ${String(latest.text).replace(/^✅\s*/, '')}`)
+        if (feedNotifiedRef.current) {
+          notify?.(t('review.feedNotice', { text: String(latest.text).replace(/^✅\s*/, '') }))
+        }
         feedNotifiedRef.current = latest.at
       }
     } catch {
@@ -967,16 +957,16 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
    */
   async function handleSubmitted(answeredId, result) {
     const items = await load()
-    const head = result?.duplicate ? '同じ回答が既に保存されています' : '回答を送信しました'
+    const head = result?.duplicate ? t('review.duplicate') : t('review.answerSent')
     const next = nextWaiting(items, answeredId)
     if (next) {
       await openItem(next)
-      notify?.(`${head} — 次の判断待ちを開きました`)
+      notify?.(t('review.nextOpened', { head }))
       return
     }
     setTab('waiting')
     closeSheet()
-    notify?.(`${head} — 判断待ちは残っていません`)
+    notify?.(t('review.noneLeft', { head }))
   }
 
   const hasItems = state.items.length > 0
@@ -985,9 +975,9 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
     <div className="pane ak-page">
       <div className="ak-head">
         <div>
-          <div className="ak-title">レビュー</div>
+          <div className="ak-title">{t('review.title')}</div>
           <div className="ak-sub">
-            {counts.waiting ? `${counts.waiting} 件の判断待ち` : '判断待ちはありません'}
+            {counts.waiting ? t('review.waitingSub', { n: counts.waiting }) : t('review.noneWaiting')}
           </div>
         </div>
         <span className="ak-head-actions">
@@ -1000,7 +990,7 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
               setShowNew(true)
             }}
           >
-            ＋ 注釈
+            {t('review.newAnnotation')}
           </button>
           <RefreshButton onRefresh={refreshReview} />
         </span>
@@ -1021,32 +1011,32 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
       ) : null}
 
       <div className="chips ak-tabs" role="tablist">
-        {TABS.map((t) => (
+        {TABS.map((item) => (
           <button
-            key={t.id}
+            key={item.id}
             type="button"
             role="tab"
-            aria-selected={tab === t.id}
-            className={`chip${tab === t.id ? ' on' : ''}`}
+            aria-selected={tab === item.id}
+            className={`chip${tab === item.id ? ' on' : ''}`}
             onClick={() => {
-              if (tab !== t.id) haptic('tap')
-              setTab(t.id)
+              if (tab !== item.id) haptic('tap')
+              setTab(item.id)
             }}
           >
-            {t.label}
-            {t.id !== 'done' && counts[t.id] ? ` ${counts[t.id]}` : null}
+            {t(item.key)}
+            {item.id !== 'done' && counts[item.id] ? ` ${counts[item.id]}` : null}
           </button>
         ))}
       </div>
 
       {state.error ? <div className="ak-error">{state.error}</div> : null}
-      {state.loading ? <Loader label="読み込み中…" /> : null}
+      {state.loading ? <Loader label={t('common.loading')} /> : null}
 
       {!state.loading && !hasItems ? (
         <div className="empty">
-          まだシートがありません。
+          {t('review.emptyNoSheets')}
           <br />
-          カンバン board <b>mobile</b> にタスクを作ると、agent がシートを生成します。
+          {t('review.emptyNoSheetsHint')}
         </div>
       ) : null}
 
@@ -1059,14 +1049,14 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
           </section>
         ) : (
           <div className="ak-empty-card">
-            <div className="ak-empty-title">判断待ちはありません</div>
-            <p className="ak-empty-body">次の仕様はチャットから投げてください。</p>
+            <div className="ak-empty-title">{t('review.noneWaiting')}</div>
+            <p className="ak-empty-body">{t('review.emptyBody')}</p>
             <button className="ak-empty-btn" type="button" onClick={() => setShowNew(true)}>
-              ＋ 注釈を作る
+              {t('review.emptyNewAnnotation')}
             </button>
-            <p className="ak-empty-note">ライブラリの画像に赤を入れて送ることもできます</p>
+            <p className="ak-empty-note">{t('review.emptyNote')}</p>
             <div className="ak-empty-meta">
-              進行中 {counts.active} 件 ・ 完了 {groups.doneTotal} 件
+              {t('review.emptyMeta', { active: counts.active, done: groups.doneTotal })}
             </div>
           </div>
         )
@@ -1080,14 +1070,14 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
             ))}
           </section>
         ) : (
-          <div className="empty">進行中はありません。</div>
+          <div className="empty">{t('review.noActive')}</div>
         )
       ) : null}
 
       {!state.loading && hasItems && tab === 'done' ? (
         <>
           <div className="ak-group-title">
-            {showAllDone ? `全 ${groups.doneTotal} 件` : doneHint(groups.doneTotal)}
+            {showAllDone ? t('review.allDone', { n: groups.doneTotal }) : doneHint(groups.doneTotal)}
           </div>
           {groups.done.length ? (
             <section className="ak-group">
@@ -1098,11 +1088,11 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
           ) : null}
           {groups.doneTotal > groups.done.length ? (
             <button className="btn ghost" style={{ width: '100%', marginTop: 8 }} onClick={() => setShowAllDone(true)}>
-              すべて表示（残り {groups.doneTotal - groups.done.length} 件）
+              {t('review.showAllDone', { n: groups.doneTotal - groups.done.length })}
             </button>
           ) : showAllDone && groups.doneTotal > DONE_LIMIT ? (
             <button className="btn ghost" style={{ width: '100%', marginTop: 8 }} onClick={() => setShowAllDone(false)}>
-              直近 {DONE_LIMIT} 件のみ表示
+              {t('review.showRecentOnly', { n: DONE_LIMIT })}
             </button>
           ) : null}
         </>
@@ -1135,7 +1125,7 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
           {open.review?.mode !== 'annotation' ? <SheetLink item={open} /> : null}
           {isWaiting(open) ? (
             <>
-              {dataError ? <div className="ak-error">{dataError} — シートを直接開いてください</div> : null}
+              {dataError ? <div className="ak-error">{t('review.openSheetDirectly', { error: dataError })}</div> : null}
               {data?.questions?.length ? (
                 <StandardForm item={open} data={data} onSubmitted={(r) => handleSubmitted(open.id, r)} />
               ) : (
@@ -1165,14 +1155,14 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
           )}
           {isWaiting(open) ? (
             <div className="ak-form">
-              <div className="row-sub">片付ける理由（任意・記録に残ります）</div>
+              <div className="row-sub">{t('review.closeReasonLabel')}</div>
               <textarea
                 className="inp"
                 rows={2}
                 style={{ marginTop: 6 }}
                 value={closeNote}
                 onChange={(e) => setCloseNote(e.target.value.slice(0, 400))}
-                placeholder="例: 不要になった / 別の Issue で扱う"
+                placeholder={t('review.closeReasonPlaceholder')}
               />
               <CloseActions
                 board={open.board || 'mobile'}

@@ -4,24 +4,35 @@ import { useInstallState, swState } from '../lib/useInstallState.js'
 import { diagnosePwa } from '../lib/pwaDiagnose.js'
 import { RefreshButton, Sheet, Spinner, fmtBytes, fmtDateTime, relTime } from '../components/Ui.jsx'
 import { haptic, isHapticEnabled, setHapticEnabled } from '../lib/haptic.js'
+import { useI18n } from '../i18n/index.js'
+import { LANGS } from '../i18n/lang.js'
 
 /**
  * 設定タブ。状態の参照・ログ末尾・監査ログ（キルスイッチの履歴）を置く。
  * 破壊的操作はタスクタブの「緊急操作」に集約し、ここは読み取り中心。
+ * 表示言語（Auto / English / 日本語）の切替もここに置く（SPEC §6.1）。
  */
 
-/** インストール形態の判定（WebAPK は referrer が android-app://…）。 */
-function launchSource() {
+/** インストール形態の判定（WebAPK は referrer が android-app://…）。表示名は呼び出し側で訳す。 */
+function launchSourceKind() {
   try {
     const ref = document.referrer || ''
-    if (ref.startsWith('android-app://')) return 'WebAPK'
+    if (ref.startsWith('android-app://')) return 'webapk'
     const standalone = window.matchMedia?.('(display-mode: standalone)')?.matches
-    return standalone ? 'スタンドアロン' : 'ブラウザ'
+    return standalone ? 'standalone' : 'browser'
   } catch {
-    return '—'
+    return 'unknown'
   }
 }
+
+/** 言語セレクタの選択肢（`Auto` は端末の言語に従う）。 */
+const LANG_CHOICES = [
+  { value: 'auto', key: 'settings.languageAuto' },
+  ...LANGS.map((l) => ({ value: l, key: l === 'ja' ? 'settings.languageJa' : 'settings.languageEn' })),
+]
+
 export function SettingsPane({ overview, notify, refresh }) {
+  const { t, pref, setPref } = useI18n()
   const install = useInstallState()
   const [diag, setDiag] = useState(null)
   const [diagBusy, setDiagBusy] = useState(false)
@@ -63,21 +74,21 @@ export function SettingsPane({ overview, notify, refresh }) {
         const d = await api('/api/snippets', { method: 'PUT', body: { custom: next } })
         setCustom((d.custom ?? []).map((s) => ({ id: s.id, label: s.label, text: s.text, hot: s.hot })))
         window.dispatchEvent(new Event('hm:snippets'))
-        notify('保存しました')
+        notify(t('settings.saved'))
       } catch (e) {
         notify(e.message)
       } finally {
         setSaving(false)
       }
     },
-    [notify],
+    [notify, t],
   )
 
   const addDraft = () => {
     const label = draftLabel.trim()
     const text = draftText.trim()
-    if (!label || !text) return notify('名前と文言を入れてください')
-    if (custom.length >= customMax) return notify(`マイスニペットは${customMax}個までです`)
+    if (!label || !text) return notify(t('settings.needNameAndText'))
+    if (custom.length >= customMax) return notify(t('settings.snippetLimit', { max: customMax }))
     saveSnippets([...custom, { label, text, hot: draftHot }])
     setDraftLabel('')
     setDraftText('')
@@ -150,58 +161,102 @@ export function SettingsPane({ overview, notify, refresh }) {
   const bridge = overview?.bridge
   const kanbanStats = overview?.kanban
 
+  const sourceKind = launchSourceKind()
+  const sourceLabel =
+    sourceKind === 'standalone'
+      ? t('settings.standalone')
+      : sourceKind === 'browser'
+        ? t('settings.browser')
+        : sourceKind === 'webapk'
+          ? 'WebAPK'
+          : '—'
+
   return (
     <div className="pane">
+      <div className="list-head">
+        <span>{t('settings.language')}</span>
+      </div>
+      <div className="chips" style={{ marginBottom: 10 }}>
+        {LANG_CHOICES.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            className={`chip${pref === o.value ? ' on' : ''}`}
+            aria-pressed={pref === o.value}
+            onClick={() => {
+              haptic('tap')
+              setPref(o.value)
+            }}
+          >
+            {t(o.key)}
+          </button>
+        ))}
+      </div>
+
       <div className="card">
         <div className="kv">
           <span>Hermes</span>
           <b>{overview?.hermes?.version ?? '—'}</b>
         </div>
         <div className="kv">
-          <span>モデル</span>
+          <span>{t('settings.model')}</span>
           <b>{overview?.hermes?.model ?? '—'}</b>
         </div>
         <div className="kv">
-          <span>メモリ</span>
-          <b>{mem ? `${fmtBytes(mem.used)} / ${fmtBytes(mem.total)}（${mem.percent}%）` : '—'}</b>
-        </div>
-        <div className="kv">
-          <span>ディスク</span>
-          <b>{disk ? `${fmtBytes(disk.free)} 空き（${disk.percent}% 使用）` : '—'}</b>
-        </div>
-        <div className="kv">
-          <span>稼働状態</span>
-          <b className={bridge?.ok === false ? 'bad-text' : ''}>
-            {bridge ? (bridge.ok ? `正常（${bridge.uptimeSec}s）` : '切断') : '—'}
+          <span>{t('settings.memory')}</span>
+          <b>
+            {mem
+              ? t('settings.memoryValue', { used: fmtBytes(mem.used), total: fmtBytes(mem.total), percent: mem.percent })
+              : '—'}
           </b>
         </div>
         <div className="kv">
-          <span>判断待ち</span>
-          <b>{kanbanStats ? `${kanbanStats.reviewWaiting} 件 / 稼働 ${kanbanStats.running}` : '—'}</b>
+          <span>{t('settings.disk')}</span>
+          <b>{disk ? t('settings.diskValue', { free: fmtBytes(disk.free), percent: disk.percent }) : '—'}</b>
         </div>
         <div className="kv">
-          <span>最終確認</span>
+          <span>{t('settings.bridge')}</span>
+          <b className={bridge?.ok === false ? 'bad-text' : ''}>
+            {bridge ? (bridge.ok ? t('settings.bridgeOk', { uptime: bridge.uptimeSec }) : t('settings.disconnected')) : '—'}
+          </b>
+        </div>
+        <div className="kv">
+          <span>{t('settings.reviewWaiting')}</span>
+          <b>
+            {kanbanStats
+              ? t('settings.kanbanValue', { waiting: kanbanStats.reviewWaiting, running: kanbanStats.running })
+              : '—'}
+          </b>
+        </div>
+        <div className="kv">
+          <span>{t('settings.lastChecked')}</span>
           <b>{relTime(overview?.checkedAt)}</b>
         </div>
         <div className="kv">
-          <span>起動元</span>
-          <b>{launchSource()}</b>
+          <span>{t('settings.launchSource')}</span>
+          <b>{sourceLabel}</b>
         </div>
         <div className="kv">
-          <span>インストール可否</span>
-          <b>{install.available ? '可能（ボタンで実行）' : install.installed ? 'インストール済み' : '不可（要件未達）'}</b>
+          <span>{t('settings.installability')}</span>
+          <b>
+            {install.available
+              ? t('settings.installPossible')
+              : install.installed
+                ? t('settings.installDone')
+                : t('settings.installNo')}
+          </b>
         </div>
         <div className="kv">
           <span>Service Worker</span>
           <b>{swState()}</b>
         </div>
         <div className="kv" style={{ alignItems: 'center' }}>
-          <span>タップ時の振動</span>
+          <span>{t('settings.haptics')}</span>
           <button
             type="button"
             role="switch"
             aria-checked={hapticOn}
-            aria-label="タップ時の振動"
+            aria-label={t('settings.haptics')}
             className={`hm-switch${hapticOn ? ' on' : ''}`}
             onClick={() => {
               const next = setHapticEnabled(!hapticOn)
@@ -242,7 +297,7 @@ export function SettingsPane({ overview, notify, refresh }) {
           }}
         >
           {diagBusy ? <Spinner size={14} /> : null}
-          <span>{diagBusy ? '診断中…' : 'PWA 診断を実行'}</span>
+          <span>{diagBusy ? t('settings.diagRunning') : t('settings.diagRun')}</span>
         </button>
         {diag && (
           <div className="diag" style={{ marginTop: 10, fontSize: 12, lineHeight: 1.5 }}>
@@ -263,22 +318,24 @@ export function SettingsPane({ overview, notify, refresh }) {
             style={{ marginTop: 8 }}
             onClick={async () => {
               const r = await install.prompt()
-              notify?.(r === 'accepted' ? 'インストールを開始しました' : 'キャンセルしました')
+              notify?.(
+                r === 'accepted' ? t('settings.installPromptAccepted') : t('settings.installPromptCancelled'),
+              )
             }}
           >
-            アプリとしてインストール
+            {t('settings.installApp')}
           </button>
         )}
         <RefreshButton
-          label="再取得"
-          ariaLabel="状態を再取得"
+          label={t('settings.refresh')}
+          ariaLabel={t('settings.refreshAria')}
           className="hm-btn-inner"
           onRefresh={async () => Boolean(await refresh?.())}
         />
       </div>
 
       <div className="list-head">
-        <span>直近のセッション</span>
+        <span>{t('settings.recentSessions')}</span>
       </div>
       <div className="list">
         {sessions.map((s) => (
@@ -292,20 +349,20 @@ export function SettingsPane({ overview, notify, refresh }) {
             </span>
           </div>
         ))}
-        {!sessions.length ? <div className="empty">なし</div> : null}
+        {!sessions.length ? <div className="empty">{t('settings.none')}</div> : null}
       </div>
 
       <div className="list-head">
-        <span>リポジトリ（{repoList.length}）</span>
+        <span>{t('settings.repos', { count: repoList.length })}</span>
         <button
           className="link"
           disabled={repoBusy}
           onClick={async () => {
             haptic('tap')
-            await saveRepos({ path: '/api/repos/scan', done: '再スキャンしました' })
+            await saveRepos({ path: '/api/repos/scan', done: t('settings.rescanned') })
           }}
         >
-          再スキャン
+          {t('settings.rescan')}
         </button>
       </div>
       <div className="list">
@@ -316,28 +373,34 @@ export function SettingsPane({ overview, notify, refresh }) {
                 {r.label}
                 {r.source === 'custom' ? (
                   <span className="pill" style={{ marginLeft: 8 }}>
-                    手動
+                    {t('settings.manual')}
                   </span>
                 ) : null}
               </span>
               <span className="row-sub" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {r.path} ・ {r.source} ・ ボード {r.boards?.length ?? 0}
+                {t('settings.repoLine', { path: r.path, source: r.source, count: r.boards?.length ?? 0 })}
               </span>
             </span>
             <button
               className="link"
               disabled={repoBusy}
-              onClick={() => saveRepos({ method: 'DELETE', path: `/api/repos/${encodeURIComponent(r.id)}`, done: '一覧から外しました' })}
+              onClick={() =>
+                saveRepos({
+                  method: 'DELETE',
+                  path: `/api/repos/${encodeURIComponent(r.id)}`,
+                  done: t('settings.hidden'),
+                })
+              }
             >
-              非表示
+              {t('settings.hide')}
             </button>
           </div>
         ))}
-        {!repoList.length ? <div className="empty">見つかりません（下の欄で追加）</div> : null}
+        {!repoList.length ? <div className="empty">{t('settings.reposEmpty')}</div> : null}
       </div>
 
       <div className="list-head">
-        <span>自動スキャン先（直下 1 階層）</span>
+        <span>{t('settings.scanDirs')}</span>
       </div>
       <div className="list">
         {scanDirs.map((d) => (
@@ -348,19 +411,21 @@ export function SettingsPane({ overview, notify, refresh }) {
             <button
               className="link"
               disabled={repoBusy}
-              onClick={() => saveRepos({ body: { scanDirs: scanDirs.filter((x) => x !== d) }, done: '外しました' })}
+              onClick={() =>
+                saveRepos({ body: { scanDirs: scanDirs.filter((x) => x !== d) }, done: t('settings.removed') })
+              }
             >
-              削除
+              {t('settings.delete')}
             </button>
           </div>
         ))}
-        {!scanDirs.length ? <div className="empty">未設定（下の欄で追加）</div> : null}
+        {!scanDirs.length ? <div className="empty">{t('settings.scanDirsEmpty')}</div> : null}
       </div>
 
       <div className="card" style={{ marginTop: 10 }}>
         <input
           className="inp"
-          placeholder="走査先（例: ~/Projects）"
+          placeholder={t('settings.scanDirPlaceholder')}
           maxLength={200}
           value={scanDraft}
           onChange={(e) => setScanDraft(e.target.value)}
@@ -371,14 +436,14 @@ export function SettingsPane({ overview, notify, refresh }) {
           style={{ marginTop: 8 }}
           onClick={async () => {
             const next = [...scanDirs, scanDraft.trim()]
-            if (await saveRepos({ body: { scanDirs: next }, done: '走査先を追加しました' })) setScanDraft('')
+            if (await saveRepos({ body: { scanDirs: next }, done: t('settings.scanDirAdded') })) setScanDraft('')
           }}
         >
-          走査先に追加
+          {t('settings.addScanDir')}
         </button>
         <input
           className="inp"
-          placeholder="リポジトリのパス（例: ~/work/my-repo）"
+          placeholder={t('settings.repoPathPlaceholder')}
           maxLength={300}
           value={pathDraft}
           onChange={(e) => setPathDraft(e.target.value)}
@@ -389,15 +454,15 @@ export function SettingsPane({ overview, notify, refresh }) {
           disabled={repoBusy || !pathDraft.trim()}
           style={{ marginTop: 8 }}
           onClick={async () => {
-            if (await saveRepos({ body: { path: pathDraft.trim() }, done: 'リポジトリを追加しました' })) setPathDraft('')
+            if (await saveRepos({ body: { path: pathDraft.trim() }, done: t('settings.repoAdded') })) setPathDraft('')
           }}
         >
-          リポジトリを追加
+          {t('settings.addRepo')}
         </button>
       </div>
 
       <div className="list-head">
-        <span>ログ</span>
+        <span>{t('settings.logs')}</span>
       </div>
       <div className="row">
         {['gateway', 'errors', 'agent'].map((n) => (
@@ -416,7 +481,7 @@ export function SettingsPane({ overview, notify, refresh }) {
       </div>
 
       <div className="list-head">
-        <span>監査ログ（緊急操作・端末）</span>
+        <span>{t('settings.audit')}</span>
         <RefreshButton variant="link" onRefresh={loadAudit} />
       </div>
       <div className="list">
@@ -428,16 +493,16 @@ export function SettingsPane({ overview, notify, refresh }) {
                 {fmtDateTime(a.at)}
                 {a.task ? ` ・ ${a.task}` : ''}
                 {a.action ? ` ・ ${a.action}` : ''}
-                {a.ok === false ? ' ・ 失敗' : ''}
+                {a.ok === false ? ` ・ ${t('settings.auditFailed')}` : ''}
               </span>
             </span>
           </div>
         ))}
-        {!(audit ?? []).length ? <div className="empty">まだありません</div> : null}
+        {!(audit ?? []).length ? <div className="empty">{t('settings.auditEmpty')}</div> : null}
       </div>
 
       <div className="list-head">
-        <span>マイスニペット（{custom.length}/{customMax}）</span>
+        <span>{t('settings.customSnippets', { count: custom.length, max: customMax })}</span>
       </div>
       <div className="list">
         {custom.map((s) => (
@@ -445,7 +510,7 @@ export function SettingsPane({ overview, notify, refresh }) {
             <span className="row-main" style={{ minWidth: 0 }}>
               <span className="row-title">
                 {s.label}
-                {s.hot ? <span className="pill" style={{ marginLeft: 8 }}>バー</span> : null}
+                {s.hot ? <span className="pill" style={{ marginLeft: 8 }}>{t('settings.bar')}</span> : null}
               </span>
               <span className="row-sub" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {s.text.replace(/\n/g, ' ')}
@@ -456,24 +521,24 @@ export function SettingsPane({ overview, notify, refresh }) {
               disabled={saving}
               onClick={() => saveSnippets(custom.filter((x) => x.id !== s.id))}
             >
-              削除
+              {t('settings.delete')}
             </button>
           </div>
         ))}
-        {!custom.length ? <div className="empty">まだありません（下の欄から追加）</div> : null}
+        {!custom.length ? <div className="empty">{t('settings.snippetsEmpty')}</div> : null}
       </div>
 
       <div className="card" style={{ marginTop: 10 }}>
         <input
           className="inp"
-          placeholder="名前（例: 議事録）"
+          placeholder={t('settings.snippetNamePlaceholder')}
           maxLength={20}
           value={draftLabel}
           onChange={(e) => setDraftLabel(e.target.value)}
         />
         <textarea
           className="inp"
-          placeholder="入力欄に挿入する文言（{{ここ}} は選択状態で挿入）"
+          placeholder={t('settings.snippetTextPlaceholder')}
           rows={3}
           maxLength={400}
           value={draftText}
@@ -482,17 +547,17 @@ export function SettingsPane({ overview, notify, refresh }) {
         />
         <label className="row-sub" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
           <input type="checkbox" checked={draftHot} onChange={(e) => setDraftHot(e.target.checked)} />
-          チャットのバーにも出す
+          {t('settings.showInBar')}
         </label>
         <button className="btn" onClick={addDraft} disabled={saving || custom.length >= customMax} style={{ marginTop: 10 }}>
-          {saving ? '保存中…' : '追加して保存'}
+          {saving ? t('settings.saving') : t('settings.addAndSave')}
         </button>
       </div>
 
       <div className="card" style={{ marginTop: 16 }}>
         <div className="row-sub" style={{ lineHeight: 1.7 }}>
-          Hermes Mobile v{overview?.hermes ? '0.1.0' : '0.1.0'} ・ 既存ダッシュボード（9119）は変更していません。
-          トークンは <span className="mono">~/.hermes/mobile-pwa/token</span>。
+          {t('settings.about', { version: '0.1.0' })}{' '}
+          <span className="mono">~/.hermes/mobile-pwa/token</span>
         </div>
       </div>
 

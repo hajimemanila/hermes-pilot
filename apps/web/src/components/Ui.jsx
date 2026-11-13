@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { haptic } from '../lib/haptic.js'
+import { useI18n } from '../i18n/index.js'
 
 /**
  * 最小限のアイコン（外部依存を増やさない）。
@@ -59,11 +60,13 @@ export function Spinner({ size = 16, className = '' }) {
  * 待機中のシンプルなローダー表示（画面・シート・一覧の初期ロード向け）。
  * @param {{label?: string, size?: number}} props
  */
-export function Loader({ label = '読み込み中…', size = 18 }) {
+export function Loader({ label, size = 18 }) {
+  const { t } = useI18n()
+  const text = label ?? t('common.loading')
   return (
     <div className="hm-loader" role="status" aria-live="polite">
       <Spinner size={size} />
-      {label ? <span>{label}</span> : null}
+      {text ? <span>{text}</span> : null}
     </div>
   )
 }
@@ -83,12 +86,15 @@ export function Loader({ label = '読み込み中…', size = 18 }) {
 export function RefreshButton({
   onRefresh,
   variant = 'btn',
-  label = '更新',
-  ariaLabel = '更新',
+  label,
+  ariaLabel,
   busy: externalBusy = false,
   disabled = false,
   className = '',
 }) {
+  const { t } = useI18n()
+  const text = label ?? t('common.refresh')
+  const aria = ariaLabel ?? t('common.refresh')
   const [running, setRunning] = useState(false)
   const [done, setDone] = useState(false)
   const timerRef = useRef(null)
@@ -143,13 +149,15 @@ export function RefreshButton({
       onClick={handleClick}
       disabled={busy || disabled}
       aria-busy={busy}
-      aria-label={ariaLabel}
-      title={ariaLabel}
+      aria-label={aria}
+      title={aria}
     >
       <span className={`hm-refresh-ico${busy ? ' hm-spin' : ''}`} aria-hidden="true">
         <Icon name={done ? 'check' : 'refresh'} size={iconSize} />
       </span>
-      {variant !== 'icon' && label ? <span>{busy ? '更新中' : done ? '更新済' : label}</span> : null}
+      {variant !== 'icon' && text ? (
+        <span>{busy ? t('common.refreshing') : done ? t('common.refreshed') : text}</span>
+      ) : null}
     </button>
   )
 }
@@ -181,6 +189,7 @@ function onGlobalSheetPop() {
  * （`TasksPane` が `#inbox` で管理している場合は二重に積まない）。
  */
 export function Sheet({ title, onClose, children }) {
+  const { t } = useI18n()
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
 
@@ -241,7 +250,7 @@ export function Sheet({ title, onClose, children }) {
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
         <div className="sheet-head">
           <span>{title}</span>
-          <button className="icon-btn" onClick={handleClose} aria-label="閉じる">
+          <button className="icon-btn" onClick={handleClose} aria-label={t('common.close')}>
             <Icon name="close" size={18} />
           </button>
         </div>
