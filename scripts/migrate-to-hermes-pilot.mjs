@@ -66,6 +66,17 @@ function expand(p, home) {
   return path.resolve(String(p).replace(/^~/, home))
 }
 
+/**
+ * `HERMES_HOME` がプロファイルディレクトリ（`~/.hermes/profiles/<name>`）を指していることがある
+ * （worker / cron から実行した場合）。その時は 2 つ上（`~/.hermes`）を Hermes ホームとして扱う。
+ * そうしないと kanban.db を見つけられず、データも `profiles/<name>/plugin-data` に散らばる。
+ */
+export function resolveHermesHome(raw, home = os.homedir()) {
+  const abs = path.resolve(String(raw).replace(/^~/, home))
+  if (path.basename(path.dirname(abs)) === 'profiles') return path.dirname(path.dirname(abs))
+  return abs
+}
+
 /** 監視対象の kanban.db（ルート＋各ボード）。 */
 export function findKanbanDbs(hermesHome) {
   const out = []
@@ -152,7 +163,7 @@ export function rewriteBoardWorkdir(hermesHome, { oldWorkdir, newWorkdir }) {
  */
 export function migrate(opts = {}) {
   const home = opts.home ?? process.env.HOME ?? os.homedir()
-  const hermesHome = opts.hermesHome ?? process.env.HERMES_HOME ?? path.join(home, '.hermes')
+  const hermesHome = resolveHermesHome(opts.hermesHome ?? process.env.HERMES_HOME ?? path.join(home, '.hermes'), home)
   const pluginDataDir =
     opts.pluginDataDir ?? process.env.HP_DATA_DIR ?? path.join(hermesHome, 'plugin-data', 'hermes-pilot')
   const reviewDir = path.join(pluginDataDir, 'review')

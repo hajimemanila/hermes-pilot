@@ -4,7 +4,13 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { migrate, findKanbanDbs, rewriteKanbanTag, formatReport } from '../../../scripts/migrate-to-hermes-pilot.mjs'
+import {
+  migrate,
+  findKanbanDbs,
+  rewriteKanbanTag,
+  formatReport,
+  resolveHermesHome,
+} from '../../../scripts/migrate-to-hermes-pilot.mjs'
 
 /** 旧環境（akapen / plugin-data/akapen / mobile-pwa / kanban）を一時ディレクトリに作る。 */
 function tempLegacy() {
@@ -190,4 +196,28 @@ test('rewriteKanbanTag はタスク表が無い DB でも例外を投げない�
   db.exec('CREATE TABLE other (id TEXT)')
   db.close()
   assert.throws(() => rewriteKanbanTag(dbPath), /no such table|tasks/i)
+})
+
+test('resolveHermesHome はプロファイルディレクトリを ~/.hermes に正す（worker からの実行対策）', () => {
+  const home = '/Users/alice'
+  assert.equal(resolveHermesHome('/Users/alice/.hermes/profiles/mobile', home), '/Users/alice/.hermes')
+  assert.equal(resolveHermesHome('/Users/alice/.hermes', home), '/Users/alice/.hermes')
+  assert.equal(resolveHermesHome('~/.hermes', home), '/Users/alice/.hermes')
+  // profiles/<name>/ 以外はそのまま
+  assert.equal(resolveHermesHome('/Users/alice/work/hermes', home), '/Users/alice/work/hermes')
+})
+
+test('migrate は HERMES_HOME がプロファイルを指していても profiles 配下に書かない', () => {
+  const env = tempLegacy()
+  // 実際に起きやすい取り違え: worker の HERMES_HOME は profiles/<name> を指す
+  const report = migrate({
+    home: env.home,
+    hermesHome: path.join(env.hermesHome, 'profiles', 'mobile'),
+  })
+  assert.equal(report.hermesHome, env.hermesHome)
+  assert.equal(report.pluginDataDir, path.join(env.hermesHome, 'plugin-data', 'hermes-pilot'))
+  assert.equal(fs.existsSync(path.join(env.hermesHome, 'profiles', 'mobile', 'plugin-data')), false)
+  // kanban.db も本物（profiles の外）を見つける
+  assert.equal(report.kanban.length, 1)
+  assert.equal(report.kanban[0].updated, 2)
 })
