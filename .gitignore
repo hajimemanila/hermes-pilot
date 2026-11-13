@@ -4,3 +4,6 @@ dist/
 *.log
 apps/web/dist.prev/
 apps/web/dist.next/
+__pycache__/
+*.pyc
+

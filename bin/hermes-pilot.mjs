@@ -43,6 +43,30 @@ export const DEFAULT_HOST = '127.0.0.1'
 /** 同梱スキル（`hermes-pilot init` で `~/.hermes/skills/` へ配置する）。 */
 export const BUNDLED_SKILLS = ['quick-review', 'annotation']
 
+/** 標準ダッシュボード（:9119）に出すタブのプラグイン名。 */
+export const DASHBOARD_PLUGIN = 'hermes-pilot'
+
+/**
+ * ダッシュボード・プラグインの配置表（リポジトリ内 → `~/.hermes/plugins/hermes-pilot/`）。
+ *
+ * 標準ダッシュボードは `<plugins>/<name>/dashboard/manifest.json` を走査し、
+ * `manifest.json` の `entry` / `css` を `dashboard/` からの相対パスとして配信する
+ * （`hermes_cli/web_server_dashboard.py`）。リポジトリでは編集しやすいよう
+ * `apps/dashboard/` 直下に置き、`init` が `dashboard/` と `dist/` の形へ写す。
+ */
+export const DASHBOARD_FILES = [
+  { from: 'plugin.yaml', to: 'plugin.yaml' },
+  // ユーザープラグインの dashboard バックエンドは「本物の・有効なプラグイン」でないと
+  // マウントされない（`hermes_cli/web_server_dashboard.py` → `_plugin_api_mount_skip_reason`）。
+  // `hermes plugins enable hermes-pilot` が名前を解決できるよう、no-op の `register` を置く。
+  { from: 'apps/dashboard/plugin_init.py', to: '__init__.py' },
+  { from: 'apps/dashboard/manifest.json', to: 'dashboard/manifest.json' },
+  { from: 'apps/dashboard/plugin_api.py', to: 'dashboard/plugin_api.py' },
+  { from: 'apps/dashboard/pilot_dashboard.py', to: 'dashboard/pilot_dashboard.py' },
+  { from: 'apps/dashboard/index.js', to: 'dashboard/dist/index.js' },
+  { from: 'apps/dashboard/style.css', to: 'dashboard/dist/style.css' },
+]
+
 /**
  * `HERMES_HOME` の補正（`scripts/migrate-to-hermes-pilot.mjs` の同名関数と同じ規則）。
  *
@@ -131,7 +155,7 @@ export function helpText() {
     'hermes-pilot — control your Hermes Agent from your phone or tablet',
     '',
     'Usage:',
-    '  hermes-pilot init                        First-run setup: data dirs, token, skills, pairing QR',
+    '  hermes-pilot init [--force]             First-run setup: data dirs, token, skills, dashboard tab, pairing QR',
     '  hermes-pilot start [--port 4097] [--host 127.0.0.1] [--tls-port 8444]',
     '                                           Build the UI if needed and run the bridge',
     '  hermes-pilot qr [--port 4097] [--tls-port 8444] [--png <path>]',
@@ -406,12 +430,63 @@ function hasLegacyEnv(p) {
 }
 
 /**
+ * 標準ダッシュボード用タブを `~/.hermes/plugins/hermes-pilot/` へ**冪等に**配置する。
+ *
+ * - 既にあるファイルは `force` が真のときだけ上書きする（`skills` 配置と同じ流儀）。
+ * - あわせて `dashboard.json`（CLI の絶対パス・node・リポジトリ根）をデータ先へ書き、
+ *   ダッシュボードの「サービス」操作がこれを spawn できるようにする。
+ * @param {object} p `resolvePaths()` の結果
+ * @param {object} [opts] オプション
+ * @param {boolean} [opts.force] 既存ファイルも上書きする
+ * @returns {{root: string, installed: string[], skipped: string[]}} 結果
+ */
+export function installDashboardPlugin(p, { force = false } = {}) {
+  const root = path.join(p.hermesHome, 'plugins', DASHBOARD_PLUGIN)
+  const installed = []
+  const skipped = []
+  for (const file of DASHBOARD_FILES) {
+    const src = path.join(ROOT, file.from)
+    const dest = path.join(root, file.to)
+    if (!fs.existsSync(src)) continue
+    if (fs.existsSync(dest) && !force) {
+      skipped.push(dest)
+      continue
+    }
+    fs.mkdirSync(path.dirname(dest), { recursive: true })
+    fs.copyFileSync(src, dest)
+    installed.push(dest)
+  }
+  // サービス操作は CLI を spawn する。常駐・worker からも辿れるよう絶対パスで残す。
+  fs.mkdirSync(p.dataDir, { recursive: true, mode: 0o700 })
+  fs.writeFileSync(
+    path.join(p.dataDir, 'dashboard.json'),
+    `${JSON.stringify(
+      {
+        version: 1,
+        plugin: DASHBOARD_PLUGIN,
+        root: ROOT,
+        cli: path.join(ROOT, 'bin', 'hermes-pilot.mjs'),
+        node: process.execPath,
+        updatedAt: new Date().toISOString(),
+      },
+      null,
+      2,
+    )}\n`,
+    { mode: 0o600 },
+  )
+  return { root, installed, skipped }
+}
+
+/**
  * `init` の本体（冪等）。
  * @param {object} p `resolvePaths()` の結果
  * @param {number} port ポート
- * @returns {{created: boolean, migrated: boolean, skills: string[]}} 結果
+ * @param {object} [opts] オプション
+ * @param {number|null} [opts.tlsPort] TLS ポート
+ * @param {boolean} [opts.force] ダッシュボード・プラグインを上書きする
+ * @returns {{created: boolean, migrated: boolean, skills: string[], dashboard: object}} 結果
  */
-export async function runInit(p, port, { tlsPort = null } = {}) {
+export async function runInit(p, port, { tlsPort = null, force = false } = {}) {
   fs.mkdirSync(p.dataDir, { recursive: true, mode: 0o700 })
   for (const sub of ['sheets', 'shots', 'library']) {
     fs.mkdirSync(path.join(p.reviewDir, sub), { recursive: true })
@@ -442,6 +517,8 @@ export async function runInit(p, port, { tlsPort = null } = {}) {
       out(`  ! skill ${name}: ${err?.message ?? err}`)
     }
   }
+  // 標準ダッシュボードのタブ（冪等）。`--force` で既存ファイルも上書きする。
+  const dashboard = installDashboardPlugin(p, { force })
   out(
     '',
     'hermes-pilot init 完了 / done',
@@ -450,8 +527,13 @@ export async function runInit(p, port, { tlsPort = null } = {}) {
     `  スキル / skills: ${installed.length ? installed.join(', ') : '（既に配置済み）'}`,
     `  移行 / migrate: ${migrated ? '実行' : '不要'}`,
   )
+  out(
+    `  ダッシュボード / dashboard tab: ${dashboard.root}`,
+    `    ${dashboard.installed.length} ファイル配置${dashboard.installed.length ? '' : '（既に配置済み。--force で上書き）'}`,
+    '    → Hermes ダッシュボード（:9119）の「Hermes Pilot」タブに出ます。初回は `hermes plugins enable hermes-pilot` とダッシュボードの再起動が必要です。',
+  )
   printPairing({ token: mintPairCode(p.dataDir), port, tlsPort, pngPath: path.join(p.dataDir, 'pair-qr.png') })
-  return { created, migrated, skills: installed }
+  return { created, migrated, skills: installed, dashboard }
 }
 
 // migrate モジュールは CLI 実行時にだけ遅延ロードする（テストの import を軽くする）
@@ -657,7 +739,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   if (command === 'init') {
-    await runInit(paths, port, { tlsPort })
+    await runInit(paths, port, { tlsPort, force: Boolean(flags.force) })
     return 0
   }
 

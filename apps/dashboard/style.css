@@ -1,0 +1,429 @@
+/* Hermes Pilot — dashboard tab styles.
+ *
+ * Scoped under .hp-* and built only from the host's --color-* tokens, so the tab
+ * follows the active theme instead of hard-coding a palette. Fallbacks are the
+ * dark-teal pair from the host so a missing token still looks intentional.
+ *
+ * The pairing QR is deliberately boring: pure white background, no radius, no
+ * shadow, pixelated scaling. Anything that softens the module edges costs a
+ * camera scan.
+ */
+
+.hp-root {
+  --hp-surface: var(--color-card, #10201f);
+  --hp-surface-2: var(--color-popover, #0c1a19);
+  --hp-border: var(--color-border, rgba(255, 255, 255, 0.1));
+  --hp-text: var(--color-card-foreground, #e6f2f0);
+  --hp-muted: var(--color-muted-foreground, #8aa5a1);
+  --hp-primary: var(--color-primary, #14b8a6);
+  --hp-warn: #f59e0b;
+  --hp-bad: #f43f5e;
+  --hp-ok: #22c55e;
+  --hp-radius: var(--radius, 12px);
+
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 24px 40px;
+  color: var(--hp-text);
+  min-height: 100%;
+}
+
+/* ---------------------------------------------------------------- header */
+
+.hp-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.hp-heading h1 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.25;
+}
+
+.hp-heading p {
+  margin: 4px 0 0;
+  color: var(--hp-muted);
+  font-size: 13px;
+  max-width: 62ch;
+}
+
+/* ----------------------------------------------------------------- chips */
+
+.hp-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 12px;
+  border: 1px solid var(--hp-border);
+  border-radius: 999px;
+  background: var(--hp-surface-2);
+  font-size: 12px;
+}
+
+.hp-chip-label {
+  color: var(--hp-muted);
+  white-space: nowrap;
+}
+
+.hp-chip strong {
+  font-weight: 600;
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 22ch;
+}
+
+.hp-chip-ok strong {
+  color: var(--hp-ok);
+}
+
+.hp-chip-bad strong {
+  color: var(--hp-bad);
+}
+
+.hp-chip-muted strong {
+  color: var(--hp-muted);
+}
+
+/* ----------------------------------------------------------------- cards */
+
+.hp-card {
+  border: 1px solid var(--hp-border);
+  border-radius: var(--hp-radius);
+  background: var(--hp-surface);
+  padding: 18px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.hp-card-head h2 {
+  margin: 0;
+  font-size: 15px;
+  letter-spacing: 0.01em;
+}
+
+.hp-hint {
+  margin: 6px 0 0;
+  color: var(--hp-muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.hp-error {
+  margin: 0;
+  color: var(--hp-bad);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.hp-note {
+  color: var(--hp-muted);
+  font-size: 12.5px;
+}
+
+/* --------------------------------------------------------------- pairing */
+
+.hp-pairing {
+  display: grid;
+  grid-template-columns: minmax(0, 287px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+/* 1:1, white behind, no radius: the camera needs square black modules. */
+.hp-qr {
+  width: 287px;
+  height: 287px;
+  max-width: 100%;
+  display: block;
+  background: #ffffff;
+  border: 1px solid var(--hp-border);
+  border-radius: 0;
+  image-rendering: pixelated;
+}
+
+.hp-pairing-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.hp-steps {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.hp-expiry {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--hp-muted);
+}
+
+.hp-expiry-over {
+  color: var(--hp-warn);
+}
+
+.hp-targets {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hp-targets li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  min-width: 0;
+}
+
+.hp-target-label {
+  color: var(--hp-muted);
+  white-space: nowrap;
+}
+
+.hp-url {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--hp-text);
+  overflow-wrap: anywhere;
+  text-decoration: none;
+  /* The host styles `code` with a filled background; a URL is long, so a block
+     behind it reads as a redacted bar. Keep only the monospace face. */
+  background: none;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+a.hp-url {
+  color: var(--hp-primary);
+  text-decoration: underline;
+}
+
+/* ----------------------------------------------------------------- form */
+
+.hp-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.hp-field-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--hp-muted);
+}
+
+.hp-field input,
+.hp-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--hp-border);
+  border-radius: 8px;
+  background: var(--hp-surface-2);
+  color: var(--hp-text);
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.45;
+}
+
+.hp-field textarea {
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+}
+
+.hp-field input:focus,
+.hp-field textarea:focus {
+  outline: 2px solid var(--hp-primary);
+  outline-offset: 1px;
+}
+
+.hp-field-hint {
+  font-size: 11.5px;
+  color: var(--hp-muted);
+}
+
+.hp-field-bad input,
+.hp-field-bad textarea {
+  border-color: var(--hp-bad);
+}
+
+.hp-field-error {
+  font-size: 11.5px;
+  color: var(--hp-bad);
+}
+
+/* --------------------------------------------------------------- actions */
+
+.hp-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hp-btn {
+  appearance: none;
+  border: 1px solid var(--hp-border);
+  border-radius: 8px;
+  background: var(--hp-surface-2);
+  color: var(--hp-text);
+  font-size: 12.5px;
+  font-family: inherit;
+  padding: 7px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.hp-btn:hover:not(:disabled) {
+  border-color: var(--hp-primary);
+}
+
+.hp-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.hp-btn-sm {
+  padding: 4px 10px;
+  font-size: 11.5px;
+}
+
+.hp-btn-primary {
+  background: var(--hp-primary);
+  border-color: var(--hp-primary);
+  color: #04201d;
+  font-weight: 600;
+}
+
+.hp-btn-warn {
+  border-color: var(--hp-warn);
+  color: var(--hp-warn);
+}
+
+.hp-out {
+  border: 1px solid var(--hp-border);
+  border-radius: 8px;
+  background: var(--hp-surface-2);
+  padding: 10px 12px;
+  font-size: 12px;
+}
+
+.hp-out summary {
+  cursor: pointer;
+  color: var(--hp-muted);
+}
+
+.hp-out pre {
+  margin: 8px 0 0;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+/* ----------------------------------------------------------------- links */
+
+.hp-links {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hp-links li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* ------------------------------------------------------------ responsive */
+
+/* The dashboard is also opened from a phone: stack the QR above its steps and
+ * let chips wrap to one per line instead of scrolling sideways. */
+@media (max-width: 720px) {
+  .hp-root {
+    padding: 14px 14px 32px;
+  }
+
+  .hp-pairing {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .hp-qr {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1 / 1;
+    max-width: 287px;
+    margin: 0 auto;
+  }
+
+  .hp-chip strong {
+    max-width: 16ch;
+  }
+
+  .hp-card {
+    padding: 14px 14px 16px;
+  }
+}
+
+/* Wide screens have room for two fields per row next to a tall QR; the textarea
+ * still spans the full width because directory paths are long. */
+@media (min-width: 721px) {
+  .hp-form {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px 20px;
+  }
+
+  .hp-field-wide {
+    grid-column: 1 / -1;
+  }
+}
+
+/* A lone action button should not stretch across the pairing column. */
+.hp-pairing-side > .hp-btn {
+  align-self: flex-start;
+}

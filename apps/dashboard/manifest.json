@@ -1,0 +1,14 @@
+{
+  "name": "hermes-pilot",
+  "label": "Hermes Pilot",
+  "description": "Pair a phone with the Hermes Pilot PWA — one-time QR code, bridge status, scan directories and the keep-alive service, all from the standard dashboard.",
+  "icon": "QrCode",
+  "version": "0.1.0",
+  "tab": {
+    "path": "/hermes-pilot",
+    "position": "after:git-ops"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}
