@@ -3,6 +3,24 @@ import path from 'node:path'
 import os from 'node:os'
 
 /**
+ * `hermes` CLI が入りやすいディレクトリ（PATH に載っていなくても見る）。
+ *
+ * 常駐（launchd / systemd）の PATH はログインシェルより狭いため、`hermes` が
+ * `~/.hermes/hermes-agent/.hermes/bin` に入っている構成では `which` 相当の
+ * 探索が失敗する。個人パスを焼き込まずに、よくある置き場所だけ補う。
+ * @param {string} [home] ホーム
+ * @returns {string[]} 候補ディレクトリ
+ */
+export function hermesCliDirs(home = os.homedir()) {
+  return [
+    path.join(home, '.hermes', 'hermes-agent', '.hermes', 'bin'),
+    path.join(home, '.local', 'bin'),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+  ]
+}
+
+/**
  * 実行環境の Capability（能力）検出。
  *
  * 公開プラグインとして「どこでも単体で動く」ために、個人環境の前提
@@ -104,15 +122,18 @@ export function serviceCommands(caps = {}) {
  * @param {string} [opts.platform] `process.platform`
  * @param {string} [opts.pathEnv] PATH
  * @param {Function} [opts.appExists] アプリ存在確認
+ * @param {string} [opts.home] ホーム（`hermes` CLI の候補ディレクトリ用）
  * @returns {{os: string, serviceManager: string, hasTailscale: boolean, hasHermesCli: boolean, pilotServiceUnit: string}} 検出結果
  */
-export function detectCapabilities({ platform = process.platform, pathEnv = process.env.PATH ?? '', appExists } = {}) {
+export function detectCapabilities({ platform = process.platform, pathEnv = process.env.PATH ?? '', appExists, home } = {}) {
   const serviceManager = serviceManagerFor(platform)
+  const cliDirs = hermesCliDirs(home ?? os.homedir())
   return {
     os: platform,
     serviceManager,
     hasTailscale: detectTailscale({ pathEnv, appExists }),
-    hasHermesCli: hasBinary('hermes', pathEnv),
+    // PATH に無くても既知の置き場所（~/.hermes/hermes-agent/.hermes/bin 等）を見る
+    hasHermesCli: hasBinary('hermes', pathEnv) || cliDirs.some((dir) => hasBinary('hermes', dir)),
     pilotServiceUnit: PILOT_UNITS[platform] ?? DEFAULT_PILOT_UNIT,
   }
 }

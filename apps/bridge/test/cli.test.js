@@ -23,6 +23,7 @@ import {
   ensureToken,
   helpText,
   parseArgv,
+  readConfig,
   resolveHermesHome,
   resolvePaths,
 } from '../../../bin/hermes-pilot.mjs'
@@ -199,8 +200,24 @@ test('buildLaunchdPlist: 新ラベル・start サブコマンド・ログ先を�
   assert.match(xml, /<string>--port<\/string>\s*<string>4097<\/string>/)
   assert.match(xml, /pilot\.out\.log/)
   assert.match(xml, /<key>RunAtLoad<\/key>/)
+  // 常駐の PATH はログインシェルより狭い。hermes CLI の置き場所を PATH に含める（SPEC §5.3）
+  assert.match(xml, /\/Users\/x\/\.hermes\/hermes-agent\/\.hermes\/bin/)
   // 旧ラベルを混ぜない（移行時に両方が動き続ける事故を防ぐ）
   assert.equal(xml.includes('ai.hermes.hermes-mobile'), false)
+})
+
+test('readConfig: tailscaleDns と tlsPort を読む（常駐から CLI を叩けない環境の控え）', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-cfg-'))
+  const p = path.join(dir, 'config.json')
+  fs.writeFileSync(p, JSON.stringify({ lang: 'ja', scanDirs: ['~/Projects'], servicePort: 4097, tlsPort: 8444, tailscaleDns: 'mini.tail1.ts.net' }))
+  const cfg = readConfig(p)
+  assert.equal(cfg.tlsPort, 8444)
+  assert.equal(cfg.tailscaleDns, 'mini.tail1.ts.net')
+  assert.equal(cfg.lang, 'ja')
+  // 欠損・壊れた JSON でも既定に落ちる
+  const missing = readConfig(path.join(dir, 'nope.json'))
+  assert.equal(missing.tlsPort, null)
+  assert.equal(missing.tailscaleDns, null)
 })
 
 test('buildSystemdUnit: ExecStart と WantedBy を持つ', () => {

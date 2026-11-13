@@ -387,9 +387,47 @@ test('collectPairing: 検出材料から最良候補（Tailscale 優先）を返
 })
 
 test('tailscaleCommandCandidates: macOS はアプリ版のバイナリも候補に入れる', () => {
-  assert.deepEqual(tailscaleCommandCandidates('darwin'), [
+  assert.deepEqual(tailscaleCommandCandidates('darwin', { env: {} }), [
     'tailscale',
+    '/opt/homebrew/bin/tailscale',
+    '/usr/local/bin/tailscale',
     '/Applications/Tailscale.app/Contents/MacOS/Tailscale',
   ])
-  assert.deepEqual(tailscaleCommandCandidates('linux'), ['tailscale'])
+  assert.deepEqual(tailscaleCommandCandidates('linux', { env: {} }), [
+    'tailscale',
+    '/opt/homebrew/bin/tailscale',
+    '/usr/local/bin/tailscale',
+  ])
+  // HP_TAILSCALE_BIN で明示指定でき、重複は畳む
+  assert.deepEqual(tailscaleCommandCandidates('linux', { env: { HP_TAILSCALE_BIN: '/opt/bin/tailscale' } }), [
+    '/opt/bin/tailscale',
+    'tailscale',
+    '/opt/homebrew/bin/tailscale',
+    '/usr/local/bin/tailscale',
+  ])
+})
+
+test('collectPairing: CLI が読めない環境では config の tailscaleDns を控えに使う', () => {
+  // launchd からアプリ版 Tailscale を叩くと「GUI failed to start」で JSON が返らない実測への対処
+  const withFallback = collectPairing({
+    token: 'tok',
+    port: 4097,
+    tailscaleJson: null,
+    dnsName: 'mini.tail1.ts.net.',
+    tlsPort: 8444,
+    ifaces: { en0: [{ address: '192.168.1.42', family: 'IPv4', internal: false }] },
+  })
+  assert.equal(withFallback.dnsName, 'mini.tail1.ts.net', '末尾ドットは落とす')
+  assert.equal(withFallback.best.kind, 'tailscale')
+  assert.equal(withFallback.best.url, 'https://mini.tail1.ts.net:8444/?token=tok')
+
+  // CLI の応答があればそちらを優先する
+  const fromCli = collectPairing({
+    token: 'tok',
+    port: 4097,
+    tailscaleJson: JSON.stringify({ Self: { DNSName: 'real.tail1.ts.net.' } }),
+    dnsName: 'stale.tail1.ts.net',
+    ifaces: { en0: [{ address: '192.168.1.42', family: 'IPv4', internal: false }] },
+  })
+  assert.equal(fromCli.dnsName, 'real.tail1.ts.net')
 })

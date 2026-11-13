@@ -10,6 +10,7 @@ import {
   detectTailscale,
   getCapabilities,
   hasBinary,
+  hermesCliDirs,
   resetCapabilitiesCache,
   serviceCommands,
   serviceManagerFor,
@@ -69,7 +70,13 @@ test('detectCapabilities は SPEC §5.3 の 5 項目を返す（darwin）', () =
 })
 
 test('detectCapabilities は linux で systemd のユニット名を返す', () => {
-  const caps = detectCapabilities({ platform: 'linux', pathEnv: fakeBin([]), appExists: () => false })
+  // `home` に空ディレクトリを渡し、実機の ~/.hermes/hermes-agent/.hermes/bin を拾わないようにする
+  const caps = detectCapabilities({
+    platform: 'linux',
+    pathEnv: fakeBin([]),
+    appExists: () => false,
+    home: fakeBin([]),
+  })
   assert.equal(caps.os, 'linux')
   assert.equal(caps.serviceManager, 'systemd')
   assert.equal(caps.hasHermesCli, false)
@@ -77,8 +84,19 @@ test('detectCapabilities は linux で systemd のユニット名を返す', () 
   assert.equal(caps.pilotServiceUnit, 'hermes-pilot.service')
 })
 
+test('detectCapabilities は PATH に無くても ~/.hermes/hermes-agent/.hermes/bin の hermes を見つける', () => {
+  // 常駐（launchd / systemd）の PATH はログインシェルより狭く、hermes CLI が落ちている実測がある
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-home-'))
+  const binDir = path.join(home, '.hermes', 'hermes-agent', '.hermes', 'bin')
+  fs.mkdirSync(binDir, { recursive: true })
+  fs.writeFileSync(path.join(binDir, 'hermes'), '#!/bin/sh\n', { mode: 0o755 })
+  const caps = detectCapabilities({ platform: 'darwin', pathEnv: fakeBin([]), appExists: () => false, home })
+  assert.equal(caps.hasHermesCli, true)
+  assert.ok(hermesCliDirs(home).includes(binDir))
+})
+
 test('detectCapabilities は未知の OS でも落ちず、既定ユニットを返す', () => {
-  const caps = detectCapabilities({ platform: 'win32', pathEnv: fakeBin([]), appExists: () => false })
+  const caps = detectCapabilities({ platform: 'win32', pathEnv: fakeBin([]), appExists: () => false, home: fakeBin([]) })
   assert.equal(caps.serviceManager, 'none')
   assert.equal(caps.pilotServiceUnit, DEFAULT_PILOT_UNIT)
 })

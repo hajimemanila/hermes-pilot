@@ -626,13 +626,22 @@ export function detectLanIp(ifaces = os.networkInterfaces()) {
 
 /**
  * Tailscale CLI の候補（PATH に無い macOS アプリ版のバイナリも見る）。
+ *
+ * 常駐プロセス（launchd / systemd）からアプリ版バイナリを叩くと
+ * 「The Tailscale GUI failed to start」を返す環境があるため、候補を広げつつ
+ * `HP_TAILSCALE_BIN` で明示指定できるようにする（読み取れなければ LAN 候補に落ちる）。
  * @param {string} [platform] `process.platform`
+ * @param {object} [opts] 差し替え
+ * @param {Record<string, string|undefined>} [opts.env] 環境変数
  * @returns {string[]} 候補コマンド
  */
-export function tailscaleCommandCandidates(platform = process.platform) {
-  const out = ['tailscale']
+export function tailscaleCommandCandidates(platform = process.platform, { env = process.env } = {}) {
+  const out = []
+  const override = String(env?.HP_TAILSCALE_BIN ?? '').trim()
+  if (override) out.push(override)
+  out.push('tailscale', '/opt/homebrew/bin/tailscale', '/usr/local/bin/tailscale')
   if (platform === 'darwin') out.push('/Applications/Tailscale.app/Contents/MacOS/Tailscale')
-  return out
+  return [...new Set(out)]
 }
 
 /**
@@ -691,13 +700,18 @@ export function bestTarget(targets) {
  * @param {string} opts.token トークン
  * @param {number} [opts.port] ブリッジのポート
  * @param {string|null} [opts.tailscaleJson] `tailscale status --json` の生出力
+ * @param {string|null} [opts.dnsName] MagicDNS 名の明示指定（CLI を叩けない環境の控え）
  * @param {string|null} [opts.lanIp] LAN IP（未指定なら自動検出）
  * @param {number|null} [opts.tlsPort] Tailscale serve の HTTPS ポート
  * @param {Record<string, any>} [opts.ifaces] `os.networkInterfaces()` の差し替え
  * @returns {{targets: Array<{kind: string, url: string, label: string}>, best: {kind: string, url: string, label: string}|null, dnsName: string|null, lanIp: string|null}} 結果
  */
-export function collectPairing({ token, port = 4097, tailscaleJson = null, lanIp, tlsPort = null, ifaces } = {}) {
-  const dnsName = tailscaleJson ? parseTailscaleDnsName(tailscaleJson) : null
+export function collectPairing({ token, port = 4097, tailscaleJson = null, dnsName: explicitDns = null, lanIp, tlsPort = null, ifaces } = {}) {
+  // CLI の応答が取れない常駐環境（launchd からアプリ版 Tailscale を叩けない等）では
+  // 設定ファイルの `tailscaleDns` を控えとして使う。どちらも無ければ LAN 候補だけ。
+  const fromJson = tailscaleJson ? parseTailscaleDnsName(tailscaleJson) : null
+  const fallback = typeof explicitDns === 'string' ? explicitDns.trim().replace(/\.$/, '') : ''
+  const dnsName = fromJson || fallback || null
   const resolvedLan = lanIp ?? detectLanIp(ifaces ?? os.networkInterfaces())
   const targets = pairingTargets({ token, port, dnsName, lanIp: resolvedLan, tlsPort })
   return { targets, best: bestTarget(targets), dnsName, lanIp: resolvedLan }

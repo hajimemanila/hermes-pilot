@@ -196,7 +196,7 @@ export function readTailscaleStatus() {
 /**
  * 設定ファイル（`config.json`）を読む。無ければ既定。
  * @param {string} configPath パス
- * @returns {{lang: string, scanDirs: string[], servicePort: number}} 設定
+ * @returns {{lang: string, scanDirs: string[], servicePort: number, tlsPort: number|null, tailscaleDns: string|null}} 設定
  */
 export function readConfig(configPath) {
   try {
@@ -207,9 +207,11 @@ export function readConfig(configPath) {
       servicePort: Number(raw?.servicePort) || DEFAULT_PORT,
       // Tailscale serve が 443 以外に出す構成（`tailscale serve --https=8444` 等）向け
       tlsPort: Number(raw?.tlsPort) || null,
+      // 常駐（launchd）からアプリ版 Tailscale を叩けない環境の控え
+      tailscaleDns: typeof raw?.tailscaleDns === 'string' && raw.tailscaleDns.trim() ? raw.tailscaleDns.trim() : null,
     }
   } catch {
-    return { lang: 'en', scanDirs: ['~/Projects', '~/projects'], servicePort: DEFAULT_PORT, tlsPort: null }
+    return { lang: 'en', scanDirs: ['~/Projects', '~/projects'], servicePort: DEFAULT_PORT, tlsPort: null, tailscaleDns: null }
   }
 }
 
@@ -255,7 +257,7 @@ export function buildLaunchdPlist({ label, node, cli, port, host, hermesHome, lo
     <key>HERMES_HOME</key>
     <string>${esc(hermesHome)}</string>
     <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>${esc(path.join(hermesHome, 'hermes-agent', '.hermes', 'bin'))}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
   <key>StandardOutPath</key>
   <string>${esc(path.join(logDir, 'pilot.out.log'))}</string>
@@ -301,8 +303,8 @@ function out(...lines) {
  * @param {number} opts.port ポート
  * @returns {{targets: Array<object>, best: object|null, dnsName: string|null, lanIp: string|null}} 情報
  */
-export function pairingInfo({ token, port, tlsPort = null }) {
-  return collectPairing({ token, port, tlsPort, tailscaleJson: readTailscaleStatus() })
+export function pairingInfo({ token, port, tlsPort = null, dnsName = null }) {
+  return collectPairing({ token, port, tlsPort, dnsName, tailscaleJson: readTailscaleStatus() })
 }
 
 /**
@@ -312,8 +314,8 @@ export function pairingInfo({ token, port, tlsPort = null }) {
  * @param {number} opts.port ポート
  * @param {boolean} [opts.svg] SVG も 1 行で出す
  */
-function printPairing({ token, port, tlsPort = null, svg = false }) {
-  const info = pairingInfo({ token, port, tlsPort })
+function printPairing({ token, port, tlsPort = null, dnsName = null, svg = false }) {
+  const info = pairingInfo({ token, port, tlsPort, dnsName })
   out('', '接続先候補 / Pairing targets:')
   for (const t of info.targets) out(`  - ${t.label}: ${t.url}`)
   if (!info.best) {
@@ -552,7 +554,7 @@ export function runService(sub, { paths, port, host, dryRun = false }) {
  * @param {boolean} [opts.noQr] QR を出さない
  * @returns {Promise<void>}
  */
-export async function runStart({ paths, port, host, tlsPort = null, noQr = false }) {
+export async function runStart({ paths, port, host, tlsPort = null, dnsName = null, noQr = false }) {
   const index = path.join(ROOT, 'apps', 'web', 'dist', 'index.html')
   if (!fs.existsSync(index)) {
     out('UI が未ビルドなのでビルドします / building the UI…')
@@ -563,7 +565,7 @@ export async function runStart({ paths, port, host, tlsPort = null, noQr = false
     }
   }
   const { token } = ensureToken(paths.tokenPath)
-  if (!noQr) printPairing({ token, port, tlsPort })
+  if (!noQr) printPairing({ token, port, tlsPort, dnsName })
   process.env.HM_PORT = String(port)
   process.env.HM_HOST = host
   if (!process.env.HERMES_HOME) process.env.HERMES_HOME = paths.hermesHome
@@ -581,6 +583,7 @@ export async function main(argv = process.argv.slice(2)) {
   const cfg = readConfig(paths.configPath)
   const port = Number(flags.port) || cfg.servicePort || DEFAULT_PORT
   const tlsPort = Number(flags['tls-port']) || cfg.tlsPort || null
+  const dnsName = cfg.tailscaleDns || null
   const host = typeof flags.host === 'string' ? flags.host : DEFAULT_HOST
   const dryRun = Boolean(flags['dry-run'])
 
@@ -597,12 +600,12 @@ export async function main(argv = process.argv.slice(2)) {
   if (command === 'qr') {
     const { token, created } = ensureToken(paths.tokenPath)
     if (created) out(`トークンを新規作成しました / token created: ${paths.tokenPath}`)
-    printPairing({ token, port, tlsPort, svg: Boolean(flags.svg) })
+    printPairing({ token, port, tlsPort, dnsName, svg: Boolean(flags.svg) })
     return 0
   }
 
   if (command === 'start') {
-    await runStart({ paths, port, host, tlsPort, noQr: Boolean(flags['no-qr']) })
+    await runStart({ paths, port, host, tlsPort, dnsName, noQr: Boolean(flags['no-qr']) })
     return 0
   }
 

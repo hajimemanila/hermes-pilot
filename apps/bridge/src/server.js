@@ -389,11 +389,19 @@ async function handleApi(req, res, url) {
   // 接続先候補（Tailscale HTTPS / LAN / localhost）と QR(SVG) を返す。
   if (a === 'auth' && b === 'pairing' && req.method === 'GET') {
     const ts = await tailscaleStatusJson()
-    const info = collectPairing({ token: auth.token, port: cfg.port, tailscaleJson: ts })
+    const info = collectPairing({
+      token: auth.token,
+      port: cfg.port,
+      tailscaleJson: ts,
+      // 常駐から Tailscale CLI を叩けない環境の控え（config.json）
+      dnsName: cfg.pairing?.tailscaleDns ?? null,
+      tlsPort: cfg.pairing?.tlsPort ?? null,
+    })
     auth.audit({ kind: 'auth.pairing', target: info.best?.kind ?? null })
     return sendJson(res, 200, {
       ok: true,
       port: cfg.port,
+      tlsPort: cfg.pairing?.tlsPort ?? null,
       tailscale: Boolean(info.dnsName),
       dnsName: info.dnsName,
       lanIp: info.lanIp,

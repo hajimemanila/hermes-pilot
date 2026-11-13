@@ -229,3 +229,15 @@ test('認証: 期限切れは永続化ファイルからも消える', async () 
   const again = createAuth({ ...cfg, sessionTtlMs: 500 })
   assert.equal(again.authorized({ url: '/', headers: { cookie: `hm_session=${value}` }, method: 'GET' }), false)
 })
+
+test('readPairingConfig: config.json の tailscaleDns / tlsPort を控えとして読む（SPEC §8.2）', async () => {
+  const { readPairingConfig } = await import('../src/config.js')
+  const dir = tmp('hm-pair-')
+  const p = path.join(dir, 'config.json')
+  fs.writeFileSync(p, JSON.stringify({ tailscaleDns: 'mini.tail1.ts.net.', tlsPort: 8444 }))
+  assert.deepEqual(readPairingConfig(p), { tailscaleDns: 'mini.tail1.ts.net', tlsPort: 8444 })
+  // 壊れた JSON・欠損でも起動を止めない
+  fs.writeFileSync(p, '{oops')
+  assert.deepEqual(readPairingConfig(p), { tailscaleDns: null, tlsPort: null })
+  assert.deepEqual(readPairingConfig(path.join(dir, 'nope.json')), { tailscaleDns: null, tlsPort: null })
+})
