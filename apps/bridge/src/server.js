@@ -723,7 +723,11 @@ async function handleApi(req, res, url) {
       return r.ok ? sendJson(res, 201, r) : sendFailure(res, 400, r)
     }
     if (c === 'image' && req.method === 'GET') {
-      const r = review.image(b, { annotated: url.searchParams.get('annotated') === '1' })
+      const r = review.image(b, {
+        annotated: url.searchParams.get('annotated') === '1',
+        // compare=1 … Before（前回の赤入れ／前ラウンド）画像。SPEC §5.2
+        compare: url.searchParams.get('compare') === '1',
+      })
       if (!r.ok) return sendFailure(res, 404, r)
       res.writeHead(200, { 'content-type': r.type, 'cache-control': 'private, max-age=120' })
       return res.end(r.data)
@@ -802,6 +806,23 @@ async function handleApi(req, res, url) {
       const r = await review.reopen(b, body?.reason)
       auth.audit({ kind: 'review.reopen', task: b, ok: Boolean(r.ok) })
       return r.ok ? sendJson(res, 200, r) : sendFailure(res, 400, r)
+    }
+    // POST /api/review/:id/approve … 赤入れせずに 1 タップ検収（SPEC §5.2.3）
+    // コメント `Visual check passed` を残して done（作業済み）または unblock（未作業）へ進める。
+    if (c === 'approve' && req.method === 'POST') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendError(res, 429, 'RATE_LIMITED')
+      }
+      const body = await readJson(req)
+      const r = await review.approve(b, body || {})
+      auth.audit({
+        kind: 'review.approve',
+        task: b,
+        duplicate: Boolean(r.duplicate),
+        moved: r.moved ?? null,
+        ok: Boolean(r.ok),
+      })
+      return r.ok ? sendJson(res, 200, r) : sendFailure(res, r.code === 'NOT_WAITING' ? 409 : 400, r)
     }
     return sendError(res, 404, 'UNKNOWN_ENDPOINT', { path: url.pathname })
   }

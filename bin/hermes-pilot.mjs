@@ -612,9 +612,32 @@ export function runService(sub, { paths, port, host, dryRun = false }) {
     }
     if (sub === 'restart') {
       if (dryRun) {
-        out(`launchctl kickstart -k ${domain}/${SERVICE_LABEL}`)
+        out(`launchctl bootout + bootstrap ${domain}/${SERVICE_LABEL}`)
         return 0
       }
+      // kickstart -k は読み込み済みのジョブ定義を使い回すので、plist の
+      // EnvironmentVariables（PATH など）を直しても反映されない（実測: PATH に
+      // hermes が無いままブリッジが起動し、レビュー回答の comment/unblock が全滅した）。
+      // bootout → bootstrap で plist を読み直し、失敗したときだけ kickstart に落とす。
+      const off = spawnSync('launchctl', ['bootout', `${domain}/${SERVICE_LABEL}`], { encoding: 'utf8' })
+      out(`launchctl bootout: exit ${off.status}`)
+      if (!fs.existsSync(plistPath)) {
+        out(`plist がありません（先に service install を実行してください）: ${plistPath}`)
+        return 1
+      }
+      // bootout 直後の bootstrap は "Input/output error (5)" で失敗することがある
+      // （実測: アンロードが終わる前）。数百 ms 待って数回だけ試す。
+      let on = { status: 1, stderr: '' }
+      for (let i = 0; i < 4; i++) {
+        spawnSync('sleep', ['0.4'], { encoding: 'utf8' })
+        on = spawnSync('launchctl', ['bootstrap', domain, plistPath], { encoding: 'utf8' })
+        if (on.status === 0) break
+      }
+      if (on.status === 0) {
+        out('launchctl bootstrap: ok（plist を読み直した）')
+        return 0
+      }
+      out(`launchctl bootstrap: exit ${on.status}${on.stderr ? ` (${on.stderr.trim()})` : ''}`)
       const r = spawnSync('launchctl', ['kickstart', '-k', `${domain}/${SERVICE_LABEL}`], { encoding: 'utf8' })
       out(`launchctl kickstart: exit ${r.status}${r.stderr ? ` (${r.stderr.trim()})` : ''}`)
       return r.status === 0 ? 0 : 1

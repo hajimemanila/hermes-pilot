@@ -6,7 +6,7 @@ import { Icon, Loader, RefreshButton, Sheet, Spinner, fmtTime, relTime } from '.
 import { haptic } from '../lib/haptic.js'
 import { readActiveChatId } from '../lib/chatReports.js'
 import { AnnotationEditor } from './AnnotationEditor.jsx'
-import { answerRows, capturedLabel, DONE_LIMIT, doneHint, groupItems, isWaiting, nextWaiting, repoLabel, thumbCaption } from '../lib/reviewView.js'
+import { answerRows, capturedLabel, DONE_LIMIT, doneHint, extractRecommendedAnswers, groupItems, isWaiting, nextWaiting, repoLabel, thumbCaption } from '../lib/reviewView.js'
 import { parsePastedReply } from '../lib/reviewPaste.js'
 import { t } from '../i18n/lang.js'
 import { useI18n } from '../i18n/index.js'
@@ -459,12 +459,15 @@ function ReadOnlyDetail({ item, data, answer, notify, onStartAnnotation, onReope
   const answered = ak.answeredAt ? relTime(Date.parse(ak.answeredAt)) : null
   const [anno, setAnno] = useState(null)
   const [zoomImg, setZoomImg] = useState(false)
+  // Before ↔ After（SPEC §5.2.2）。比較相手が無ければトグルを出さない
+  const [showBefore, setShowBefore] = useState(false)
   const [reopenReason, setReopenReason] = useState('')
   const [reopenBusy, setReopenBusy] = useState(false)
 
   useEffect(() => {
     setAnno(null)
     setZoomImg(false)
+    setShowBefore(false)
     setReopenReason('')
     if (ak.mode !== 'annotation') return undefined
     let alive = true
@@ -497,7 +500,9 @@ function ReadOnlyDetail({ item, data, answer, notify, onStartAnnotation, onReope
   // 回答の履歴（グローバル注記: 完了したレビュー項目から回答内容を参照したい）
   const history = answerRows(data, answer)
   const hasHistory = history.rows.some((r) => r.choice || r.note) || Boolean(history.global)
-  const imgSrc = ak.image ? `/api/review/${item.id}/image?annotated=1` : null
+  const imgSrc = ak.image
+    ? `/api/review/${item.id}/image${showBefore ? '?compare=1' : '?annotated=1'}`
+    : null
 
   return (
     <div className="ak-form">
@@ -521,6 +526,20 @@ function ReadOnlyDetail({ item, data, answer, notify, onStartAnnotation, onReope
       </p>
       {imgSrc ? (
         <div className="ak-anno-preview">
+          {ak.hasCompare ? (
+            <button
+              className={`ak-compare-pill${showBefore ? ' on' : ''}`}
+              type="button"
+              aria-pressed={showBefore}
+              title={t('annot.compareAria')}
+              onClick={() => {
+                haptic('tap')
+                setShowBefore((v) => !v)
+              }}
+            >
+              {showBefore ? t('annot.compareBefore') : t('annot.compareAfter')}
+            </button>
+          ) : null}
           <button
             type="button"
             className="ak-anno-preview-btn"
@@ -818,6 +837,9 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
   const [dataError, setDataError] = useState(null)
   const [closeNote, setCloseNote] = useState('')
   const [showAllDone, setShowAllDone] = useState(false)
+  // 一括承認（⚡）の送信中フラグと「全件完了」バナー（SPEC §5.1）
+  const [fastBusy, setFastBusy] = useState(false)
+  const [allClear, setAllClear] = useState(false)
   // 作業フィード（監視 cron が書く 1 行ログ）。完了・停止を端末で気づくために出す。
   const [feed, setFeed] = useState([])
   const feedNotifiedRef = useRef(0)
@@ -861,6 +883,9 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
     [state.items, showAllDone],
   )
   const counts = { waiting: groups.waiting.length, active: groups.active.length }
+  // シートを開いたときの「1 / N 判断待ち」と一括承認の材料（SPEC §5.1）
+  const fastTrack = useMemo(() => extractRecommendedAnswers(data), [data])
+  const waitIndex = open ? groups.waiting.findIndex((x) => x.id === open.id) + 1 : 0
 
   const openItem = useCallback(async (item) => {
     setOpen(item)
@@ -958,16 +983,47 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
    */
   async function handleSubmitted(answeredId, result) {
     const items = await load()
-    const head = result?.duplicate ? t('review.duplicate') : t('review.answerSent')
+    // 検収（approve）は「送信」ではなく「合格」なので、トーストの頭を差し替える
+    const head = result?.duplicate
+      ? t('review.duplicate')
+      : result?.files?.approval
+        ? t('annot.approved')
+        : t('review.answerSent')
     const next = nextWaiting(items, answeredId)
     if (next) {
+      setAllClear(false)
       await openItem(next)
       notify?.(t('review.nextOpened', { head }))
       return
     }
     setTab('waiting')
     closeSheet()
+    // 最後の 1 件を送り終えたら「全件完了」をバナーで知らせる（SPEC §5.1）
+    setAllClear(true)
     notify?.(t('review.noneLeft', { head }))
+  }
+
+  /**
+   * 推奨案で一括承認（SPEC §5.1 / D15①）。
+   *
+   * 送信先は通常のフォームと同じ `/answer`（推奨の無い問は `choice: null` = お任せ）。
+   * 送信後は `handleSubmitted` が次の判断待ちへスライドする。
+   */
+  async function acceptRecommended() {
+    if (!open || fastBusy || !fastTrack.canFastTrack) return
+    setFastBusy(true)
+    try {
+      haptic('success')
+      const r = await api(`/api/review/${open.id}/answer`, {
+        method: 'POST',
+        body: { answers: fastTrack.answers, global: '', by: 'mobile', chat: readActiveChatId() },
+      })
+      await handleSubmitted(open.id, r)
+    } catch (e) {
+      notify?.(e?.message || t('review.fastTrackFailed'))
+    } finally {
+      setFastBusy(false)
+    }
   }
 
   const hasItems = state.items.length > 0
@@ -979,6 +1035,25 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
   // 選択中シートの中身（Sheet と右ペインで同一。2 ペインでも挙動を変えない）
   const sheetInner = open ? (
     <>
+        {isWaiting(open) && waitIndex > 0 && counts.waiting > 1 ? (
+          <div className="ak-wait-bar">
+            <span className="ak-wait-pill">{t('review.waitPill', { i: waitIndex, n: counts.waiting })}</span>
+          </div>
+        ) : null}
+        {isWaiting(open) && fastTrack.canFastTrack && data?.questions?.length ? (
+          <div className="ak-fasttrack">
+            <button
+              className="btn fast-track"
+              type="button"
+              disabled={fastBusy}
+              aria-busy={fastBusy}
+              onClick={acceptRecommended}
+            >
+              {fastBusy ? t('review.sending') : t('review.fastTrack', { summary: fastTrack.summary })}
+            </button>
+            <p className="ak-fasttrack-hint">{t('review.fastTrackHint')}</p>
+          </div>
+        ) : null}
         {open.review?.mode !== 'annotation' ? <SheetLink item={open} /> : null}
         {isWaiting(open) ? (
           <>
@@ -1063,6 +1138,24 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
           <RefreshButton onRefresh={refreshReview} />
         </span>
       </div>
+
+      {/* 全件完了（最後の判断待ちを送り終えたときだけ出す） */}
+      {allClear ? (
+        <div className="ak-allclear" role="status" aria-live="polite">
+          <span>{t('review.allClear')}</span>
+          <button
+            className="icon-btn"
+            type="button"
+            aria-label={t('common.close')}
+            onClick={() => {
+              haptic('tap')
+              setAllClear(false)
+            }}
+          >
+            <Icon name="close" size={16} />
+          </button>
+        </div>
+      ) : null}
 
       {/* 作業フィード: 完了・停止を「開いた瞬間」に読めるようにする（Discord と同じ 1 行） */}
       {feed.length ? (

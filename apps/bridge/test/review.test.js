@@ -11,6 +11,7 @@ import {
   answerHash,
   toReplyText,
   injectReviewBridge,
+  compareCandidates,
   createReview,
 } from '../src/review.js'
 
@@ -679,4 +680,247 @@ test('chatFor は本文の chat= を優先し、無ければ task-chats.json を
   fs.writeFileSync(path.join(review, 'task-chats.json'), JSON.stringify({ t_other: 'chat_map_1' }))
   assert.equal(api.chatFor('t_other'), 'chat_map_1')
   assert.equal(api.chatFor('t_unknown'), null)
+})
+
+/** 注釈ボード（`shots/` に画像を置く）。tasks は {id, body, status, started_at} の配列。 */
+function annoBoard(tasks) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-anno-'))
+  const boardDir = path.join(root, 'kanban', 'boards', 'mobile')
+  fs.mkdirSync(boardDir, { recursive: true })
+  const workdir = path.join(root, 'work')
+  fs.mkdirSync(path.join(workdir, 'shots'), { recursive: true })
+  fs.writeFileSync(path.join(boardDir, 'board.json'), JSON.stringify({ slug: 'mobile', default_workdir: workdir }))
+  const db = new DatabaseSync(path.join(boardDir, 'kanban.db'))
+  db.exec(`CREATE TABLE tasks (
+    id TEXT PRIMARY KEY, title TEXT, body TEXT, status TEXT NOT NULL, assignee TEXT,
+    priority INTEGER DEFAULT 0, created_at INTEGER, started_at INTEGER, completed_at INTEGER, result TEXT,
+    last_heartbeat_at INTEGER)`)
+  let t = 1000
+  for (const x of tasks) {
+    db.prepare('INSERT INTO tasks (id,title,body,status,assignee,created_at,started_at) VALUES (?,?,?,?,?,?,?)').run(
+      x.id,
+      x.title || x.id,
+      x.body,
+      x.status,
+      'mobile',
+      (t += 10),
+      x.started_at ?? null,
+    )
+  }
+  db.close()
+  return { root, workdir }
+}
+
+test('compareCandidates は .before / 前ラウンド / 同一 label の .annotated を優先順で返す', () => {
+  const a = compareCandidates({ image: 'shots/x-1.png', round: 1 })
+  assert.deepEqual(a.slice(0, 1), ['shots/x-1.before.png'], '同名 .before が最優先')
+  assert.equal(a.includes('shots/'), false)
+
+  const b = compareCandidates({ image: 'shots/x-2.after.png', round: 2 })
+  assert.ok(b.includes('shots/x-2.before.png'), '.after から .before を作る')
+  assert.ok(b.includes('shots/x-1.png'), 'round 2 → round 1')
+
+  const c = compareCandidates({
+    image: 'shots/x-1.png',
+    round: 1,
+    others: [{ image: 'shots/x-0.png', round: 1 }, { image: 'shots/x-1.annotated.png', round: 1 }],
+  })
+  assert.ok(c.includes('shots/x-1.annotated.png') || c.includes('shots/x-0.annotated.png'), '前回の赤入れを候補にする')
+  assert.ok(c.includes('shots/x-0.png'), '元画像も候補にする')
+
+  assert.deepEqual(compareCandidates({ image: 'sheets/a.html' }), [], '画像以外は候補にしない')
+  assert.deepEqual(
+    compareCandidates({ image: 'shots/x.png', round: 3 }),
+    ['shots/x.before.png'],
+    '名前にラウンド番号が無ければ前ラウンドは作らない（body の round だけでは決めない）',
+  )
+})
+
+test('list は比較画像があるタスクに hasCompare: true を付ける（無いものは false）', () => {
+  const { root, workdir } = annoBoard([
+    {
+      id: 't_anno1',
+      body: '[review] label=demo-01 round=1 mode=annotation image=shots/demo-01-1.png target=/tmp/repo',
+      status: 'blocked',
+    },
+    {
+      id: 't_anno2',
+      body: '[review] label=demo-02 round=1 mode=annotation image=shots/demo-02-1.png target=/tmp/repo',
+      status: 'blocked',
+    },
+  ])
+  fs.writeFileSync(path.join(workdir, 'shots', 'demo-01-1.png'), 'AFTER')
+  fs.writeFileSync(path.join(workdir, 'shots', 'demo-01-1.before.png'), 'BEFORE')
+  fs.writeFileSync(path.join(workdir, 'shots', 'demo-02-1.png'), 'ONLY')
+
+  const api = createReview({ kanbanRoot: path.join(root, 'kanban') })
+  const byId = Object.fromEntries(api.list().map((i) => [i.id, i]))
+  assert.equal(byId.t_anno1.review.hasCompare, true, '.before があるので比較できる')
+  assert.equal(byId.t_anno2.review.hasCompare, false, '比較相手が無ければ false')
+
+  const img = api.image('t_anno1', { compare: true })
+  assert.equal(img.ok, true)
+  assert.equal(img.data.toString(), 'BEFORE', 'compare=1 は Before（前回）を返す')
+  assert.equal(api.image('t_anno1').data.toString(), 'AFTER', '既定は After（いまの下地）')
+
+  const none = api.image('t_anno2', { compare: true })
+  assert.equal(none.ok, false)
+  assert.equal(none.code, 'NO_COMPARE')
+})
+
+test('list は同一 label の前ラウンド（archived）の赤入れ画像を Before として解決する', () => {
+  const { root, workdir } = annoBoard([
+    {
+      id: 't_prev',
+      body: '[review] label=rounds-01 round=1 mode=annotation image=shots/rounds-01-a.png target=/tmp/repo',
+      status: 'archived',
+    },
+    {
+      id: 't_now',
+      body: '[review] label=rounds-01 round=2 mode=annotation image=shots/rounds-01-b.png target=/tmp/repo',
+      status: 'blocked',
+    },
+  ])
+  fs.writeFileSync(path.join(workdir, 'shots', 'rounds-01-a.png'), 'PREV')
+  fs.writeFileSync(path.join(workdir, 'shots', 'rounds-01-a.annotated.png'), 'PREV-RED')
+  fs.writeFileSync(path.join(workdir, 'shots', 'rounds-01-b.png'), 'NOW')
+
+  const api = createReview({ kanbanRoot: path.join(root, 'kanban') })
+  const now = api.list().find((i) => i.id === 't_now')
+  assert.equal(now.review.hasCompare, true, 'archived の前ラウンドも見る（status で絞らない）')
+  assert.equal(api.image('t_now', { compare: true }).data.toString(), 'PREV-RED', '赤入れ済みを優先する')
+})
+
+test('approve は コメント Visual check passed を残し、作業済みなら done へ進める（冪等）', async () => {
+  const { root, workdir } = annoBoard([
+    {
+      id: 't_done1',
+      body: '[review] label=ok-01 round=1 mode=annotation image=shots/ok-01-1.png target=/tmp/repo',
+      status: 'blocked',
+      started_at: 2000,
+    },
+  ])
+  fs.writeFileSync(path.join(workdir, 'shots', 'ok-01-1.png'), 'AFTER')
+  const calls = []
+  const dbPath = path.join(root, 'kanban', 'boards', 'mobile', 'kanban.db')
+  const setStatus = (status) => {
+    const db = new DatabaseSync(dbPath)
+    db.prepare('UPDATE tasks SET status=? WHERE id=?').run(status, 't_done1')
+    db.close()
+  }
+  const api = createReview(
+    { kanbanRoot: path.join(root, 'kanban') },
+    {
+      runKanban: async (args) => {
+        calls.push(args)
+        if (args[0] === 'complete') setStatus('done')
+        return { code: 0, out: 'ok' }
+      },
+    },
+  )
+
+  const r = await api.approve('t_done1', { note: 'この見た目でOK', by: 'mobile' })
+  assert.equal(r.ok, true)
+  assert.equal(r.duplicate, false)
+  assert.equal(r.moved, 'done', '検収 OK は完了（done）')
+  const comment = calls.find((a) => a[0] === 'comment')
+  assert.ok(comment.includes('Visual check passed'), 'コメント本文は固定文言')
+  const saved = JSON.parse(fs.readFileSync(path.join(workdir, 'shots', 'ok-01-1.approval.json'), 'utf8'))
+  assert.equal(saved.task_id, 't_done1')
+  assert.equal(saved.note, 'この見た目でOK')
+  assert.equal(saved.verdict, 'visual-check-passed')
+
+  const again = await api.approve('t_done1', { note: 'この見た目でOK', by: 'mobile' })
+  assert.equal(again.duplicate, true)
+  assert.equal(calls.filter((a) => a[0] === 'comment').length, 1, '再送でコメントを増やさない')
+})
+
+test('approve は未作業の注釈タスクも完了にし、complete が通らないときだけ unblock する', async () => {
+  const { root, workdir } = annoBoard([
+    {
+      id: 't_new1',
+      body: '[review] label=new-01 round=1 mode=annotation image=shots/new-01-1.png target=/tmp/repo',
+      status: 'blocked',
+    },
+    {
+      id: 't_new3',
+      body: '[review] label=new-03 round=1 mode=annotation image=shots/new-03-1.png target=/tmp/repo',
+      status: 'blocked',
+    },
+    {
+      id: 't_ready1',
+      body: '[review] label=new-02 round=1 mode=annotation image=shots/new-02-1.png target=/tmp/repo',
+      status: 'ready',
+    },
+  ])
+  fs.writeFileSync(path.join(workdir, 'shots', 'new-01-1.png'), 'A')
+  fs.writeFileSync(path.join(workdir, 'shots', 'new-02-1.png'), 'B')
+  fs.writeFileSync(path.join(workdir, 'shots', 'new-03-1.png'), 'C')
+  const dbPath = path.join(root, 'kanban', 'boards', 'mobile', 'kanban.db')
+  const setStatus = (id, status) => {
+    const db = new DatabaseSync(dbPath)
+    db.prepare('UPDATE tasks SET status=? WHERE id=?').run(status, id)
+    db.close()
+  }
+  // t_new3 だけ complete が失敗する状況（ワーカーが抱えたまま等）を作る
+  const calls = []
+  const api = createReview(
+    { kanbanRoot: path.join(root, 'kanban') },
+    {
+      runKanban: async (a) => {
+        calls.push(a)
+        if (a[0] === 'complete' && a[1] === 't_new3') return { code: 1, out: 'task is running' }
+        if (a[0] === 'complete') setStatus(a[1], 'done')
+        if (a[0] === 'unblock') setStatus(a[1], 'ready')
+        return { code: 0, out: 'ok' }
+      },
+    },
+  )
+
+  const r = await api.approve('t_new1', {})
+  assert.equal(r.ok, true)
+  assert.equal(r.moved, 'done', 'Looks Good は合格＝完了（未作業でも止まっている理由が済んだ）')
+
+  const fallback = await api.approve('t_new3', {})
+  assert.equal(fallback.ok, true)
+  assert.equal(fallback.moved, 'ready', 'complete が通らないときだけ unblock に落とす')
+
+  const notWaiting = await api.approve('t_ready1', {})
+  assert.equal(notWaiting.ok, false)
+  assert.equal(notWaiting.code, 'NOT_WAITING')
+
+  const missing = await api.approve('t_nope', {})
+  assert.equal(missing.ok, false)
+  assert.equal(missing.code, 'NOT_FOUND')
+})
+
+test('approve はコメントが残せなかったとき記録を消して再挑戦できる（コメント欠落を残さない）', async () => {
+  const { root, workdir } = annoBoard([
+    {
+      id: 't_retry1',
+      body: '[review] label=retry-01 round=1 mode=annotation image=shots/retry-01-1.png target=/tmp/repo',
+      status: 'blocked',
+    },
+  ])
+  fs.writeFileSync(path.join(workdir, 'shots', 'retry-01-1.png'), 'A')
+  let failComment = true
+  const api = createReview(
+    { kanbanRoot: path.join(root, 'kanban') },
+    {
+      runKanban: async (a) => {
+        if (a[0] === 'comment' && failComment) return { code: 1, out: 'database is locked' }
+        return { code: 0, out: 'ok' }
+      },
+    },
+  )
+  const bad = await api.approve('t_retry1', {})
+  assert.equal(bad.ok, false)
+  assert.equal(bad.code, 'COMMENT_FAILED')
+  assert.equal(fs.existsSync(path.join(workdir, 'shots', 'retry-01-1.approval.json')), false, '記録を残さない')
+
+  failComment = false
+  const retry = await api.approve('t_retry1', {})
+  assert.equal(retry.ok, true)
+  assert.equal(retry.duplicate, false, '再挑戦は duplicate ではなく本処理からやり直す')
+  assert.equal(fs.existsSync(path.join(workdir, 'shots', 'retry-01-1.approval.json')), true)
 })

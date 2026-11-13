@@ -230,3 +230,57 @@ export function repoLabel(repo) {
   const id = typeof repo === 'string' ? repo : String(repo?.id ?? repo?.label ?? '')
   return id.trim() || '—'
 }
+
+/**
+ * 推奨の印。`recommended: true` のほか、**ラベルに推奨の語を含む選択肢**も推奨として扱う。
+ *
+ * シートを作る側（akapen スキル）は `recommended: true` を付けるが、既存の資産には
+ * ラベルに「推奨」と書いただけのものがある。日本語は `\u` エスケープで持つ
+ * （`apps/web/test/noHardcodedJapanese.test.js` がソース中の生の日本語を弾く）。
+ */
+const RECOMMENDED_RE = /recommend|\u63a8\u5968/i
+
+/** 否定（「非推奨」「not recommended」）は推奨として扱わない。先に判定する。 */
+const NOT_RECOMMENDED_RE = /not\s+recommended|no\s+recommend|\u975e\u63a8\u5968/i
+
+/**
+ * 選択肢が推奨か。
+ *
+ * @param {{id?: string, label?: string, detail?: string, recommended?: boolean|string}} option 選択肢
+ * @returns {boolean} 推奨か
+ */
+export function isRecommendedOption(option) {
+  if (!option) return false
+  const flag = option.recommended
+  if (flag === true || flag === 'true') return true
+  const text = `${option.label ?? ''} ${option.detail ?? ''}`
+  if (NOT_RECOMMENDED_RE.test(text)) return false
+  return RECOMMENDED_RE.test(text)
+}
+
+/**
+ * 推奨案で一括承認するための材料（SPEC §5.1 / D15①）。
+ *
+ * 「推奨が 1 問でもあれば一括承認できる」— 推奨の無い問は `choice: null`（＝お任せ）で
+ * 送る。回答の形は `POST /api/review/:id/answer` の `answers` と同じにして、送信側が
+ * そのまま使えるようにする。
+ *
+ * @param {object|null} sheetData `/api/review/:id/data` の `data`（sheet.json）
+ * @returns {{canFastTrack: boolean, summary: string, answers: Array<{id: string, choice: string|null, note: string}>}}
+ *   summary は `Q1:A · Q2:B`（推奨のある問だけ）
+ */
+export function extractRecommendedAnswers(sheetData) {
+  const questions = Array.isArray(sheetData?.questions) ? sheetData.questions : []
+  const answers = []
+  const parts = []
+  questions.forEach((q, i) => {
+    const options = Array.isArray(q?.options) ? q.options : []
+    const rec = options.find((o) => isRecommendedOption(o)) || null
+    const id = String(q?.id ?? `q${i + 1}`)
+    const choice = rec && rec.id != null && rec.id !== '' ? String(rec.id) : null
+    answers.push({ id, choice, note: '' })
+    if (choice) parts.push(`Q${i + 1}:${choice}`)
+  })
+  return { canFastTrack: parts.length > 0, summary: parts.join(' · '), answers }
+}
+

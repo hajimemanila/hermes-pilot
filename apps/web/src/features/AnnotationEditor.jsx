@@ -36,6 +36,11 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
   const [error, setError] = useState(null)
   const [note, setNote] = useState('')
   const [count, setCount] = useState(0)
+  // Before ↔ After（SPEC §5.2.2）。比較相手が無いタスクではトグルを出さない
+  const [compare, setCompare] = useState(false)
+  const [approving, setApproving] = useState(false)
+  const baseSrc = `/api/review/${item.id}/image`
+  const imgSrc = compare ? `${baseSrc}?compare=1` : baseSrc
 
   /** 画像を画面に収める（contain）大きさを CSS px で返す。 */
   const layout = useCallback(() => {
@@ -88,12 +93,16 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
   useEffect(() => {
     const img = new Image()
     imgRef.current = img
+    setReady(false)
     img.onload = () => {
       setReady(true)
       requestAnimationFrame(() => scheduleRedraw())
     }
-    img.onerror = () => setError(t('annot.loadFailed'))
-    img.src = `/api/review/${item.id}/image`
+    img.onerror = () => {
+      setReady(false)
+      setError(t('annot.loadFailed'))
+    }
+    img.src = imgSrc
     const onResize = () => scheduleRedraw()
     window.addEventListener('resize', onResize)
     const wrap = canvasRef.current?.parentElement
@@ -103,7 +112,7 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
       window.removeEventListener('resize', onResize)
       if (ro) ro.disconnect()
     }
-  }, [item.id, redraw, ready])
+  }, [imgSrc, scheduleRedraw])
 
   /** ポインタ座標 → CSS px（キャンバス左上基準）。 */
   function point(ev) {
@@ -201,6 +210,31 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
     }
   }
 
+  /**
+   * 赤入れせずに 1 タップ検収（SPEC §5.2.3）。
+   *
+   * 描いたストロークは送らない（合格の意思表示だけ）。bridge が
+   * `Visual check passed` をコメントし、作業済みなら done・未作業なら unblock する。
+   */
+  async function approve() {
+    if (approving) return
+    setApproving(true)
+    setError(null)
+    try {
+      haptic('success')
+      const r = await api(`/api/review/${item.id}/approve`, {
+        method: 'POST',
+        body: { by: 'mobile', note, chat: readActiveChatId() },
+      })
+      notify?.(r?.moved === 'done' ? t('annot.approved') : t('annot.approvedResume'))
+      onSubmitted?.(r)
+    } catch (e) {
+      setError(e?.message || t('annot.approveFailed'))
+    } finally {
+      setApproving(false)
+    }
+  }
+
   return (
     <div className="ak-anno">
       <header className="ak-anno-head">
@@ -233,15 +267,45 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
       </header>
 
       <div className="ak-anno-canvas-wrap">
-        <canvas
-          ref={canvasRef}
-          className="ak-anno-canvas"
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={onPointerUp}
-        />
+        {item.review?.hasCompare ? (
+          <button
+            className={`ak-compare-pill${compare ? ' on' : ''}`}
+            type="button"
+            aria-pressed={compare}
+            title={t('annot.compareAria')}
+            onClick={() => {
+              haptic('tap')
+              setCompare((v) => !v)
+            }}
+          >
+            {compare ? t('annot.compareBefore') : t('annot.compareAfter')}
+          </button>
+        ) : null}
+        <div className="ak-anno-stage">
+          <canvas
+            ref={canvasRef}
+            className="ak-anno-canvas"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+          />
+        </div>
       </div>
+
+      {item.status === 'blocked' ? (
+        <div className="ak-approve-row">
+          <button
+            className="ak-approve"
+            type="button"
+            disabled={approving || busy}
+            aria-busy={approving}
+            onClick={approve}
+          >
+            {approving ? t('annot.sending') : t('annot.looksGood')}
+          </button>
+        </div>
+      ) : null}
 
       {error ? <div className="ak-error ak-anno-error">{error}</div> : null}
 

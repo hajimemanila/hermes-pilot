@@ -2174,9 +2174,34 @@ button.stat:active {
 }
 .ak-anno-send:disabled { opacity: .6; }
 .ak-anno-canvas-wrap {
-  flex: 1 1 auto; display: flex; align-items: center; justify-content: center;
+  flex: 1 1 auto; display: flex; flex-direction: column; gap: 6px;
+  align-items: center; justify-content: center;
   overflow: hidden; padding: 8px; min-height: 0;
 }
+/* 画像は「使える領域」いっぱいに contain（layout() はこの要素の clientWidth/Height を見る） */
+.ak-anno-stage {
+  flex: 1 1 auto; display: flex; align-items: center; justify-content: center;
+  min-height: 0; width: 100%;
+}
+/* Before ↔ After のトグルピル（比較相手があるタスクだけ出る） */
+.ak-compare-pill {
+  flex: none; max-width: 100%;
+  padding: 5px 12px; border-radius: 999px; font-size: 11.5px; font-weight: 600;
+  border: 1px solid var(--line-strong); background: var(--surface); color: var(--accent-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ak-compare-pill.on {
+  border-color: var(--warn); background: rgba(250, 204, 21, .14); color: var(--text);
+}
+.ak-compare-pill:active { transform: scale(.98); }
+/* 赤入れせずに合格（1 タップ検収） */
+.ak-approve-row { padding: 0 12px 8px; }
+.ak-approve {
+  width: 100%; padding: 11px 12px; border-radius: 11px;
+  border: 1px solid var(--good-line, var(--line-strong)); background: var(--good-bg, var(--surface));
+  color: var(--good-fg, var(--text)); font-size: 13.5px; font-weight: 700;
+}
+.ak-approve:disabled { opacity: .55; }
 .ak-anno-canvas {
   touch-action: none;            /* スクロール・ズームを止めて描画に専念させる */
   border-radius: 8px; background: #000;
@@ -2199,6 +2224,31 @@ button.stat:active {
   border: 1px solid var(--line); background: var(--bg-2); color: var(--text); font: inherit; font-size: 12.5px;
 }
 .ak-head-actions { display: flex; gap: 6px; flex: none; }
+
+/* --- Quick Review: 一括承認（⚡）と 1 / N プログレス（SPEC §5.1） --- */
+.ak-wait-bar { display: flex; justify-content: flex-start; margin: -2px 0 8px; }
+.ak-wait-pill {
+  display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px;
+  font-size: 11px; font-weight: 700; letter-spacing: .02em;
+  border: 1px solid var(--line-strong); background: var(--surface); color: var(--accent-2);
+}
+.ak-fasttrack { display: flex; flex-direction: column; gap: 4px; margin: 0 0 10px; }
+.btn.fast-track {
+  width: 100%; padding: 12px 14px; border-radius: 12px; font-size: 13.5px; font-weight: 700;
+  border: 1px solid var(--warn); background: rgba(245, 158, 11, .16); color: var(--text);
+  text-align: left; line-height: 1.45;
+}
+.btn.fast-track:active { transform: scale(.99); }
+.btn.fast-track:disabled { opacity: .6; }
+.ak-fasttrack-hint { margin: 0; font-size: 11px; color: var(--muted); line-height: 1.5; }
+.ak-allclear {
+  display: flex; align-items: center; gap: 10px;
+  margin: 2px 0 10px; padding: 10px 12px; border-radius: 12px;
+  border: 1px solid var(--good-line); background: var(--good-bg); color: var(--good-fg);
+  font-size: 12.5px; font-weight: 600; line-height: 1.5;
+}
+.ak-allclear span { flex: 1 1 auto; min-width: 0; }
+.ak-allclear .icon-btn { flex: none; color: inherit; }
 .ak-new-btn { border-color: var(--accent); color: var(--accent-2); }
 .ak-new { display: flex; flex-direction: column; gap: 10px; }
 .ak-new-sub { font-size: 11px; color: var(--muted); }
@@ -2422,6 +2472,7 @@ button.stat:active {
 .ak-anno-preview {
   margin: 4px 0 8px;
 }
+.ak-anno-preview .ak-compare-pill { margin-bottom: 6px; }
 
 .ak-anno-preview-btn {
   display: block;

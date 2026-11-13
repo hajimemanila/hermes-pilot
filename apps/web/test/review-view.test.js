@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { setLang } from '../src/i18n/lang.js'
-import { answerRows, capturedLabel, DONE_LIMIT, doneHint, groupItems, isAnswered, isWaiting, navBadgeState, nextWaiting, pendingCount, repoLabel, runningCount, thumbCaption, unseenNotices, waitingCount } from '../src/lib/reviewView.js'
+import { answerRows, capturedLabel, DONE_LIMIT, doneHint, extractRecommendedAnswers, groupItems, isAnswered, isRecommendedOption, isWaiting, navBadgeState, nextWaiting, pendingCount, repoLabel, runningCount, thumbCaption, unseenNotices, waitingCount } from '../src/lib/reviewView.js'
 
 /** レビュー待ち（blocked + label）。 */
 const waitingItem = (id) => ({ id, status: 'blocked', review: { label: 'review-view-01', round: 1 } })
@@ -173,4 +173,78 @@ test('answerRows は回答を履歴の行にする（未回答は捏造せず ch
   const empty = answerRows(null, null)
   assert.deepEqual(empty.rows, [], 'データが無ければ空（画面を壊さない）')
   assert.equal(empty.global, '')
+})
+
+/** 設問の雛形（options を差し替えて境界を作る）。 */
+const q = (id, options) => ({ id, text: `${id} の問い`, options })
+
+test('extractRecommendedAnswers: 推奨が全部なら全問ぶんの選択肢を返す', () => {
+  const sheet = {
+    questions: [
+      q('q1', [{ id: 'A', label: '塗り', recommended: true }, { id: 'B', label: '線' }]),
+      q('q2', [{ id: 'A', label: '左' }, { id: 'B', label: '右', recommended: true }]),
+    ],
+  }
+  const r = extractRecommendedAnswers(sheet)
+  assert.equal(r.canFastTrack, true)
+  assert.equal(r.summary, 'Q1:A · Q2:B')
+  assert.deepEqual(r.answers, [
+    { id: 'q1', choice: 'A', note: '' },
+    { id: 'q2', choice: 'B', note: '' },
+  ])
+})
+
+test('extractRecommendedAnswers: 推奨が一部なら、無い問は choice:null（お任せ）で送る', () => {
+  const sheet = {
+    questions: [
+      q('q1', [{ id: 'A', label: '塗り', recommended: true }]),
+      q('q2', [{ id: 'A', label: '左' }, { id: 'B', label: '右' }]),
+    ],
+  }
+  const r = extractRecommendedAnswers(sheet)
+  assert.equal(r.canFastTrack, true, '1 問でも推奨があれば一括承認できる')
+  assert.equal(r.summary, 'Q1:A', 'summary は推奨のある問だけ')
+  assert.deepEqual(r.answers[1], { id: 'q2', choice: null, note: '' }, '推奨の無い問はお任せ')
+})
+
+test('extractRecommendedAnswers: 推奨が 1 つも無ければ一括承認を出さない', () => {
+  const r = extractRecommendedAnswers({ questions: [q('q1', [{ id: 'A' }, { id: 'B' }])] })
+  assert.equal(r.canFastTrack, false)
+  assert.equal(r.summary, '')
+  assert.deepEqual(r.answers, [{ id: 'q1', choice: null, note: '' }], '送信形は保つ（未選択＝お任せ）')
+})
+
+test('extractRecommendedAnswers: ラベルに「推奨」/ Recommended を含む選択肢も推奨として扱う', () => {
+  const ja = extractRecommendedAnswers({
+    questions: [q('q1', [{ id: 'A', label: '塗りボタン' }, { id: 'B', label: '線ボタン（推奨）' }])],
+  })
+  assert.equal(ja.canFastTrack, true, 'recommended フラグが無くてもラベルで判定する')
+  assert.equal(ja.summary, 'Q1:B')
+
+  const en = extractRecommendedAnswers({
+    questions: [q('q1', [{ id: 'A', label: 'Recommended: filled' }, { id: 'B', label: 'Outline' }])],
+  })
+  assert.equal(en.summary, 'Q1:A')
+
+  const flagString = extractRecommendedAnswers({ questions: [q('q1', [{ id: 'C', recommended: 'true' }])] })
+  assert.equal(flagString.summary, 'Q1:C', '文字列の "true" も推奨として受ける')
+})
+
+test('extractRecommendedAnswers: 空・壊れた入力で落ちない', () => {
+  for (const bad of [null, undefined, {}, { questions: null }, { questions: [null, {}] }]) {
+    const r = extractRecommendedAnswers(bad)
+    assert.equal(r.canFastTrack, false)
+    assert.equal(r.summary, '')
+    assert.ok(Array.isArray(r.answers))
+  }
+  assert.deepEqual(extractRecommendedAnswers({ questions: [{ id: 'x' }] }).answers, [{ id: 'x', choice: null, note: '' }])
+})
+
+test('isRecommendedOption は recommended フラグとラベルの両方を見る（否定は除く）', () => {
+  assert.equal(isRecommendedOption({ id: 'A', recommended: true }), true)
+  assert.equal(isRecommendedOption({ id: 'A', recommended: 'true' }), true)
+  assert.equal(isRecommendedOption({ id: 'A', label: '推奨案' }), true)
+  assert.equal(isRecommendedOption({ id: 'A', label: 'no recommendation' }), false, '「no recommend…」は推奨ではない')
+  assert.equal(isRecommendedOption({ id: 'A', label: '非推奨' }), false, '「非推奨」は推奨ではない')
+  assert.equal(isRecommendedOption(null), false)
 })

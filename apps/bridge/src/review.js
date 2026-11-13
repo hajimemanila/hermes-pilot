@@ -55,6 +55,59 @@ export function isSafeRel(rel) {
   return /^[A-Za-z0-9._/-]+$/.test(s)
 }
 
+/**
+ * 比較用（Before）画像の候補パスを優先順に返す（存在確認はしない純粋関数）。
+ *
+ * After = いまの下地画像（最新のスクショ）。Before = 前回の赤入れ／前ラウンドの画像。
+ * 実測の命名は `<label>-<stamp>-<round>[.<kind>].png`（例 `1385.jpg-202611131208-1.jpg`）で
+ * round はほぼ常に 1。比較相手は 3 通りで見つかる:
+ *  1. 同名 `.before`（`shots/x-1.before.png` / `x-1.after.png` → `x-1.before.png`）
+ *  2. 同じ命名の前ラウンド（末尾の `-<round>` を 1 つ戻す。round >= 2 のときだけ）
+ *  3. 同一 label の別タスク（前回のレビュー）の `.annotated`、無ければその元画像
+ *
+ * 3 は「前ラウンドのタスクは archived のことが多い」（実測）ので status では絞らない。
+ *
+ * @param {{image?: string, round?: number, others?: Array<{image: string, round?: number}>}} input
+ *   `others` は同一 label の他タスクの画像（新しい順）。**このタスク自身は含めない**
+ * @returns {string[]} 相対パスの候補（優先順・重複なし）
+ */
+export function compareCandidates({ image, round = 1, others = [] } = {}) {
+  const out = []
+  const rel = String(image ?? '').trim()
+  if (!rel) return out
+  const ext = path.extname(rel)
+  if (!/\.(png|jpe?g|webp)$/i.test(ext)) return out
+  const noExt = rel.slice(0, -ext.length)
+  const push = (p) => {
+    if (p && p !== rel && !out.includes(p)) out.push(p)
+  }
+
+  // 1) 同名 .before（いまの画像の 1 つ前を撮ったもの）
+  push(`${noExt}.before${ext}`)
+  if (/\.after$/i.test(noExt)) push(`${noExt.replace(/\.after$/i, '')}.before${ext}`)
+
+  // 2) 前ラウンド（`shots/x-2.png` → `shots/x-1.png`）
+  const current = Math.max(1, Number(round) || 1)
+  const m = /^(.*-)(\d+)$/.exec(noExt.replace(/\.(after|before)$/i, ''))
+  if (m && Number(m[2]) >= 2) {
+    const prev = `${m[1]}${Number(m[2]) - 1}`
+    push(`${prev}${ext}`)
+    push(`${prev}.after${ext}`)
+  }
+
+  // 3) 同一 label の前ラウンドタスク（近い順）。赤入れ済みを優先する
+  for (const o of Array.isArray(others) ? others : []) {
+    const r = String(o?.image ?? '').trim()
+    if (!r) continue
+    if (Number(o?.round ?? 1) > current) continue
+    const e = path.extname(r)
+    const base = r.slice(0, -e.length)
+    push(`${base}.annotated${e}`)
+    push(r)
+  }
+  return out
+}
+
 /** 回答の安定ハッシュ（キー順を固定して二重投稿を検出する）。 */
 export function answerHash({ answers = [], global = '', annotations = [] }) {
   const norm = {
@@ -367,6 +420,62 @@ export function createReview(cfg, opts = {}) {
     }
   }
 
+  /**
+   * 同一 label の他タスク（前ラウンド）を 1 回のクエリで索引にする（比較画像の解決用）。
+   *
+   * 前ラウンドのタスクは `archived` のことが多い（実測: `1379.jpg-…` の前回は archived）ので
+   * status では絞らない。キーは `[review]` 行の label、値は新しい順の `{id, image, round, createdAt}`。
+   *
+   * @returns {Map<string, Array<{id: string, image: string, round: number, createdAt: number}>>}
+   */
+  function siblingIndex() {
+    const byLabel = new Map()
+    let db
+    try {
+      db = openDb()
+    } catch {
+      return byLabel
+    }
+    try {
+      const rs = db.prepare("SELECT id, body, created_at FROM tasks WHERE body LIKE '%[review]%'").all()
+      for (const r of rs) {
+        const ak = parseReviewLine(r.body)
+        if (!ak?.image || !ak.label) continue
+        const list = byLabel.get(ak.label) || []
+        list.push({
+          id: r.id,
+          image: ak.image,
+          round: Number(ak.round ?? 1),
+          createdAt: Number(r.created_at ?? 0) * 1000,
+        })
+        byLabel.set(ak.label, list)
+      }
+    } catch {
+      /* 索引は補助情報。壊れた DB でも一覧は返す */
+    } finally {
+      db.close()
+    }
+    for (const list of byLabel.values()) list.sort((a, b) => b.createdAt - a.createdAt)
+    return byLabel
+  }
+
+  /**
+   * 比較用（Before）画像の実在する相対パス（無ければ null）。
+   *
+   * @param {string} id タスク ID（自分自身を候補から外す）
+   * @param {object} ak `[review]` 行
+   * @param {Map} [index] `siblingIndex()` の結果（一覧では 1 回だけ作って渡す）
+   */
+  function compareRelOf(id, ak, index) {
+    if (!ak?.image) return null
+    const others = (index?.get(ak.label) || []).filter((o) => o.id !== id)
+    const cands = compareCandidates({ image: ak.image, round: Number(ak.round ?? 1), others })
+    for (const rel of cands) {
+      if (resolveInside(rel)) return rel
+    }
+    return null
+  }
+
   /** このタスクを実行している worker のセッション ID（無ければ null）。 */
   function sessionId(id) {
     let db
@@ -430,6 +539,7 @@ export function createReview(cfg, opts = {}) {
     const base = rows(limit)
     const events = lastEvents(base.map((r) => r.id))
     const taskChats = readTaskChats()
+    const siblings = siblingIndex()
     for (const r of base) {
       const ak = parseReviewLine(r.body)
       if (!ak) continue
@@ -457,6 +567,8 @@ export function createReview(cfg, opts = {}) {
         review: {
           label: ak.label ?? null,
           image: ak.image ?? null,
+          // 比較用（Before=前回の赤入れ）画像があるか。UI はこれでトグルを出す
+          hasCompare: Boolean(compareRelOf(r.id, ak, siblings)),
           target: ak.target ?? null,
           repo: repoForTarget(ak.target),
           chat: sanitizeChatId(ak.chat) || taskChats[r.id] || null,
@@ -624,6 +736,126 @@ export function createReview(cfg, opts = {}) {
     return { ok: out.code === 0, status: b.status, output: out.out.slice(0, 800) }
   }
 
+  /**
+   * 検収（1 タップ合格）の状態遷移。
+   *
+   * 「✅ Looks Good」の意味は **合格＝完了**（SPEC §5.2.3 / D15②）。まず `complete` を試し、
+   * それが通らない（ワーカーが抱えたまま等）ときだけ `unblock` に落とす — どちらでも
+   * ワーカーは止まらず、人間の判断は失われない。
+   *
+   * @param {string} id タスク ID
+   * @param {{status: string}} b `bodyOf()` の行
+   * @param {string} reason unblock に落ちたときの理由
+   * @returns {Promise<{code: number, out: string, status: string, moved: string|null}>}
+   */
+  async function approveAdvance(id, b, reason) {
+    if (b.status !== 'blocked') return { code: 0, out: '', status: b.status, moved: null }
+    const done = await runKanban([
+      'complete',
+      id,
+      '--result',
+      'Visual check passed',
+      '--metadata',
+      JSON.stringify({ closed_from: 'review', approved_by: 'mobile', approved_at: new Date().toISOString() }),
+    ])
+    if (done.code === 0) return { code: 0, out: done.out, status: 'done', moved: 'done' }
+    const freed = await runKanban(['unblock', id, '--reason', reason])
+    return {
+      code: freed.code,
+      out: `${done.out}\n${freed.out}`,
+      status: freed.code === 0 ? 'ready' : b.status,
+      moved: freed.code === 0 ? 'ready' : null,
+    }
+  }
+
+  /**
+   * 赤入れせずに 1 タップ検収（SPEC §5.2.3 / D15②）。
+   *
+   * `answer()` と同じ方針:
+   *  - 注釈待ち（blocked）のときだけ受け付ける（それ以外は NOT_WAITING）
+   *  - 同じ検収の再送は `duplicate` を返し、コメントを二重に付けず遷移だけ補完する
+   *
+   * 記録は `<image>.approval.json`（注釈の `.annotation.json` と同じ場所）。
+   *
+   * @param {string} id タスク ID
+   * @param {{note?: string, by?: string, chat?: string}} [payload]
+   */
+  async function approve(id, payload = {}) {
+    const b = bodyOf(id)
+    if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
+    const ak = parseReviewLine(b.body)
+    if (!ak?.image) return { ok: false, code: 'NO_IMAGE', message: '注釈タスクではありません' }
+    if (payload?.chat) rememberTaskChat(id, payload.chat)
+
+    const note = String(payload?.note ?? '').slice(0, 400)
+    const by = String(payload?.by ?? 'mobile').slice(0, 40)
+    const rel = ak.image.replace(/\.(png|jpe?g|webp)$/i, '.approval.json')
+    const abs = path.join(path.resolve(workdir(), rel))
+    const reason = `検収 OK（Visual check passed）${note ? `: ${note}` : ''}`
+
+    const existing = readJsonIfExists(abs)
+    if (existing) {
+      // 冪等: 記録済みならコメントは増やさない（遷移だけ補完）
+      const adv = await approveAdvance(id, b, `${reason}（再送）`)
+      return {
+        ok: adv.code === 0,
+        duplicate: true,
+        status: adv.status,
+        moved: adv.moved,
+        files: { approval: rel },
+        message: '検収は既に記録されています',
+        output: adv.out.slice(0, 400),
+      }
+    }
+    if (b.status !== 'blocked') {
+      return {
+        ok: false,
+        code: 'NOT_WAITING',
+        status: b.status,
+        message: `注釈待ちではありません（現在: ${b.status}）`,
+      }
+    }
+
+    const record = {
+      task_id: id,
+      label: ak.label ?? null,
+      round: Number(ak.round ?? 1),
+      image: ak.image,
+      note,
+      approved_by: by,
+      approved_at: new Date().toISOString(),
+      verdict: 'visual-check-passed',
+    }
+    fs.mkdirSync(path.dirname(abs), { recursive: true })
+    fs.writeFileSync(abs, JSON.stringify(record, null, 2), 'utf8')
+
+    const comment = await runKanban(['comment', id, 'Visual check passed', '--author', by])
+    if (comment.code !== 0) {
+      // コメントが残せなかったら検収の記録も消す（再挑戦でコメントを落とさないため）
+      try {
+        fs.unlinkSync(abs)
+      } catch {
+        /* 既に消えていれば noop */
+      }
+      return {
+        ok: false,
+        code: 'COMMENT_FAILED',
+        status: b.status,
+        moved: null,
+        output: comment.out.slice(0, 400),
+      }
+    }
+    const adv = await approveAdvance(id, b, reason)
+    return {
+      ok: adv.code === 0,
+      duplicate: false,
+      status: adv.status,
+      moved: adv.moved,
+      files: { approval: rel },
+      output: `${comment.out}\n${adv.out}`.trim().slice(0, 600),
+    }
+  }
+
 
   /** 挿絵（workdir/thumbs/... の PNG/JPEG/WebP のみ）。 */
   function thumb(rel) {
@@ -639,23 +871,28 @@ export function createReview(cfg, opts = {}) {
   }
 
 
-  /** 注釈の下地画像（または annotated=true なら赤入れ済み画像）。 */
+  /** 注釈の下地画像（annotated=true なら赤入れ済み、compare=true なら前回の赤入れ）。 */
   function image(id, opts = {}) {
     const b = bodyOf(id)
     if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
     const ak = parseReviewLine(b.body)
     if (!ak?.image) return { ok: false, code: 'NO_IMAGE', message: 'このタスクには下地画像がありません' }
-    let abs = null
-    if (opts?.annotated) {
+    let rel = ak.image
+    if (opts?.compare) {
+      // 比較（Before）: 前回の赤入れ／前ラウンドの画像。無ければ 404 で UI がトグルを隠す
+      const cmp = compareRelOf(id, ak, siblingIndex())
+      if (!cmp) return { ok: false, code: 'NO_COMPARE', message: '比較できる前回の画像がありません' }
+      rel = cmp
+    } else if (opts?.annotated) {
       const jsonAbs = resolveInside(ak.image.replace(/\.(png|jpe?g)$/i, '.annotation.json'))
       const data = jsonAbs ? readJsonIfExists(jsonAbs) : null
-      if (data?.annotated_image) abs = resolveInside(data.annotated_image)
+      if (data?.annotated_image) rel = data.annotated_image
     }
-    if (!abs) abs = resolveInside(ak.image)
+    const abs = resolveInside(rel)
     if (!abs) return { ok: false, code: 'IMAGE_MISSING', message: '下地画像が見つかりません' }
     const ext = path.extname(abs).toLowerCase()
-    const type = ext === '.png' ? 'image/png' : 'image/jpeg'
-    return { ok: true, data: fs.readFileSync(abs), type, path: abs }
+    const type = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
+    return { ok: true, data: fs.readFileSync(abs), type, path: abs, rel }
   }
 
   /** 送信済みの注釈（無ければ null）。 */
@@ -1155,6 +1392,7 @@ export function createReview(cfg, opts = {}) {
     sheetData,
     answer,
     reopen,
+    approve,
     sessionId,
     image,
     annotation,
