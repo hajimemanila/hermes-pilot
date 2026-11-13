@@ -8,7 +8,8 @@ import { loadConfig, VERSION } from './config.js'
 import { createAuth, isAllowedWsOrigin } from './auth.js'
 import { createHermesClient } from './hermes.js'
 import { createKanban } from './kanban.js'
-import { createAkapen, injectAkapenBridge } from './akapen.js'
+import { createReview, injectReviewBridge } from './review.js'
+import { createReviewWatcher } from './review-watcher.js'
 import { createOps } from './ops.js'
 import { listSnippets, normalizeCustom, CUSTOM_MAX } from './snippets.js'
 import { listTermSnippets } from './term-snippets.js'
@@ -49,7 +50,9 @@ const kanban = createKanban(cfg)
 // リポジトリ（作業ディレクトリ）↔ ボード。一覧は repos.json ＋ 1 階層スキャン
 // ＋ ボードの default_workdir ＋ 直近セッション cwd の統合（SPEC §5.1）
 const repos = createRepos(cfg, { boards: () => kanban.boards() })
-const akapen = createAkapen(cfg, { targets: () => repos.targets() })
+const review = createReview(cfg, { targets: () => repos.targets() })
+// 完了・ブロックの記録はブリッジ内蔵（D7）。外部 cron は要らない。
+const reviewWatcher = createReviewWatcher(cfg, { review })
 const ops = createOps(cfg, hermes, auth, { kanban })
 const gitinfo = createGitInfo(cfg)
 const discord = createDiscord(cfg)
@@ -453,55 +456,62 @@ async function handleApi(req, res, url) {
   }
 
 
-  // --- 赤ペン（akapen）------------------------------------------------------
-  // /api/akapen                     … 一覧（review / ready / done）
-  // /api/akapen/:id/sheet           … シート HTML（sandbox・生成物）
-  // /api/akapen/:id/data            … sheet.json（PWA のネイティブフォーム用）
-  // POST /api/akapen/:id/answer     … 回答を保存 → comment → unblock（冪等）
-  // POST /api/akapen/:id/reopen     … 反映が違うとき review に戻す
-  if (a === 'akapen') {
+  // --- レビュー（review）------------------------------------------------------
+  // 全ルートは SPEC §4.2。旧 `/api/akapen/*` は廃止し、ここに一本化する。
+  // /api/review                     … 一覧（review / ready / done）
+  // /api/review/:id/sheet           … シート HTML（sandbox・生成物）
+  // /api/review/:id/data            … sheet.json（PWA のネイティブフォーム用）
+  // POST /api/review/:id/answer     … 回答を保存 → comment → unblock（冪等）
+  // POST /api/review/:id/reopen     … 反映が違うとき review に戻す
+  if (a === 'review') {
     if (!b) {
       return sendJson(res, 200, {
-        board: akapen.board,
-        workdir: akapen.workdir(),
-        items: akapen.list(Number(url.searchParams.get('limit') ?? 80)),
+        board: review.board,
+        workdir: review.workdir(),
+        items: review.list(Number(url.searchParams.get('limit') ?? 80)),
       })
     }
-    // /api/akapen/feed?limit=&since= … 作業フィード（監視 cron が書く 1 行ログ）
+    // /api/review/feed?limit=&since= … 作業フィード（監視 cron が書く 1 行ログ）
     if (b === 'feed' && req.method === 'GET') {
       return sendJson(res, 200, {
-        items: akapen.feed(
+        items: review.feed(
           Number(url.searchParams.get('limit') ?? 20),
           Number(url.searchParams.get('since') ?? 0),
         ),
       })
     }
-    // /api/akapen/chat-reports?limit=&since= … 全会話ぶんの完了報告（未読の点を出すため）
+    // /api/review/chat-reports?limit=&since= … 全会話ぶんの完了報告（未読の点を出すため）
     // 会話一覧の行と下部ナビのチャットタブは「どの会話に新着があるか」を 1 回で要る。
     if (b === 'chat-reports' && req.method === 'GET') {
       return sendJson(res, 200, {
-        items: akapen.chatReports({
+        items: review.chatReports({
           limit: Number(url.searchParams.get('limit') ?? 200),
           since: Number(url.searchParams.get('since') ?? 0),
         }),
       })
     }
-    // /api/akapen/chat-report?session_id=&limit=&since= … その会話に流す完了報告
+    // /api/review/chat-report?session_id=&limit=&since= … その会話に流す完了報告
     // （監視 cron が起票元の会話へ返す 1 行。端末はチャットタブが 15 秒ごとに読む）
     if (b === 'chat-report' && req.method === 'GET') {
       const sessionId = String(url.searchParams.get('session_id') || '')
       if (!sessionId) return sendJson(res, 400, { error: { code: 'SESSION_REQUIRED', message: 'session_id が必要です' } })
       return sendJson(res, 200, {
         sessionId,
-        items: akapen.chatReport(sessionId, {
+        items: review.chatReport(sessionId, {
           limit: Number(url.searchParams.get('limit') ?? 3),
           since: Number(url.searchParams.get('since') ?? 0),
         }),
       })
     }
+    // /api/review/:id/session        … 実行ワーカーの session_id を解決する
+    if (c === 'session' && req.method === 'GET') {
+      const info = review.sessionId(b)
+      if (!info) return sendJson(res, 404, { error: { code: 'NO_SESSION', message: 'このタスクに worker セッションがありません' } })
+      return sendJson(res, 200, { taskId: b, status: info.status, sessionId: info.sessionId })
+    }
     if (c === 'worker' && req.method === 'GET') {
       // worker（profile mobile）の進行を読む。session.resume は通らないので state.db を直接読む
-      const info = akapen.sessionId(b)
+      const info = review.sessionId(b)
       if (!info) return sendJson(res, 404, { error: { code: 'NO_SESSION', message: 'このタスクに worker セッションがありません' } })
       // セッションの DB はイベントが記録した実パスを優先（無ければ profiles/mobile）
       const profileDb =
@@ -513,38 +523,40 @@ async function handleApi(req, res, url) {
       })
       return sendJson(res, 200, { taskId: b, status: info.status, sessionId: info.sessionId, feed })
     }
-    // /api/akapen/library            … 注釈の下地にできる画像（library + shots）
-    // /api/akapen/library/file?path= … その画像
-    // /api/akapen/from-image         … 画像から注釈タスクを1件作る
+    // /api/review/library            … 注釈の下地にできる画像（library + shots）
+    // /api/review/library/file?path= … その画像
+    // /api/review/from-image         … 画像から注釈タスクを1件作る
     if (b === 'targets') {
-      return sendJson(res, 200, { targets: akapen.targets() })
+      return sendJson(res, 200, { targets: review.targets() })
     }
     if (b === 'library' && !c) {
-      return sendJson(res, 200, { items: akapen.library(Number(url.searchParams.get('limit') ?? 60)) })
+      return sendJson(res, 200, { items: review.library(Number(url.searchParams.get('limit') ?? 60)) })
     }
     if (b === 'library' && c === 'file' && req.method === 'GET') {
-      const r = akapen.libraryFile(String(url.searchParams.get('path') || ''))
+      const r = review.libraryFile(String(url.searchParams.get('path') || ''))
       if (!r.ok) return sendJson(res, 404, { error: { code: r.code, message: r.message } })
       res.writeHead(200, { 'content-type': r.type, 'cache-control': 'private, max-age=600' })
       return res.end(r.data)
     }
-    if (b === 'from-image' && req.method === 'POST') {
+    // POST /api/review/annotation/new … 画像から注釈タスクを1件作る（SPEC §4.2）
+    // 旧 `/api/review/from-image` は、配信済み dist を掴んだ端末のために受け続ける。
+    if (((b === 'annotation' && c === 'new') || b === 'from-image') && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
         return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
       }
       const body = await readJson(req, 12_000_000)
-      const r = await akapen.createFromImage(body || {})
-      auth.audit({ kind: 'akapen.from_image', task: r.taskId ?? null, source: body?.source ?? 'upload', ok: Boolean(r.ok) })
+      const r = await review.createFromImage(body || {})
+      auth.audit({ kind: 'review.from_image', task: r.taskId ?? null, source: body?.source ?? 'upload', ok: Boolean(r.ok) })
       return sendJson(res, r.ok ? 201 : 400, r)
     }
     if (c === 'image' && req.method === 'GET') {
-      const r = akapen.image(b, { annotated: url.searchParams.get('annotated') === '1' })
+      const r = review.image(b, { annotated: url.searchParams.get('annotated') === '1' })
       if (!r.ok) return sendJson(res, 404, { error: { code: r.code, message: r.message } })
       res.writeHead(200, { 'content-type': r.type, 'cache-control': 'private, max-age=120' })
       return res.end(r.data)
     }
     if (c === 'annotation' && req.method === 'GET') {
-      const r = akapen.annotation(b)
+      const r = review.annotation(b)
       return sendJson(res, r.ok ? 200 : 404, r.ok ? r : { error: { code: r.code, message: r.message } })
     }
     if (c === 'annotation' && req.method === 'POST') {
@@ -553,9 +565,9 @@ async function handleApi(req, res, url) {
       }
       // 画像は base64 で来るので、この経路だけ上限を上げる（既定は 1MB）
       const body = await readJson(req, 12_000_000)
-      const r = await akapen.saveAnnotation(b, body || {})
+      const r = await review.saveAnnotation(b, body || {})
       auth.audit({
-        kind: 'akapen.annotation',
+        kind: 'review.annotation',
         task: b,
         duplicate: Boolean(r.duplicate),
         marks: r.marks ?? 0,
@@ -564,7 +576,7 @@ async function handleApi(req, res, url) {
       return sendJson(res, r.ok ? 200 : 400, r)
     }
     if (c === 'sheet' && req.method === 'GET') {
-      const r = akapen.sheetHtml(b)
+      const r = review.sheetHtml(b)
       if (!r.ok) return sendJson(res, r.code === 'NOT_FOUND' ? 404 : 409, { error: { code: r.code, message: r.message } })
       // iframe で埋め込む時は sandbox（別オリジン）で隔離し、回答は postMessage で親へ。
       // 単体タブで開いた時は same-origin を許可して自分で API に POST できるようにする。
@@ -580,17 +592,17 @@ async function handleApi(req, res, url) {
         'cache-control': 'no-store',
         'x-content-type-options': 'nosniff',
       })
-      return res.end(injectAkapenBridge(r.html, b))
+      return res.end(injectReviewBridge(r.html, b))
     }
     if (c === 'thumb' && req.method === 'GET') {
       const rel = url.pathname.split('/').slice(5).join('/')
-      const r = akapen.thumb(decodeURIComponent(rel))
+      const r = review.thumb(decodeURIComponent(rel))
       if (!r.ok) return sendJson(res, 404, { error: { code: r.code, message: r.message } })
       res.writeHead(200, { 'content-type': r.type, 'cache-control': 'private, max-age=600' })
       return res.end(r.data)
     }
     if (c === 'data' && req.method === 'GET') {
-      const r = akapen.sheetData(b)
+      const r = review.sheetData(b)
       return sendJson(res, r.ok ? 200 : 409, r.ok ? r : { error: { code: r.code, message: r.message } })
     }
     if (c === 'answer' && req.method === 'POST') {
@@ -598,15 +610,15 @@ async function handleApi(req, res, url) {
         return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
       }
       const body = await readJson(req)
-      const r = await akapen.answer(b, body || {})
+      const r = await review.answer(b, body || {})
       auth.audit({
-        kind: 'akapen.answer',
+        kind: 'review.answer',
         task: b,
         duplicate: Boolean(r.duplicate),
         choiceCount: Array.isArray(body?.answers) ? body.answers.length : 0,
         ok: Boolean(r.ok),
       })
-      // 赤ペン待ち以外への送信は 409（状態の衝突）として返す。他の失敗は 400。
+      // レビュー待ち以外への送信は 409（状態の衝突）として返す。他の失敗は 400。
       return sendJson(res, r.ok ? 200 : r.code === 'NOT_WAITING' ? 409 : 400, r)
     }
     if (c === 'reopen' && req.method === 'POST') {
@@ -614,8 +626,8 @@ async function handleApi(req, res, url) {
         return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
       }
       const body = await readJson(req)
-      const r = await akapen.reopen(b, body?.reason)
-      auth.audit({ kind: 'akapen.reopen', task: b, ok: Boolean(r.ok) })
+      const r = await review.reopen(b, body?.reason)
+      auth.audit({ kind: 'review.reopen', task: b, ok: Boolean(r.ok) })
       return sendJson(res, r.ok ? 200 : 400, r)
     }
     return sendJson(res, 404, { error: { message: `unknown endpoint: ${url.pathname}` } })
@@ -1120,9 +1132,15 @@ server.on('error', (err) => {
 })
 
 server.listen(cfg.port, cfg.host, async () => {
-  console.log(`[bridge] Hermes Mobile PWA: http://${cfg.host}:${cfg.port}`)
+  console.log(`[bridge] Hermes Pilot: http://${cfg.host}:${cfg.port}`)
   console.log(`[bridge] 上流: ${cfg.hermesBase}`)
   console.log(`[bridge] 管理画面: http://${cfg.host}:${cfg.port}/auth?t=${auth.token}`)
+  // 内蔵ウォッチャー（D7）。初回はベースライン確立のみで過去分は通知しない。
+  try {
+    reviewWatcher.start()
+  } catch (err) {
+    console.warn(`[bridge] reviewWatcher を起動できません: ${err?.message}`)
+  }
   try {
     await hermes.ensureToken()
     console.log('[bridge] Hermes セッショントークン: 解決済み')

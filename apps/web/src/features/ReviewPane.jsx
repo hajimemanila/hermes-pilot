@@ -6,28 +6,28 @@ import { Loader, RefreshButton, Sheet, Spinner, relTime } from '../components/Ui
 import { haptic } from '../lib/haptic.js'
 import { readActiveChatId } from '../lib/chatReports.js'
 import { AnnotationEditor } from './AnnotationEditor.jsx'
-import { answerRows, capturedLabel, DONE_LIMIT, doneHint, groupItems, isWaiting, nextWaiting, repoLabel, thumbCaption } from '../lib/akapenView.js'
+import { answerRows, capturedLabel, DONE_LIMIT, doneHint, groupItems, isWaiting, nextWaiting, repoLabel, thumbCaption } from '../lib/reviewView.js'
 
 /**
  * 挿絵の拡大用データ。キャプションは「Q2 A. 塗りのボタン」＋問いの文。
- * ラベルだけだと何の話か分からない（注釈 akapen-empty-01: この文言はなんですか？）。
+ * ラベルだけだと何の話か分からない（注釈 review-empty-01: この文言はなんですか？）。
  */
 function toZoom(taskId, option, qIndex, question, thumb) {
   const { head, sub } = thumbCaption(`Q${qIndex + 1}`, option, question?.text)
-  return { src: `/api/akapen/${taskId}/thumb/${thumb}`, head, sub }
+  return { src: `/api/review/${taskId}/thumb/${thumb}`, head, sub }
 }
 
 /**
- * 赤ペン（akapen）ビュー。
+ * レビュー（review）ビュー。
  *
- * 契約: `~/Projects/akapen/CONTRACT.md`。カンバン board `mobile` の状態が真実で、
+ * 契約: `~/Projects/review/CONTRACT.md`。カンバン board `mobile` の状態が真実で、
  * 標準モードは sheet.json から**ネイティブフォーム**を描き（=モバイルで一番速い）、
  * 指摘/添削モードはシート自体を iframe で開く（注釈UIは再現しない）。
  *
- * 送信は `POST /api/akapen/:id/answer` のみ。サーバが回答ファイルを書き、
+ * 送信は `POST /api/review/:id/answer` のみ。サーバが回答ファイルを書き、
  * カンバンを comment → unblock するので、この画面は状態を推測しない。
  *
- * 表示仕様は `docs/AKAPEN-VIEW.md`（赤ペン akapen-view-01 の回答で確定）:
+ * 表示仕様は `docs/REVIEW-VIEW.md`（レビュー akapen-view-01 の回答で確定）:
  * 既定は「判断待ち」だけを見せ、送信後は次の判断待ちへ移る。
  */
 
@@ -62,9 +62,9 @@ function progressText(item) {
     return `反映中${since ? `（開始 ${since}）` : ''}${beat ? ` ・ 心拍 ${beat}` : ''}`
   }
   if (item.status === 'ready') return '反映待ち（worker の起動待ち）'
-  if (item.status === 'blocked' && item.akapen?.label) {
+  if (item.status === 'blocked' && item.review?.label) {
     const at = ago(pr.lastEventAt)
-    return `赤ペン待ち${at ? ` ・ 提示 ${at}` : ''}`
+    return `レビュー待ち${at ? ` ・ 提示 ${at}` : ''}`
   }
   if (item.status === 'done') return `完了${pr.lastEventAt ? ` ・ ${ago(pr.lastEventAt)}` : ''}`
   return ''
@@ -75,7 +75,7 @@ function Chip({ tone, children }) {
 }
 
 function ItemRow({ item, onOpen }) {
-  const ak = item.akapen || {}
+  const ak = item.review || {}
   const waiting = isWaiting(item)
   const age = item.completedAt || item.createdAt ? relTime(item.completedAt || item.createdAt) : ''
   return (
@@ -100,14 +100,14 @@ function ItemRow({ item, onOpen }) {
       </div>
       <div className="ak-row-side">
         <Chip tone={waiting ? 'warn' : item.status === 'done' ? 'good' : ''}>
-          {waiting ? '赤ペン待ち' : STATUS_LABEL[item.status] || item.status}
+          {waiting ? 'レビュー待ち' : STATUS_LABEL[item.status] || item.status}
         </Chip>
       </div>
     </button>
   )
 }
 
-/** 【赤ペン回答】の貼り付けを最小限パースする（iframe モードのフォールバック）。 */
+/** 【レビュー回答】の貼り付けを最小限パースする（iframe モードのフォールバック）。 */
 export function parsePastedReply(text) {
   const out = { answers: [], global: '' }
   const lines = String(text || '').split('\n')
@@ -126,7 +126,7 @@ export function parsePastedReply(text) {
       inGlobal = false
       continue
     }
-    const g = /^全体への赤ペン:\s*(.*)$/.exec(line)
+    const g = /^全体へのレビュー:\s*(.*)$/.exec(line)
     if (g) {
       out.global = g[1] || ''
       inGlobal = true
@@ -150,7 +150,7 @@ function WorkerFeed({ taskId, open }) {
     let alive = true
     const load = async () => {
       try {
-        const r = await api(`/api/akapen/${taskId}/worker?limit=30`)
+        const r = await api(`/api/review/${taskId}/worker?limit=30`)
         if (!alive) return
         setFeed(r)
         setError(null)
@@ -214,7 +214,7 @@ function StandardForm({ item, data, onSubmitted }) {
   const [global, setGlobal] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
-  // 挿絵は 72px 固定だと判断できない（赤ペン回答の全体メモ）。タップで原寸表示する。
+  // 挿絵は 72px 固定だと判断できない（レビュー回答の全体メモ）。タップで原寸表示する。
   const [zoom, setZoom] = useState(null)
 
   const setChoice = (qid, value) =>
@@ -236,7 +236,7 @@ function StandardForm({ item, data, onSubmitted }) {
         by: 'mobile',
         chat: readActiveChatId(),
       }
-      const r = await api(`/api/akapen/${item.id}/answer`, { method: 'POST', body: payload })
+      const r = await api(`/api/review/${item.id}/answer`, { method: 'POST', body: payload })
       onSubmitted?.(r)
     } catch (e) {
       setError(e?.message || '送信できませんでした')
@@ -288,7 +288,7 @@ function StandardForm({ item, data, onSubmitted }) {
                         setZoom(toZoom(item.id, o, i, q, o.thumb))
                       }}
                     >
-                      <img className="ak-opt-thumb" src={`/api/akapen/${item.id}/thumb/${o.thumb}`} alt="" />
+                      <img className="ak-opt-thumb" src={`/api/review/${item.id}/thumb/${o.thumb}`} alt="" />
                     </span>
                   ) : null}
                 </button>
@@ -306,7 +306,7 @@ function StandardForm({ item, data, onSubmitted }) {
       <section className="ak-q">
         <div className="ak-q-head">
           <span className="ak-q-no">全</span>
-          <span className="ak-q-text">全体への赤ペン（任意）</span>
+          <span className="ak-q-text">全体へのレビュー（任意）</span>
         </div>
         <textarea
           className="ak-global"
@@ -329,7 +329,7 @@ function StandardForm({ item, data, onSubmitted }) {
           }}
         >
           {busy ? <Spinner size={15} /> : null}
-          <span>{busy ? '送信中…' : '赤ペンを送る'}</span>
+          <span>{busy ? '送信中…' : 'レビューを送る'}</span>
         </button>
       </div>
       <p className="ak-hint">未選択は推奨案で確定します。送信するとカンバンが ready に戻り、agent が反映します。</p>
@@ -369,12 +369,13 @@ function IframeForm({ item, onSubmitted, notify }) {
   useEffect(() => {
     const onMessage = async (ev) => {
       const d = ev.data
-      if (!d || d.type !== 'akapen:reply' || String(d.taskId) !== String(item.id)) return
+      // 旧シート（`akapen:reply`）も受ける。新しい注入スクリプトは `review:reply` を送る。
+      if (!d || (d.type !== 'review:reply' && d.type !== 'akapen:reply') || String(d.taskId) !== String(item.id)) return
       setBusy(true)
       setError(null)
       try {
         const parsed = parsePastedReply(d.text)
-        const r = await api(`/api/akapen/${item.id}/answer`, {
+        const r = await api(`/api/review/${item.id}/answer`, {
           method: 'POST',
           body: { ...parsed, by: 'mobile', chat: readActiveChatId() },
         })
@@ -396,7 +397,7 @@ function IframeForm({ item, onSubmitted, notify }) {
     setError(null)
     try {
       const parsed = parsePastedReply(pasted)
-      const r = await api(`/api/akapen/${item.id}/answer`, {
+      const r = await api(`/api/review/${item.id}/answer`, {
         method: 'POST',
         body: { ...parsed, by: 'mobile', chat: readActiveChatId() },
       })
@@ -412,8 +413,8 @@ function IframeForm({ item, onSubmitted, notify }) {
     <div className="ak-form">
       <iframe
         className="ak-iframe"
-        title="赤ペンシート"
-        src={`/api/akapen/${item.id}/sheet`}
+        title="レビューシート"
+        src={`/api/review/${item.id}/sheet`}
         sandbox="allow-scripts allow-forms"
       />
       <details className="ak-paste">
@@ -421,7 +422,7 @@ function IframeForm({ item, onSubmitted, notify }) {
         <textarea
           value={pasted}
           onChange={(e) => setPasted(e.target.value)}
-          placeholder="【赤ペン回答】… をそのまま貼り付け"
+          placeholder="【レビュー回答】… をそのまま貼り付け"
           rows={6}
         />
         {error ? <div className="ak-error">{error}</div> : null}
@@ -444,7 +445,7 @@ function IframeForm({ item, onSubmitted, notify }) {
 }
 
 /**
- * 詳細シート（`/api/akapen/:id/sheet`）への導線。**ドロワーの先頭に固定して出す**。
+ * 詳細シート（`/api/review/:id/sheet`）への導線。**ドロワーの先頭に固定して出す**。
  *
  * 判断待ちのドロワーはネイティブの設問フォームが主で、前提・挿絵・前回の回答といった
  * シートの全体像は見えない。リンクをフォームの末尾に置くと、設問が増えた時点で
@@ -454,16 +455,16 @@ function IframeForm({ item, onSubmitted, notify }) {
 function SheetLink({ item }) {
   return (
     <div className="ak-sheetlink">
-      <a className="ak-link" href={`/api/akapen/${item.id}/sheet`} target="_blank" rel="noreferrer">
+      <a className="ak-link" href={`/api/review/${item.id}/sheet`} target="_blank" rel="noreferrer">
         シート全体を開く ↗
       </a>
     </div>
   )
 }
 
-/** 赤ペン待ち以外（進行中・完了）の読み取り専用ビュー。回答フォームは出さない。 */
+/** レビュー待ち以外（進行中・完了）の読み取り専用ビュー。回答フォームは出さない。 */
 function ReadOnlyDetail({ item, data, answer, notify, onStartAnnotation, onReopened, onOpenChat }) {
-  const ak = item.akapen || {}
+  const ak = item.review || {}
   const label = STATUS_LABEL[item.status] || item.status
   const answered = ak.answeredAt ? relTime(Date.parse(ak.answeredAt)) : null
   const [anno, setAnno] = useState(null)
@@ -477,7 +478,7 @@ function ReadOnlyDetail({ item, data, answer, notify, onStartAnnotation, onReope
     setReopenReason('')
     if (ak.mode !== 'annotation') return undefined
     let alive = true
-    api(`/api/akapen/${item.id}/annotation`)
+    api(`/api/review/${item.id}/annotation`)
       .then((r) => alive && setAnno(r?.data ?? null))
       .catch(() => alive && setAnno(null))
     return () => {
@@ -489,7 +490,7 @@ function ReadOnlyDetail({ item, data, answer, notify, onStartAnnotation, onReope
     if (reopenBusy) return
     setReopenBusy(true)
     try {
-      const r = await api(`/api/akapen/${item.id}/reopen`, {
+      const r = await api(`/api/review/${item.id}/reopen`, {
         method: 'POST',
         body: { reason: reopenReason.trim() || 'PWA から再確認を依頼' },
       })
@@ -503,10 +504,10 @@ function ReadOnlyDetail({ item, data, answer, notify, onStartAnnotation, onReope
     }
   }
 
-  // 回答の履歴（グローバル注記: 完了した赤ペン項目から回答内容を参照したい）
+  // 回答の履歴（グローバル注記: 完了したレビュー項目から回答内容を参照したい）
   const history = answerRows(data, answer)
   const hasHistory = history.rows.some((r) => r.choice || r.note) || Boolean(history.global)
-  const imgSrc = ak.image ? `/api/akapen/${item.id}/image?annotated=1` : null
+  const imgSrc = ak.image ? `/api/review/${item.id}/image?annotated=1` : null
 
   return (
     <div className="ak-form">
@@ -520,7 +521,7 @@ function ReadOnlyDetail({ item, data, answer, notify, onStartAnnotation, onReope
         {item.completedAt ? <span>完了 {relTime(item.completedAt)}</span> : null}
       </div>
       <p className="ak-hint">
-        赤ペンを送れるのは「赤ペン待ち」のシートだけです（このシートは{label}）。
+        レビューを送れるのは「レビュー待ち」のシートだけです（このシートは{label}）。
         {item.result ? (
           <>
             <br />
@@ -550,7 +551,7 @@ function ReadOnlyDetail({ item, data, answer, notify, onStartAnnotation, onReope
       ) : null}
       {hasHistory ? (
         <details className="ak-answers">
-          <summary>赤ペン回答（履歴）</summary>
+          <summary>レビュー回答（履歴）</summary>
           <ol className="ak-answer-list">
             {history.rows.map((r, i) => (
               <li key={r.id || i}>
@@ -681,13 +682,13 @@ function NewAnnotationSheet({ onCreated, onClose, notify, initialTarget = '' }) 
   const fileRef = React.useRef(null)
 
   useEffect(() => {
-    api('/api/akapen/library?limit=36')
+    api('/api/review/library?limit=36')
       .then((r) => setItems(r.items || []))
       .catch((e) => {
         setItems([])
         setError(e?.message || '一覧を取得できません')
       })
-    api('/api/akapen/targets')
+    api('/api/review/targets')
       .then((r) => {
         const list = r.targets || []
         setTargets(list)
@@ -706,7 +707,7 @@ function NewAnnotationSheet({ onCreated, onClose, notify, initialTarget = '' }) 
     try {
       // 起票元の会話（完了報告を戻す宛先 `chat=`）。新規会話未送信中でも直前の会話 ID を引き継ぐ。
       const chat = readActiveChatId()
-      const r = await api('/api/akapen/from-image', { method: 'POST', body: { ...body, chat } })
+      const r = await api('/api/review/annotation/new', { method: 'POST', body: { ...body, chat } })
       if (!r?.ok) throw new Error(r?.message || '作成できませんでした')
       notify?.(`注釈タスクを作りました（${r.image}）`)
       onCreated?.(r)
@@ -795,7 +796,7 @@ function NewAnnotationSheet({ onCreated, onClose, notify, initialTarget = '' }) 
               onClick={() => create({ source: it.source === 'capture' ? 'capture' : 'library', path: it.path, title: it.name.replace(/^\d{8}-\d{4}-/, '').replace(/\.[a-z]+$/i, ''), target })}
             >
               <span className="ak-new-thumb">
-                <img src={`/api/akapen/library/file?path=${encodeURIComponent(it.path)}`} alt="" loading="lazy" />
+                <img src={`/api/review/library/file?path=${encodeURIComponent(it.path)}`} alt="" loading="lazy" />
                 <span className="ak-new-tag">{it.source}</span>
               </span>
               {/* 取得日時とリポジトリ名: 同じ画面のショットが並ぶので、これが無いと選べない */}
@@ -817,7 +818,7 @@ function NewAnnotationSheet({ onCreated, onClose, notify, initialTarget = '' }) 
   )
 }
 
-export function AkapenPane({ notify, focusRequest = null, onConsumedFocus }) {
+export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
   const [state, setState] = useState({ loading: true, items: [], error: null })
   const [tab, setTab] = useState('waiting')
   const [open, setOpen] = useState(null)
@@ -835,13 +836,13 @@ export function AkapenPane({ notify, focusRequest = null, onConsumedFocus }) {
   const lastLoadOkRef = useRef(true)
   const load = useCallback(async () => {
     try {
-      const r = await api('/api/akapen')
+      const r = await api('/api/review')
       const items = r.items || []
       lastLoadOkRef.current = true
       setState({ loading: false, items, error: null })
       // 下部ナビの丸バッジ（注釈 1377.jpg の赤）を、この一覧と同じデータで同期する
       try {
-        window.dispatchEvent(new CustomEvent('hm:akapen-items', { detail: { items } }))
+        window.dispatchEvent(new CustomEvent('hm:review-items', { detail: { items } }))
       } catch {
         /* noop */
       }
@@ -853,7 +854,7 @@ export function AkapenPane({ notify, focusRequest = null, onConsumedFocus }) {
     }
   }, [])
 
-  const refreshAkapen = useCallback(async () => {
+  const refreshReview = useCallback(async () => {
     await load()
     return lastLoadOkRef.current
   }, [load])
@@ -878,21 +879,21 @@ export function AkapenPane({ notify, focusRequest = null, onConsumedFocus }) {
     setAnswer(null)
     setDataError(null)
     setCloseNote('')
-    const ak = item.akapen || {}
+    const ak = item.review || {}
     if (ak.mode && ak.mode !== 'standard') return
-    // 進行中・完了も読むだけ開く（bridge の answer() は赤ペン待ち以外を 409 で拒否する）。
-    // 完了した項目は「赤ペン回答（履歴）」を出すため sheet.json と answer.json を取る。
+    // 進行中・完了も読むだけ開く（bridge の answer() はレビュー待ち以外を 409 で拒否する）。
+    // 完了した項目は「レビュー回答（履歴）」を出すため sheet.json と answer.json を取る。
     try {
-      const r = await api(`/api/akapen/${item.id}/data`)
+      const r = await api(`/api/review/${item.id}/data`)
       setData(r.data)
       setAnswer(r.answer ?? null)
     } catch (e) {
-      // 赤ペン待ちなら理由を出す。読むだけの項目はシートが無いこともあるので黙る
+      // レビュー待ちなら理由を出す。読むだけの項目はシートが無いこともあるので黙る
       if (isWaiting(item)) setDataError(e?.message || 'sheet.json がありません')
     }
   }, [])
 
-  // チャットの完了報告行など外部からの誘導（「この赤ペンタスク／注釈作成を開く」）を処理する
+  // チャットの完了報告行など外部からの誘導（「このレビュータスク／注釈作成を開く」）を処理する
   useEffect(() => {
     if (!focusRequest || state.loading) return
     if (focusRequest.openNewAnnotation) {
@@ -904,7 +905,7 @@ export function AkapenPane({ notify, focusRequest = null, onConsumedFocus }) {
     const found = state.items.find(
       (x) =>
         (focusRequest.taskId && x.id === focusRequest.taskId) ||
-        (focusRequest.label && x.akapen?.label === focusRequest.label),
+        (focusRequest.label && x.review?.label === focusRequest.label),
     )
     if (found) {
       setTab(isWaiting(found) ? 'waiting' : found.status === 'done' ? 'done' : 'active')
@@ -928,17 +929,17 @@ export function AkapenPane({ notify, focusRequest = null, onConsumedFocus }) {
    */
   const loadFeed = useCallback(async () => {
     try {
-      const r = await api('/api/akapen/feed?limit=6')
+      const r = await api('/api/review/feed?limit=6')
       const items = Array.isArray(r.items) ? r.items : []
       setFeed(items)
       const at = Date.now()
       try {
-        localStorage.setItem('hm.akapenSeenAt', String(at))
+        localStorage.setItem('hm.reviewSeenAt', String(at))
       } catch {
         /* noop */
       }
       try {
-        window.dispatchEvent(new CustomEvent('hm:akapen-seen', { detail: { at } }))
+        window.dispatchEvent(new CustomEvent('hm:review-seen', { detail: { at } }))
       } catch {
         /* noop */
       }
@@ -946,7 +947,7 @@ export function AkapenPane({ notify, focusRequest = null, onConsumedFocus }) {
       const latest = done[done.length - 1]
       if (latest && latest.at > feedNotifiedRef.current) {
         // 初回読み込みでは出さない（過去の完了を今の通知として見せない）
-        if (feedNotifiedRef.current) notify?.(`赤ペン: ${String(latest.text).replace(/^✅\s*/, '')}`)
+        if (feedNotifiedRef.current) notify?.(`レビュー: ${String(latest.text).replace(/^✅\s*/, '')}`)
         feedNotifiedRef.current = latest.at
       }
     } catch {
@@ -961,7 +962,7 @@ export function AkapenPane({ notify, focusRequest = null, onConsumedFocus }) {
   }, [loadFeed])
 
   /**
-   * 送信後（赤ペン回答 Q2-B）: 閉じずに次の判断待ちを開く。
+   * 送信後（レビュー回答 Q2-B）: 閉じずに次の判断待ちを開く。
    * 残りが無いときだけ閉じる。送れた実感はトーストで補う。
    */
   async function handleSubmitted(answeredId, result) {
@@ -984,7 +985,7 @@ export function AkapenPane({ notify, focusRequest = null, onConsumedFocus }) {
     <div className="pane ak-page">
       <div className="ak-head">
         <div>
-          <div className="ak-title">赤ペン</div>
+          <div className="ak-title">レビュー</div>
           <div className="ak-sub">
             {counts.waiting ? `${counts.waiting} 件の判断待ち` : '判断待ちはありません'}
           </div>
@@ -1001,7 +1002,7 @@ export function AkapenPane({ notify, focusRequest = null, onConsumedFocus }) {
           >
             ＋ 注釈
           </button>
-          <RefreshButton onRefresh={refreshAkapen} />
+          <RefreshButton onRefresh={refreshReview} />
         </span>
       </div>
 
@@ -1115,12 +1116,12 @@ export function AkapenPane({ notify, focusRequest = null, onConsumedFocus }) {
           onCreated={async (r) => {
             setShowNew(false)
             await load()
-            setOpen({ id: r.taskId, title: r.label, status: 'blocked', akapen: { mode: 'annotation', label: r.label } })
+            setOpen({ id: r.taskId, title: r.label, status: 'blocked', review: { mode: 'annotation', label: r.label } })
           }}
         />
       ) : null}
 
-      {open && open.akapen?.mode === 'annotation' && isWaiting(open) ? (
+      {open && open.review?.mode === 'annotation' && isWaiting(open) ? (
         <AnnotationEditor
           item={open}
           notify={notify}
@@ -1129,9 +1130,9 @@ export function AkapenPane({ notify, focusRequest = null, onConsumedFocus }) {
         />
       ) : null}
 
-      {open && !(open.akapen?.mode === 'annotation' && isWaiting(open)) ? (
-        <Sheet title={(open.akapen?.title || open.title) + ''} onClose={closeSheet}>
-          {open.akapen?.mode !== 'annotation' ? <SheetLink item={open} /> : null}
+      {open && !(open.review?.mode === 'annotation' && isWaiting(open)) ? (
+        <Sheet title={(open.review?.title || open.title) + ''} onClose={closeSheet}>
+          {open.review?.mode !== 'annotation' ? <SheetLink item={open} /> : null}
           {isWaiting(open) ? (
             <>
               {dataError ? <div className="ak-error">{dataError} — シートを直接開いてください</div> : null}

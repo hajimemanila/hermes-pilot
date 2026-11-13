@@ -84,7 +84,7 @@ PATH=/opt/homebrew/opt/node@24/bin:$PATH npm start
 | POST | `/api/boards/:slug/tasks/:id/close` | タスクの完了・取消（archive） |
 | POST | `/api/boards/:slug/tasks/:id/abort` | 実行中タスクの中断（reclaim → block） |
 | GET | `/api/inbox` | ボード横断の blocked タスク一覧 |
-| GET / POST | `/api/akapen`, `/api/akapen/:id/*` | 赤ペン一覧・シート取得・回答・注釈保存 |
+| GET / POST | `/api/review`, `/api/review/:id/*` | レビュー一覧・シート取得・回答・注釈保存（旧 `/api/akapen` は廃止） |
 | GET / POST | `/api/repos`, `/api/repos/:id/board` | リポジトリ一覧・リポジトリ用ボード作成 |
 | GET | `/api/usage`, `/api/live` | 24h 使用量集計・ライブ実行状況 |
 | POST | `/api/gateway/:action` | `drain` / `restart` / `stop` / `start`（`confirm` 必須） |

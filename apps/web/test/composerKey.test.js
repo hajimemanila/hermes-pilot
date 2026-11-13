@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { shouldSendOnEnter } from '../src/lib/composerKey.js'
 
-// 赤ペン enter-key-01（round 1 / すべて A）: Enter は改行、送信は丸ボタンと物理キーボードの Shift+Enter だけ。
+// レビュー enter-key-01（round 1 / すべて A）: Enter は改行、送信は丸ボタンと物理キーボードの Shift+Enter だけ。
 test('Enter だけでは送らない（改行）', () => {
   assert.equal(shouldSendOnEnter({ key: 'Enter' }), false)
 })

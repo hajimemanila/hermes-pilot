@@ -429,7 +429,7 @@ export function createRepos(cfg = {}, deps = {}) {
     return candidates().config.scanDirs ?? []
   }
 
-  /** `akapen` など他モジュール向けの最小形（`id` / `label` / `path`）。 */
+  /** `review` など他モジュール向けの最小形（`id` / `label` / `path`）。 */
   function targets() {
     return list().map(({ id, label, path }) => ({ id, label, path }))
   }

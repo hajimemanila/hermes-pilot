@@ -1,19 +1,19 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { answerRows, capturedLabel, DONE_LIMIT, doneHint, groupItems, isAnswered, isWaiting, navBadgeState, nextWaiting, pendingCount, repoLabel, runningCount, thumbCaption, unseenNotices, waitingCount } from '../src/lib/akapenView.js'
+import { answerRows, capturedLabel, DONE_LIMIT, doneHint, groupItems, isAnswered, isWaiting, navBadgeState, nextWaiting, pendingCount, repoLabel, runningCount, thumbCaption, unseenNotices, waitingCount } from '../src/lib/reviewView.js'
 
-/** 赤ペン待ち（blocked + label）。 */
-const waitingItem = (id) => ({ id, status: 'blocked', akapen: { label: 'akapen-view-01', round: 1 } })
+/** レビュー待ち（blocked + label）。 */
+const waitingItem = (id) => ({ id, status: 'blocked', review: { label: 'review-view-01', round: 1 } })
 /** 進行中（回答できない）。 */
-const activeItem = (id, status) => ({ id, status, akapen: { label: 'x' } })
+const activeItem = (id, status) => ({ id, status, review: { label: 'x' } })
 /** 完了。 */
-const doneItem = (id) => ({ id, status: 'done', akapen: { label: 'x' } })
+const doneItem = (id) => ({ id, status: 'done', review: { label: 'x' } })
 
-test('isWaiting は blocked かつ label 付きだけを赤ペン待ちとする', () => {
+test('isWaiting は blocked かつ label 付きだけをレビュー待ちとする', () => {
   assert.equal(isWaiting(waitingItem('t1')), true)
-  assert.equal(isWaiting({ id: 't2', status: 'blocked', akapen: {} }), false, 'label 無しは待ちではない')
-  assert.equal(isWaiting({ id: 't3', status: 'ready', akapen: { label: 'x' } }), false, 'ready は待ちではない')
-  assert.equal(isWaiting({ id: 't4', status: 'review', akapen: { label: 'x' } }), false, 'review は回答を受けない')
+  assert.equal(isWaiting({ id: 't2', status: 'blocked', review: {} }), false, 'label 無しは待ちではない')
+  assert.equal(isWaiting({ id: 't3', status: 'ready', review: { label: 'x' } }), false, 'ready は待ちではない')
+  assert.equal(isWaiting({ id: 't4', status: 'review', review: { label: 'x' } }), false, 'review は回答を受けない')
   assert.equal(isWaiting(null), false)
 })
 
@@ -23,7 +23,7 @@ test('groupItems: 判断待ち / 進行中 / 完了 に分かれ、完了は直�
     waitingItem('w2'),
     activeItem('a1', 'ready'),
     activeItem('a2', 'running'),
-    { id: 'a3', status: 'blocked', akapen: { label: null } },
+    { id: 'a3', status: 'blocked', review: { label: null } },
     activeItem('r1', 'review'),
     ...Array.from({ length: 10 }, (_, i) => doneItem(`d${i}`)),
   ]
@@ -91,14 +91,14 @@ test('repoLabel はリポジトリ id を出し、推定できなければ —',
 })
 
 // 下部ナビの丸バッジ（注釈 1377.jpg の赤）: 判断待ちの件数だけを数える
-test('waitingCount はナビのバッジに出す赤ペン待ち件数（0 ならバッジを出さない）', () => {
+test('waitingCount はナビのバッジに出すレビュー待ち件数（0 ならバッジを出さない）', () => {
   assert.equal(waitingCount([]), 0)
   assert.equal(waitingCount(undefined), 0)
   assert.equal(waitingCount([waitingItem('w1')]), 1)
   assert.equal(waitingCount([waitingItem('w1'), waitingItem('w2')]), 2)
   // 進行中・完了・label 無しの blocked はバッジに数えない
   assert.equal(waitingCount([activeItem('a1', 'ready'), activeItem('a2', 'running'), doneItem('d1')]), 0)
-  assert.equal(waitingCount([{ id: 'b1', status: 'blocked', akapen: {} }]), 0)
+  assert.equal(waitingCount([{ id: 'b1', status: 'blocked', review: {} }]), 0)
   assert.equal(waitingCount([waitingItem('w1'), doneItem('d1'), activeItem('a1', 'review')]), 1)
   assert.equal(waitingCount([null, waitingItem('w9')]), 1)
 })
@@ -107,7 +107,7 @@ test('pendingCount はナビのタスクタブに出す未回答の承認待ち�
   assert.equal(pendingCount([]), 0)
   assert.equal(pendingCount(undefined), 0)
   assert.equal(pendingCount([{ id: 'x1', board: 'nanokvm' }]), 1)
-  // 赤ペン待ちは /api/inbox 側で除かれるので、ここに来る items は承認待ちだけ
+  // レビュー待ちは /api/inbox 側で除かれるので、ここに来る items は承認待ちだけ
   assert.equal(pendingCount([{ id: 'x1', board: 'ffp' }, { id: 'x2', board: 'mobile' }]), 2)
   assert.equal(pendingCount([null, { id: 'x2' }]), 1)
   // 回答済み（mobile が blocked 以降にコメント済み）はバッジ件数から除外する

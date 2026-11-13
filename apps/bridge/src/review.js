@@ -7,22 +7,32 @@ import { DatabaseSync } from 'node:sqlite'
 import { readTailText } from './tail.js'
 
 /**
- * 赤ペン（akapen）パイプラインのブリッジ側。
+ * レビュー（review）パイプラインのブリッジ側。
  *
- * 契約は `~/Projects/akapen/CONTRACT.md`。カンバン（board `mobile`）が唯一の真実で、
+ * 契約は `docs/REVIEW-VIEW.md` と `docs/SPEC-PUBLIC-PLUGIN.md` §4。カンバン（board `mobile`）が唯一の真実で、
  * シートはボードの default_workdir 配下に置かれる。ここは**読み取り + 回答の書き込み**だけを行い、
  * 実装判断はしない（生成も反映も worker の仕事）。
  *
  * パスの解決規則:
- *  - シートの場所はタスク本文の `[akapen] ... sheet=...` 行から取る（リクエストのパスは使わない）
+ *  - シートの場所はタスク本文の `[review] ... sheet=...` 行から取る（リクエストのパスは使わない）
  *  - 解決後 realpath が workdir 配下でなければ拒否する（allowlist）
  */
 
-const LINE_RE = /^\[akapen\]\s+(.+)$/m
+/**
+ * タスク本文の機械可読行（SPEC §4.1）。
+ *
+ * 正は `[review]`。移行前のボード（`kanban.db` の `[akapen]` 置換が済んでいない）でも
+ * レビューが消えないよう、旧タグも読むだけ受ける（書き込み側は常に `[review]`）。
+ */
+const LINE_RE = /^\[(?:review|akapen)\]\s+(.+)$/m
 const LABEL_RE = /^[a-z0-9][a-z0-9._-]{0,40}$/i
 
-/** タスク本文から `[akapen] label=... round=... mode=... sheet=...` を取り出す。 */
-export function parseAkapenLine(body) {
+/** 旧名（`【赤ペン回答】` / `全体への赤ペン:`）も移行前のシート資産のために受ける。 */
+const REPLY_HEAD_RE = /^【(?:レビュー|赤ペン)回答】/
+const GLOBAL_LABEL_RE = /^(?:全体への(?:レビュー|赤ペン)|Overall Note):\s*(.*)$/
+
+/** タスク本文から `[review] label=... round=... mode=... sheet=...` を取り出す。 */
+export function parseReviewLine(body) {
   const m = LINE_RE.exec(String(body || ''))
   if (!m) return null
   const out = {}
@@ -57,9 +67,12 @@ export function answerHash({ answers = [], global = '', annotations = [] }) {
   return crypto.createHash('sha256').update(JSON.stringify(norm)).digest('hex')
 }
 
-/** 回答を【赤ペン回答】互換テキストにする（貼り戻し経路と同じ形）。 */
-
-/** 【赤ペン回答】テキストを構造化する（シートが直接送ってきた場合に使う）。 */
+/**
+ * 回答テキストを構造化する（シートが直接送ってきた場合に使う）。
+ *
+ * EN 見出し（`[Review Answer]` / `Overall Note:`）と JA 見出しの両方、および旧
+ * `【赤ペン回答】` / `全体への赤ペン:` を受理する（SPEC §4.1）。
+ */
 export function parseReplyText(text) {
   const out = { answers: [], global: '' }
   const lines = String(text || '').split(/\r?\n/)
@@ -79,7 +92,7 @@ export function parseReplyText(text) {
       inGlobal = false
       continue
     }
-    const g = /^全体への赤ペン:\s*(.*)$/.exec(line)
+    const g = GLOBAL_LABEL_RE.exec(line)
     if (g) {
       out.global = g[1] || ''
       inGlobal = true
@@ -91,16 +104,26 @@ export function parseReplyText(text) {
   return out
 }
 
-export function toReplyText(label, answers, global, questions = []) {
+/**
+ * 回答を貼り戻し用テキストにする（`parseReplyText` と往復できる形）。
+ *
+ * @param {string} label ラベル
+ * @param {Array<{id: string, choice: string|null, note?: string}>} answers 回答
+ * @param {string} global 全体コメント
+ * @param {Array<{id: string, text?: string}>} [questions] 設問（見出しに使う）
+ * @param {'ja'|'en'} [lang] 見出しの言語（既定は日本語）
+ */
+export function toReplyText(label, answers, global, questions = [], lang = 'ja') {
   const title = new Map(questions.map((q) => [String(q.id), String(q.text ?? '')]))
-  const lines = [`【赤ペン回答】${label}`]
+  const en = lang === 'en'
+  const lines = [en ? `[Review Answer] ${label}` : `【レビュー回答】${label}`]
   for (const a of answers) {
     const q = title.get(String(a.id)) || String(a.id)
     const choice = a.choice === null || a.choice === undefined ? '(未選択 = お任せ)' : String(a.choice)
     const note = a.note ? ` / 補足: ${String(a.note).replace(/\n/g, ' ')}` : ''
     lines.push(`Q${String(a.id).replace(/^q/i, '')}. ${q}: ${choice}${note}`)
   }
-  lines.push(`全体への赤ペン: ${String(global ?? '').replace(/\r/g, '')}`)
+  lines.push(`${en ? 'Overall Note' : '全体へのレビュー'}: ${String(global ?? '').replace(/\r/g, '')}`)
   lines.push('---')
   lines.push('上の回答を反映して作業を続けてください。お任せの項目は推奨案で確定してください。')
   return `${lines.join('\n')}\n`
@@ -109,10 +132,10 @@ export function toReplyText(label, answers, global, questions = []) {
 /**
  * シート HTML に「回答をアプリへ送る」小さなブリッジを注入する（保存物は書き換えない）。
  *
- * アプリ内で開いたときだけ、設問見出し (Q1…) をマーカーで装飾する（赤ペン注釈の指摘）。
+ * アプリ内で開いたときだけ、設問見出し (Q1…) をマーカーで装飾する（レビュー注釈の指摘）。
  * 保存済みのシート（file:// で開く原本）は書き換えないので、装飾はアプリ表示の担当。
  */
-export function injectAkapenBridge(html, taskId) {
+export function injectReviewBridge(html, taskId) {
   const style = `
 <style id="akBridgeStyle">
 #akForm .q h3{
@@ -147,13 +170,14 @@ export function injectAkapenBridge(html, taskId) {
   }
   function submit() {
     var text = replyText();
-    if (!text || text.indexOf('【赤ペン回答】') === -1) return;
+    // 移行前のシートは【赤ペン回答】を、新しいシートは【レビュー回答】を出す。
+    if (!text || !/【(?:レビュー|赤ペン)回答】|\[Review Answer\]/.test(text)) return;
     if (window.parent && window.parent !== window) {
-      window.parent.postMessage({ type: 'akapen:reply', taskId: TASK, text: text }, '*');
+      window.parent.postMessage({ type: 'review:reply', taskId: TASK, text: text }, '*');
       report(true, 'アプリに回答を送りました（この画面は閉じてOK）');
       return;
     }
-    fetch('/api/akapen/' + TASK + '/answer', {
+    fetch('/api/review/' + TASK + '/answer', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'content-type': 'application/json', 'x-client': 'mobile' },
       body: JSON.stringify({ text: text })
@@ -179,6 +203,8 @@ export function injectAkapenBridge(html, taskId) {
     var t = ev.target;
     if (t && (t.id === 'genBtn' || (t.closest && t.closest('#genBtn')))) setTimeout(submit, 80);
   }, true);
+  window.__reviewSubmit = submit;
+  // 互換エイリアス: 移行前のシート資産はこちらを直接呼ぶ（SPEC §4.1）
   window.__akapenSubmit = submit;
 })();
 </script>
@@ -191,13 +217,27 @@ export function injectAkapenBridge(html, taskId) {
  * @param {object} cfg ブリッジ設定（kanbanRoot を使う）
  * @param {{board?: string, root?: string}} [opts]
  */
-export function createAkapen(cfg, opts = {}) {
-  const board = opts.board || process.env.AKAPEN_BOARD || 'mobile'
+export function createReview(cfg, opts = {}) {
+  const board = opts.board || process.env.REVIEW_BOARD || 'mobile'
   const boardDir = path.join(cfg.kanbanRoot, 'boards', board)
   const dbPath = path.join(boardDir, 'kanban.db')
 
   function homeDir() {
     return path.dirname(cfg.kanbanRoot || path.join(os.homedir(), '.hermes', 'kanban'))
+  }
+
+  /**
+   * データの根（D1 / §3.2）。`~/.hermes/plugin-data/hermes-pilot/` に一本化する。
+   * 旧 `plugin-data/akapen` や `~/Projects/akapen` は参照しない（移行スクリプトが物理コピーする）。
+   */
+  function dataRoot() {
+    if (cfg.pluginDataDir) return cfg.pluginDataDir
+    return path.join(homeDir(), 'plugin-data', 'hermes-pilot')
+  }
+
+  /** レビューのワークスペース（sheets / shots / library / *.jsonl）。 */
+  function reviewRoot() {
+    return path.join(dataRoot(), 'review')
   }
 
   function sanitizeChatId(raw) {
@@ -208,7 +248,7 @@ export function createAkapen(cfg, opts = {}) {
   }
 
   function taskChatsFile() {
-    return path.join(homeDir(), 'plugin-data', 'akapen', 'task-chats.json')
+    return path.join(reviewRoot(), 'task-chats.json')
   }
 
   function readTaskChats() {
@@ -241,7 +281,7 @@ export function createAkapen(cfg, opts = {}) {
     }
   }
 
-  /** ボードの default_workdir（シート置き場のルート）。 */
+  /** ボードの default_workdir（シート置き場のルート）。未設定なら review ワークスペース。 */
   function workdir() {
     if (opts.root) return path.resolve(opts.root.replace(/^~/, os.homedir()))
     try {
@@ -250,7 +290,7 @@ export function createAkapen(cfg, opts = {}) {
     } catch {
       /* fall through */
     }
-    return path.join(os.homedir(), 'Projects', 'akapen')
+    return reviewRoot()
   }
 
   function openDb() {
@@ -384,14 +424,14 @@ export function createAkapen(cfg, opts = {}) {
     }
   }
 
-  /** 一覧（PWA の赤ペンタブ）。 */
+  /** 一覧（PWA のレビュータブ）。 */
   function list(limit = 80) {
     const out = []
     const base = rows(limit)
     const events = lastEvents(base.map((r) => r.id))
     const taskChats = readTaskChats()
     for (const r of base) {
-      const ak = parseAkapenLine(r.body)
+      const ak = parseReviewLine(r.body)
       if (!ak) continue
       const sheetAbs = ak.sheet ? resolveInside(ak.sheet) : null
       const dataRel = ak.sheet ? ak.sheet.replace(/\.html$/, '.json') : null
@@ -414,7 +454,7 @@ export function createAkapen(cfg, opts = {}) {
           heartbeatAt: r.last_heartbeat_at ? Number(r.last_heartbeat_at) * 1000 : null,
           startedAt: r.started_at ? Number(r.started_at) * 1000 : null,
         },
-        akapen: {
+        review: {
           label: ak.label ?? null,
           image: ak.image ?? null,
           target: ak.target ?? null,
@@ -438,7 +478,7 @@ export function createAkapen(cfg, opts = {}) {
   function sheetHtml(id) {
     const b = bodyOf(id)
     if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
-    const ak = parseAkapenLine(b.body)
+    const ak = parseReviewLine(b.body)
     if (!ak?.sheet) return { ok: false, code: 'NO_SHEET', message: 'このタスクにはシートがありません' }
     const abs = resolveInside(ak.sheet)
     if (!abs) return { ok: false, code: 'SHEET_MISSING', message: 'シートが見つかりません' }
@@ -449,7 +489,7 @@ export function createAkapen(cfg, opts = {}) {
   function sheetData(id) {
     const b = bodyOf(id)
     if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
-    const ak = parseAkapenLine(b.body)
+    const ak = parseReviewLine(b.body)
     if (!ak?.sheet) return { ok: false, code: 'NO_SHEET', message: 'このタスクにはシートがありません' }
     const abs = resolveInside(ak.sheet.replace(/\.html$/, '.json'))
     const data = abs ? readJsonIfExists(abs) : null
@@ -483,7 +523,7 @@ export function createAkapen(cfg, opts = {}) {
   async function answer(id, payload) {
     const b = bodyOf(id)
     if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
-    const ak = parseAkapenLine(b.body)
+    const ak = parseReviewLine(b.body)
     if (!ak?.sheet) return { ok: false, code: 'NO_SHEET', message: 'このタスクにはシートがありません' }
 
     const sheetAbs = resolveInside(ak.sheet)
@@ -491,7 +531,7 @@ export function createAkapen(cfg, opts = {}) {
     const data = dataAbs ? readJsonIfExists(dataAbs) : null
     const questions = Array.isArray(data?.questions) ? data.questions : []
 
-    // シート HTML がそのまま送ってきた【赤ペン回答】も受ける
+    // シート HTML がそのまま送ってきた【レビュー回答】も受ける
     const fromText =
       payload?.text && !(Array.isArray(payload?.answers) && payload.answers.length)
         ? parseReplyText(payload.text)
@@ -513,7 +553,7 @@ export function createAkapen(cfg, opts = {}) {
       let moved = { code: 0, out: '' }
       let status = b.status
       if (b.status === 'blocked') {
-        moved = await runKanban(['unblock', id, '--reason', '赤ペン回答を受領（再送）'])
+        moved = await runKanban(['unblock', id, '--reason', 'レビュー回答を受領（再送）'])
         if (moved.code === 0) status = 'ready'
       }
       return {
@@ -526,14 +566,14 @@ export function createAkapen(cfg, opts = {}) {
         output: moved.out.slice(0, 400),
       }
     }
-    // 回答は「赤ペン待ち（blocked）」のときだけ受け付ける。ready / running / review / done へ
-    // 送ると answer.json を上書きし、comment が二重に付く（赤ペンシートの付録 1-2）。
+    // 回答は「レビュー待ち（blocked）」のときだけ受け付ける。ready / running / review / done へ
+    // 送ると answer.json を上書きし、comment が二重に付く（レビューシートの付録 1-2）。
     if (b.status !== 'blocked') {
       return {
         ok: false,
         code: 'NOT_WAITING',
         status: b.status,
-        message: `赤ペン待ちではありません（現在: ${b.status}）`,
+        message: `レビュー待ちではありません（現在: ${b.status}）`,
       }
     }
 
@@ -555,14 +595,14 @@ export function createAkapen(cfg, opts = {}) {
     fs.writeFileSync(answerFile, JSON.stringify(record, null, 2), 'utf8')
     fs.writeFileSync(textFile, toReplyText(ak.label ?? id, record.answers, global, questions), 'utf8')
 
-    const summary = `赤ペン回答: ${questions.length || answers.length}問 ` +
+    const summary = `レビュー回答: ${questions.length || answers.length}問 ` +
       `(選択 ${answers.filter((a) => a?.choice).length} / お任せ ${answers.filter((a) => !a?.choice).length}) ` +
       `— ${path.relative(workdir(), answerFile)}`
     const comment = await runKanban(['comment', id, summary, '--author', String(payload?.by ?? 'mobile')])
     let moved = { code: 0, out: '' }
     let status = b.status
     if (b.status === 'blocked') {
-      moved = await runKanban(['unblock', id, '--reason', '赤ペン回答を受領'])
+      moved = await runKanban(['unblock', id, '--reason', 'レビュー回答を受領'])
       if (moved.code === 0) status = 'ready'
     }
     return {
@@ -580,7 +620,7 @@ export function createAkapen(cfg, opts = {}) {
   async function reopen(id, reason) {
     const b = bodyOf(id)
     if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
-    const out = await runKanban(['request-changes', id, String(reason || '赤ペンの再確認をお願いします')])
+    const out = await runKanban(['request-changes', id, String(reason || 'レビューの再確認をお願いします')])
     return { ok: out.code === 0, status: b.status, output: out.out.slice(0, 800) }
   }
 
@@ -603,7 +643,7 @@ export function createAkapen(cfg, opts = {}) {
   function image(id, opts = {}) {
     const b = bodyOf(id)
     if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
-    const ak = parseAkapenLine(b.body)
+    const ak = parseReviewLine(b.body)
     if (!ak?.image) return { ok: false, code: 'NO_IMAGE', message: 'このタスクには下地画像がありません' }
     let abs = null
     if (opts?.annotated) {
@@ -622,7 +662,7 @@ export function createAkapen(cfg, opts = {}) {
   function annotation(id) {
     const b = bodyOf(id)
     if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
-    const ak = parseAkapenLine(b.body)
+    const ak = parseReviewLine(b.body)
     if (!ak?.image) return { ok: false, code: 'NO_IMAGE', message: '注釈タスクではありません' }
     const rel = ak.image.replace(/\.(png|jpe?g)$/i, '.annotation.json')
     const abs = resolveInside(rel)
@@ -638,7 +678,7 @@ export function createAkapen(cfg, opts = {}) {
   async function saveAnnotation(id, payload) {
     const b = bodyOf(id)
     if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
-    const ak = parseAkapenLine(b.body)
+    const ak = parseReviewLine(b.body)
     if (!ak?.image) return { ok: false, code: 'NO_IMAGE', message: 'このタスクには下地画像がありません' }
     if (b.status !== 'blocked') {
       return { ok: false, code: 'NOT_WAITING', status: b.status, message: `注釈待ちではありません（現在: ${b.status}）` }
@@ -767,7 +807,7 @@ export function createAkapen(cfg, opts = {}) {
    * 画像 → 反映先リポジトリの手掛かり。
    *
    * 画像そのものにリポジトリ情報は無い（library の名前は取得時刻と slug だけ）。
-   * 赤ペンのタスク本文 `[akapen] label=… image=shots/x.png target=<path>` の対応を集め、
+   * レビューのタスク本文 `[review] label=… image=shots/x.png target=<path>` の対応を集め、
    * `image=` の完全一致 → `label=` の前方一致の順で当てる。撮影名は
    * `<label>-<stamp>-<round>.<kind>.png`（実測 33 枚中 27 枚がこれで解決）。
    */
@@ -782,14 +822,14 @@ export function createAkapen(cfg, opts = {}) {
     }
     let rs = []
     try {
-      rs = db.prepare("SELECT body FROM tasks WHERE body LIKE '%[akapen]%'").all()
+      rs = db.prepare("SELECT body FROM tasks WHERE body LIKE '%[review]%' OR body LIKE '%[akapen]%'").all()
     } catch {
       rs = []
     } finally {
       db.close()
     }
     for (const r of rs) {
-      const ak = parseAkapenLine(r.body)
+      const ak = parseReviewLine(r.body)
       if (!ak?.target) continue
       if (ak.image) byImage.set(String(ak.image), ak.target)
       if (ak.label) byLabel.set(String(ak.label), ak.target)
@@ -878,24 +918,22 @@ export function createAkapen(cfg, opts = {}) {
   }
 
   /**
-   * 作業フィード（監視 cron `mobile-akapen-watch` が書く 1 行ログ）。
+   * 作業フィード（内蔵 reviewWatcher が書く 1 行ログ）。
    *
-   * 完了は Discord にしか流れておらず、PWA（と TUI セッション）には届かなかった
-   * （実測: 完了 22:26:38 の報告が 22:27:09 に Discord だけへ）。同じ行を
-   * `<home>/plugin-data/akapen/feed.jsonl` にも追記し、ここから読んで端末に出す。
+   * 旧来は外部 cron（`mobile-akapen-watch`）が Discord と `plugin-data/akapen/feed.jsonl` を
+   * 書いていた。D7 でブリッジ内蔵の `reviewWatcher` に移し、`review/feed.jsonl` をここから読む。
    *
    * @param {number} [limit] 末尾から何行読むか（1..200）
    * @param {number} [since] この epoch ms より新しい行だけ返す（0 なら全部）
    * @returns {Array<{at: number, text: string}>} 古い順
    */
   function feed(limit = 20, since = 0) {
-    const home = path.dirname(cfg.kanbanRoot || path.join(os.homedir(), '.hermes', 'kanban'))
-    const file = path.join(home, 'plugin-data', 'akapen', 'feed.jsonl')
+    const file = path.join(reviewRoot(), 'feed.jsonl')
     let raw = ''
     try {
       raw = readTailText(file, 128 * 1024)
     } catch {
-      return [] // まだ 1 行も無い（cron が走っていない）だけなので空でよい
+      return [] // まだ 1 行も無いだけなので空でよい
     }
     const tail = raw.split('\n').filter((l) => l.trim()).slice(-Math.min(200, Math.max(1, Number(limit) || 20)))
     const out = []
@@ -914,7 +952,7 @@ export function createAkapen(cfg, opts = {}) {
   }
 
   /**
-   * 赤ペンの完了報告の生データ（監視 cron `mobile-akapen-watch` が書く 1 行/タスク）。
+   * レビューの完了報告の生データ（監視 cron `mobile-review-watch` が書く 1 行/タスク）。
    *
    * 1 会話だけを見る `chatReport` と、全会話を見る `chatReports` の共通読み取り。
    * ファイルが無い（＝宛先つきのタスクがまだ完了していない）のは正常なので空で返す。
@@ -922,8 +960,7 @@ export function createAkapen(cfg, opts = {}) {
    * @returns {Array<{at: number, sessionId: string, taskId: string, label: string|null, text: string}>} 古い順
    */
   function readChatReportRows() {
-    const home = homeDir()
-    const file = path.join(home, 'plugin-data', 'akapen', 'chat-reports.jsonl')
+    const file = path.join(reviewRoot(), 'chat-reports.jsonl')
     let raw = ''
     try {
       raw = readTailText(file, 256 * 1024)
@@ -941,7 +978,7 @@ export function createAkapen(cfg, opts = {}) {
         const taskId = String(j.task_id ?? '')
         let sessionId = String(j.session_id ?? '')
         if (!sessionId && taskId) {
-          sessionId = taskChats[taskId] || sanitizeChatId(parseAkapenLine(bodyOf(taskId)?.body)?.chat) || ''
+          sessionId = taskChats[taskId] || sanitizeChatId(parseReviewLine(bodyOf(taskId)?.body)?.chat) || ''
         }
         if (!sessionId) continue
         out.push({
@@ -959,7 +996,7 @@ export function createAkapen(cfg, opts = {}) {
   }
 
   /**
-   * ある会話に流す赤ペンの完了報告（監視 cron `mobile-akapen-watch` が書く）。
+   * ある会話に流すレビューの完了報告（監視 cron `mobile-review-watch` が書く）。
    *
    * 完了報告は Discord と作業フィードにしか出ておらず、**起票した会話**には戻らなかった
    * （実測: 回答 22:19 → 完了 22:26 の報告を、会話を開いても読めない）。起票時に本文へ
@@ -1071,12 +1108,12 @@ export function createAkapen(cfg, opts = {}) {
       }
     }
     const target = picked.path
-    // 起票した会話へ完了報告を返す宛先（赤ペン chat-badge-01 q1=A の「紐づけ」）。
+    // 起票した会話へ完了報告を返す宛先（レビュー chat-badge-01 q1=A の「紐づけ」）。
     // 注釈タスクは bridge が本文を組み立てるので、端末が渡さないと `chat=` が付かず
-    // 完了が会話に戻らない（従来の宛先つきは赤ペンシート経由だけだった）。
+    // 完了が会話に戻らない（従来の宛先つきはレビューシート経由だけだった）。
     const chat = sanitizeChatId(payload?.chat)
     const body =
-      `[akapen] label=${label} round=1 mode=annotation image=${relShot} target=${target}` + (chat ? ` chat=${chat}` : '')
+      `[review] label=${label} round=1 mode=annotation image=${relShot} target=${target}` + (chat ? ` chat=${chat}` : '')
     // assignee が無いと dispatcher が拾わない（実測: ready のまま止まる）
     const created = await runKanban(['create', title, '--body', body, '--assignee', 'mobile'])
     const m = /t_[0-9a-f]{8}/.exec(created.out || '')
@@ -1096,5 +1133,39 @@ export function createAkapen(cfg, opts = {}) {
     }
   }
 
-  return { board, workdir, list, sheetHtml, sheetData, answer, reopen, sessionId, image, annotation, saveAnnotation, thumb, library, libraryFile, createFromImage, targets, feed, chatReport, chatReports }
+  /**
+   * タスクの宛先チャット（本文の `chat=` → `task-chats.json`）。
+   * reviewWatcher が完了報告の宛先を決めるのに使う（SPEC §4.3）。
+   */
+  function chatFor(id) {
+    const b = bodyOf(id)
+    const fromBody = sanitizeChatId(parseReviewLine(b?.body)?.chat)
+    if (fromBody) return fromBody
+    return readTaskChats()[id] || null
+  }
+
+  return {
+    board,
+    workdir,
+    dataRoot,
+    reviewRoot,
+    chatFor,
+    list,
+    sheetHtml,
+    sheetData,
+    answer,
+    reopen,
+    sessionId,
+    image,
+    annotation,
+    saveAnnotation,
+    thumb,
+    library,
+    libraryFile,
+    createFromImage,
+    targets,
+    feed,
+    chatReport,
+    chatReports,
+  }
 }

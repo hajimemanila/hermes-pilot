@@ -16,7 +16,7 @@ import {
 import { pickResumeTarget, recentSessions } from '../lib/chatResume.js'
 import { orderProfiles } from '../lib/profileOrder.js'
 import { foldTranscriptMessages, mergeProgress, shortenPath } from '../lib/toolProgress.js'
-import { isWaiting } from '../lib/akapenView.js'
+import { isWaiting } from '../lib/reviewView.js'
 import { api } from '../api.js'
 import { composerHeight } from '../lib/composerSize.js'
 import { shouldSendOnEnter } from '../lib/composerKey.js'
@@ -151,7 +151,7 @@ function ToolRows({ rows, prefix, expandedMap, onToggle }) {
 export function ChatPane({
   notify,
   chatReports = [],
-  akapenItems = [],
+  reviewItems = [],
   liveTurns = [],
   active = false,
   openRequest = null,
@@ -177,7 +177,7 @@ export function ChatPane({
   const [drawer, setDrawer] = useState(false)
   const [thinking, setThinking] = useState('')
   const [dcLink, setDcLink] = useState(null)
-  // 赤ペンの完了報告（起票した会話にだけ流れる 1 行。行の取得は App が 1 回だけ行う）
+  // レビューの完了報告（起票した会話にだけ流れる 1 行。行の取得は App が 1 回だけ行う）
   // と、会話一覧の行に出す「新着の点」の既読（端末に残す）。
   const [seenMap, setSeenMap] = useState({})
   // resume できない会話（カンバン作業ログ等）は読み取り専用で表示する
@@ -547,7 +547,7 @@ export function ChatPane({
   }, [storedSid, storedProfile])
 
   /*
-   * 新しい赤ペン完了報告が届いたら、末尾を見ていれば自動で最下部へ寄せる
+   * 新しいレビュー完了報告が届いたら、末尾を見ていれば自動で最下部へ寄せる
    * （報告の行は会話の最後に足されるので、下に居ないと増えたことに気づけない。実測）。
    * 依存は配列そのものではなく**最後の報告のキー** — 15 秒ごとの取得で配列が作り直される
    * たびにスクロールすると、上へ遡って読んでいる最中に勝手に飛ぶ。
@@ -560,21 +560,21 @@ export function ChatPane({
     () => liveTurns.find((t) => t?.sessionId && currentIds.includes(String(t.sessionId))) ?? null,
     [liveTurns, currentIds],
   )
-  const linkedAkapen = useMemo(() => {
-    const activeOnes = (akapenItems ?? []).filter((it) => it && it.status !== 'done')
-    const byChat = activeOnes.find((it) => it.akapen?.chat && currentIds.includes(String(it.akapen.chat)))
+  const linkedReview = useMemo(() => {
+    const activeOnes = (reviewItems ?? []).filter((it) => it && it.status !== 'done')
+    const byChat = activeOnes.find((it) => it.review?.chat && currentIds.includes(String(it.review.chat)))
     if (byChat) return byChat
     if (!repo) return null
     const repoPathLow = repo.path ? String(repo.path).toLowerCase() : ''
     return (
       activeOnes.find(
         (it) =>
-          !it.akapen?.chat &&
-          (it.akapen?.repo === repo.id ||
-            (repoPathLow && it.akapen?.target && String(it.akapen.target).toLowerCase().startsWith(repoPathLow))),
+          !it.review?.chat &&
+          (it.review?.repo === repo.id ||
+            (repoPathLow && it.review?.target && String(it.review.target).toLowerCase().startsWith(repoPathLow))),
       ) ?? null
     )
-  }, [akapenItems, currentIds, repo])
+  }, [reviewItems, currentIds, repo])
   const isWorking = Boolean(streaming || activeLiveTurn)
   const reports = useMemo(() => reportLines(chatReports, currentIds), [chatReports, currentIds])
   const timeline = useMemo(() => mergeTimeline(blocks, reports), [blocks, reports])
@@ -586,8 +586,8 @@ export function ChatPane({
     return () => clearInterval(id)
   }, [isWorking])
 
-  // 紐づいた Akapen 自律ワーカーが実行中の間は直近ツールステップを 4 秒ごとに取得する
-  const linkedWorkerId = linkedAkapen && (linkedAkapen.status === 'running' || linkedAkapen.status === 'ready') ? linkedAkapen.id : null
+  // 紐づいた Review 自律ワーカーが実行中の間は直近ツールステップを 4 秒ごとに取得する
+  const linkedWorkerId = linkedReview && (linkedReview.status === 'running' || linkedReview.status === 'ready') ? linkedReview.id : null
   useEffect(() => {
     if (!linkedWorkerId) {
       setWorkerFeed(null)
@@ -596,7 +596,7 @@ export function ChatPane({
     let alive = true
     const load = async () => {
       try {
-        const r = await api(`/api/akapen/${encodeURIComponent(linkedWorkerId)}/worker?limit=8`)
+        const r = await api(`/api/review/${encodeURIComponent(linkedWorkerId)}/worker?limit=8`)
         if (alive) setWorkerFeed(r)
       } catch {
         /* 補助情報 */
@@ -620,7 +620,7 @@ export function ChatPane({
     // 進捗行と thinking も「新しい内容」なので追従対象。ここを deps に入れ忘れると
     // ツール行が増えてもスクロールせず、最後の行が下端（入力欄の裏）に隠れる（実測）。
     if (stickRef.current) el.scrollTop = el.scrollHeight
-  }, [blocks, isWorking, progress, thinking, linkedAkapen, workerFeed, readonly?.focusId, lastReportKey])
+  }, [blocks, isWorking, progress, thinking, linkedReview, workerFeed, readonly?.focusId, lastReportKey])
 
   /** ヒットした発言を画面の上寄りに出す（offsetTop ではなく実測差分で合わせる）。 */
   const scrollToHit = useCallback((mid) => {
@@ -659,7 +659,7 @@ export function ChatPane({
     }
   }, [storedSid, sid])
 
-  // 会話ごとの既読（会話一覧の行の点。赤ペン chat-badge-01 q2=A の「行の点」）。
+  // 会話ごとの既読（会話一覧の行の点。レビュー chat-badge-01 q2=A の「行の点」）。
   useEffect(() => {
     try {
       setSeenMap(readSeenMap(localStorage.getItem(SEEN_MAP_KEY)))
@@ -1060,7 +1060,7 @@ export function ChatPane({
   const openSessionSafe = useCallback(
     (id, focusId = null, prof = 'default') => {
       if (!id) return
-      // 開いた会話の新着（赤ペンの完了報告）は見た扱いにする（行の点を消す）
+      // 開いた会話の新着（レビューの完了報告）は見た扱いにする（行の点を消す）
       markReportsSeen(id)
       if (connRef.current === 'ready') openRef.current?.(id, focusId, prof)
       else pendingOpenRef.current = { id, focusId, profile: prof }
@@ -1365,7 +1365,7 @@ export function ChatPane({
                   onClick={() => {
                     haptic('tap')
                     window.dispatchEvent(
-                      new CustomEvent('hm:open-akapen', {
+                      new CustomEvent('hm:open-review', {
                         detail: { taskId: r.taskId, label: r.label },
                       }),
                     )
@@ -1484,12 +1484,12 @@ export function ChatPane({
             })()}
           </div>
         ) : null}
-        {linkedAkapen ? (
-          isWaiting(linkedAkapen) ? (
+        {linkedReview ? (
+          isWaiting(linkedReview) ? (
             <div className="chat-live-card warn" role="status">
               <div className="chat-live-head">
                 <span className="chat-live-title">
-                  🖊 赤ペン判断待ち: {linkedAkapen.akapen?.title || linkedAkapen.title}
+                  🖊 レビュー判断待ち: {linkedReview.review?.title || linkedReview.title}
                 </span>
                 <button
                   type="button"
@@ -1497,13 +1497,13 @@ export function ChatPane({
                   onClick={() => {
                     haptic('tap')
                     window.dispatchEvent(
-                      new CustomEvent('hm:open-akapen', {
-                        detail: { taskId: linkedAkapen.id, label: linkedAkapen.akapen?.label },
+                      new CustomEvent('hm:open-review', {
+                        detail: { taskId: linkedReview.id, label: linkedReview.review?.label },
                       }),
                     )
                   }}
                 >
-                  赤ペンで回答 ↗
+                  レビューで回答 ↗
                 </button>
               </div>
               <div className="chat-live-sub">
@@ -1515,7 +1515,7 @@ export function ChatPane({
               <div className="chat-live-head">
                 <span className="working-dot" aria-hidden="true" />
                 <b className="working-shimmer">
-                  {linkedAkapen.status === 'running' ? 'Working… 自律ワーカー稼働中' : '自律ワーカー起動待ち'}
+                  {linkedReview.status === 'running' ? 'Working… 自律ワーカー稼働中' : '自律ワーカー起動待ち'}
                 </b>
                 <button
                   type="button"
@@ -1523,8 +1523,8 @@ export function ChatPane({
                   onClick={() => {
                     haptic('tap')
                     window.dispatchEvent(
-                      new CustomEvent('hm:open-akapen', {
-                        detail: { taskId: linkedAkapen.id, label: linkedAkapen.akapen?.label },
+                      new CustomEvent('hm:open-review', {
+                        detail: { taskId: linkedReview.id, label: linkedReview.review?.label },
                       }),
                     )
                   }}
@@ -1532,7 +1532,7 @@ export function ChatPane({
                   進行を見る ↗
                 </button>
               </div>
-              <div className="chat-live-sub">{linkedAkapen.akapen?.title || linkedAkapen.title}</div>
+              <div className="chat-live-sub">{linkedReview.review?.title || linkedReview.title}</div>
               {(() => {
                 const steps = (workerFeed?.feed?.messages || [])
                   .filter((m) => m.role !== 'user')
@@ -1550,7 +1550,7 @@ export function ChatPane({
                         done: idx < steps.length - 1,
                       }
                     })}
-                    prefix={`worker-${linkedAkapen.id}`}
+                    prefix={`worker-${linkedReview.id}`}
                     expandedMap={expandedTools}
                     onToggle={toggleToolExpand}
                   />
@@ -1570,7 +1570,7 @@ export function ChatPane({
       {!atBottom && timeline.length > 0 ? (
         <button
           type="button"
-          className={`chat-jump-bottom${isWorking || linkedAkapen ? ' active' : ''}`}
+          className={`chat-jump-bottom${isWorking || linkedReview ? ' active' : ''}`}
           onClick={() => {
             haptic('tap')
             const el = listRef.current
@@ -1581,7 +1581,7 @@ export function ChatPane({
             }
           }}
         >
-          {isWorking || linkedAkapen ? '↓ Working・最新へ' : '↓ 最下部へ'}
+          {isWorking || linkedReview ? '↓ Working・最新へ' : '↓ 最下部へ'}
         </button>
       ) : null}
 
@@ -1681,7 +1681,7 @@ export function ChatPane({
             addFiles(files)
           }}
           onKeyDown={(e) => {
-            // Enter は改行。送信は丸ボタンと、物理キーボードの Shift+Enter だけ（赤ペン enter-key-01）
+            // Enter は改行。送信は丸ボタンと、物理キーボードの Shift+Enter だけ（レビュー enter-key-01）
             if (!shouldSendOnEnter({ key: e.key, shiftKey: e.shiftKey, isComposing: e.nativeEvent?.isComposing })) return
             e.preventDefault()
             send()
@@ -1989,13 +1989,13 @@ export function ChatPane({
           </button>
           {sessions.map((s) => {
             const foreign = s.profile && s.profile !== DEFAULT_PROFILE
-            // その会話に未読の赤ペン完了報告があるか（行の点。q2=A）
+            // その会話に未読のレビュー完了報告があるか（行の点。q2=A）
             const unread = unreadIds.includes(String(s.id))
             return (
               <button
                 key={`${s.profile ?? 'default'}:${s.id}`}
                 className={`row${s.id === storedSid ? ' on' : ''}`}
-                title={unread ? '赤ペンの完了報告が届いています' : undefined}
+                title={unread ? 'レビューの完了報告が届いています' : undefined}
                 onClick={() => openSessionSafe(s.id, null, s.profile ?? 'default')}
               >
                 <span className="row-main">
@@ -2008,7 +2008,7 @@ export function ChatPane({
                     {s.is_active ? ' ・ 稼働中' : ''}
                   </span>
                 </span>
-                {unread ? <span className="row-dot done" aria-label="赤ペンの完了報告あり" /> : null}
+                {unread ? <span className="row-dot done" aria-label="レビューの完了報告あり" /> : null}
                 <Icon name="chevron" size={16} />
               </button>
             )

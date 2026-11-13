@@ -91,7 +91,7 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
       requestAnimationFrame(() => scheduleRedraw())
     }
     img.onerror = () => setError('下地画像を読み込めませんでした')
-    img.src = `/api/akapen/${item.id}/image`
+    img.src = `/api/review/${item.id}/image`
     const onResize = () => scheduleRedraw()
     window.addEventListener('resize', onResize)
     const wrap = canvasRef.current?.parentElement
@@ -186,7 +186,7 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
           Math.round((y / (h / (window.devicePixelRatio || 1))) * 1000) / 1000,
         ]),
       }))
-      const r = await api(`/api/akapen/${item.id}/annotation`, {
+      const r = await api(`/api/review/${item.id}/annotation`, {
         method: 'POST',
         body: { annotated_image: exportDataUrl(), note, marks, by: 'mobile', chat: readActiveChatId() },
       })
@@ -214,7 +214,7 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
           ✕
         </button>
         <div className="ak-anno-title">
-          {item.akapen?.title || item.title}
+          {item.review?.title || item.title}
           <span>赤を入れて「送信」</span>
         </div>
         <button

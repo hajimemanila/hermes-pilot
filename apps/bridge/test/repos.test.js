@@ -32,7 +32,7 @@ const BOARDS = [
   { slug: 'custom-launcher', name: 'Custom Launcher（Phase 1）', workdir: path.join(HOME, 'Projects/other-app') },
   { slug: 'other-app-2', name: 'Other App 2', workdir: path.join(HOME, 'projects/other-app') },
   { slug: 'old', name: 'Old', workdir: path.join(HOME, 'projects/other-app'), archived: true },
-  { slug: 'elsewhere', name: 'Elsewhere', workdir: path.join(HOME, 'Projects/akapen') },
+  { slug: 'elsewhere', name: 'Elsewhere', workdir: path.join(HOME, 'Projects/review') },
 ]
 
 /** 一時ディレクトリ（Git リポジトリの入れ物）。 */

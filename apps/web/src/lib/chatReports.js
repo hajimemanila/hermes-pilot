@@ -1,7 +1,7 @@
 /**
- * 赤ペンの完了報告（起票した会話に戻る 1 行）の未読判定。
+ * レビューの完了報告（起票した会話に戻る 1 行）の未読判定。
  *
- * 新着は**点だけ**で示す（赤ペン chat-badge-01 q3=B）: 数字は「あなたの番（判断待ち）」の
+ * 新着は**点だけ**で示す（レビュー chat-badge-01 q3=B）: 数字は「あなたの番（判断待ち）」の
  * 専用で、同じ数字を 2 つの意味に使わない。既読は端末に残す（サーバに持たない）。
  * 判定は純関数にしてテストで固定する — ここがずれると「点が出ない/消えない」になる。
  */
@@ -31,7 +31,7 @@ export function readActiveChatId(storage = globalThis.localStorage) {
 /**
  * `since` より新しい報告だけ（古い順は保つ）。
  *
- * @param {Array<{at: number}>} items `/api/akapen/chat-reports` の items
+ * @param {Array<{at: number}>} items `/api/review/chat-reports` の items
  * @param {number} since 既読時刻（epoch ms）
  * @returns {Array} 未読だけ
  */
@@ -199,7 +199,7 @@ export function toEpochMs(raw) {
 }
 
 /**
- * 会話ブロック列と赤ペン完了報告を時系列で統合する。
+ * 会話ブロック列とレビュー完了報告を時系列で統合する。
  * 報告の時刻より後の発言（`b.at >= r.at`）が存在する場合、報告はその手前に差し込まれ、
  * 新しい会話履歴が増えても完了通知が常に最下部に張り付かないようにする。
  *

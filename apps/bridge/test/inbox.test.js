@@ -100,19 +100,19 @@ test('件数の集計は blockKind ごと', () => {
   assert.equal(r.counts.untyped, 1)
 })
 
-test('赤ペン待ち（本文に [akapen]）は承認待ちに混ぜない', () => {
+test('レビュー待ち（本文に [review]）は承認待ちに混ぜない', () => {
   const { root } = fixture()
-  // 赤ペンのシート待ちを b1 に足す（blocked + [akapen] 行）
+  // レビューのシート待ちを b1 に足す（blocked + [review] 行）
   const db = new DatabaseSync(path.join(root, 'kanban', 'boards', 'b1', 'kanban.db'))
   db.prepare('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').run(
-    't_ak1', '赤ペン: 帯の形', 'blocked', 'needs_input', 0, null, null,
+    't_ak1', 'レビュー: 帯の形', 'blocked', 'needs_input', 0, null, null,
     Math.floor(Date.now() / 1000) - 10, null, null, null,
-    '[akapen] label=band-01 round=1 mode=standard sheet=sheets/band-01-1.html',
+    '[review] label=band-01 round=1 mode=standard sheet=sheets/band-01-1.html',
   )
   db.close()
 
   const r = createInbox({ kanbanRoot: path.join(root, 'kanban') }, fakeKanban).list()
-  assert.equal(r.items.some((x) => x.id === 't_ak1'), false, '一覧に出さない（赤ペンタブが受け持つ）')
+  assert.equal(r.items.some((x) => x.id === 't_ak1'), false, '一覧に出さない（レビュータブが受け持つ）')
   assert.equal(r.counts.needs_input, 1, '件数にも数えない（承認待ちの数字を混ぜない）')
   assert.equal(r.items.length, 3)
 })

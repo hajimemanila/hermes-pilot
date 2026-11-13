@@ -1,22 +1,22 @@
 /**
- * 赤ペンタブの表示ロジック（React に依存しない純関数）。
+ * レビュータブの表示ロジック（React に依存しない純関数）。
  *
- * 仕様は `docs/AKAPEN-VIEW.md`。2026-11-12 の赤ペン（`~/Projects/akapen/sheets/akapen-view-01-1`）
+ * 仕様は `docs/AKAPEN-VIEW.md`。2026-11-12 のレビュー（`~/Projects/review/sheets/review-view-01-1`）
  * で決まった 3 点をここに固定する:
  *  1. 既定表示は「判断待ちだけ」— 上部チップで 判断待ち / 進行中 / 完了 を切り替える
  *  2. 送信後は閉じず「次の判断待ち」を開き、最後の 1 件でだけ閉じる
  *  3. 完了は直近 8 件（畳みはタブが担う。件数は偽らない）
  *
- * 「赤ペンを送れる」= `blocked` かつ `akapen.label` を持つ（CONTRACT.md の赤ペン待ち）。
- * bridge 側 `akapen.answer()` も同じ条件でしか受け付けない（二重の守り）。
+ * 「レビューを送れる」= `blocked` かつ `review.label` を持つ（CONTRACT.md のレビュー待ち）。
+ * bridge 側 `review.answer()` も同じ条件でしか受け付けない（二重の守り）。
  */
 
 /** 完了タブに出す件数（契約: 直近 8 件）。 */
 export const DONE_LIMIT = 8
 
-/** 赤ペン待ち = 回答を送ってよいタスク。 */
+/** レビュー待ち = 回答を送ってよいタスク。 */
 export function isWaiting(item) {
-  return item?.status === 'blocked' && Boolean(item?.akapen?.label)
+  return item?.status === 'blocked' && Boolean(item?.review?.label)
 }
 
 /** 一覧に出す（回答できない）進行中の状態。`review` は契約上ほぼ来ないが落とさない。 */
@@ -25,7 +25,7 @@ const ACTIVE_STATUSES = new Set(['review', 'ready', 'running', 'blocked'])
 /**
  * 一覧 API の items を 3 グループへ分ける。
  *
- * @param {Array} items `/api/akapen` の items
+ * @param {Array} items `/api/review` の items
  * @param {number} [doneLimit] 完了タブに残す件数
  * @returns {{waiting: Array, active: Array, done: Array, doneTotal: number}}
  */
@@ -55,14 +55,14 @@ export function nextWaiting(items, answeredId) {
 }
 
 /**
- * ナビの赤ペンタブに出す「小さな丸の数字」（ティッカー）。
+ * ナビのレビュータブに出す「小さな丸の数字」（ティッカー）。
  *
  * 注釈（`1377.jpg` の赤）で決まったこと: 件数は**下部ナビの丸バッジ**にだけ出し、
  * タブ内の表示（「N 件の判断待ち」）は変えない。0 のときはバッジ自体を出さない
  * （0 の丸は「何かある」と誤読させる）。
  *
- * @param {Array} items `/api/akapen` の items
- * @returns {number} 赤ペン待ちの件数（0 以上）
+ * @param {Array} items `/api/review` の items
+ * @returns {number} レビュー待ちの件数（0 以上）
  */
 export function waitingCount(items) {
   const list = Array.isArray(items) ? items.filter(Boolean) : []
@@ -86,8 +86,8 @@ export function isAnswered(item) {
  * ナビのタスクタブに出す「小さな丸の数字」（未回答の承認待ち）。
  *
  * 注釈（`1377.jpg` の赤）で決まったこと: 「ティッカー」は下部ナビの丸バッジのこと。
- * 承認待ち（`/api/inbox`）と赤ペン判断待ち（`/api/akapen`）は**別の数字**で、混ぜない。
- * `/api/inbox` 側が本文 `[akapen]` の blocked を除いているので、ここでは未回答だけを数える。
+ * 承認待ち（`/api/inbox`）とレビュー判断待ち（`/api/review`）は**別の数字**で、混ぜない。
+ * `/api/inbox` 側が本文 `[review]` の blocked を除いているので、ここでは未回答だけを数える。
  *
  * @param {Array} items `/api/inbox` の items
  * @returns {number} 未回答の承認待ち件数（0 以上）
@@ -98,12 +98,12 @@ export function pendingCount(items) {
 }
 
 /**
- * 下部ナビの赤ペンタブに出す「進行中」の件数（反映待ち＋生成中）。
+ * 下部ナビのレビュータブに出す「進行中」の件数（反映待ち＋生成中）。
  *
  * 完了の可視化と合わせて「押すまで分からない」を減らす。件数は丸バッジではなく
  * 青い点で出す（数字は「判断待ち＝あなたの番」にだけ使う。2 つの数字を混ぜない）。
  *
- * @param {Array} items `/api/akapen` の items
+ * @param {Array} items `/api/review` の items
  * @returns {number} 進行中の件数
  */
 export function runningCount(items) {
@@ -114,8 +114,8 @@ export function runningCount(items) {
 /**
  * 未読の作業フィード（監視 cron が書いた 1 行ログ）。
  *
- * @param {Array<{at: number, text: string}>} feed `/api/akapen/feed` の items
- * @param {number} lastSeen 端末が最後に赤ペンタブを開いた時刻（epoch ms）
+ * @param {Array<{at: number, text: string}>} feed `/api/review/feed` の items
+ * @param {number} lastSeen 端末が最後にレビュータブを開いた時刻（epoch ms）
  * @returns {Array} 未読だけ（古い順）
  */
 export function unseenNotices(feed, lastSeen) {
@@ -125,7 +125,7 @@ export function unseenNotices(feed, lastSeen) {
 }
 
 /**
- * 赤ペンタブの丸/点の状態（優先度: 判断待ち > 未読の完了 > 進行中）。
+ * レビュータブの丸/点の状態（優先度: 判断待ち > 未読の完了 > 進行中）。
  *
  * 判断待ちだけ数字を出し、それ以外は点にする（「あなたの番」と「進んでいる」を
  * 同じ見た目にしない）。
@@ -151,7 +151,7 @@ export function doneHint(doneTotal) {
  * 挿絵を拡大したときのキャプション。
  *
  * 選択肢の id とラベルだけだと「A. 塗りのボタン」としか出ず、何の話か分からない
- * （赤ペン akapen-empty-01 の注釈「この文言はなんですか？」）。問番号を頭に付け、
+ * （レビュー review-empty-01 の注釈「この文言はなんですか？」）。問番号を頭に付け、
  * 問いの文を 2 行目に必ず添える。
  *
  * @param {string} qno 問番号（例: 'Q2'）
@@ -170,13 +170,13 @@ export function thumbCaption(qno, option, questionText) {
 }
 
 /**
- * 赤ペンの回答を「履歴」として読むための行（完了した項目の詳細で使う）。
+ * レビューの回答を「履歴」として読むための行（完了した項目の詳細で使う）。
  *
  * 回答が無い問（未回答のまま片付けた等）は `choice: null` で返し、UI 側が
  * 「お任せ（既定）」と書けるようにする — 回答を捏造しない。
  *
- * @param {object|null} data `/api/akapen/:id/data` の `data`（sheet.json）
- * @param {object|null} answer `/api/akapen/:id/data` の `answer`（answer.json）
+ * @param {object|null} data `/api/review/:id/data` の `data`（sheet.json）
+ * @param {object|null} answer `/api/review/:id/data` の `answer`（answer.json）
  * @returns {{rows: Array<{id: string, question: string, choice: string|null, label: string, note: string}>, global: string}}
  */
 export function answerRows(data, answer) {
@@ -204,7 +204,7 @@ export function answerRows(data, answer) {
  * 「いつの画像か」が人に分からない。**一覧はこの値の新しい順**なので、並びの
  * 意味が読めるように必ず出す。
  *
- * @param {number} ms `/api/akapen/library` の `mtime`（epoch ms）
+ * @param {number} ms `/api/review/library` の `mtime`（epoch ms）
  * @returns {string} 例: '11/12 21:05'。値が無ければ '—'
  */
 export function capturedLabel(ms) {
@@ -218,7 +218,7 @@ export function capturedLabel(ms) {
 /**
  * 画像一覧に出す「リポジトリ名」。
  *
- * 画像にリポジトリ情報は無いので、bridge が赤ペンのタスク（`[akapen] … target=`）から
+ * 画像にリポジトリ情報は無いので、bridge がレビューのタスク（`[review] … target=`）から
  * 推定した id を出す。推定できない画像（チャットから取り込んだだけ等）は '—'。
  *
  * @param {{id?: string, label?: string}|string|null} repo

@@ -16,7 +16,7 @@ import {
   unreadSessions,
 } from '../src/lib/chatReports.js'
 
-/** 監視 cron が書く 1 行（`/api/akapen/chat-reports` の items）。 */
+/** 監視 cron が書く 1 行（`/api/review/chat-reports` の items）。 */
 const rep = (at, sessionId, taskId, text = '完了') => ({
   at: Date.parse(at),
   sessionId,
@@ -107,8 +107,8 @@ test('mergeTimeline は報告より後の会話ブロックがあるとき報告
     { role: 'assistant', text: '新しい回答', at: 2100 },
   ]
   const reports = [
-    { key: 't1:1500', at: 1500, text: '赤ペン完了' },
-    { key: 't2:3000', at: 3000, text: '最新の赤ペン完了' },
+    { key: 't1:1500', at: 1500, text: 'レビュー完了' },
+    { key: 't2:3000', at: 3000, text: '最新のレビュー完了' },
   ]
   const merged = mergeTimeline(blocks, reports)
   assert.deepEqual(

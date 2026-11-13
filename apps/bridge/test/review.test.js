@@ -5,17 +5,18 @@ import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
-  parseAkapenLine,
+  parseReviewLine,
+  parseReplyText,
   isSafeRel,
   answerHash,
   toReplyText,
-  injectAkapenBridge,
-  createAkapen,
-} from '../src/akapen.js'
+  injectReviewBridge,
+  createReview,
+} from '../src/review.js'
 
-test('injectAkapenBridge は設問見出しのマーカー装飾を注入し、保存物は変えない', () => {
+test('injectReviewBridge は設問見出しのマーカー装飾を注入し、保存物は変えない', () => {
   const base = '<html><body><section id="akForm"><div class="q"><h3>Q1. 問い</h3></div></section></body></html>'
-  const html = injectAkapenBridge(base, 't_abc12345')
+  const html = injectReviewBridge(base, 't_abc12345')
 
   assert.ok(html.includes('<style id="akBridgeStyle">'), 'マーカー用スタイルが入る')
   assert.match(html, /#akForm \.q h3\{[^}]*linear-gradient/, '設問見出しにマーカー (linear-gradient) が当たる')
@@ -23,30 +24,30 @@ test('injectAkapenBridge は設問見出しのマーカー装飾を注入し、�
   assert.ok(html.indexOf('akBridgeStyle') < html.indexOf('</body>'), '</body> の直前に注入する')
 
   assert.equal(base.includes('akBridgeStyle'), false, '元のシート HTML は書き換えない')
-  assert.equal(base.includes('akapen:reply'), false)
+  assert.equal(base.includes('review:reply'), false)
 
   // </body> が無い断片でも末尾に注入する
-  const frag = injectAkapenBridge('<div id="akForm"></div>', 't_1')
+  const frag = injectReviewBridge('<div id="akForm"></div>', 't_1')
   assert.ok(frag.indexOf('akBridgeStyle') > -1)
   assert.ok(frag.indexOf('var TASK = "t_1";') > -1)
 })
 
-test('parseAkapenLine は機械可読行を取り出す', () => {
-  const body = '本文\n[akapen] label=cockpit-03 round=2 mode=standard sheet=sheets/cockpit-03-2.html\nおわり'
-  const ak = parseAkapenLine(body)
+test('parseReviewLine は機械可読行を取り出す', () => {
+  const body = '本文\n[review] label=cockpit-03 round=2 mode=standard sheet=sheets/cockpit-03-2.html\nおわり'
+  const ak = parseReviewLine(body)
   assert.equal(ak.label, 'cockpit-03')
   assert.equal(ak.round, '2')
   assert.equal(ak.mode, 'standard')
   assert.equal(ak.sheet, 'sheets/cockpit-03-2.html')
 })
 
-test('parseAkapenLine は行が無ければ null', () => {
-  assert.equal(parseAkapenLine('ただの本文'), null)
+test('parseReviewLine は行が無ければ null', () => {
+  assert.equal(parseReviewLine('ただの本文'), null)
 })
 
-test('parseAkapenLine は親ディレクトリ参照を拒否する', () => {
-  assert.equal(parseAkapenLine('[akapen] label=x sheet=../../etc/passwd'), null)
-  assert.equal(parseAkapenLine('[akapen] label=x sheet=/etc/passwd'), null)
+test('parseReviewLine は親ディレクトリ参照を拒否する', () => {
+  assert.equal(parseReviewLine('[review] label=x sheet=../../etc/passwd'), null)
+  assert.equal(parseReviewLine('[review] label=x sheet=/etc/passwd'), null)
 })
 
 test('isSafeRel', () => {
@@ -64,7 +65,7 @@ test('answerHash はキー順に依存せず、内容が変われば変わる', 
   assert.notEqual(a, c)
 })
 
-test('toReplyText は【赤ペン回答】契約の形になる', () => {
+test('toReplyText は【レビュー回答】契約の形になる', () => {
   const txt = toReplyText(
     'cockpit-03',
     [
@@ -74,16 +75,16 @@ test('toReplyText は【赤ペン回答】契約の形になる', () => {
     '全体はこれで',
     [{ id: 'q1', text: '既定位置は？' }, { id: 'q2', text: '表示は？' }],
   )
-  assert.match(txt, /^【赤ペン回答】cockpit-03\n/)
+  assert.match(txt, /^【レビュー回答】cockpit-03\n/)
   assert.match(txt, /Q1\. 既定位置は？: A \/ 補足: 映像を隠さない範囲で/)
   assert.match(txt, /Q2\. 表示は？: \(未選択 = お任せ\)/)
-  assert.match(txt, /全体への赤ペン: 全体はこれで/)
+  assert.match(txt, /全体へのレビュー: 全体はこれで/)
   assert.match(txt, /\n---\n/)
 })
 
 /** 一時ボード（kanban.db + board.json + sheets）を作る。 */
 function tempBoard() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'akapen-'))
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-'))
   const boardDir = path.join(root, 'kanban', 'boards', 'mobile')
   fs.mkdirSync(boardDir, { recursive: true })
   const workdir = path.join(root, 'work')
@@ -97,7 +98,7 @@ function tempBoard() {
   db.prepare('INSERT INTO tasks (id,title,body,status,assignee,created_at) VALUES (?,?,?,?,?,?)').run(
     't_test1',
     'キーボード配置',
-    '本文\n[akapen] label=cockpit-03 round=1 mode=standard sheet=sheets/cockpit-03-1.html\n',
+    '本文\n[review] label=cockpit-03 round=1 mode=standard sheet=sheets/cockpit-03-1.html\n',
     'blocked',
     'mobile',
     Math.floor(Date.now() / 1000),
@@ -122,11 +123,11 @@ function tempBoard() {
 
 test('list / sheetHtml / sheetData は workdir 配下を解決する', () => {
   const { root, workdir } = tempBoard()
-  const api = createAkapen({ kanbanRoot: path.join(root, 'kanban') })
+  const api = createReview({ kanbanRoot: path.join(root, 'kanban') })
   const items = api.list()
   assert.equal(items.length, 1)
-  assert.equal(items[0].akapen.questions, 1)
-  assert.equal(items[0].akapen.exists, true)
+  assert.equal(items[0].review.questions, 1)
+  assert.equal(items[0].review.exists, true)
 
   const html = api.sheetHtml('t_test1')
   assert.equal(html.ok, true)
@@ -142,7 +143,7 @@ test('answer は保存して comment + unblock を呼び、二重投稿を弾く
   const { root, workdir } = tempBoard()
   const calls = []
   const dbPath = path.join(root, 'kanban', 'boards', 'mobile', 'kanban.db')
-  const api = createAkapen(
+  const api = createReview(
     { kanbanRoot: path.join(root, 'kanban') },
     {
       runKanban: async (args) => {
@@ -166,7 +167,7 @@ test('answer は保存して comment + unblock を呼び、二重投稿を弾く
   assert.equal(saved.answers[0].choice, 'A')
   assert.equal(saved.task_id, 't_test1')
   const txt = fs.readFileSync(path.join(workdir, 'sheets', 'cockpit-03-1.answer.txt'), 'utf8')
-  assert.match(txt, /【赤ペン回答】cockpit-03/)
+  assert.match(txt, /【レビュー回答】cockpit-03/)
 
   assert.deepEqual(calls[0].slice(0, 1), ['comment'])
   assert.deepEqual(calls[1].slice(0, 1), ['unblock'])
@@ -184,13 +185,13 @@ test('answer はシートの無いタスクを拒否する', async () => {
     't_plain', 'シート無し', 'ふつうの本文', 'review', Math.floor(Date.now() / 1000),
   )
   db.close()
-  const api = createAkapen({ kanbanRoot: path.join(root, 'kanban') }, { runKanban: async () => ({ code: 0, out: '' }) })
+  const api = createReview({ kanbanRoot: path.join(root, 'kanban') }, { runKanban: async () => ({ code: 0, out: '' }) })
   const r = await api.answer('t_plain', { answers: [] })
   assert.equal(r.ok, false)
   assert.equal(r.code, 'NO_SHEET')
 })
 
-test('answer は赤ペン待ち（blocked）以外を拒否し、answer.json を上書きしない', async () => {
+test('answer はレビュー待ち（blocked）以外を拒否し、answer.json を上書きしない', async () => {
   const { root, workdir } = tempBoard()
   const calls = []
   const dbPath = path.join(root, 'kanban', 'boards', 'mobile', 'kanban.db')
@@ -199,7 +200,7 @@ test('answer は赤ペン待ち（blocked）以外を拒否し、answer.json を
     db.prepare('UPDATE tasks SET status=? WHERE id=?').run(status, 't_test1')
     db.close()
   }
-  const api = createAkapen(
+  const api = createReview(
     { kanbanRoot: path.join(root, 'kanban') },
     {
       runKanban: async (args) => {
@@ -234,13 +235,13 @@ test('answer は赤ペン待ち（blocked）以外を拒否し、answer.json を
   assert.equal(calls.length, callsAfterFirst)
 })
 
-test('parseReplyText はシートが送る【赤ペン回答】を構造化する', async () => {
-  const { parseReplyText } = await import('../src/akapen.js')
+test('parseReplyText はシートが送る【レビュー回答】を構造化する', async () => {
+  const { parseReplyText } = await import('../src/review.js')
   const text = [
-    '【赤ペン回答】cockpit-03',
+    '【レビュー回答】cockpit-03',
     'Q1. 既定位置は？: A / 補足: 映像を隠さない',
     'Q2. 表示は？: (未選択 = お任せ)',
-    '全体への赤ペン: 全体OK',
+    '全体へのレビュー: 全体OK',
     '---',
     '上の回答を反映して作業を続けてください。',
   ].join('\n')
@@ -255,18 +256,18 @@ test('parseReplyText はシートが送る【赤ペン回答】を構造化す�
 test('answer は text だけでも受け付ける（シート直送）', async () => {
   const { root } = tempBoard()
   const calls = []
-  const api = createAkapen(
+  const api = createReview(
     { kanbanRoot: path.join(root, 'kanban') },
     { runKanban: async (a) => { calls.push(a); return { code: 0, out: 'ok' } } },
   )
-  const r = await api.answer('t_test1', { text: '【赤ペン回答】x\nQ1. 問: B / 補足: n\n全体への赤ペン: g\n---\n' })
+  const r = await api.answer('t_test1', { text: '【レビュー回答】x\nQ1. 問: B / 補足: n\n全体へのレビュー: g\n---\n' })
   assert.equal(r.ok, true)
   assert.equal(r.moved, 'ready')
   assert.deepEqual(calls[0].slice(0, 1), ['comment'])
 })
 
-test('parseAkapenLine は annotation の image を返す', () => {
-  const ak = parseAkapenLine('[akapen] label=demo round=1 mode=annotation image=shots/demo-1.png')
+test('parseReviewLine は annotation の image を返す', () => {
+  const ak = parseReviewLine('[review] label=demo round=1 mode=annotation image=shots/demo-1.png')
   assert.equal(ak.mode, 'annotation')
   assert.equal(ak.image, 'shots/demo-1.png')
 })
@@ -277,13 +278,13 @@ test('saveAnnotation は画像を保存して unblock を呼ぶ（冪等）', as
   const dbPath = path.join(root, 'kanban', 'boards', 'mobile', 'kanban.db')
   const db = new DatabaseSync(dbPath)
   db.prepare("UPDATE tasks SET body=? WHERE id='t_test1'").run(
-    '[akapen] label=demo round=1 mode=annotation image=shots/demo.png',
+    '[review] label=demo round=1 mode=annotation image=shots/demo.png',
   )
   db.close()
   fs.mkdirSync(path.join(workdir, 'shots'), { recursive: true })
   fs.writeFileSync(path.join(workdir, 'shots', 'demo.png'), 'PNGDATA')
   const calls = []
-  const api = createAkapen(
+  const api = createReview(
     { kanbanRoot: path.join(root, 'kanban') },
     { runKanban: async (a) => { calls.push(a); return { code: 0, out: 'ok' } } },
   )
@@ -305,7 +306,7 @@ test('createFromImage は assignee と target を付けて起票し、blocked �
   const repoA = path.join(root, 'repo-a')
   fs.mkdirSync(path.join(repoA, '.git'), { recursive: true })
   const calls = []
-  const api = createAkapen(
+  const api = createReview(
     { kanbanRoot: path.join(root, 'kanban') },
     {
       targets: () => [{ id: 'hermes-mobile-pwa', label: 'Mobile', path: repoA }],
@@ -331,10 +332,10 @@ test('targets は渡された登録リポジトリだけを返し、未登録の
   const repoA = path.join(root, 'repo-a')
   fs.mkdirSync(path.join(repoA, '.git'), { recursive: true })
   const calls = []
-  const api = createAkapen(
+  const api = createReview(
     { kanbanRoot: path.join(root, 'kanban') },
     {
-      // 一覧の出所は repos.js（ここでは差し替え）。akapen 側は絞り込みをしない
+      // 一覧の出所は repos.js（ここでは差し替え）。review 側は絞り込みをしない
       targets: () => [{ id: 'hermes-mobile-pwa', label: 'Mobile', path: repoA }],
       runKanban: async (a) => { calls.push(a); return a[0] === 'create' ? { code: 0, out: 'Created t_11112222' } : { code: 0, out: 'ok' } },
     },
@@ -355,9 +356,9 @@ test('targets は渡された登録リポジトリだけを返し、未登録の
 })
 
 test('image=<*.html> は sheet の別名として解釈する（NO_SHEET の再発防止）', () => {
-  const a = parseAkapenLine('[akapen] label=s-01 round=1 mode=sheet image=sheets/s-01-1.html')
+  const a = parseReviewLine('[review] label=s-01 round=1 mode=sheet image=sheets/s-01-1.html')
   assert.equal(a.sheet, 'sheets/s-01-1.html')
-  const b = parseAkapenLine('[akapen] label=a-01 round=1 mode=annotation image=shots/a-01-1.png')
+  const b = parseReviewLine('[review] label=a-01 round=1 mode=annotation image=shots/a-01-1.png')
   assert.equal(b.sheet, undefined, '画像は sheet にしない')
   assert.equal(b.image, 'shots/a-01-1.png')
 })
@@ -366,10 +367,10 @@ test('library は取得日時とリポジトリ名を返す（画像にリポジ
   const { root, workdir } = tempBoard()
   const repoA = path.join(root, 'repo-a')
   fs.mkdirSync(path.join(repoA, '.git'), { recursive: true })
-  // 赤ペンのタスク本文: image= は完全一致、label= は撮影名の前方一致に使う
+  // レビューのタスク本文: image= は完全一致、label= は撮影名の前方一致に使う
   const db = new DatabaseSync(path.join(root, 'kanban', 'boards', 'mobile', 'kanban.db'))
   db.prepare('UPDATE tasks SET body = ? WHERE id = ?').run(
-    `[akapen] label=cockpit-03 round=1 mode=annotation image=shots/cockpit-03-202611122105-1.png target=${repoA}`,
+    `[review] label=cockpit-03 round=1 mode=annotation image=shots/cockpit-03-202611122105-1.png target=${repoA}`,
     't_test1',
   )
   db.close()
@@ -379,7 +380,7 @@ test('library は取得日時とリポジトリ名を返す（画像にリポジ
   fs.writeFileSync(path.join(workdir, 'shots', 'unknown-shot.png'), 'x')
   fs.writeFileSync(path.join(workdir, 'library', 'chat', '20261112-2105-shot.png'), 'x')
 
-  const api = createAkapen(
+  const api = createReview(
     { kanbanRoot: path.join(root, 'kanban') },
     { targets: () => [{ id: 'demo-repo', label: 'Demo', path: repoA }] },
   )
@@ -400,7 +401,7 @@ test('library は取得日時とリポジトリ名を返す（画像にリポジ
 test('feed は監視 cron の 1 行ログを末尾から読み、since で絞る', () => {
   const { root } = tempBoard()
   // kanbanRoot = <root>/kanban なので home = <root>
-  const dir = path.join(root, 'plugin-data', 'akapen')
+  const dir = path.join(root, 'plugin-data', 'hermes-pilot', 'review')
   fs.mkdirSync(dir, { recursive: true })
   const lines = [
     { at: '2026-11-12T22:26:38+08:00', text: '✅ 完了 22:26 タスクA' },
@@ -408,7 +409,7 @@ test('feed は監視 cron の 1 行ログを末尾から読み、since で絞る
   ]
   fs.writeFileSync(path.join(dir, 'feed.jsonl'), lines.map((l) => JSON.stringify(l)).join('\n') + '\n')
 
-  const api = createAkapen({ kanbanRoot: path.join(root, 'kanban') })
+  const api = createReview({ kanbanRoot: path.join(root, 'kanban') })
   const all = api.feed(10)
   assert.equal(all.length, 2)
   assert.match(all[0].text, /完了/)
@@ -423,10 +424,10 @@ test('feed は監視 cron の 1 行ログを末尾から読み、since で絞る
 
 test('feed はファイルが無い/壊れていても空で返る（補助情報で画面を壊さない）', () => {
   const { root } = tempBoard()
-  const api = createAkapen({ kanbanRoot: path.join(root, 'kanban') })
+  const api = createReview({ kanbanRoot: path.join(root, 'kanban') })
   assert.deepEqual(api.feed(5), [])
 
-  const dir = path.join(root, 'plugin-data', 'akapen')
+  const dir = path.join(root, 'plugin-data', 'hermes-pilot', 'review')
   fs.mkdirSync(dir, { recursive: true })
   fs.writeFileSync(path.join(dir, 'feed.jsonl'), 'not json\n{"at":"bad"}\n{"at":"2026-11-12T22:00:00+08:00","text":"ok"}\n')
   const r = api.feed(5)
@@ -436,7 +437,7 @@ test('feed はファイルが無い/壊れていても空で返る（補助情�
 
 test('chatReport は会話ごとの完了報告だけを返す（起票したチャットへ流す 1 行）', () => {
   const { root } = tempBoard()
-  const dir = path.join(root, 'plugin-data', 'akapen')
+  const dir = path.join(root, 'plugin-data', 'hermes-pilot', 'review')
   fs.mkdirSync(dir, { recursive: true })
   const lines = [
     { at: '2026-11-13T02:10:00+08:00', session_id: 'chat-a', task_id: 't_1', label: 'x-01', text: '完了 A' },
@@ -445,7 +446,7 @@ test('chatReport は会話ごとの完了報告だけを返す（起票したチ
   ]
   fs.writeFileSync(path.join(dir, 'chat-reports.jsonl'), lines.map((l) => JSON.stringify(l)).join('\n') + '\n')
 
-  const api = createAkapen({ kanbanRoot: path.join(root, 'kanban') })
+  const api = createReview({ kanbanRoot: path.join(root, 'kanban') })
   const mine = api.chatReport('chat-a', { limit: 5 })
   assert.equal(mine.length, 2, '別の会話の報告は混ぜない')
   assert.deepEqual(mine.map((m) => m.taskId), ['t_1', 't_3'], '古い順')
@@ -460,10 +461,10 @@ test('chatReport は会話ごとの完了報告だけを返す（起票したチ
 
 test('chatReport はファイルが無い/壊れていても空で返る', () => {
   const { root } = tempBoard()
-  const api = createAkapen({ kanbanRoot: path.join(root, 'kanban') })
+  const api = createReview({ kanbanRoot: path.join(root, 'kanban') })
   assert.deepEqual(api.chatReport('chat-a'), [])
 
-  const dir = path.join(root, 'plugin-data', 'akapen')
+  const dir = path.join(root, 'plugin-data', 'hermes-pilot', 'review')
   fs.mkdirSync(dir, { recursive: true })
   fs.writeFileSync(
     path.join(dir, 'chat-reports.jsonl'),
@@ -476,7 +477,7 @@ test('chatReport はファイルが無い/壊れていても空で返る', () =>
 
 test('chatReports は全会話ぶんを返す（未読の点は 1 回の取得で出す）', () => {
   const { root } = tempBoard()
-  const dir = path.join(root, 'plugin-data', 'akapen')
+  const dir = path.join(root, 'plugin-data', 'hermes-pilot', 'review')
   fs.mkdirSync(dir, { recursive: true })
   const rows = [
     { at: '2026-11-13T02:10:00+08:00', session_id: 'chat-a', task_id: 't_1', label: 'x-01', text: '完了 A' },
@@ -489,7 +490,7 @@ test('chatReports は全会話ぶんを返す（未読の点は 1 回の取得�
     path.join(dir, 'chat-reports.jsonl'),
     rows.map((r) => (typeof r === 'string' ? r : JSON.stringify(r))).join('\n') + '\n',
   )
-  const api = createAkapen({ kanbanRoot: path.join(root, 'kanban') })
+  const api = createReview({ kanbanRoot: path.join(root, 'kanban') })
 
   const all = api.chatReports()
   assert.equal(all.length, 3, '会話が分かる行だけ（宛先なし・壊れた行は捨てる）')
@@ -504,7 +505,7 @@ test('chatReports は全会話ぶんを返す（未読の点は 1 回の取得�
 
 test('chatReports はファイルが無ければ空（補助情報なので落とさない）', () => {
   const { root } = tempBoard()
-  const api = createAkapen({ kanbanRoot: path.join(root, 'kanban') })
+  const api = createReview({ kanbanRoot: path.join(root, 'kanban') })
   assert.deepEqual(api.chatReports(), [])
 })
 
@@ -513,7 +514,7 @@ test('createFromImage は chat= を本文に付ける（注釈タスクの完了
   const repoA = path.join(root, 'repo-a')
   fs.mkdirSync(path.join(repoA, '.git'), { recursive: true })
   const calls = []
-  const api = createAkapen(
+  const api = createReview(
     { kanbanRoot: path.join(root, 'kanban') },
     {
       targets: () => [{ id: 'hermes-mobile-pwa', label: 'Mobile', path: repoA }],
@@ -548,11 +549,11 @@ test('answer は chat を task-chats.json に覚え、session_id 欠落の完了
   // target を持つタスクを 1 件追加（body に chat= が無くても answer 時に紐づける）
   const db = new DatabaseSync(dbPath)
   db.prepare(
-    "INSERT INTO tasks (id, title, body, status, created_at) VALUES ('t_extra', '追加', '[akapen] label=extra-01 round=1 mode=standard sheet=sheets/x-01-1.html target=/tmp/repo-x', 'blocked', 1700000001)",
+    "INSERT INTO tasks (id, title, body, status, created_at) VALUES ('t_extra', '追加', '[review] label=extra-01 round=1 mode=standard sheet=sheets/x-01-1.html target=/tmp/repo-x', 'blocked', 1700000001)",
   ).run()
   db.close()
 
-  const api = createAkapen(
+  const api = createReview(
     { kanbanRoot: path.join(root, 'kanban') },
     { runKanban: async () => ({ code: 0, out: 'ok' }) },
   )
@@ -568,11 +569,11 @@ test('answer は chat を task-chats.json に覚え、session_id 欠落の完了
   const items = api.list()
   const t1 = items.find((x) => x.id === 't_test1')
   const t2 = items.find((x) => x.id === 't_extra')
-  assert.equal(t1?.akapen?.chat, 'chat_recovered_1')
-  assert.equal(t2?.akapen?.target, '/tmp/repo-x')
+  assert.equal(t1?.review?.chat, 'chat_recovered_1')
+  assert.equal(t2?.review?.target, '/tmp/repo-x')
 
   // chat-reports.jsonl に session_id が無くても task-chats.json から補完して返す
-  const dir = path.join(root, 'plugin-data', 'akapen')
+  const dir = path.join(root, 'plugin-data', 'hermes-pilot', 'review')
   fs.mkdirSync(dir, { recursive: true })
   fs.writeFileSync(
     path.join(dir, 'chat-reports.jsonl'),
@@ -593,11 +594,11 @@ test('image(id, { annotated: true }) は注釈済み画像があればそちら�
   const dbPath = path.join(root, 'kanban', 'boards', 'mobile', 'kanban.db')
   const db = new DatabaseSync(dbPath)
   db.prepare(
-    "INSERT INTO tasks (id, title, body, status, created_at) VALUES ('t_img1', '画像注釈', '[akapen] label=demo round=1 mode=annotation image=shots/demo-1.png', 'blocked', 1700000002)",
+    "INSERT INTO tasks (id, title, body, status, created_at) VALUES ('t_img1', '画像注釈', '[review] label=demo round=1 mode=annotation image=shots/demo-1.png', 'blocked', 1700000002)",
   ).run()
   db.close()
 
-  const api = createAkapen(
+  const api = createReview(
     { kanbanRoot: path.join(root, 'kanban') },
     { runKanban: async () => ({ code: 0, out: 'ok' }) },
   )
@@ -614,4 +615,68 @@ test('image(id, { annotated: true }) は注釈済み画像があればそちら�
   assert.equal(saved.ok, true)
   assert.equal(api.image('t_img1').data.toString(), 'BASE')
   assert.equal(api.image('t_img1', { annotated: true }).data.toString(), 'ANNOTATED')
+})
+
+test('parseReviewLine は旧 [akapen] タグも読む（移行前のボードでもレビューが消えない）', () => {
+  const a = parseReviewLine('本文\n[akapen] label=old-01 round=2 mode=sheet sheet=sheets/old-01-2.html')
+  assert.equal(a.label, 'old-01')
+  assert.equal(a.sheet, 'sheets/old-01-2.html')
+  assert.equal(parseReviewLine('[review] label=new-01').label, 'new-01')
+})
+
+test('parseReplyText は英語見出しも旧【赤ペン回答】も受理する（SPEC §4.1）', () => {
+  const en = parseReplyText('[Review Answer] strip-01\nQ1. Which?: A\nOverall Note: keep color\n---\n')
+  assert.equal(en.answers[0].choice, 'A')
+  assert.equal(en.global, 'keep color')
+
+  const legacy = parseReplyText(
+    ['【赤ペン回答】strip-01', 'Q1. どれ: B / 補足: 小さく', '全体への赤ペン: 現行のまま', '---'].join('\n'),
+  )
+  assert.equal(legacy.answers[0].choice, 'B')
+  assert.equal(legacy.answers[0].note, '小さく')
+  assert.equal(legacy.global, '現行のまま')
+})
+
+test('toReplyText は en 指定で英語見出しになり、parseReplyText と往復できる', () => {
+  const txt = toReplyText('strip-01', [{ id: 'q1', choice: 'A' }], 'ok', [{ id: 'q1', text: 'Which?' }], 'en')
+  assert.match(txt, /^\[Review Answer\] strip-01\n/)
+  assert.match(txt, /Overall Note: ok/)
+  const back = parseReplyText(txt)
+  assert.equal(back.answers[0].choice, 'A')
+  assert.equal(back.global, 'ok')
+
+  const ja = toReplyText('strip-01', [{ id: 'q1', choice: 'A' }], 'ok')
+  assert.match(ja, /^【レビュー回答】strip-01\n/)
+  assert.match(ja, /全体へのレビュー: ok/)
+})
+
+test('injectReviewBridge は window.__reviewSubmit と互換エイリアス __akapenSubmit の両方を定義する', () => {
+  const html = injectReviewBridge('<html><body><div id="akForm"></div></body></html>', 't_1')
+  assert.ok(html.includes('window.__reviewSubmit = submit;'))
+  assert.ok(html.includes('window.__akapenSubmit = submit;'))
+  assert.ok(html.includes("type: 'review:reply'"))
+  // 旧シートが吐く【赤ペン回答】でも送信できる（判定は両対応）
+  assert.ok(html.includes('レビュー|赤ペン'))
+})
+
+test('データの置き場は ~/.hermes/plugin-data/hermes-pilot/review（旧 akapen を参照しない）', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-root-'))
+  const api = createReview({ kanbanRoot: path.join(root, 'kanban') })
+  assert.equal(api.dataRoot(), path.join(root, 'plugin-data', 'hermes-pilot'))
+  assert.equal(api.reviewRoot(), path.join(root, 'plugin-data', 'hermes-pilot', 'review'))
+  // ボードに default_workdir が無ければ review ワークスペースを使う
+  assert.equal(path.resolve(api.workdir()), path.resolve(api.reviewRoot()))
+})
+
+test('chatFor は本文の chat= を優先し、無ければ task-chats.json を返す', async () => {
+  const { root } = tempBoard()
+  const api = createReview({ kanbanRoot: path.join(root, 'kanban') }, { runKanban: async () => ({ code: 0, out: 'ok' }) })
+  await api.answer('t_test1', { answers: [{ id: 'q1', choice: 'A' }], chat: 'chat_flow_1' })
+  assert.equal(api.chatFor('t_test1'), 'chat_flow_1')
+
+  const review = path.join(root, 'plugin-data', 'hermes-pilot', 'review')
+  fs.mkdirSync(review, { recursive: true })
+  fs.writeFileSync(path.join(review, 'task-chats.json'), JSON.stringify({ t_other: 'chat_map_1' }))
+  assert.equal(api.chatFor('t_other'), 'chat_map_1')
+  assert.equal(api.chatFor('t_unknown'), null)
 })

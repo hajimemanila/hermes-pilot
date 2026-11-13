@@ -3,7 +3,7 @@ import { api } from '../api.js'
 import { CloseActions } from '../components/CloseActions.jsx'
 import { Sheet, Spinner, relTime } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
-import { isAnswered } from '../lib/akapenView.js'
+import { isAnswered } from '../lib/reviewView.js'
 
 const KIND_LABEL = {
   needs_input: '回答待ち',

@@ -10,10 +10,11 @@ export const VERSION = '0.1.0'
 export function loadConfig() {
   const home = process.env.HOME ?? os.homedir()
   const hermesHome = process.env.HERMES_HOME ?? path.join(home, '.hermes')
-  const dataDir = process.env.HM_DATA ?? path.join(hermesHome, 'mobile-pwa')
-  // 公開プラグインのデータ先（D1）。リポジトリ設定はここに置く（SPEC §3.2）
+  // 公開プラグインのデータ先（D1 / §3.2）。token・audit・snippets・repos.json はここへ一本化する。
   const pluginDataDir =
     process.env.HP_DATA_DIR ?? path.join(hermesHome, 'plugin-data', 'hermes-pilot')
+  // 旧 `mobile-pwa` を指したい検証用に HM_DATA も受けるが、既定は hermes-pilot。
+  const dataDir = process.env.HM_DATA ?? pluginDataDir
   return {
     version: VERSION,
     home,
@@ -29,6 +30,8 @@ export function loadConfig() {
     logDir: path.join(hermesHome, 'logs'),
     dataDir,
     pluginDataDir,
+    /** レビューワークスペース（sheets / shots / library / feed.jsonl 等） */
+    reviewDir: path.join(pluginDataDir, 'review'),
     /** リポジトリ設定（scanDirs / pinned / hidden / custom） */
     reposPath: process.env.HP_REPOS_JSON ?? path.join(pluginDataDir, 'repos.json'),
     tokenPath: path.join(dataDir, 'token'),

@@ -6,7 +6,7 @@ import { CaptureSheet } from './CaptureSheet.jsx'
 import { UsageSheet } from './UsageSheet.jsx'
 import { LiveSheet } from './LiveSheet.jsx'
 import { InboxSheet } from './InboxSheet.jsx'
-import { pendingCount } from '../lib/akapenView.js'
+import { pendingCount } from '../lib/reviewView.js'
 import { fmtCost } from '../lib/format.js'
 
 const STATUS_LABEL = {

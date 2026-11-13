@@ -20,7 +20,8 @@
     "check:pwa:live": "python3 scripts/check-pwa.py --url https://hajimemac-mini.tail975a79.ts.net:8444",
     "check:pwa:selftest": "python3 scripts/check-pwa.py --self-test",
     "verify": "npm test && npm run check:pwa && npm run build",
-    "deploy": "node scripts/deploy.mjs"
+    "deploy": "node scripts/deploy.mjs",
+    "migrate:pilot": "node scripts/migrate-to-hermes-pilot.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",

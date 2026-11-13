@@ -1,7 +1,7 @@
 /**
  * PWA チャットの既定プロファイルと、既定を切り替えたときの一度きりの移行。
  *
- * 決定: 赤ペン `sheets/mobile-profile-01-1.html` Q4=A（mobile を既定にし、端末に
+ * 決定: レビュー `sheets/mobile-profile-01-1.html` Q4=A（mobile を既定にし、端末に
  * 保存済みの選択も一度リセットする）。`ChatPane.jsx` は localStorage の
  * `hm.storedProfile` を復元するので、既定値だけ変えても効かない。
  */
