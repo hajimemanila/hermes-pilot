@@ -25,6 +25,7 @@ import { execFileSync } from 'node:child_process'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { collectPairing, qrSvg, qrTerminal, tailscaleCommandCandidates } from '../apps/bridge/src/qr.js'
+import { createPairCodes } from '../apps/bridge/src/pair-codes.js'
 
 /** リポジトリのルート（このファイルは `bin/` の下）。 */
 export const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
@@ -308,6 +309,21 @@ export function pairingInfo({ token, port, tlsPort = null, dnsName = null }) {
 }
 
 /**
+ * ワンタイム・ペアリングコードを発行して注意書きを出す。
+ *
+ * 本トークン（64 文字）を URL に載せると QR が高密度になり、端末 80x24 では
+ * 行が溢れてカメラが読めない。短いコード（8 文字）で QR を粗くする。
+ * @param {string} dataDir データ先（`pair-codes.json` を置く）
+ * @returns {string} 発行したコード
+ */
+export function mintPairCode(dataDir) {
+  const { code, expiresAt } = createPairCodes({ dataDir }).mint()
+  const minutes = Math.max(1, Math.round((expiresAt - Date.now()) / 60000))
+  out('', `ワンタイムコード / one-time code: ${code}（${minutes} 分有効・1 回限り）`)
+  return code
+}
+
+/**
  * ペアリング URL と QR を表示する。
  * @param {object} opts 入力
  * @param {string} opts.token トークン
@@ -322,8 +338,44 @@ function printPairing({ token, port, tlsPort = null, dnsName = null, svg = false
     out('', '到達可能なアドレスがありません（Tailscale か LAN を確認してください）。')
     return
   }
-  out('', `QR（${info.best.label}）— カメラで読み取ってください:`, '')
-  out(qrTerminal(info.best.url))
+  // 端末に収まらない QR を出すと、行が折り返すか上にスクロールして**欠けたコード**になる（実測:
+  // 64 文字トークンの URL は 27 行になり 80x24 で読めなかった）。収まる候補を選び、
+  // どれも収まらないときは URL と 8 文字コードの手入力へ誘導する。
+  const cols = process.stdout.columns || 80
+  const rows = process.stdout.rows || 24
+  const dims = (s) => {
+    const lines = s.split('\n')
+    return { width: lines[0].replace(/\x1b\[[0-9;]*m/g, '').length, height: lines.length }
+  }
+  const fits = (s) => {
+    const d = dims(s)
+    return d.width <= cols - 2 && d.height <= rows - 6
+  }
+  let pick = info.targets[0]
+  let qr = qrTerminal(pick.url)
+  if (!fits(qr)) {
+    // 短い候補（LAN など）なら端末に収まる
+    for (const t of info.targets) {
+      const candidate = qrTerminal(t.url)
+      if (fits(candidate)) {
+        pick = t
+        qr = candidate
+        break
+      }
+    }
+  }
+  if (!fits(qr)) {
+    const d = dims(qrTerminal(info.best.url))
+    out(
+      '',
+      `QR はこの端末（${cols}x${rows}）に収まらないため省略しました（${d.width} 桁 x ${d.height} 行）。`,
+      '  → PC のブラウザで「設定 → ペアリング QR」を開いて読み取るか、上の 8 文字コードを「アプリトークン」欄に入れてください。',
+    )
+    if (svg) out('', qrSvg(info.best.url))
+    return
+  }
+  out('', `QR（${pick.label}）— カメラで読み取ってください:`, '')
+  out(qr)
   if (svg) out('', qrSvg(info.best.url))
 }
 
@@ -386,7 +438,7 @@ export async function runInit(p, port, { tlsPort = null } = {}) {
     `  スキル / skills: ${installed.length ? installed.join(', ') : '（既に配置済み）'}`,
     `  移行 / migrate: ${migrated ? '実行' : '不要'}`,
   )
-  printPairing({ token: ensureToken(p.tokenPath).token, port, tlsPort })
+  printPairing({ token: mintPairCode(p.dataDir), port, tlsPort })
   return { created, migrated, skills: installed }
 }
 
@@ -564,8 +616,8 @@ export async function runStart({ paths, port, host, tlsPort = null, dnsName = nu
       process.exit(1)
     }
   }
-  const { token } = ensureToken(paths.tokenPath)
-  if (!noQr) printPairing({ token, port, tlsPort, dnsName })
+  ensureToken(paths.tokenPath)
+  if (!noQr) printPairing({ token: mintPairCode(paths.dataDir), port, tlsPort, dnsName })
   process.env.HM_PORT = String(port)
   process.env.HM_HOST = host
   if (!process.env.HERMES_HOME) process.env.HERMES_HOME = paths.hermesHome
@@ -598,9 +650,9 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   if (command === 'qr') {
-    const { token, created } = ensureToken(paths.tokenPath)
+    const { created } = ensureToken(paths.tokenPath)
     if (created) out(`トークンを新規作成しました / token created: ${paths.tokenPath}`)
-    printPairing({ token, port, tlsPort, dnsName, svg: Boolean(flags.svg) })
+    printPairing({ token: mintPairCode(paths.dataDir), port, tlsPort, dnsName, svg: Boolean(flags.svg) })
     return 0
   }
 

@@ -22,6 +22,7 @@ import { createUsage } from './usage.js'
 import { createLive } from './live.js'
 import { createInbox } from './inbox.js'
 import { createRepos } from './repos.js'
+import { createPairCodes } from './pair-codes.js'
 import { getCapabilities } from './capabilities.js'
 import { errorBody } from './api-errors.js'
 import { resolveLang } from './lang.js'
@@ -76,7 +77,9 @@ function safeRequire(name) {
 
 const cfg = loadConfig()
 const capabilities = getCapabilities()
-const auth = createAuth(cfg)
+// ワンタイム・ペアリングコード（QR を短くするため。SPEC §8.2 の one-time token）
+const pairCodes = createPairCodes(cfg)
+const auth = createAuth(cfg, { pairCodes })
 const hermes = createHermesClient(cfg)
 const kanban = createKanban(cfg)
 // リポジトリ（作業ディレクトリ）↔ ボード。一覧は repos.json ＋ 1 階層スキャン
@@ -389,8 +392,10 @@ async function handleApi(req, res, url) {
   // 接続先候補（Tailscale HTTPS / LAN / localhost）と QR(SVG) を返す。
   if (a === 'auth' && b === 'pairing' && req.method === 'GET') {
     const ts = await tailscaleStatusJson()
+    // QR を短くするため、本トークンではなくワンタイムコードを URL に載せる（10 分・1 回限り）
+    const minted = pairCodes.mint()
     const info = collectPairing({
-      token: auth.token,
+      token: minted.code,
       port: cfg.port,
       tailscaleJson: ts,
       // 常駐から Tailscale CLI を叩けない環境の控え（config.json）
@@ -406,6 +411,8 @@ async function handleApi(req, res, url) {
       dnsName: info.dnsName,
       lanIp: info.lanIp,
       targets: info.targets,
+      // 有効期限（ミリ秒エポック）。画面に「あと何分」を出せるようにする
+      expiresAt: minted.expiresAt,
       qrSvg: info.best ? qrSvg(info.best.url) : null,
     })
   }

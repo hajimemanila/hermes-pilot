@@ -38,7 +38,7 @@ export function isAllowedWsOrigin(req) {
   return parsed.host.toLowerCase() === expectedHost
 }
 
-export function createAuth(cfg) {
+export function createAuth(cfg, { pairCodes = null } = {}) {
   fs.mkdirSync(cfg.dataDir, { recursive: true })
   let token = ''
   try {
@@ -130,7 +130,9 @@ export function createAuth(cfg) {
 
     /** ワンタイム URL のトークンをセッション Cookie に交換する。 */
     exchange(given) {
-      if (!tokenMatches(given)) return null
+      // 本トークン（64 文字）か、ワンタイム・ペアリングコード（短い使い捨て）のどちらでも通す
+      const byToken = tokenMatches(given)
+      if (!byToken && !pairCodes?.consume?.(given)) return null
       prune()
       const value = crypto.randomBytes(24).toString('base64url')
       const now = Date.now()

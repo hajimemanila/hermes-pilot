@@ -127,9 +127,27 @@ test('node bin/hermes-pilot.mjs qr はペアリング URL と QR を出す（受
     const token = fs.readFileSync(path.join(home, '.hermes', 'plugin-data', 'hermes-pilot', 'token'), 'utf8').trim()
     const r = runCli(['qr', '--port', '4097'], home)
     assert.equal(r.status, 0, r.out)
-    assert.ok(r.out.includes(`?token=${token}`), 'QR の URL にトークンが入っていない')
+    // 本トークン（64 文字）を QR に焼くと高密度で読めないため、8 文字のワンタイムコードを使う
+    assert.match(r.out, /ワンタイムコード \/ one-time code: [A-Z2-9]{8}/, 'ワンタイムコードが出ていない')
+    assert.match(r.out, /\?token=[A-Z2-9]{8}/, 'QR の URL にワンタイムコードが入っていない')
+    assert.equal(r.out.includes(token), false, '本トークンが URL に出てしまっている（QR が高密度になる）')
     assert.match(r.out, /Pairing targets/)
-    assert.match(r.out, /[█▀▄]/, 'ターミナル QR（ブロック文字）が出ていない')
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('qr: 端末に収まらない QR は出さず、URL と代替手段を案内する', () => {
+  const home = tempHome()
+  try {
+    assert.equal(runCli(['init'], home).status, 0)
+    // COLUMNS/LINES は子プロセスの stdout が TTY でないため既定 80x24 とみなされる
+    const r = runCli(['qr'], home)
+    assert.equal(r.status, 0, r.out)
+    assert.match(r.out, /Pairing targets/)
+    assert.match(r.out, /\?token=[A-Z2-9]{8}/)
+    // 収まる場合はブロック文字、収まらない場合は「省略しました」のどちらか（環境依存を許す）
+    assert.match(r.out, /[█▀▄]|省略しました/)
   } finally {
     fs.rmSync(home, { recursive: true, force: true })
   }
