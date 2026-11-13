@@ -9,6 +9,7 @@ import { InboxSheet } from './InboxSheet.jsx'
 import { pendingCount } from '../lib/reviewView.js'
 import { fmtCost } from '../lib/format.js'
 import { useI18n } from '../i18n/index.js'
+import { useSplitLayout } from '../lib/useSplitLayout.js'
 
 /** タスク状態 → 辞書キー（未知は生の値）。 */
 const STATUS_KEY = {
@@ -350,9 +351,168 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
   const disk = overview?.system?.disk
   const running = tasks.filter((task) => task.status === 'running').length
   const paused = overview?.paused ?? { engaged: false }
+  // >=820px は 2 ペイン（詳細をシートではなく右ペインに出す。SPEC §7.2）
+  const split = useSplitLayout()
+
+  // 詳細（右ペインと Sheet で同じ中身を使う。2 ペインのときは右ペインに常設する）
+  const detailBody = detail
+    ? detail.loading
+      ? <Loader label={t('tasks.detailLoading')} />
+      : (
+          <>
+            <div className="kv">
+              <span>{t('tasks.status')}</span>
+              <b>
+                {STATUS_KEY[detail.status] ? t(STATUS_KEY[detail.status]) : detail.status}
+                {detail.workerPid ? ` ・ pid ${detail.workerPid}` : ''}
+              </b>
+            </div>
+            <div className="kv">
+              <span>{t('tasks.started')}</span>
+              <b>{detail.startedAt ? relTime(detail.startedAt) : '—'}</b>
+            </div>
+            {detail.branch ? (
+              <div className="kv">
+                <span>{t('tasks.branch')}</span>
+                <b className="mono">{detail.branch}</b>
+              </div>
+            ) : null}
+            {detail.body ? <div className="body-text">{detail.body}</div> : null}
+            {detail.result ? <div className="body-text result">{detail.result}</div> : null}
+
+            {detail.git?.head ? (
+              <>
+                <div className="kv">
+                  <span>{t('tasks.commit')}</span>
+                  <b className="mono">
+                    {detail.git.head}
+                    {detail.git.branch ? ` (${detail.git.branch})` : ''}
+                  </b>
+                </div>
+                <div className="kv">
+                  <span>{t('tasks.message')}</span>
+                  <b className="git-msg">{detail.git.subject || '—'}</b>
+                </div>
+                <button
+                  className="accordion"
+                  onClick={() => {
+                    if (diff?.loading) return
+                    if (diff) setDiff(null)
+                    else loadDiff(detail.id)
+                  }}
+                >
+                  <span className="acc-title">
+                    {t('tasks.changedFiles')}
+                    {diff?.ok ? (
+                      <span className="diff-sum">
+                        <span className="add">+{diff.total.add}</span> <span className="del">−{diff.total.del}</span>
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="acc-caret">{diff ? '▾' : '▸'}</span>
+                </button>
+                {diff ? (
+                  diff.loading ? (
+                    <div className="row-sub hm-btn-inner" style={{ padding: '6px 4px' }}>
+                      <Spinner size={12} />
+                      <span>{t('common.loading')}</span>
+                    </div>
+                  ) : diff.ok ? (
+                    <div className="diff-list">
+                      {(diff.files ?? []).map((f) => (
+                        <div key={f.path}>
+                          <button
+                            className={`diff-row${patch?.path === f.path ? ' on' : ''}`}
+                            onClick={() => loadPatch(detail.id, f.path)}
+                          >
+                            <span className="diff-path mono">{f.path}</span>
+                            <span className="diff-nums">
+                              {f.binary ? (
+                                <span className="git-dirty">binary</span>
+                              ) : (
+                                <>
+                                  <span className="add">+{f.add}</span> <span className="del">−{f.del}</span>
+                                </>
+                              )}
+                            </span>
+                          </button>
+                          {patch?.path === f.path ? (
+                            patch.loading ? (
+                              <div className="row-sub hm-btn-inner" style={{ padding: '6px 10px' }}>
+                                <Spinner size={12} />
+                                <span>{t('common.loading')}</span>
+                              </div>
+                            ) : patch.ok ? (
+                              <pre className="patch">{patch.text}</pre>
+                            ) : (
+                              <div className="row-sub" style={{ padding: '6px 10px' }}>
+                                {patch.reason}
+                              </div>
+                            )
+                          ) : null}
+                        </div>
+                      ))}
+                      {!(diff.files ?? []).length ? <div className="empty">{t('tasks.noDiff')}</div> : null}
+                      {diff.truncated ? <div className="row-sub">{t('tasks.diffLimit')}</div> : null}
+                      {diff.dirty ? <div className="row-sub">{t('tasks.dirtyNote')}</div> : null}
+                    </div>
+                  ) : (
+                    <div className="row-sub" style={{ padding: '6px 4px' }}>
+                      {diff.reason}
+                    </div>
+                  )
+                ) : null}
+                </>
+              ) : null}
+
+              {detail.discord?.url ? (
+                <button
+                  className="btn dc-btn"
+                  onClick={() => window.open(detail.discord.url, '_blank', 'noopener')}
+                >
+                  {t('tasks.openThread')}
+                </button>
+              ) : null}
+
+              {detail.status === 'running' || detail.workerPid ? (
+                <div style={{ marginTop: 12 }}>
+                  <HoldButton
+                    label={t('tasks.abortTask')}
+                    sub={t('tasks.abortSub')}
+                    tone="danger"
+                    disabled={busy}
+                    onFire={() => abortTask(detail)}
+                  />
+                </div>
+              ) : null}
+
+              <div className="list-head" style={{ marginTop: 16 }}>
+                <span>{t('tasks.events')}</span>
+              </div>
+              <div className="timeline">
+                {(detail.events ?? []).map((e, i) => (
+                  <div key={i} className="tl">
+                    <span className="tl-dot" />
+                    <span className="tl-main">
+                      <span className="row-title">{e.kind}</span>
+                      <span className="row-sub">{relTime(e.at)}</span>
+                    </span>
+                  </div>
+                ))}
+                {!(detail.events ?? []).length ? <div className="empty">{t('tasks.noEvents')}</div> : null}
+              </div>
+          </>
+        )
+    : null
+
+  const closeDetail = () => {
+    setDetail(null)
+    setConfirmText('')
+  }
 
   return (
-    <div className="pane">
+    <div className={split ? 'pane split-layout tasks' : 'pane'}>
+      <div className={split ? 'split-master' : undefined}>
       {paused.engaged ? (
         <div className="banner paused">
           {t('tasks.pausedBanner', { reason: paused.reason ? ` ・ ${paused.reason}` : '' })}
@@ -633,162 +793,34 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
         />
       ) : null}
 
-      {detail ? (
-        <Sheet
-          title={detail.title ?? detail.id}
-          onClose={() => {
-            setDetail(null)
-            setConfirmText('')
-          }}
-        >
-          {detail.loading ? (
-            <Loader label={t('tasks.detailLoading')} />
-          ) : (
-            <>
-              <div className="kv">
-                <span>{t('tasks.status')}</span>
-                <b>
-                  {STATUS_KEY[detail.status] ? t(STATUS_KEY[detail.status]) : detail.status}
-                  {detail.workerPid ? ` ・ pid ${detail.workerPid}` : ''}
-                </b>
-              </div>
-              <div className="kv">
-                <span>{t('tasks.started')}</span>
-                <b>{detail.startedAt ? relTime(detail.startedAt) : '—'}</b>
-              </div>
-              {detail.branch ? (
-                <div className="kv">
-                  <span>{t('tasks.branch')}</span>
-                  <b className="mono">{detail.branch}</b>
-                </div>
-              ) : null}
-              {detail.body ? <div className="body-text">{detail.body}</div> : null}
-              {detail.result ? <div className="body-text result">{detail.result}</div> : null}
+      </div>
 
-              {detail.git?.head ? (
-                <>
-                  <div className="kv">
-                    <span>{t('tasks.commit')}</span>
-                    <b className="mono">
-                      {detail.git.head}
-                      {detail.git.branch ? ` (${detail.git.branch})` : ''}
-                    </b>
-                  </div>
-                  <div className="kv">
-                    <span>{t('tasks.message')}</span>
-                    <b className="git-msg">{detail.git.subject || '—'}</b>
-                  </div>
-                  <button
-                    className="accordion"
-                    onClick={() => {
-                      if (diff?.loading) return
-                      if (diff) setDiff(null)
-                      else loadDiff(detail.id)
-                    }}
-                  >
-                    <span className="acc-title">
-                      {t('tasks.changedFiles')}
-                      {diff?.ok ? (
-                        <span className="diff-sum">
-                          <span className="add">+{diff.total.add}</span> <span className="del">−{diff.total.del}</span>
-                        </span>
-                      ) : null}
-                    </span>
-                    <span className="acc-caret">{diff ? '▾' : '▸'}</span>
-                  </button>
-                  {diff ? (
-                    diff.loading ? (
-                      <div className="row-sub hm-btn-inner" style={{ padding: '6px 4px' }}>
-                        <Spinner size={12} />
-                        <span>{t('common.loading')}</span>
-                      </div>
-                    ) : diff.ok ? (
-                      <div className="diff-list">
-                        {(diff.files ?? []).map((f) => (
-                          <div key={f.path}>
-                            <button
-                              className={`diff-row${patch?.path === f.path ? ' on' : ''}`}
-                              onClick={() => loadPatch(detail.id, f.path)}
-                            >
-                              <span className="diff-path mono">{f.path}</span>
-                              <span className="diff-nums">
-                                {f.binary ? (
-                                  <span className="git-dirty">binary</span>
-                                ) : (
-                                  <>
-                                    <span className="add">+{f.add}</span> <span className="del">−{f.del}</span>
-                                  </>
-                                )}
-                              </span>
-                            </button>
-                            {patch?.path === f.path ? (
-                              patch.loading ? (
-                                <div className="row-sub hm-btn-inner" style={{ padding: '6px 10px' }}>
-                                  <Spinner size={12} />
-                                  <span>{t('common.loading')}</span>
-                                </div>
-                              ) : patch.ok ? (
-                                <pre className="patch">{patch.text}</pre>
-                              ) : (
-                                <div className="row-sub" style={{ padding: '6px 10px' }}>
-                                  {patch.reason}
-                                </div>
-                              )
-                            ) : null}
-                          </div>
-                        ))}
-                        {!(diff.files ?? []).length ? <div className="empty">{t('tasks.noDiff')}</div> : null}
-                        {diff.truncated ? <div className="row-sub">{t('tasks.diffLimit')}</div> : null}
-                        {diff.dirty ? <div className="row-sub">{t('tasks.dirtyNote')}</div> : null}
-                      </div>
-                    ) : (
-                      <div className="row-sub" style={{ padding: '6px 4px' }}>
-                        {diff.reason}
-                      </div>
-                    )
-                  ) : null}
-                </>
-              ) : null}
-
-              {detail.discord?.url ? (
-                <button
-                  className="btn dc-btn"
-                  onClick={() => window.open(detail.discord.url, '_blank', 'noopener')}
-                >
-                  {t('tasks.openThread')}
-                </button>
-              ) : null}
-
-              {detail.status === 'running' || detail.workerPid ? (
-                <div style={{ marginTop: 12 }}>
-                  <HoldButton
-                    label={t('tasks.abortTask')}
-                    sub={t('tasks.abortSub')}
-                    tone="danger"
-                    disabled={busy}
-                    onFire={() => abortTask(detail)}
-                  />
-                </div>
-              ) : null}
-
-              <div className="list-head" style={{ marginTop: 16 }}>
-                <span>{t('tasks.events')}</span>
-              </div>
-              <div className="timeline">
-                {(detail.events ?? []).map((e, i) => (
-                  <div key={i} className="tl">
-                    <span className="tl-dot" />
-                    <span className="tl-main">
-                      <span className="row-title">{e.kind}</span>
-                      <span className="row-sub">{relTime(e.at)}</span>
-                    </span>
-                  </div>
-                ))}
-                {!(detail.events ?? []).length ? <div className="empty">{t('tasks.noEvents')}</div> : null}
-              </div>
-            </>
-          )}
+      {detail && !split ? (
+        <Sheet title={detail.title ?? detail.id} onClose={closeDetail}>
+          {detailBody}
         </Sheet>
+      ) : null}
+
+      {/* >=820px: 右ペインに詳細を常設（左の一覧から選ぶだけで切り替わる） */}
+      {split ? (
+        <div className="split-detail">
+          {detail ? (
+            <>
+              <div className="split-detail-head">
+                <span className="split-detail-title">{detail.title ?? detail.id}</span>
+                <button className="icon-btn" onClick={closeDetail} aria-label={t('common.close')}>
+                  <Icon name="close" size={18} />
+                </button>
+              </div>
+              <div className="split-detail-body">{detailBody}</div>
+            </>
+          ) : (
+            <div className="split-placeholder">
+              <b>{t('tasks.selectPlaceholder')}</b>
+              <span>{t('tasks.selectHint')}</span>
+            </div>
+          )}
+        </div>
       ) : null}
     </div>
   )

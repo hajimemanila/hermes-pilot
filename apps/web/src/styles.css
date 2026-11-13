@@ -1,20 +1,112 @@
+/*
+ * カラートークン（SPEC §7.1）。`:root` が Dark（既定）、
+ * `html[data-theme="light"]` が Light。切替は JS（`lib/theme.js`）が
+ * `<html data-theme>` を書き換えるだけで、CSS 側は変数を差し替える。
+ * 表に無い名前（`--bg-2` / `--surface-2` / `--text-dim` 等）は既存ルールが
+ * 参照している派生トークンで、両テーマで必ず定義する（未定義だと
+ * `var(--text-dim, #9fb3b0)` の暗色フォールバックが Light で漏れる）。
+ */
 :root {
-  --bg: #06161a;
-  --bg-2: #08202a;
-  --surface: #0c2530;
-  --surface-2: #103039;
-  --line: #17383f;
-  --line-strong: #215159;
-  --text: #e6f4f1;
-  --muted: #82a8a6;
+  /* --- SPEC §7.1 の表（Dark が既定） --- */
+  --bg: #051319;
+  --bg-elev: #0a2029;
+  --surface: #0e2a35;
+  --text: #e8f4f6;
+  --muted: #84a5ad;
+  --line: rgba(120, 190, 205, 0.16);
   --accent: #2dd4bf;
+  --warn: #f59e0b;
+  --bad: #f87171;
+
+  /* --- 派生トークン（Dark） --- */
+  --bg-2: var(--bg-elev);
+  --surface-2: #123543;
+  --line-strong: rgba(120, 190, 205, 0.34);
+  --text-dim: #9fb3b0;
   --accent-2: #5eead4;
-  --warn: #f5b942;
-  --bad: #f97066;
   --good: #34d399;
+  --bg-grad-top: #0a2630;
+  --glass: rgba(6, 22, 26, 0.92);
+  --glass-strong: rgba(6, 22, 26, 0.96);
+  --overlay: rgba(8, 32, 42, 0.72);
+  --scrim: rgba(6, 20, 24, 0.92);
+  --zoom-scrim: rgba(2, 10, 12, 0.94);
+  --code-bg: #0a1417;
+  --on-accent: #04191c;
+  --on-warn: #1d1300;
+  --danger-fg: #ffd7c9;
+  --danger-bg: rgba(120, 35, 25, 0.35);
+  --danger-bg-strong: rgba(80, 25, 20, 0.5);
+  --good-bg: rgba(52, 211, 153, 0.14);
+  --good-line: rgba(52, 211, 153, 0.35);
+  --good-fg: #b8f5d8;
+  --rec-bg: rgba(45, 212, 191, 0.16);
+  --rec-fg: #c9fff8;
+  --discord: #a5b4fc;
+  --danger-line: var(--danger-line);
+  --dot-done: #3f6b6a;
+  --glint: #c7fff7;
+  --user-bubble: linear-gradient(180deg, #11706c, #0d5a57);
+  --bubble-fg: #eafefb;
+  --on-good: #05261e;
+  --danger-grad: linear-gradient(180deg, #d1584c, #a33c33);
+  --sheet-scrim: rgba(0, 0, 0, 0.5);
+  --accent-grad: linear-gradient(180deg, #19a99e, #0f7d76);
+  color-scheme: dark;
   --nav-h: 58px;
   --safe-b: env(safe-area-inset-bottom, 0px);
   --safe-t: env(safe-area-inset-top, 0px);
+}
+
+/*
+ * Light テーマ。`--bg` 上の本文 `--text` は 15.6:1、補助 `--muted` は 4.9:1
+ * （`apps/web/test/themeContrast.test.js` が 7:1 / 4.5:1 を機械検査する）。
+ */
+html[data-theme='light'] {
+  --bg: #f4f7f8;
+  --bg-elev: #ffffff;
+  --surface: #eef3f5;
+  --text: #0f242a;
+  --muted: #526d75;
+  --line: rgba(15, 45, 55, 0.12);
+  --accent: #0d9488;
+  --warn: #d97706;
+  --bad: #dc2626;
+
+  --bg-2: var(--bg-elev);
+  --surface-2: #e2ebee;
+  --line-strong: rgba(15, 45, 55, 0.24);
+  --text-dim: #3f5b63;
+  --accent-2: #0f766e;
+  --good: #047857;
+  --bg-grad-top: #e7eff1;
+  --glass: rgba(255, 255, 255, 0.92);
+  --glass-strong: rgba(255, 255, 255, 0.96);
+  --overlay: rgba(255, 255, 255, 0.82);
+  --scrim: rgba(238, 243, 245, 0.94);
+  --zoom-scrim: rgba(232, 240, 242, 0.96);
+  --code-bg: #eef3f5;
+  --on-accent: #04211f;
+  --on-warn: #1d1300;
+  --danger-fg: #8c1d12;
+  --danger-bg: rgba(220, 38, 38, 0.1);
+  --danger-bg-strong: rgba(220, 38, 38, 0.08);
+  --good-bg: rgba(5, 150, 105, 0.12);
+  --good-line: rgba(5, 150, 105, 0.32);
+  --good-fg: #065f46;
+  --rec-bg: rgba(13, 148, 136, 0.12);
+  --rec-fg: #0f5f58;
+  --discord: #4752c4;
+  --danger-line: rgba(220, 38, 38, 0.35);
+  --dot-done: #6d8785;
+  --glint: #0f766e;
+  --user-bubble: linear-gradient(180deg, #0d9488, #0f766e);
+  --bubble-fg: #ffffff;
+  --on-good: #ffffff;
+  --danger-grad: linear-gradient(180deg, #dc2626, #b91c1c);
+  --sheet-scrim: rgba(15, 36, 42, 0.32);
+  --accent-grad: linear-gradient(180deg, #0d9488, #0f766e);
+  color-scheme: light;
 }
 
 * {
@@ -34,7 +126,7 @@ body,
 
 body {
   margin: 0;
-  background: radial-gradient(120% 80% at 50% 0%, #0a2630 0%, #06161a 55%);
+  background: radial-gradient(120% 80% at 50% 0%, var(--bg-grad-top) 0%, var(--bg) 55%);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', system-ui, sans-serif;
   font-size: 15px;
@@ -58,7 +150,7 @@ body {
   justify-content: space-between;
   padding: 0 14px;
   border-bottom: 1px solid var(--line);
-  background: rgba(6, 22, 26, 0.92);
+  background: var(--glass);
   backdrop-filter: blur(8px);
 }
 
@@ -88,18 +180,18 @@ body {
   gap: 10px;
   padding: 8px 14px;
   font-size: 12.5px;
-  color: #ffd7c9;
-  background: rgba(120, 35, 25, 0.35);
-  border-bottom: 1px solid rgba(249, 112, 102, 0.35);
+  color: var(--danger-fg);
+  background: var(--danger-bg);
+  border-bottom: 1px solid var(--danger-line);
 }
 
 .banner button {
   margin-left: auto;
   padding: 5px 10px;
   border-radius: 8px;
-  border: 1px solid rgba(249, 112, 102, 0.5);
+  border: 1px solid var(--danger-line);
   background: transparent;
-  color: #ffd7c9;
+  color: var(--danger-fg);
   font-size: 12px;
 }
 
@@ -213,7 +305,7 @@ button.stat:active {
   color: var(--good);
 }
 .stat.bad {
-  border-color: rgba(249, 112, 102, 0.5);
+  border-color: var(--danger-line);
 }
 .stat.bad .stat-v {
   color: var(--bad);
@@ -435,7 +527,7 @@ button.stat:active {
   box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.18);
 }
 .dot.done {
-  background: #3f6b6a;
+  background: var(--dot-done);
 }
 .dot.ready {
   background: var(--warn);
@@ -462,9 +554,9 @@ button.stat:active {
   gap: 8px;
   padding: 13px;
   border-radius: 14px;
-  border: 1px solid rgba(249, 112, 102, 0.45);
-  background: rgba(80, 25, 20, 0.5);
-  color: #ffd0c8;
+  border: 1px solid var(--danger-line);
+  background: var(--danger-bg-strong);
+  color: var(--danger-fg);
   font-size: 13.5px;
   font-weight: 600;
 }
@@ -472,9 +564,9 @@ button.stat:active {
 .warn-card {
   padding: 10px 12px;
   border-radius: 10px;
-  background: rgba(120, 35, 25, 0.35);
-  border: 1px solid rgba(249, 112, 102, 0.35);
-  color: #ffd7c9;
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-line);
+  color: var(--danger-fg);
   font-size: 12px;
   line-height: 1.6;
   margin-bottom: 12px;
@@ -503,7 +595,7 @@ button.stat:active {
 }
 
 .hold.danger {
-  border-color: rgba(249, 112, 102, 0.5);
+  border-color: var(--danger-line);
 }
 
 .hold.safe {
@@ -515,7 +607,7 @@ button.stat:active {
   inset: 0;
   transform-origin: left center;
   transform: scaleX(0);
-  background: rgba(249, 112, 102, 0.25);
+  background: var(--danger-bg-strong);
 }
 
 .hold.safe .hold-fill {
@@ -541,7 +633,7 @@ button.stat:active {
 .sheet-wrap {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--sheet-scrim);
   z-index: 60;
   display: flex;
   align-items: flex-end;
@@ -607,7 +699,7 @@ button.stat:active {
   gap: 12px;
   padding: 7px 2px;
   font-size: 12.5px;
-  border-bottom: 1px solid rgba(23, 56, 63, 0.6);
+  border-bottom: 1px solid var(--line);
 }
 
 .kv span {
@@ -769,7 +861,8 @@ button.stat:active {
 }
 
 .msg.user .bubble {
-  background: linear-gradient(180deg, #11706c, #0d5a57);
+  background: var(--user-bubble);
+  color: var(--bubble-fg);
   border-bottom-right-radius: 5px;
 }
 
@@ -817,7 +910,7 @@ button.stat:active {
 .thinking {
   flex-shrink: 0;
   font-size: 11px;
-  color: #6f8f8d;
+  color: var(--text-dim);
   padding: 2px 8px 6px;
   /* 1行の "thinking…" 前提だった。いまはタイマー＋ツール行のブロックを載せるので、
      nowrap + overflow hidden のままだと高さ8pxに潰れて中身が全部見切れる（実測） */
@@ -834,7 +927,7 @@ button.stat:active {
   border-radius: 12px;
   border: 1px solid rgba(45, 212, 191, 0.28);
   border-left: 3px solid var(--accent);
-  background: rgba(12, 37, 48, 0.85);
+  background: var(--overlay);
 }
 
 .working-head {
@@ -875,7 +968,7 @@ button.stat:active {
   font-size: 12px;
   font-weight: 700;
   color: var(--accent-2);
-  background: linear-gradient(90deg, var(--accent) 0%, #c7fff7 45%, var(--accent) 90%);
+  background: linear-gradient(90deg, var(--accent) 0%, var(--glint) 45%, var(--accent) 90%);
   background-size: 220% 100%;
   -webkit-background-clip: text;
   background-clip: text;
@@ -898,7 +991,7 @@ button.stat:active {
   margin-bottom: 6px;
   border: 1px solid var(--line);
   border-radius: 9px;
-  background: rgba(8, 32, 42, 0.72);
+  background: var(--overlay);
   padding: 5px 8px;
   font-size: 11.5px;
 }
@@ -928,7 +1021,7 @@ button.stat:active {
   margin: 6px 0;
   border: 1px solid var(--line-strong);
   border-radius: 9px;
-  background: rgba(6, 20, 24, 0.92);
+  background: var(--scrim);
   overflow: hidden;
 }
 
@@ -985,7 +1078,7 @@ button.stat:active {
 .chat-live-card.running {
   border-color: rgba(45, 212, 191, 0.36);
   border-left: 3px solid var(--accent);
-  background: rgba(12, 37, 48, 0.9);
+  background: var(--overlay);
 }
 
 .chat-live-head {
@@ -1028,7 +1121,7 @@ button.stat:active {
   padding: 6px 12px;
   border-radius: 999px;
   border: 1px solid var(--line-strong);
-  background: rgba(12, 37, 48, 0.96);
+  background: var(--glass-strong);
   color: var(--text);
   font-size: 11.5px;
   font-weight: 600;
@@ -1056,7 +1149,7 @@ button.stat:active {
   gap: 8px;
   padding: 8px 10px;
   border-top: 1px solid var(--line);
-  background: rgba(6, 22, 26, 0.9);
+  background: var(--glass);
 }
 
 /* ＋（添付） */
@@ -1085,7 +1178,7 @@ button.stat:active {
   align-items: center;
   gap: 6px;
   padding: 5px 8px 0 8px;
-  background: rgba(6, 22, 26, 0.9);
+  background: var(--glass);
 }
 
 .chips-scroll {
@@ -1213,8 +1306,8 @@ button.stat:active {
 
 .mic.on {
   border-color: var(--bad);
-  background: rgba(249, 112, 102, 0.15);
-  color: #ffb4ad;
+  background: var(--danger-bg);
+  color: var(--danger-fg);
 }
 
 .snippet-chip.add {
@@ -1288,7 +1381,7 @@ button.stat:active {
   height: 20px;
   border-radius: 50%;
   border: 1px solid var(--line-strong);
-  background: #0b2a2f;
+  background: var(--surface-2);
   color: var(--text);
   font-size: 12px;
   line-height: 1;
@@ -1407,7 +1500,7 @@ button.stat:active {
   height: 40px;
   border-radius: 50%;
   border: none;
-  background: linear-gradient(180deg, #19a99e, #0f7d76);
+  background: var(--accent-grad);
   color: #fff;
   display: grid;
   place-items: center;
@@ -1418,7 +1511,7 @@ button.stat:active {
 }
 
 .send.stop {
-  background: linear-gradient(180deg, #d1584c, #a33c33);
+  background: var(--danger-grad);
 }
 
 /* ---------- タスクの Git バッジ / Diff プレビュー ---------- */
@@ -1466,7 +1559,7 @@ button.stat:active {
   padding: 1px 6px;
   border-radius: 6px;
   border: 1px solid rgba(88, 101, 242, 0.5);
-  color: #a5b4fc;
+  color: var(--discord);
 }
 
 .git-msg {
@@ -1564,8 +1657,8 @@ button.stat:active {
   overflow: auto;
   border-radius: 8px;
   border: 1px solid var(--line);
-  background: #05121a;
-  color: #cfe9e3;
+  background: var(--code-bg);
+  color: var(--text-dim);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 10.5px;
   line-height: 1.5;
@@ -1576,11 +1669,11 @@ button.stat:active {
   margin-top: 12px;
   width: 100%;
   border-color: rgba(88, 101, 242, 0.55);
-  color: #c7d2fe;
+  color: var(--discord);
 }
 
 .dc-icon {
-  color: #a5b4fc;
+  color: var(--discord);
   font-size: 17px;
   font-weight: 700;
 }
@@ -1644,7 +1737,7 @@ button.stat:active {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 10.5px;
   line-height: 1.5;
-  color: #cfe6e2;
+  color: var(--text-dim);
   white-space: pre-wrap;
   word-break: break-all;
 }
@@ -1666,7 +1759,7 @@ button.stat:active {
   height: calc(var(--nav-h) + var(--safe-b));
   padding-bottom: var(--safe-b);
   border-top: 1px solid var(--line);
-  background: rgba(6, 22, 26, 0.96);
+  background: var(--glass-strong);
   backdrop-filter: blur(10px);
 }
 
@@ -1681,8 +1774,8 @@ button.stat:active {
   flex: 0 0 14px;
   pointer-events: none;
 }
-.nav::before { left: 0; margin-right: -14px; background: linear-gradient(90deg, rgba(6,22,26,.96), transparent); }
-.nav::after { right: 0; margin-left: -14px; background: linear-gradient(270deg, rgba(6,22,26,.96), transparent); }
+.nav::before { left: 0; margin-right: -14px; background: linear-gradient(90deg, var(--glass-strong), transparent); }
+.nav::after { right: 0; margin-left: -14px; background: linear-gradient(270deg, var(--glass-strong), transparent); }
 
 .nav-item {
   display: flex;
@@ -1697,7 +1790,7 @@ button.stat:active {
   white-space: nowrap;
   border: none;
   background: none;
-  color: #5c7f7e;
+  color: var(--text-dim);
   font-size: 10.5px;
   font-family: inherit;
 }
@@ -1724,7 +1817,7 @@ button.stat:active {
   padding: 0 4px;
   border-radius: 999px;
   background: var(--warn);
-  color: #1d1300;
+  color: var(--on-warn);
   font-size: 10px;
   font-weight: 700;
   line-height: 16px;
@@ -1771,7 +1864,7 @@ button.stat:active {
   max-width: 86vw;
   padding: 9px 14px;
   border-radius: 12px;
-  background: rgba(18, 48, 56, 0.97);
+  background: var(--glass-strong);
   border: 1px solid var(--line-strong);
   font-size: 12.5px;
   z-index: 90;
@@ -1815,7 +1908,7 @@ button.stat:active {
   padding: 13px;
   border-radius: 12px;
   border: none;
-  background: linear-gradient(180deg, #19a99e, #0f7d76);
+  background: var(--accent-grad);
   color: #fff;
   font: inherit;
   font-size: 15px;
@@ -1847,7 +1940,7 @@ button.stat:active {
 .ak-feed-row { display: flex; gap: 8px; align-items: baseline; font-size: 11.5px; line-height: 1.5; }
 .ak-feed-at { flex: 0 0 auto; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .ak-feed-text {
-  flex: 1 1 auto; min-width: 0; color: var(--text-dim, #9fb3b0);
+  flex: 1 1 auto; min-width: 0; color: var(--text-dim);
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .ak-group { margin-top: 10px; }
@@ -1867,9 +1960,9 @@ button.stat:active {
   display: inline-block; font-size: 10px; padding: 3px 8px; border-radius: 999px;
   background: var(--surface-2); border: 1px solid var(--line-strong); color: var(--muted); white-space: nowrap;
 }
-.ak-chip.warn { background: var(--warn); border-color: var(--warn); color: #1d1300; font-weight: 700; }
-.ak-chip.good { background: rgba(52, 211, 153, .14); border-color: rgba(52, 211, 153, .35); color: #b8f5d8; }
-.ak-chip.rec { background: rgba(45, 212, 191, .16); border-color: rgba(45, 212, 191, .38); color: #c9fff8; }
+.ak-chip.warn { background: var(--warn); border-color: var(--warn); color: var(--on-warn); font-weight: 700; }
+.ak-chip.good { background: var(--good-bg); border-color: var(--good-line); color: var(--good-fg); }
+.ak-chip.rec { background: var(--rec-bg); border-color: var(--line-strong); color: var(--rec-fg); }
 
 .ak-form { display: flex; flex-direction: column; gap: 12px; }
 .ak-q { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
@@ -1892,13 +1985,13 @@ button.stat:active {
   border: 1.5px solid var(--line-strong); display: inline-flex; align-items: center; justify-content: center;
   font-size: 11px; color: transparent;
 }
-.ak-opt.on .ak-opt-check { background: var(--accent); border-color: var(--accent); color: #04191c; }
+.ak-opt.on .ak-opt-check { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .ak-opt-head { display: flex; align-items: center; gap: 7px; font-size: 13px; }
 .ak-opt-head b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent-2); }
 .ak-opt-detail { font-size: 11.5px; color: var(--muted); line-height: 1.45; }
 .ak-opt-thumb {
   display: block; height: 72px; width: auto; max-width: 100%;
-  vertical-align: middle; border: 1px solid var(--line); border-radius: 6px; background: #0a1417;
+  vertical-align: middle; border: 1px solid var(--line); border-radius: 6px; background: var(--code-bg);
 }
 /* 挿絵はタップで拡大（72px 固定では案の違いが判断できない） */
 .ak-thumb-btn {
@@ -1914,12 +2007,12 @@ button.stat:active {
 .ak-zoom {
   position: fixed; inset: 0; z-index: 90; display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 10px; padding: 14px;
-  background: rgba(2, 10, 12, .94);
+  background: var(--zoom-scrim);
 }
 .ak-zoom figure { margin: 0; max-width: 100%; max-height: 100%; display: flex; flex-direction: column; gap: 8px; }
 .ak-zoom img {
   max-width: 100%; max-height: 78dvh; width: auto; margin: 0 auto;
-  border: 1px solid var(--line-strong); border-radius: 10px; background: #0a1417;
+  border: 1px solid var(--line-strong); border-radius: 10px; background: var(--code-bg);
 }
 .ak-zoom figcaption { font-size: 12px; color: var(--muted); text-align: center; display: flex; flex-direction: column; gap: 2px; padding: 0 6px; }
 .ak-zoom figcaption b { color: var(--text); font-weight: 600; font-size: 13px; }
@@ -1946,7 +2039,7 @@ button.stat:active {
   border: 1px solid rgba(45, 212, 191, .35); border-radius: 999px;
   padding: 3px 10px; background: rgba(45, 212, 191, .08);
 }
-.btn.primary { background: var(--accent); color: #04191c; border-color: var(--accent); font-weight: 700; }
+.btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 700; }
 .ak-hint { font-size: 11px; color: var(--muted); line-height: 1.6; }
 
 /* 完了した項目の「レビュー回答（履歴）」。既定は畳んでおき、必要なとき開く
@@ -1958,7 +2051,7 @@ button.stat:active {
 .ak-answer-a { color: var(--text); line-height: 1.5; }
 .ak-answer-note { color: var(--muted); line-height: 1.5; font-style: italic; }
 .ak-answer-global { margin-top: 8px; color: var(--muted); line-height: 1.5; }
-.ak-error { background: rgba(249, 112, 102, .14); border: 1px solid rgba(249, 112, 102, .4); color: #ffd9d5; border-radius: 10px; padding: 8px 10px; font-size: 12px; }
+.ak-error { background: var(--danger-bg); border: 1px solid var(--danger-line); color: var(--danger-fg); border-radius: 10px; padding: 8px 10px; font-size: 12px; }
 .ak-iframe { width: 100%; height: 62vh; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
 .ak-paste { margin-top: 10px; font-size: 12px; color: var(--muted); }
 .ak-paste textarea {
@@ -1981,7 +2074,7 @@ button.stat:active {
 .ak-empty-btn {
   display: inline-flex; align-items: center; justify-content: center;
   min-height: 44px; padding: 0 22px; border-radius: 10px;
-  background: var(--accent); border: 1px solid var(--accent); color: #04191c;
+  background: var(--accent); border: 1px solid var(--accent); color: var(--on-accent);
   font: inherit; font-size: 14px; font-weight: 700; cursor: pointer;
 }
 .ak-empty-note { margin: 10px 0 0; font-size: 11px; color: var(--muted); line-height: 1.6; }
@@ -2007,7 +2100,7 @@ button.stat:active {
   z-index: 60;
   display: flex;
   flex-direction: column;
-  background: #04121a;
+  background: var(--bg);
   padding-top: var(--safe-t);
   padding-bottom: var(--safe-b);
 }
@@ -2029,7 +2122,7 @@ button.stat:active {
 .ak-anno-title span { display: block; font-size: 10.5px; font-weight: 400; color: var(--muted); margin-top: 2px; }
 .ak-anno-send {
   flex: none; padding: 9px 16px; border-radius: 10px; border: 0;
-  background: var(--accent); color: #04191c; font-weight: 700; font-size: 14px;
+  background: var(--accent); color: var(--on-accent); font-weight: 700; font-size: 14px;
 }
 .ak-anno-send:disabled { opacity: .6; }
 .ak-anno-canvas-wrap {
@@ -2051,7 +2144,7 @@ button.stat:active {
   padding: 8px 11px; border-radius: 10px; font-size: 12px;
   border: 1px solid var(--line); background: var(--surface); color: var(--text);
 }
-.ak-anno-tool.on { border-color: var(--accent); background: rgba(45,212,191,.16); color: #c9fff8; }
+.ak-anno-tool.on { border-color: var(--accent); background: rgba(45,212,191,.16); color: var(--rec-fg); }
 .ak-anno-tool:disabled { opacity: .45; }
 .ak-anno-note {
   flex: 1 1 140px; min-width: 120px; padding: 8px 10px; border-radius: 10px;
@@ -2068,7 +2161,7 @@ button.stat:active {
 }
 /* 下地は判別できることが最優先。phone の縦長ショットを切り落とさず全体を出す */
 .ak-new-thumb { position: relative; display: block; }
-.ak-new-item img { width: 100%; aspect-ratio: 3 / 4; object-fit: contain; display: block; background: #0a1417; }
+.ak-new-item img { width: 100%; aspect-ratio: 3 / 4; object-fit: contain; display: block; background: var(--code-bg); }
 /* 取得日時とリポジトリ名。3 列に収めるため 9.5px・分まで・あふれは省略 */
 .ak-new-cap {
   display: flex; flex-direction: column; gap: 1px; padding: 3px 5px 4px;
@@ -2079,7 +2172,7 @@ button.stat:active {
 .ak-new-repo { color: var(--accent-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ak-new-tag {
   position: absolute; left: 4px; bottom: 4px; font-size: 9px; padding: 1px 6px; border-radius: 999px;
-  background: rgba(6,22,26,.8); color: var(--accent-2); border: 1px solid var(--line-strong);
+  background: var(--glass); color: var(--accent-2); border: 1px solid var(--line-strong);
 }
 .ak-new-target {
   width: 100%; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--line);
@@ -2117,7 +2210,7 @@ button.stat:active {
 .tool-state { flex: none; width: 11px; display: inline-flex; align-items: center; justify-content: center; color: var(--good); font-size: 10px; }
 .tool-spin { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid rgba(45, 212, 191, 0.35); border-top-color: var(--accent-2); animation: hm-spin 0.8s linear infinite; display: inline-block; }
 .tool-name { flex: none; font-weight: 600; }
-.tool-detail { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim, #9fb3b0); }
+.tool-detail { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }
 .tool-rows li.expanded { align-items: flex-start; }
 .tool-rows li.expanded .tool-detail { white-space: pre-wrap; word-break: break-all; overflow: visible; color: var(--text); }
 .tool-ms { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -2246,8 +2339,8 @@ button.stat:active {
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
-  background: rgba(16, 185, 129, 0.1);
-  border-bottom: 1px solid rgba(52, 211, 153, 0.28);
+  background: var(--good-bg);
+  border-bottom: 1px solid var(--good-line);
   font-size: 12px;
   color: var(--text);
 }
@@ -2274,7 +2367,7 @@ button.stat:active {
 .chat-report-btn.primary {
   background: var(--good);
   border-color: transparent;
-  color: #05261e;
+  color: var(--on-good);
   font-weight: 700;
 }
 
@@ -2329,4 +2422,158 @@ button.stat:active {
 
 .ak-reopen .inp {
   margin: 8px 0;
+}
+
+/* ------------------------------------------------------------------
+ * タブレット 2 ペイン分割（SPEC §7.2 / >= 820px）
+ *
+ * 820px 未満は従来どおり 1 ペイン（詳細はシートの全画面被せ）。
+ * 820px 以上では左を一覧（固定幅・独立スクロール）、右を詳細（flex:1・
+ * 独立スクロール）にする。どちらを出すかは JS 側の `lib/useSplitLayout.js`
+ * が同じ 820px で判定する（閾値を 2 箇所に置くので必ず一致させる）。
+ * ------------------------------------------------------------------ */
+.split-layout.review {
+  --split-master-w: 380px;
+}
+
+.split-layout.tasks {
+  --split-master-w: 360px;
+}
+
+@media (min-width: 820px) {
+  .pane.split-layout {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .split-master {
+    flex: 0 0 var(--split-master-w, 360px);
+    width: var(--split-master-w, 360px);
+    min-width: 0;
+    height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    padding: 10px 12px calc(12px + var(--safe-b));
+    border-right: 1px solid var(--line);
+    background: var(--bg);
+  }
+
+  .split-detail {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    padding: 0 18px calc(18px + var(--safe-b));
+    background: var(--bg-elev);
+  }
+
+  /* 右ペインの見出し。スクロールしても対象名が残るよう上に貼る */
+  .split-detail-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 0 -18px 8px;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-elev);
+  }
+
+  .split-detail-title {
+    min-width: 0;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .split-detail-body {
+    padding-bottom: 8px;
+  }
+
+  /* 右ペインに何も選ばれていないとき（左から選ぶ） */
+  .split-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 100%;
+    min-height: 220px;
+    padding: 24px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.7;
+  }
+
+  .split-placeholder b {
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  /* 左ペインは狭いので状態ストリップを 3 列に畳む（数字は落とさない） */
+  .split-master .strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  /* 左ペインの一覧カードは幅が足りないぶん余白を詰める */
+  .split-master .ak-row {
+    padding: 9px 10px;
+  }
+
+  .split-master .ak-head {
+    padding-top: 4px;
+  }
+
+  /*
+   * チャットは 820px〜1023px でタイムラインの最大幅を 840px に保つ
+   * （SPEC §7.2-3。1024px 以上の履歴サイドバーは任意要件なので作らない）。
+   */
+  .pane-host {
+    display: flex;
+    justify-content: center;
+  }
+
+  .pane-host > * {
+    width: 100%;
+    max-width: 840px;
+  }
+
+  /* 設定・端末は読み物なので中央に寄せて行長を抑える */
+  .pane.center-readable {
+    max-width: 840px;
+    margin: 0 auto;
+    width: 100%;
+  }
+
+  /*
+   * 注釈エディタは 1 ペインでは全画面固定だが、2 ペインでは右ペインに収める
+   * （`position: fixed` のままだと画面全体を覆って左の一覧が触れない）。
+   */
+  .split-detail .ak-anno {
+    position: static;
+    inset: auto;
+    z-index: auto;
+    height: 100%;
+    padding: 0;
+  }
+
+  .split-detail .ak-anno-canvas-wrap {
+    min-height: 0;
+  }
 }

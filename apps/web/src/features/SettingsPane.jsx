@@ -6,6 +6,7 @@ import { RefreshButton, Sheet, Spinner, fmtBytes, fmtDateTime, relTime } from '.
 import { haptic, isHapticEnabled, setHapticEnabled } from '../lib/haptic.js'
 import { useI18n } from '../i18n/index.js'
 import { LANGS } from '../i18n/lang.js'
+import { useTheme } from '../lib/useTheme.js'
 
 /**
  * 設定タブ。状態の参照・ログ末尾・監査ログ（キルスイッチの履歴）を置く。
@@ -31,8 +32,16 @@ const LANG_CHOICES = [
   ...LANGS.map((l) => ({ value: l, key: l === 'ja' ? 'settings.languageJa' : 'settings.languageEn' })),
 ]
 
+/** テーマの選択肢（SPEC §7.1。`System` は端末の明暗に従う）。 */
+const THEME_CHOICES = [
+  { value: 'dark', key: 'settings.themeDark' },
+  { value: 'light', key: 'settings.themeLight' },
+  { value: 'system', key: 'settings.themeSystem' },
+]
+
 export function SettingsPane({ overview, notify, refresh }) {
   const { t, pref, setPref } = useI18n()
+  const { pref: themePref, setPref: setThemePref } = useTheme()
   const install = useInstallState()
   const [diag, setDiag] = useState(null)
   const [diagBusy, setDiagBusy] = useState(false)
@@ -172,7 +181,7 @@ export function SettingsPane({ overview, notify, refresh }) {
           : '—'
 
   return (
-    <div className="pane">
+    <div className="pane center-readable">
       <div className="list-head">
         <span>{t('settings.language')}</span>
       </div>
@@ -186,6 +195,27 @@ export function SettingsPane({ overview, notify, refresh }) {
             onClick={() => {
               haptic('tap')
               setPref(o.value)
+            }}
+          >
+            {t(o.key)}
+          </button>
+        ))}
+      </div>
+
+      {/* テーマ（SPEC §7.1）。Dark が既定、System は端末の明暗に追従する */}
+      <div className="list-head">
+        <span>{t('settings.theme')}</span>
+      </div>
+      <div className="chips" style={{ marginBottom: 10 }} role="group" aria-label={t('settings.theme')}>
+        {THEME_CHOICES.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            className={`chip${themePref === o.value ? ' on' : ''}`}
+            aria-pressed={themePref === o.value}
+            onClick={() => {
+              haptic('tap')
+              setThemePref(o.value)
             }}
           >
             {t(o.key)}

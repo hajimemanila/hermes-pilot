@@ -13,6 +13,7 @@ import { Icon, Loader } from './components/Ui.jsx'
 import { haptic } from './lib/haptic.js'
 import { useI18n } from './i18n/index.js'
 import { t as tGlobal } from './i18n/lang.js'
+import { initTheme } from './lib/theme.js'
 
 const TermPane = lazy(() => import('./features/TermPane.jsx').then((m) => ({ default: m.TermPane })))
 
@@ -90,6 +91,14 @@ class ErrorBoundary extends React.Component {
 export function App() {
   const { t } = useI18n()
   const [deepLink] = useState(() => readDeepLink())
+
+  /*
+   * テーマ（Dark / Light / System）の初期化と `prefers-color-scheme` の監視（SPEC §7.1）。
+   * 初回描画前に `main.jsx` が 1 度当てているので、ここは「購読を張り直す」役。
+   * `initTheme` は冪等（監視は 1 本だけ）で、`<html data-theme>` と
+   * `<meta name="theme-color">` の更新も内部で行う。
+   */
+  useEffect(() => initTheme(), [])
 
   const [tab, setTab] = useState(
     deepLink?.open === 'inbox' || deepLink?.open === 'tasks' ? 'tasks' : deepLink?.open === 'chat' ? 'chat' : 'tasks',

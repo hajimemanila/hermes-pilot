@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from '../api.js'
 import { CloseActions } from '../components/CloseActions.jsx'
-import { Loader, RefreshButton, Sheet, Spinner, fmtTime, relTime } from '../components/Ui.jsx'
+import { Icon, Loader, RefreshButton, Sheet, Spinner, fmtTime, relTime } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
 import { readActiveChatId } from '../lib/chatReports.js'
 import { AnnotationEditor } from './AnnotationEditor.jsx'
@@ -10,6 +10,7 @@ import { answerRows, capturedLabel, DONE_LIMIT, doneHint, groupItems, isWaiting,
 import { parsePastedReply } from '../lib/reviewPaste.js'
 import { t } from '../i18n/lang.js'
 import { useI18n } from '../i18n/index.js'
+import { useSplitLayout } from '../lib/useSplitLayout.js'
 
 export { parsePastedReply }
 
@@ -970,9 +971,76 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
   }
 
   const hasItems = state.items.length > 0
+  // >=820px は 2 ペイン（詳細をシートではなく右ペインに出す。SPEC §7.2）
+  const split = useSplitLayout()
+  const isAnnoOpen = Boolean(open && open.review?.mode === 'annotation' && isWaiting(open))
+  const openTitle = open ? (open.review?.title || open.title) + '' : ''
+
+  // 選択中シートの中身（Sheet と右ペインで同一。2 ペインでも挙動を変えない）
+  const sheetInner = open ? (
+    <>
+        {open.review?.mode !== 'annotation' ? <SheetLink item={open} /> : null}
+        {isWaiting(open) ? (
+          <>
+            {dataError ? <div className="ak-error">{t('review.openSheetDirectly', { error: dataError })}</div> : null}
+            {data?.questions?.length ? (
+              <StandardForm item={open} data={data} onSubmitted={(r) => handleSubmitted(open.id, r)} />
+            ) : (
+              <IframeForm item={open} onSubmitted={(r) => handleSubmitted(open.id, r)} />
+            )}
+          </>
+        ) : (
+          <ReadOnlyDetail
+            item={open}
+            data={data}
+            answer={answer}
+            notify={notify}
+            onStartAnnotation={(t) => {
+              closeSheet()
+              setNewTarget(t || '')
+              setShowNew(true)
+            }}
+            onReopened={async () => {
+              await load()
+              closeSheet()
+            }}
+            onOpenChat={(chatId) => {
+              closeSheet()
+              window.dispatchEvent(new CustomEvent('hm:open-session', { detail: { id: chatId } }))
+            }}
+          />
+        )}
+        {isWaiting(open) ? (
+          <div className="ak-form">
+            <div className="row-sub">{t('review.closeReasonLabel')}</div>
+            <textarea
+              className="inp"
+              rows={2}
+              style={{ marginTop: 6 }}
+              value={closeNote}
+              onChange={(e) => setCloseNote(e.target.value.slice(0, 400))}
+              placeholder={t('review.closeReasonPlaceholder')}
+            />
+            <CloseActions
+              board={open.board || 'mobile'}
+              taskId={open.id}
+              note={closeNote}
+              notify={notify}
+              onClosed={() => {
+                setCloseNote('')
+                load()
+                setTimeout(() => setOpen(null), 600)
+              }}
+            />
+          </div>
+        ) : null}
+        <WorkerFeed taskId={open.id} open={['running', 'ready'].includes(open.status)} />
+    </>
+  ) : null
 
   return (
-    <div className="pane ak-page">
+    <div className={split ? 'pane ak-page split-layout review' : 'pane ak-page'}>
+      <div className={split ? 'split-master' : undefined}>
       <div className="ak-head">
         <div>
           <div className="ak-title">{t('review.title')}</div>
@@ -1098,6 +1166,8 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
         </>
       ) : null}
 
+      </div>
+
       {showNew ? (
         <NewAnnotationSheet
           notify={notify}
@@ -1111,7 +1181,8 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
         />
       ) : null}
 
-      {open && open.review?.mode === 'annotation' && isWaiting(open) ? (
+      {/* 1 ペイン（< 820px）は従来どおり全画面被せ。2 ペインなら右ペインに常設する */}
+      {!split && isAnnoOpen ? (
         <AnnotationEditor
           item={open}
           notify={notify}
@@ -1120,65 +1191,41 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
         />
       ) : null}
 
-      {open && !(open.review?.mode === 'annotation' && isWaiting(open)) ? (
-        <Sheet title={(open.review?.title || open.title) + ''} onClose={closeSheet}>
-          {open.review?.mode !== 'annotation' ? <SheetLink item={open} /> : null}
-          {isWaiting(open) ? (
-            <>
-              {dataError ? <div className="ak-error">{t('review.openSheetDirectly', { error: dataError })}</div> : null}
-              {data?.questions?.length ? (
-                <StandardForm item={open} data={data} onSubmitted={(r) => handleSubmitted(open.id, r)} />
-              ) : (
-                <IframeForm item={open} onSubmitted={(r) => handleSubmitted(open.id, r)} />
-              )}
-            </>
-          ) : (
-            <ReadOnlyDetail
-              item={open}
-              data={data}
-              answer={answer}
-              notify={notify}
-              onStartAnnotation={(t) => {
-                closeSheet()
-                setNewTarget(t || '')
-                setShowNew(true)
-              }}
-              onReopened={async () => {
-                await load()
-                closeSheet()
-              }}
-              onOpenChat={(chatId) => {
-                closeSheet()
-                window.dispatchEvent(new CustomEvent('hm:open-session', { detail: { id: chatId } }))
-              }}
-            />
-          )}
-          {isWaiting(open) ? (
-            <div className="ak-form">
-              <div className="row-sub">{t('review.closeReasonLabel')}</div>
-              <textarea
-                className="inp"
-                rows={2}
-                style={{ marginTop: 6 }}
-                value={closeNote}
-                onChange={(e) => setCloseNote(e.target.value.slice(0, 400))}
-                placeholder={t('review.closeReasonPlaceholder')}
-              />
-              <CloseActions
-                board={open.board || 'mobile'}
-                taskId={open.id}
-                note={closeNote}
-                notify={notify}
-                onClosed={() => {
-                  setCloseNote('')
-                  load()
-                  setTimeout(() => setOpen(null), 600)
-                }}
-              />
-            </div>
-          ) : null}
-          <WorkerFeed taskId={open.id} open={['running', 'ready'].includes(open.status)} />
+      {!split && open && !isAnnoOpen ? (
+        <Sheet title={openTitle} onClose={closeSheet}>
+          {sheetInner}
         </Sheet>
+      ) : null}
+
+      {/* >=820px: 右ペインに選択中のシート／注釈エディタを常設（左の一覧から選ぶだけ） */}
+      {split ? (
+        <div className="split-detail">
+          {open ? (
+            isAnnoOpen ? (
+              <AnnotationEditor
+                item={open}
+                notify={notify}
+                onClose={() => setOpen(null)}
+                onSubmitted={(r) => handleSubmitted(open.id, r)}
+              />
+            ) : (
+              <>
+                <div className="split-detail-head">
+                  <span className="split-detail-title">{openTitle}</span>
+                  <button className="icon-btn" onClick={closeSheet} aria-label={t('common.close')}>
+                    <Icon name="close" size={18} />
+                  </button>
+                </div>
+                <div className="split-detail-body">{sheetInner}</div>
+              </>
+            )
+          ) : (
+            <div className="split-placeholder">
+              <b>{t('review.selectPlaceholder')}</b>
+              <span>{t('review.selectHint')}</span>
+            </div>
+          )}
+        </div>
       ) : null}
     </div>
   )
