@@ -19,6 +19,9 @@ export const RECENT_REPOS_KEY = 'hm.repoRecent'
 /** タスクタブ / クイック起票が読む「既定のボード」。選んだ repo の板に合わせる。 */
 export const BOARD_KEY = 'hm.board'
 
+/** 送信前の「新しい会話で選んだリポジトリ」（1通目送信・既存会話resumeまでのリロード復元用）。 */
+export const PENDING_REPO_KEY = 'hm.pendingRepo'
+
 /** 履歴に残す件数。 */
 export const RECENT_MAX = 6
 
@@ -140,5 +143,53 @@ export function rememberRepo(storage = globalThis.localStorage, pick = {}) {
   } catch {
     // ストレージが無い / 拒否された。会話は始められるので止めない
     return { repo: id || null, board: board || null }
+  }
+}
+
+/**
+ * `cwd` パスに一致するリポジトリを返す（大小文字・末尾スラッシュを正規化して比較）。
+ * @param {Array<{id: string, path?: string}>} repos 全リポジトリ
+ * @param {string|null|undefined} cwd セッションの作業ディレクトリ
+ * @returns {object|null} 一致したリポジトリ
+ */
+export function matchRepoByCwd(repos = [], cwd = '') {
+  const norm = (p) => String(p ?? '').trim().replace(/\/+$/, '').toLowerCase()
+  const target = norm(cwd)
+  if (!target || !Array.isArray(repos)) return null
+  return repos.find((r) => r?.path && norm(r.path) === target) ?? null
+}
+
+/**
+ * 送信前の「新しい会話で選んだリポジトリ」を読む。
+ * @param {{getItem: Function}} [storage] 端末ストレージ
+ * @returns {{repoId: string, profile: string}|null} 保存された選択
+ */
+export function readPendingRepo(storage = globalThis.localStorage) {
+  try {
+    const raw = storage?.getItem(PENDING_REPO_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed.repoId !== 'string' || !parsed.repoId) return null
+    return { repoId: parsed.repoId, profile: typeof parsed.profile === 'string' && parsed.profile ? parsed.profile : '' }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 送信前の「新しい会話で選んだリポジトリ」を保存・消去する。
+ * @param {{setItem: Function, removeItem?: Function}} [storage] 端末ストレージ
+ * @param {{repoId: string, profile?: string}|null} pending 保存する選択（null で消去）
+ */
+export function writePendingRepo(storage = globalThis.localStorage, pending = null) {
+  if (!storage) return
+  try {
+    if (pending?.repoId) {
+      storage.setItem(PENDING_REPO_KEY, JSON.stringify({ repoId: pending.repoId, profile: pending.profile || '' }))
+    } else {
+      storage.removeItem?.(PENDING_REPO_KEY)
+    }
+  } catch {
+    /* noop */
   }
 }

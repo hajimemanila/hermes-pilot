@@ -22,10 +22,68 @@ export function createLive(cfg, kanban) {
   const dbPath = cfg.stateDb ?? path.join(cfg.home ?? '', '.hermes', 'state.db')
 
   /**
+   * 1つの DB から実行中ターンを読む。
+   * @param {{profile: string, path: string}} target DB情報
+   * @param {number} at 現在時刻
+   * @returns {Array<object>} ターン一覧
+   */
+  function turnsFrom(target, at) {
+    let db
+    try {
+      db = new DatabaseSync(target.path, { readOnly: true })
+      const rows = db
+        .prepare(
+          `SELECT l.conversation_id, l.holder, l.acquired_at, l.expires_at,
+                  s.title, s.source, s.chat_type, s.last_activity_description,
+                  s.last_activity_at
+             FROM session_turn_leases l
+             LEFT JOIN sessions s ON s.id = l.conversation_id
+            ORDER BY l.acquired_at DESC`,
+        )
+        .all()
+      const lastToolStmt = db.prepare(
+        `SELECT tool_name, timestamp FROM messages
+          WHERE session_id = ? AND tool_name IS NOT NULL
+          ORDER BY id DESC LIMIT 1`,
+      )
+      return rows.map((r) => {
+        let lastTool = null
+        try {
+          const t = lastToolStmt.get(r.conversation_id)
+          if (t?.tool_name) lastTool = { name: t.tool_name, at: Math.round(Number(t.timestamp) * 1000) }
+        } catch {
+          /* noop */
+        }
+        const acquired = Math.round(Number(r.acquired_at ?? 0) * 1000)
+        const expires = Math.round(Number(r.expires_at ?? 0) * 1000)
+        return {
+          profile: target.profile || 'default',
+          sessionId: r.conversation_id,
+          title: r.title || r.conversation_id,
+          source: r.source ?? '',
+          platform: platformOf(r.holder),
+          startedAt: acquired || null,
+          elapsedSec: acquired ? Math.max(0, Math.round((at - acquired) / 1000)) : null,
+          expiresInSec: expires ? Math.round((expires - at) / 1000) : null,
+          lastActivity: r.last_activity_description ?? null,
+          lastTool,
+        }
+      })
+    } finally {
+      try {
+        db?.close()
+      } catch {
+        /* noop */
+      }
+    }
+  }
+
+  /**
    * いま動いているもの。
+   * @param {{dbs?: Array<{profile: string, path: string}>}} [opts] 条件
    * @returns {object} スナップショット
    */
-  function snapshot() {
+  function snapshot(opts = {}) {
     const at = Date.now()
     const out = { ok: true, at, turns: [], tasks: [], counts: { turns: 0, tasks: 0 } }
 
@@ -52,62 +110,32 @@ export function createLive(cfg, kanban) {
     }
 
     // 実行中ターン（リース）
-    if (!fs.existsSync(dbPath)) {
+    const rawDbs = Array.isArray(opts.dbs) && opts.dbs.length ? opts.dbs : [{ profile: 'default', path: dbPath }]
+    const targets = rawDbs.filter((d) => d?.path && fs.existsSync(d.path))
+    if (!targets.length) {
       out.ok = false
       out.reason = 'state.db が見つかりません'
       return out
     }
-    let db
-    try {
-      db = new DatabaseSync(dbPath, { readOnly: true })
-      const rows = db
-        .prepare(
-          `SELECT l.conversation_id, l.holder, l.acquired_at, l.expires_at,
-                  s.title, s.source, s.chat_type, s.last_activity_description,
-                  s.last_activity_at
-             FROM session_turn_leases l
-             LEFT JOIN sessions s ON s.id = l.conversation_id
-            ORDER BY l.acquired_at DESC`,
-        )
-        .all()
-      const lastToolStmt = db.prepare(
-        `SELECT tool_name, timestamp FROM messages
-          WHERE session_id = ? AND tool_name IS NOT NULL
-          ORDER BY id DESC LIMIT 1`,
-      )
-      out.turns = rows.map((r) => {
-        let lastTool = null
-        try {
-          const t = lastToolStmt.get(r.conversation_id)
-          if (t?.tool_name) lastTool = { name: t.tool_name, at: Math.round(Number(t.timestamp) * 1000) }
-        } catch {
-          /* noop */
-        }
-        const acquired = Math.round(Number(r.acquired_at ?? 0) * 1000)
-        const expires = Math.round(Number(r.expires_at ?? 0) * 1000)
-        return {
-          sessionId: r.conversation_id,
-          title: r.title || r.conversation_id,
-          source: r.source ?? '',
-          platform: platformOf(r.holder),
-          startedAt: acquired || null,
-          elapsedSec: acquired ? Math.max(0, Math.round((at - acquired) / 1000)) : null,
-          expiresInSec: expires ? Math.round((expires - at) / 1000) : null,
-          lastActivity: r.last_activity_description ?? null,
-          lastTool,
-        }
-      })
-      out.counts.turns = out.turns.length
-    } catch (e) {
-      out.ok = false
-      out.reason = `読み取りに失敗しました: ${e.message}`
-    } finally {
+    const turns = []
+    let firstErr = null
+    let succeeded = 0
+    for (const target of targets) {
       try {
-        db?.close()
-      } catch {
-        /* noop */
+        turns.push(...turnsFrom(target, at))
+        succeeded++
+      } catch (e) {
+        if (!firstErr) firstErr = e
       }
     }
+    if (!succeeded && firstErr) {
+      out.ok = false
+      out.reason = `読み取りに失敗しました: ${firstErr.message}`
+      return out
+    }
+    turns.sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))
+    out.turns = turns
+    out.counts.turns = turns.length
     return out
   }
 

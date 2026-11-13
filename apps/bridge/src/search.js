@@ -62,53 +62,45 @@ export function createSearch(cfg) {
   }
 
   /**
-   * 検索する。
-   * @param {{q: string, limit?: number, hours?: number}} opts 条件
-   * @returns {{ok: boolean, q: string, tookMs: number, total: number, hits: Array<object>, reason?: string}} 結果
+   * 1つの DB から検索する。
+   * @param {{profile: string, path: string}} target DB情報
+   * @param {string} q 検索語
+   * @param {number} since 開始秒
+   * @param {number} limit 件数上限
+   * @returns {Array<object>} ヒット一覧
    */
-  function search(opts = {}) {
-    const started = process.hrtime.bigint()
-    const q = String(opts.q ?? '').trim().slice(0, 100)
-    const limit = Math.min(Math.max(Number(opts.limit ?? 30), 1), MAX_LIMIT)
-    const hours = Number(opts.hours ?? 0)
-    const out = { ok: true, q, tookMs: 0, total: 0, hits: [] }
-    if (!q) return { ...out, ok: false, reason: '検索語がありません' }
-    if (!fs.existsSync(dbPath)) return { ...out, ok: false, reason: 'state.db が見つかりません' }
-
+  function searchOne(target, q, since, limit) {
     let db
     try {
-      db = new DatabaseSync(dbPath, { readOnly: true })
-      const since = hours > 0 ? Date.now() / 1000 - hours * 3600 : 0
-      let rows
-      if (useTrigram(q)) {
-        rows = db
-          .prepare(
-            `SELECT m.id, m.session_id, m.role, m.content, m.timestamp,
-                    s.title, s.source, s.chat_type, s.display_name
-               FROM messages_fts_trigram f
-               JOIN messages m ON m.id = f.rowid
-               LEFT JOIN sessions s ON s.id = m.session_id
-              WHERE messages_fts_trigram MATCH ?
-                AND m.timestamp >= ?
-              ORDER BY m.timestamp DESC
-              LIMIT ?`,
-          )
-          .all(buildMatch(q), since, limit)
-      } else {
-        rows = db
-          .prepare(
-            `SELECT m.id, m.session_id, m.role, m.content, m.timestamp,
-                    s.title, s.source, s.chat_type, s.display_name
-               FROM messages m
-               LEFT JOIN sessions s ON s.id = m.session_id
-              WHERE m.content LIKE ?
-                AND m.timestamp >= ?
-              ORDER BY m.timestamp DESC
-              LIMIT ?`,
-          )
-          .all(`%${q}%`, since, limit)
-      }
-      out.hits = rows.map((r) => ({
+      db = new DatabaseSync(target.path, { readOnly: true })
+      const rows = useTrigram(q)
+        ? db
+            .prepare(
+              `SELECT m.id, m.session_id, m.role, m.content, m.timestamp,
+                      s.title, s.source, s.chat_type, s.display_name
+                 FROM messages_fts_trigram f
+                 JOIN messages m ON m.id = f.rowid
+                 LEFT JOIN sessions s ON s.id = m.session_id
+                WHERE messages_fts_trigram MATCH ?
+                  AND m.timestamp >= ?
+                ORDER BY m.timestamp DESC
+                LIMIT ?`,
+            )
+            .all(buildMatch(q), since, limit)
+        : db
+            .prepare(
+              `SELECT m.id, m.session_id, m.role, m.content, m.timestamp,
+                      s.title, s.source, s.chat_type, s.display_name
+                 FROM messages m
+                 LEFT JOIN sessions s ON s.id = m.session_id
+                WHERE m.content LIKE ?
+                  AND m.timestamp >= ?
+                ORDER BY m.timestamp DESC
+                LIMIT ?`,
+            )
+            .all(`%${q}%`, since, limit)
+      return rows.map((r) => ({
+        profile: target.profile || 'default',
         messageId: Number(r.id),
         sessionId: r.session_id,
         sessionTitle: r.title || r.display_name || r.session_id,
@@ -118,9 +110,6 @@ export function createSearch(cfg) {
         snippet: makeSnippet(r.content, q),
         at: Math.round(Number(r.timestamp ?? 0) * 1000),
       }))
-      out.total = out.hits.length
-    } catch (e) {
-      return { ...out, ok: false, reason: `検索に失敗しました: ${e.message}` }
     } finally {
       try {
         db?.close()
@@ -128,6 +117,43 @@ export function createSearch(cfg) {
         /* noop */
       }
     }
+  }
+
+  /**
+   * 検索する。
+   * @param {{q: string, limit?: number, hours?: number, dbs?: Array<{profile: string, path: string}>}} opts 条件
+   * @returns {{ok: boolean, q: string, tookMs: number, total: number, hits: Array<object>, reason?: string}} 結果
+   */
+  function search(opts = {}) {
+    const started = process.hrtime.bigint()
+    const q = String(opts.q ?? '').trim().slice(0, 100)
+    const limit = Math.min(Math.max(Number(opts.limit ?? 30), 1), MAX_LIMIT)
+    const hours = Number(opts.hours ?? 0)
+    const out = { ok: true, q, tookMs: 0, total: 0, hits: [] }
+    if (!q) return { ...out, ok: false, reason: '検索語がありません' }
+
+    const rawDbs = Array.isArray(opts.dbs) && opts.dbs.length ? opts.dbs : [{ profile: 'default', path: dbPath }]
+    const targets = rawDbs.filter((d) => d?.path && fs.existsSync(d.path))
+    if (!targets.length) return { ...out, ok: false, reason: 'state.db が見つかりません' }
+
+    const since = hours > 0 ? Date.now() / 1000 - hours * 3600 : 0
+    const merged = []
+    let firstErr = null
+    let succeeded = 0
+    for (const target of targets) {
+      try {
+        merged.push(...searchOne(target, q, since, limit))
+        succeeded++
+      } catch (e) {
+        if (!firstErr) firstErr = e
+      }
+    }
+    if (!succeeded && firstErr) {
+      return { ...out, ok: false, reason: `検索に失敗しました: ${firstErr.message}` }
+    }
+    merged.sort((a, b) => b.at - a.at)
+    out.hits = merged.slice(0, limit)
+    out.total = out.hits.length
     out.tookMs = Number(process.hrtime.bigint() - started) / 1e6
     return out
   }

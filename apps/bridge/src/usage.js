@@ -14,22 +14,18 @@ const CACHE_MS = 30_000
 
 export function createUsage(cfg = {}) {
   const dbPath = cfg.stateDb ?? path.join(cfg.home ?? '', '.hermes', 'state.db')
-  let cache = { at: 0, hours: null, data: null }
+  let cache = { at: 0, key: null, data: null }
 
   /**
-   * 期間内の合計と内訳を返す。
-   * @param {{hours?: number}} [opts] 条件（既定24時間）
-   * @returns {object} 集計
+   * 1つの DB から期間内の使用量を読む。
+   * @param {{profile: string, path: string}} target DB情報
+   * @param {number} since 開始秒
+   * @returns {{totals: object, models: Array<object>, topSessions: Array<object>}} 部分集計
    */
-  function summary(opts = {}) {
-    const hours = Math.min(Math.max(Number(opts.hours ?? 24) || 24, 1), 24 * 30)
-    if (cache.data && cache.hours === hours && Date.now() - cache.at < CACHE_MS) return cache.data
-    if (!fs.existsSync(dbPath)) return { ok: false, reason: 'state.db が見つかりません' }
-
-    const since = Date.now() / 1000 - hours * 3600
+  function summarizeOne(target, since) {
     let db
     try {
-      db = new DatabaseSync(dbPath, { readOnly: true })
+      db = new DatabaseSync(target.path, { readOnly: true })
       const t = db
         .prepare(
           `SELECT COUNT(*) AS sessions,
@@ -74,18 +70,12 @@ export function createUsage(cfg = {}) {
         )
         .all(since)
 
-      const input = Number(t?.input ?? 0)
-      const cacheRead = Number(t?.cacheRead ?? 0)
-      const denom = input + cacheRead
-      const data = {
-        ok: true,
-        hours,
-        since: Math.round(since * 1000),
+      return {
         totals: {
           sessions: Number(t?.sessions ?? 0),
-          input,
+          input: Number(t?.input ?? 0),
           output: Number(t?.output ?? 0),
-          cacheRead,
+          cacheRead: Number(t?.cacheRead ?? 0),
           cacheWrite: Number(t?.cacheWrite ?? 0),
           reasoning: Number(t?.reasoning ?? 0),
           cost: Number(t?.cost ?? 0),
@@ -93,7 +83,6 @@ export function createUsage(cfg = {}) {
           messages: Number(t?.messages ?? 0),
           tools: Number(t?.tools ?? 0),
         },
-        cacheHitRate: denom > 0 ? cacheRead / denom : null,
         models: models.map((m) => ({
           model: m.model ?? '(不明)',
           input: Number(m.input ?? 0),
@@ -103,6 +92,7 @@ export function createUsage(cfg = {}) {
           calls: Number(m.calls ?? 0),
         })),
         topSessions: top.map((s) => ({
+          profile: target.profile || 'default',
           id: s.id,
           title: s.title || s.id,
           source: s.source ?? '',
@@ -112,10 +102,6 @@ export function createUsage(cfg = {}) {
           at: Math.round(Number(s.at ?? 0) * 1000),
         })),
       }
-      cache = { at: Date.now(), hours, data }
-      return data
-    } catch (e) {
-      return { ok: false, reason: `集計に失敗しました: ${e.message}` }
     } finally {
       try {
         db?.close()
@@ -123,6 +109,76 @@ export function createUsage(cfg = {}) {
         /* noop */
       }
     }
+  }
+
+  /**
+   * 期間内の合計と内訳を返す。
+   * @param {{hours?: number, dbs?: Array<{profile: string, path: string}>}} [opts] 条件（既定24時間）
+   * @returns {object} 集計
+   */
+  function summary(opts = {}) {
+    const hours = Math.min(Math.max(Number(opts.hours ?? 24) || 24, 1), 24 * 30)
+    const rawDbs = Array.isArray(opts.dbs) && opts.dbs.length ? opts.dbs : [{ profile: 'default', path: dbPath }]
+    const targets = rawDbs.filter((d) => d?.path && fs.existsSync(d.path))
+    if (!targets.length) return { ok: false, reason: 'state.db が見つかりません' }
+
+    const cacheKey = `${hours}:${targets.map((d) => d.path).join('|')}`
+    if (cache.data && cache.key === cacheKey && Date.now() - cache.at < CACHE_MS) return cache.data
+
+    const since = Date.now() / 1000 - hours * 3600
+    const totals = {
+      sessions: 0,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      reasoning: 0,
+      cost: 0,
+      calls: 0,
+      messages: 0,
+      tools: 0,
+    }
+    const modelMap = new Map()
+    const topSessions = []
+    let firstErr = null
+    let succeeded = 0
+
+    for (const target of targets) {
+      try {
+        const part = summarizeOne(target, since)
+        succeeded++
+        for (const k of Object.keys(totals)) totals[k] += part.totals[k]
+        for (const m of part.models) {
+          const prev = modelMap.get(m.model) ?? { model: m.model, input: 0, output: 0, cacheRead: 0, cost: 0, calls: 0 }
+          prev.input += m.input
+          prev.output += m.output
+          prev.cacheRead += m.cacheRead
+          prev.cost += m.cost
+          prev.calls += m.calls
+          modelMap.set(m.model, prev)
+        }
+        topSessions.push(...part.topSessions)
+      } catch (e) {
+        if (!firstErr) firstErr = e
+      }
+    }
+
+    if (!succeeded && firstErr) {
+      return { ok: false, reason: `集計に失敗しました: ${firstErr.message}` }
+    }
+
+    const denom = totals.input + totals.cacheRead
+    const data = {
+      ok: true,
+      hours,
+      since: Math.round(since * 1000),
+      totals,
+      cacheHitRate: denom > 0 ? totals.cacheRead / denom : null,
+      models: [...modelMap.values()].sort((a, b) => b.cost - a.cost),
+      topSessions: topSessions.sort((a, b) => b.cost - a.cost).slice(0, 5),
+    }
+    cache = { at: Date.now(), key: cacheKey, data }
+    return data
   }
 
   return { summary }

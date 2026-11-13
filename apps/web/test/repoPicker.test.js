@@ -2,16 +2,20 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   BOARD_KEY,
+  PENDING_REPO_KEY,
   PINNED_ROWS,
   RECENT_REPOS_KEY,
   RECENT_MAX,
   REPO_KEY,
   boardSummary,
   defaultBoard,
+  matchRepoByCwd,
   pinnedRepos,
   readLastRepo,
+  readPendingRepo,
   readRecent,
   rememberRepo,
+  writePendingRepo,
 } from '../src/lib/repoPicker.js'
 
 /** localStorage 相当（テスト用の最小実装）。 */
@@ -107,4 +111,23 @@ test('readRecent / readLastRepo は壊れた保存値を無視する', () => {
   assert.deepEqual(readRecent(fakeStorage({ [RECENT_REPOS_KEY]: '{"a":1}' })), [])
   assert.equal(readLastRepo(fakeStorage()), null)
   assert.equal(readLastRepo(fakeStorage({ [REPO_KEY]: 'dsh-web-ui' })), 'dsh-web-ui')
+})
+
+test('matchRepoByCwd は大小文字と末尾スラッシュを無視して一致を返す', () => {
+  const repos = [
+    { id: 'hermes-mobile-pwa', path: '/Users/h/Projects/hermes-mobile-pwa' },
+    { id: 'nanokvm', path: '/Users/h/projects/nanokvm' },
+  ]
+  assert.equal(matchRepoByCwd(repos, '/Users/h/projects/hermes-mobile-pwa/')?.id, 'hermes-mobile-pwa')
+  assert.equal(matchRepoByCwd(repos, '/Users/h/projects/unknown'), null)
+  assert.equal(matchRepoByCwd(repos, ''), null)
+})
+
+test('writePendingRepo / readPendingRepo は未送信時の選択を保存・削除する', () => {
+  const s = fakeStorage()
+  writePendingRepo(s, { repoId: 'hermes-mobile-pwa', profile: 'mobile' })
+  assert.deepEqual(readPendingRepo(s), { repoId: 'hermes-mobile-pwa', profile: 'mobile' })
+  writePendingRepo(s, null)
+  assert.equal(readPendingRepo(s), null)
+  assert.equal(readPendingRepo(fakeStorage({ [PENDING_REPO_KEY]: '{broken' })), null)
 })

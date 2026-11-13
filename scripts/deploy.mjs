@@ -32,14 +32,18 @@ function verify(dir, label) {
   return { assets: refs.length, bytes: fs.statSync(index).size }
 }
 
-if (!checkOnly) {
-  fs.rmSync(next, { recursive: true, force: true })
-  console.log('build → apps/web/dist.next')
-  execFileSync('npx', ['vite', 'build', '--config', 'apps/web/vite.config.js', '--outDir', 'dist.next'], {
-    cwd: root,
-    stdio: 'inherit',
-  })
+if (checkOnly) {
+  const v = verify(dist, 'dist')
+  console.log(`検証: dist (index ${v.bytes}B / assets 参照 ${v.assets} 件)`)
+  process.exit(0)
 }
+
+fs.rmSync(next, { recursive: true, force: true })
+console.log('build → apps/web/dist.next')
+execFileSync('npx', ['vite', 'build', '--config', 'apps/web/vite.config.js', '--outDir', 'dist.next'], {
+  cwd: root,
+  stdio: 'inherit',
+})
 
 const v = verify(next, 'dist.next')
 console.log(`検証: index ${v.bytes}B / assets 参照 ${v.assets} 件`)

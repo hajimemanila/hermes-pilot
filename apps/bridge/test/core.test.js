@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { createAuth } from '../src/auth.js'
+import { createAuth, isAllowedWsOrigin } from '../src/auth.js'
 import { createKanban } from '../src/kanban.js'
 
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p))
@@ -41,8 +41,37 @@ test('認証: トークン交換した Cookie だけが通る', () => {
   assert.equal(auth.authorized(write), false)
   assert.equal(auth.authorized({ ...write, headers: { ...write.headers, 'x-client': 'mobile' } }), true)
 
-  // 誤ったトークン
+  // 誤ったトークン（マルチバイト文字でも例外にならない）
   assert.equal(auth.exchange('wrong'), null)
+  assert.equal(auth.exchange('あ'.repeat(auth.token.length)), null)
+
+  // ?t= クエリ認証でも書き込み時は X-Client 必須
+  assert.equal(auth.authorized({ url: `/api/overview?t=${auth.token}`, headers: {}, method: 'GET' }), true)
+  assert.equal(auth.authorized({ url: `/api/tasks/1/reply?t=${auth.token}`, headers: {}, method: 'POST' }), false)
+  assert.equal(
+    auth.authorized({ url: `/api/tasks/1/reply?t=${auth.token}`, headers: { 'x-client': 'mobile' }, method: 'POST' }),
+    true,
+  )
+})
+
+test('WebSocket Origin 検証: 同一オリジンのみ許可（Origin なしは CLI 扱い）', () => {
+  assert.equal(isAllowedWsOrigin({ headers: { host: 'example.ts.net:8444' } }), true)
+  assert.equal(
+    isAllowedWsOrigin({ headers: { host: 'example.ts.net:8444', origin: 'https://Example.ts.net:8444' } }),
+    true,
+  )
+  assert.equal(
+    isAllowedWsOrigin({
+      headers: { host: '127.0.0.1:8787', 'x-forwarded-host': 'example.ts.net:8444', origin: 'https://example.ts.net:8444' },
+    }),
+    true,
+  )
+  assert.equal(
+    isAllowedWsOrigin({ headers: { host: 'example.ts.net:8444', origin: 'https://evil.example' } }),
+    false,
+  )
+  assert.equal(isAllowedWsOrigin({ headers: { host: 'example.ts.net:8444', origin: 'null' } }), false)
+  assert.equal(isAllowedWsOrigin({ headers: { host: 'example.ts.net:8444', origin: 'file://' } }), false)
 })
 
 test('認証: 期限切れの Cookie は落ちる', async () => {

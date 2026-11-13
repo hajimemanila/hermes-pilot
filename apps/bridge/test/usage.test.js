@@ -110,3 +110,24 @@ test('モデル別はセッションと同じ窓で数える（合計は別会�
   // モデル別は API 呼び出し記録の集計で、セッションの見積りとは一致しないことがある
   assert.ok(d.models.every((m) => m.cost > 0))
 })
+
+test('複数プロファイルの state.db を横断合算する', () => {
+  const dbDefault = fixture()
+  const dbMobile = fixture()
+  const u = createUsage({ home: '/nonexistent', stateDb: dbDefault })
+  const single = u.summary({ hours: 24, dbs: [{ profile: 'default', path: dbDefault }] })
+  const both = u.summary({
+    hours: 24,
+    dbs: [
+      { profile: 'default', path: dbDefault },
+      { profile: 'mobile', path: dbMobile },
+      { profile: 'nanokvm', path: '/nonexistent/state.db' },
+    ],
+  })
+  assert.equal(both.ok, true)
+  assert.equal(both.totals.sessions, single.totals.sessions * 2)
+  assert.ok(Math.abs(both.totals.cost - single.totals.cost * 2) < 1e-6)
+  assert.equal(both.models.length, single.models.length)
+  assert.ok(both.topSessions.some((s) => s.profile === 'default'))
+  assert.ok(both.topSessions.some((s) => s.profile === 'mobile'))
+})

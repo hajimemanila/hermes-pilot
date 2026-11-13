@@ -76,11 +76,13 @@ export function UsageSheet({ data, hours = 24, onClose }) {
           </div>
           <div className="list">
             {(data.topSessions ?? []).map((s) => (
-              <div key={s.id} className="row static">
+              <div key={`${s.profile ?? 'default'}:${s.id}`} className="row static">
                 <span className="row-main">
                   <span className="row-title">{s.title}</span>
                   <span className="row-sub">
-                    {s.source || '—'} ・ in {fmtTokens(s.input)} ・ out {fmtTokens(s.output)} ・ {relTime(s.at)}
+                    {s.source || '—'}
+                    {s.profile && s.profile !== 'default' ? ` ・ ${s.profile}` : ''} ・ in {fmtTokens(s.input)} ・ out{' '}
+                    {fmtTokens(s.output)} ・ {relTime(s.at)}
                   </span>
                 </span>
                 <span className="mono" style={{ fontSize: 12 }}>

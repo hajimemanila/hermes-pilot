@@ -75,12 +75,13 @@ export function LiveSheet({ onClose, notify, onAbortTask }) {
       </div>
       <div className="list">
         {turns.map((t) => (
-          <div key={t.sessionId} className="row static">
+          <div key={`${t.profile ?? 'default'}:${t.sessionId}`} className="row static">
             <span className="dot running" />
             <span className="row-main" style={{ minWidth: 0 }}>
               <span className="row-title">{t.title}</span>
               <span className="row-sub">
-                {t.platform || t.source || '—'} ・ {fmtElapsed(t.elapsedSec)}
+                {t.platform || t.source || '—'}
+                {t.profile && t.profile !== 'default' ? ` ・ ${t.profile}` : ''} ・ {fmtElapsed(t.elapsedSec)}
                 {t.lastTool ? ` ・ tool: ${t.lastTool.name}` : t.lastActivity ? ` ・ ${t.lastActivity}` : ''}
               </span>
               {t.lastTool?.at ? (

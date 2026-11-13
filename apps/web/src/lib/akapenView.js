@@ -70,18 +70,31 @@ export function waitingCount(items) {
 }
 
 /**
- * ナビのタスクタブに出す「小さな丸の数字」（承認待ち）。
+ * 自分が回答済みか。`lastComment` は `{author, body, at}` を返すので、
+ * 最新コメントが mobile かつ blocked 以降なら「回答済み（再開待ち）」。
+ * インボックス・ナビバッジ・黄色バーの3箇所で数字を揃えるために共有する。
+ *
+ * @param {object} item `/api/inbox` の item
+ * @returns {boolean} 回答済みか
+ */
+export function isAnswered(item) {
+  const c = item?.lastComment
+  return Boolean(c && c.author === 'mobile' && (c.at ?? 0) >= (item?.blockedAt ?? 0))
+}
+
+/**
+ * ナビのタスクタブに出す「小さな丸の数字」（未回答の承認待ち）。
  *
  * 注釈（`1377.jpg` の赤）で決まったこと: 「ティッカー」は下部ナビの丸バッジのこと。
  * 承認待ち（`/api/inbox`）と赤ペン判断待ち（`/api/akapen`）は**別の数字**で、混ぜない。
- * `/api/inbox` 側が本文 `[akapen]` の blocked を除いているので、ここは数えるだけでよい。
+ * `/api/inbox` 側が本文 `[akapen]` の blocked を除いているので、ここでは未回答だけを数える。
  *
  * @param {Array} items `/api/inbox` の items
- * @returns {number} 承認待ちの件数（0 以上）
+ * @returns {number} 未回答の承認待ち件数（0 以上）
  */
 export function pendingCount(items) {
   const list = Array.isArray(items) ? items.filter(Boolean) : []
-  return list.length
+  return list.filter((it) => !isAnswered(it)).length
 }
 
 /**

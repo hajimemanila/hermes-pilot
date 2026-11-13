@@ -5,7 +5,7 @@ import os from 'node:os'
 import { WebSocketServer, WebSocket } from 'ws'
 import { createRequire } from 'node:module'
 import { loadConfig, VERSION } from './config.js'
-import { createAuth } from './auth.js'
+import { createAuth, isAllowedWsOrigin } from './auth.js'
 import { createHermesClient } from './hermes.js'
 import { createKanban } from './kanban.js'
 import { createAkapen, injectAkapenBridge } from './akapen.js'
@@ -68,6 +68,24 @@ function stateDbFor(profiles, name) {
   const hit = profiles.find((p) => p.name === name)
   if (!hit?.path) return cfg.stateDb
   return path.join(hit.path, 'state.db')
+}
+
+/** 全プロファイルの state.db 一覧（重複除去・default フォールバック付き）。 */
+async function listStateDbs() {
+  const profiles = await listProfiles()
+  const out = []
+  const seen = new Set()
+  for (const p of profiles) {
+    if (!p?.name) continue
+    const dbPath = p.path ? path.join(p.path, 'state.db') : cfg.stateDb
+    if (seen.has(dbPath)) continue
+    seen.add(dbPath)
+    out.push({ profile: p.name, path: dbPath })
+  }
+  if (!seen.has(cfg.stateDb)) {
+    out.unshift({ profile: 'default', path: cfg.stateDb })
+  }
+  return out
 }
 const capture = createCapture(cfg)
 const usage = createUsage(cfg)
@@ -565,12 +583,12 @@ async function handleApi(req, res, url) {
   }
 
   // --- ライブ進捗（実行中ターンと実行中タスク）--------------------------------
-  // /api/live  … 5秒ポーリング前提。state.db のリースとカンバンを合成する
+  // /api/live  … 5秒ポーリング前提。全プロファイルの state.db のリースとカンバンを合成する
   if (a === 'live' && req.method === 'GET') {
     if (!readAllowed(cfg.rate.maxReads ?? 240, cfg.rate.windowMs)) {
       return sendJson(res, 429, { error: { message: '読み取りが多すぎます' } })
     }
-    const r = live.snapshot()
+    const r = live.snapshot({ dbs: await listStateDbs() })
     // Discord 由来のターンにはスレッドリンクを添える
     for (const t of r.turns) {
       const link = discord.forSession(t.sessionId)
@@ -602,14 +620,14 @@ async function handleApi(req, res, url) {
   }
 
   // --- 使用量（コスト・トークン）----------------------------------------------
-  // /api/usage?hours=24  … 合計とモデル別・上位セッション
+  // /api/usage?hours=24  … 合計とモデル別・上位セッション（全プロファイル合算）
   if (a === 'usage' && req.method === 'GET') {
-    const r = usage.summary({ hours: Number(url.searchParams.get('hours') ?? 24) })
+    const r = usage.summary({ hours: Number(url.searchParams.get('hours') ?? 24), dbs: await listStateDbs() })
     return sendJson(res, r.ok ? 200 : 500, r)
   }
 
   // --- 横断検索 --------------------------------------------------------------
-  // /api/search?q=&limit=&hours=  … 全セッションの発言から抜粋を返す（読み取り専用）
+  // /api/search?q=&limit=&hours=  … 全プロファイル・全セッションの発言から抜粋を返す（読み取り専用）
   if (a === 'search' && req.method === 'GET') {
     const q = String(url.searchParams.get('q') ?? '')
     if (!q.trim()) return sendJson(res, 400, { error: { message: 'q が必要です' } })
@@ -620,6 +638,7 @@ async function handleApi(req, res, url) {
       q,
       limit: Number(url.searchParams.get('limit') ?? 30),
       hours: Number(url.searchParams.get('hours') ?? 0),
+      dbs: await listStateDbs(),
     })
     // 該当セッションが Discord 由来ならスレッドリンクも添える
     if (r.ok) {
@@ -826,8 +845,13 @@ const wssChat = new WebSocketServer({ noServer: true })
 const wssTerm = new WebSocketServer({ noServer: true })
 
 server.on('upgrade', (req, socket, head) => {
+  if (!isAllowedWsOrigin(req)) {
+    socket.write('HTTP/1.1 403 Forbidden\r\n\r\n')
+    socket.destroy()
+    return
+  }
   const url = new URL(req.url ?? '/', 'http://127.0.0.1')
-  if (!auth.authorized(req) && url.searchParams.get('t') !== auth.token) {
+  if (!auth.authorized(req)) {
     socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
     socket.destroy()
     return

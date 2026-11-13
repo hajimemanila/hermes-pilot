@@ -5,6 +5,7 @@ import { CaptureSheet } from './CaptureSheet.jsx'
 import { UsageSheet } from './UsageSheet.jsx'
 import { LiveSheet } from './LiveSheet.jsx'
 import { InboxSheet } from './InboxSheet.jsx'
+import { pendingCount } from '../lib/akapenView.js'
 import { fmtCost } from '../lib/format.js'
 
 const STATUS_LABEL = {
@@ -188,7 +189,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
     try {
       const d = await api('/api/inbox')
       const items = d?.items ?? []
-      setInboxCount(items.length)
+      setInboxCount(pendingCount(items))
       // 下部ナビのタスクタブの丸バッジ（注釈 1377.jpg の赤）を、この一覧と同じデータで同期する
       try {
         window.dispatchEvent(new CustomEvent('hm:inbox-items', { detail: { items } }))

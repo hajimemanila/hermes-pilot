@@ -2,22 +2,13 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { CloseActions } from '../components/CloseActions.jsx'
 import { Sheet, relTime } from '../components/Ui.jsx'
+import { isAnswered } from '../lib/akapenView.js'
 
 const KIND_LABEL = {
   needs_input: '回答待ち',
   dependency: '依存待ち',
   failure: '失敗',
   untyped: '停止',
-}
-
-/**
- * 自分が回答済みか。`lastComment` は `{author, body, at}` を返すので、
- * 最新コメントが mobile かつ blocked 以降なら「回答済み（再開待ち）」。
- * ウィジェット側のカウントと同じ判定にして、両サーフェスの数字を揃える。
- */
-function isAnswered(item) {
-  const c = item?.lastComment
-  return Boolean(c && c.author === 'mobile' && (c.at ?? 0) >= (item?.blockedAt ?? 0))
 }
 
 /**

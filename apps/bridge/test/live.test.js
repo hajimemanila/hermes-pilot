@@ -107,3 +107,21 @@ test('カンバンが落ちてもターンは返す', () => {
   assert.equal(s.turns.length, 2)
   assert.deepEqual(s.tasks, [])
 })
+
+test('複数プロファイルの state.db を横断してターンを統合する', () => {
+  const dbDefault = fixture()
+  const dbMobile = fixture()
+  const s = createLive({ home: '/nonexistent', stateDb: dbDefault }, fakeKanban).snapshot({
+    dbs: [
+      { profile: 'default', path: dbDefault },
+      { profile: 'mobile', path: dbMobile },
+      { profile: 'nanokvm', path: '/nonexistent/state.db' },
+    ],
+  })
+  assert.equal(s.ok, true)
+  assert.equal(s.counts.turns, 4)
+  assert.deepEqual(
+    s.turns.map((t) => t.profile).sort(),
+    ['default', 'default', 'mobile', 'mobile'],
+  )
+})

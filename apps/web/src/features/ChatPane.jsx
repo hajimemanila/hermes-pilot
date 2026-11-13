@@ -4,11 +4,14 @@ import { DEFAULT_PROFILE, STORED_PROFILE_KEY, applyDefaultProfile } from '../lib
 import {
   boardSummary,
   defaultBoard,
+  matchRepoByCwd,
   pinnedRepos,
   readLastRepo,
+  readPendingRepo,
   readRecent,
   rememberRepo,
   repoLabel,
+  writePendingRepo,
 } from '../lib/repoPicker.js'
 import { pickResumeTarget, recentSessions } from '../lib/chatResume.js'
 import { mergeProgress } from '../lib/toolProgress.js'
@@ -87,6 +90,7 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
   const storedRef = useRef(null)
   const storedProfileRef = useRef(DEFAULT_PROFILE)
   const repoRef = useRef(null)
+  const reposRef = useRef([])
   const sessionsRef = useRef([])
   const listRef = useRef(null)
   const taRef = useRef(null)
@@ -97,6 +101,20 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
   storedRef.current = storedSid
   storedProfileRef.current = storedProfile
   repoRef.current = repo
+  reposRef.current = repos
+
+  /** リポジトリ一覧（未取得なら /api/repos から取ってキャッシュ）。 */
+  const ensureRepos = useCallback(async () => {
+    if (reposRef.current.length) return reposRef.current
+    try {
+      const d = await api('/api/repos')
+      const list = Array.isArray(d?.repos) ? d.repos : []
+      setRepos(list)
+      return list
+    } catch {
+      return []
+    }
+  }, [])
 
   /**
    * セッション一覧を取り直す。
@@ -151,25 +169,37 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
   }, [loadSnippets])
 
   /** サーバのセッションに繋ぎ直す（履歴も置き換える）。`prof` は他プロファイルの時だけ渡す。 */
-  const resumeInto = useCallback(async (rpc, target, prof = 'default') => {
-    const r = await rpc('session.resume', {
-      session_id: target,
-      ...(prof && prof !== 'default' ? { profile: prof } : {}),
-    })
-    const res = r?.result
-    if (!res?.session_id) return { ok: false, sid: null, error: r?.error ?? null }
-    setSid(res.session_id)
-    setStoredSid(res.resumed ?? target)
-    setProfile(prof || 'default')
-    const msgs = Array.isArray(res.messages) ? res.messages : []
-    setBlocks(
-      msgs
-        .filter((m) => m.role === 'user' || m.role === 'assistant')
-        .map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', text: String(m.text ?? '') }))
-        .filter((m) => m.text.trim().length > 0),
-    )
-    return { ok: true, sid: res.session_id }
-  }, [])
+  const resumeInto = useCallback(
+    async (rpc, target, prof = 'default') => {
+      const r = await rpc('session.resume', {
+        session_id: target,
+        ...(prof && prof !== 'default' ? { profile: prof } : {}),
+      })
+      const res = r?.result
+      if (!res?.session_id) return { ok: false, sid: null, error: r?.error ?? null }
+      writePendingRepo(globalThis.localStorage, null)
+      setSid(res.session_id)
+      setStoredSid(res.resumed ?? target)
+      setProfile(prof || 'default')
+      const cwd = res.info?.cwd ?? res.cwd ?? ''
+      if (cwd) {
+        ensureRepos().then((list) => {
+          if (sidRef.current === res.session_id) setRepo(matchRepoByCwd(list, cwd))
+        })
+      } else {
+        setRepo(null)
+      }
+      const msgs = Array.isArray(res.messages) ? res.messages : []
+      setBlocks(
+        msgs
+          .filter((m) => m.role === 'user' || m.role === 'assistant')
+          .map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', text: String(m.text ?? '') }))
+          .filter((m) => m.text.trim().length > 0),
+      )
+      return { ok: true, sid: res.session_id }
+    },
+    [ensureRepos],
+  )
 
   /** 通知の処理。 */
   const onEvent = useCallback((msg) => {
@@ -258,6 +288,8 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
       await openRef.current?.(pending.id, pending.focusId ?? null, pending.profile ?? 'default')
       return
     }
+    // リポジトリを選んで新しい会話を始めた直後（未送信）なら過去の会話へ戻さない
+    if (!storedRef.current && readPendingRepo()) return
     // stored が空でも、同じプロファイルの直近セッションへ戻る（空画面の再発防止）
     const pick = pickResumeTarget({
       storedSid: storedRef.current,
@@ -306,6 +338,19 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
       if (saved && !storedRef.current) setStoredSid(saved)
       const savedProfile = localStorage.getItem(STORED_PROFILE_KEY)
       if (savedProfile) setStoredProfile(savedProfile)
+      // 未送信でリポジトリを選んでいた場合、リロード後もヘッダー札と cwd を復元する
+      const pendingRepo = !saved ? readPendingRepo() : null
+      if (pendingRepo) {
+        if (pendingRepo.profile) {
+          setProfile(pendingRepo.profile)
+          setStoredProfile(pendingRepo.profile)
+        }
+        ensureRepos().then((list) => {
+          if (sidRef.current || storedRef.current) return
+          const hit = list.find((r) => r.id === pendingRepo.repoId)
+          if (hit) setRepo(hit)
+        })
+      }
     } catch {
       /* noop */
     }
@@ -570,6 +615,7 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
         setStoredSid(r?.result?.stored_session_id ?? null)
         setStoredProfile(profile || DEFAULT_PROFILE)
         if (!target) return failed('セッションを作成できませんでした')
+        writePendingRepo(globalThis.localStorage, null)
         setSid(target)
         setTitle(shown.slice(0, 24))
       }
@@ -655,7 +701,10 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
       setProfileSheet(false)
       if (chosen) {
         rememberRepo(globalThis.localStorage, { id: chosen.id, board: boardSlug ? { slug: boardSlug } : null })
+        writePendingRepo(globalThis.localStorage, { repoId: chosen.id, profile: next })
         notify(`${repoLabel(chosen)}${boardSlug ? ` ・ ${boardSlug}` : ''} で新しい会話`)
+      } else {
+        writePendingRepo(globalThis.localStorage, null)
       }
     },
     [notify],
@@ -741,7 +790,7 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
 
   // 検索結果など外側から「このセッションを開く」と指示された場合
   useEffect(() => {
-    const onOpen = (e) => openSessionSafe(e?.detail?.id, e?.detail?.messageId ?? null)
+    const onOpen = (e) => openSessionSafe(e?.detail?.id, e?.detail?.messageId ?? null, e?.detail?.profile || 'default')
     window.addEventListener('hm:open-session', onOpen)
     return () => window.removeEventListener('hm:open-session', onOpen)
   }, [openSessionSafe])
@@ -786,12 +835,8 @@ export function ChatPane({ notify, chatReports = [], active = false }) {
     setRepoStep(null)
     setRepoPick(profile || DEFAULT_PROFILE)
     // リポジトリ一覧は開いたときに取りに行く（ボードの件数は変わらないので 1 回で足りる）
-    if (!repos.length) {
-      api('/api/repos')
-        .then((d) => setRepos(Array.isArray(d?.repos) ? d.repos : []))
-        .catch(() => setRepos([]))
-    }
-  }, [profile, repos.length])
+    ensureRepos()
+  }, [profile, ensureRepos])
 
   /**
    * リポジトリを選んだ（Q2=A）。板が無ければ確認、複数なら次の段、1 つならそのまま開始。

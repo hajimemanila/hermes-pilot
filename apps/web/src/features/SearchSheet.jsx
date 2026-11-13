@@ -73,7 +73,7 @@ export function SearchSheet({ onClose, onOpenSession, notify }) {
       <div className="list">
         {hits.map((h) => (
           <button
-            key={h.messageId}
+            key={`${h.profile ?? 'default'}:${h.messageId}`}
             className="list-item"
             onClick={() => {
               onOpenSession?.(h)
@@ -88,6 +88,7 @@ export function SearchSheet({ onClose, onOpenSession, notify }) {
                 {h.role === 'user' ? 'あなた' : h.role === 'assistant' ? 'Hermes' : h.role}
                 {` ・ ${relTime(h.at)}`}
                 {h.sessionTitle ? ` ・ ${String(h.sessionTitle).slice(0, 28)}` : ''}
+                {h.profile && h.profile !== 'default' ? ` ・ ${h.profile}` : ''}
                 {h.source ? ` ・ ${h.source}` : ''}
               </span>
             </span>

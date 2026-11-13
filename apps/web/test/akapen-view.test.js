@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { answerRows, capturedLabel, DONE_LIMIT, doneHint, groupItems, isWaiting, navBadgeState, nextWaiting, pendingCount, repoLabel, runningCount, thumbCaption, unseenNotices, waitingCount } from '../src/lib/akapenView.js'
+import { answerRows, capturedLabel, DONE_LIMIT, doneHint, groupItems, isAnswered, isWaiting, navBadgeState, nextWaiting, pendingCount, repoLabel, runningCount, thumbCaption, unseenNotices, waitingCount } from '../src/lib/akapenView.js'
 
 /** 赤ペン待ち（blocked + label）。 */
 const waitingItem = (id) => ({ id, status: 'blocked', akapen: { label: 'akapen-view-01', round: 1 } })
@@ -103,13 +103,21 @@ test('waitingCount はナビのバッジに出す赤ペン待ち件数（0 な�
   assert.equal(waitingCount([null, waitingItem('w9')]), 1)
 })
 
-test('pendingCount はナビのタスクタブに出す承認待ち件数', () => {
+test('pendingCount はナビのタスクタブに出す未回答の承認待ち件数', () => {
   assert.equal(pendingCount([]), 0)
   assert.equal(pendingCount(undefined), 0)
   assert.equal(pendingCount([{ id: 'x1', board: 'nanokvm' }]), 1)
   // 赤ペン待ちは /api/inbox 側で除かれるので、ここに来る items は承認待ちだけ
   assert.equal(pendingCount([{ id: 'x1', board: 'ffp' }, { id: 'x2', board: 'mobile' }]), 2)
   assert.equal(pendingCount([null, { id: 'x2' }]), 1)
+  // 回答済み（mobile が blocked 以降にコメント済み）はバッジ件数から除外する
+  const answered = { id: 'x3', blockedAt: 1000, lastComment: { author: 'mobile', at: 1000 } }
+  const olderReply = { id: 'x4', blockedAt: 2000, lastComment: { author: 'mobile', at: 1500 } }
+  const agentComment = { id: 'x5', blockedAt: 1000, lastComment: { author: 'worker', at: 1500 } }
+  assert.equal(isAnswered(answered), true)
+  assert.equal(isAnswered(olderReply), false)
+  assert.equal(isAnswered(agentComment), false)
+  assert.equal(pendingCount([answered, olderReply, agentComment]), 2)
 })
 
 // 完了の見える化（作業フィード）: 進行中は点、未読の完了は点、判断待ちだけ数字

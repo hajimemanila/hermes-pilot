@@ -119,3 +119,23 @@ test('FTS の構文エラーになる入力でも落ちない', () => {
     assert.equal(typeof r.ok, 'boolean', q)
   }
 })
+
+test('複数プロファイルの state.db を横断検索して profile を付与する', () => {
+  const dbDefault = fixture()
+  const dbMobile = fixture()
+  const s = createSearch({ home: '/nonexistent', stateDb: dbDefault })
+  const r = s.search({
+    q: 'ドレイン',
+    dbs: [
+      { profile: 'default', path: dbDefault },
+      { profile: 'mobile', path: dbMobile },
+      { profile: 'nanokvm', path: '/nonexistent/state.db' },
+    ],
+  })
+  assert.equal(r.ok, true)
+  assert.equal(r.total, 4)
+  assert.deepEqual(
+    r.hits.map((h) => h.profile).sort(),
+    ['default', 'default', 'mobile', 'mobile'],
+  )
+})

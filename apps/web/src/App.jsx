@@ -526,7 +526,9 @@ export function App() {
             setTab('chat')
             setTimeout(() => {
               window.dispatchEvent(
-                new CustomEvent('hm:open-session', { detail: { id: hit.sessionId, messageId: hit.messageId } }),
+                new CustomEvent('hm:open-session', {
+                  detail: { id: hit.sessionId, messageId: hit.messageId, profile: hit.profile },
+                }),
               )
             }, 120)
           }}

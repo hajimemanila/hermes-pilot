@@ -15,6 +15,29 @@ import path from 'node:path'
  * @param {object} cfg 設定
  * @returns {object} 認証ヘルパ
  */
+/**
+ * WebSocket アップグレード時の Origin 検証（CSWSH 対策）。
+ * ブラウザからの接続（Origin ヘッダあり）は Host と同一オリジンのみ許可する。
+ * @param {import('node:http').IncomingMessage} req リクエスト
+ * @returns {boolean} 許可してよいか
+ */
+export function isAllowedWsOrigin(req) {
+  const origin = req.headers?.origin
+  if (!origin) return true
+  if (typeof origin !== 'string') return false
+  let parsed
+  try {
+    parsed = new URL(origin)
+  } catch {
+    return false
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false
+  const rawHost = req.headers['x-forwarded-host'] ?? req.headers.host
+  const expectedHost = (Array.isArray(rawHost) ? rawHost[0] : rawHost ?? '').split(',')[0].trim().toLowerCase()
+  if (!expectedHost) return false
+  return parsed.host.toLowerCase() === expectedHost
+}
+
 export function createAuth(cfg) {
   fs.mkdirSync(cfg.dataDir, { recursive: true })
   let token = ''
@@ -93,14 +116,21 @@ export function createAuth(cfg) {
     return out
   }
 
+  function tokenMatches(given) {
+    if (typeof given !== 'string') return false
+    const a = Buffer.from(given)
+    const b = Buffer.from(token)
+    if (a.length !== b.length) return false
+    return crypto.timingSafeEqual(a, b)
+  }
+
   return {
     token,
     auditPath: cfg.auditPath,
 
     /** ワンタイム URL のトークンをセッション Cookie に交換する。 */
     exchange(given) {
-      if (!given || given.length !== token.length) return null
-      if (!crypto.timingSafeEqual(Buffer.from(given), Buffer.from(token))) return null
+      if (!tokenMatches(given)) return null
       prune()
       const value = crypto.randomBytes(24).toString('base64url')
       const now = Date.now()
@@ -113,22 +143,24 @@ export function createAuth(cfg) {
     /** @param {import('node:http').IncomingMessage} req リクエスト @returns {boolean} */
     authorized(req) {
       const url = new URL(req.url ?? '/', 'http://127.0.0.1')
-      if (url.searchParams.get('t') === token) return true
-      const cookie = parseCookies(req.headers.cookie)[cfg.cookieName]
-      if (!cookie) return false
-      const key = hash(cookie)
-      const rec = store.sessions[key]
-      if (!rec) return false
-      const now = Date.now()
-      if (now - (rec.lastSeen ?? rec.created ?? 0) > cfg.sessionTtlMs) {
-        delete store.sessions[key]
+      const byToken = tokenMatches(url.searchParams.get('t'))
+      if (!byToken) {
+        const cookie = parseCookies(req.headers.cookie)[cfg.cookieName]
+        if (!cookie) return false
+        const key = hash(cookie)
+        const rec = store.sessions[key]
+        if (!rec) return false
+        const now = Date.now()
+        if (now - (rec.lastSeen ?? rec.created ?? 0) > cfg.sessionTtlMs) {
+          delete store.sessions[key]
+          dirty = true
+          flush(true)
+          return false
+        }
+        rec.lastSeen = now
         dirty = true
-        flush(true)
-        return false
+        flush()
       }
-      rec.lastSeen = now
-      dirty = true
-      flush()
       if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers['x-client'] !== 'mobile') return false
       return true
     },
