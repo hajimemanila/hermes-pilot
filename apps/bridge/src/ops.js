@@ -3,7 +3,10 @@ import path from 'node:path'
 import { execFile } from 'node:child_process'
 
 /**
- * 運用系（SystemOps バッジ + キルスイッチ）。
+ * 運用系（状態の俯瞰 + キルスイッチ）。
+ *
+ * `/api/overview` は **Hermes 標準 API とブリッジ自身のメトリクスだけ**で組み立てる
+ * （SPEC §5.2）。外部プラグインのエンドポイントは叩かない。
  *
  * キルスイッチは Hermes 自身の API を叩く（生の launchctl は使わない）。
  * 実測した挙動:
@@ -16,9 +19,11 @@ import { execFile } from 'node:child_process'
  * @param {object} cfg 設定
  * @param {object} hermes Hermes クライアント
  * @param {object} auth 認証（監査用）
+ * @param {{kanban?: object}} [deps] 差し替え（テスト用）
  * @returns {object} 運用操作
  */
-export function createOps(cfg, hermes, auth) {
+export function createOps(cfg, hermes, auth, deps = {}) {
+  const startedAt = Number(cfg.startedAt ?? Date.now())
   const GATEWAY_ACTIONS = new Map([
     ['drain', '/api/gateway/drain'],
     ['restart', '/api/gateway/restart'],
@@ -26,16 +31,40 @@ export function createOps(cfg, hermes, auth) {
     ['start', '/api/gateway/start'],
   ])
 
-  /** 画面の 3 枚カード分をまとめて取る（片方が落ちても他は返す）。 */
+  /**
+   * カンバン集計（自前メトリクス）。板が読めなくても落ちない。
+   * @returns {{boards: number, running: number, blocked: number, ready: number, reviewWaiting: number}} 集計
+   */
+  function kanbanSummary() {
+    const empty = { boards: 0, running: 0, blocked: 0, ready: 0, reviewWaiting: 0 }
+    let boards = []
+    try {
+      boards = deps.kanban?.boards?.() ?? []
+    } catch {
+      boards = []
+    }
+    if (!Array.isArray(boards) || !boards.length) return empty
+    const live = boards.filter((b) => b && !b.archived)
+    const sum = (k) => live.reduce((n, b) => n + Number(b.counts?.[k] ?? 0), 0)
+    const blocked = sum('blocked')
+    return {
+      boards: live.length,
+      running: sum('running'),
+      blocked,
+      ready: sum('ready'),
+      // 判断待ち（blocked）は人間の回答を待っている件数＝Review 待ち
+      reviewWaiting: blocked,
+    }
+  }
+
+  /** 画面のカード分をまとめて取る（片方が落ちても他は返す）。 */
   async function overview() {
-    const [status, stats, blocked] = await Promise.allSettled([
+    const [status, stats] = await Promise.allSettled([
       hermes.call('/api/status', { timeoutMs: 8000 }),
       hermes.call('/api/system/stats', { timeoutMs: 8000 }),
-      hermes.call('/api/plugins/system-ops/blocked-processes', { timeoutMs: 12000 }),
     ])
     const s = status.status === 'fulfilled' && status.value.status === 200 ? status.value.data : null
     const sys = stats.status === 'fulfilled' && stats.value.status === 200 ? stats.value.data : null
-    const bl = blocked.status === 'fulfilled' && blocked.value.status === 200 ? blocked.value.data : null
     return {
       hermes: s
         ? {
@@ -55,14 +84,16 @@ export function createOps(cfg, hermes, auth) {
             uptime: sys.uptime ?? null,
           }
         : null,
-      ops: bl
-        ? {
-            ok: Boolean(bl.data?.ok ?? bl.ok),
-            generatedAt: bl.generated_at ?? bl.data?.generated_at ?? null,
-            host: bl.data?.host ?? null,
-            findings: bl.data?.findings ?? bl.data?.summary ?? null,
-          }
-        : null,
+      /** ブリッジ自身の稼働状態（自前メトリクス） */
+      bridge: {
+        ok: Boolean(s),
+        version: String(cfg.version ?? ''),
+        port: Number(cfg.port ?? 0) || null,
+        startedAt,
+        uptimeSec: Math.max(0, Math.round((Date.now() - startedAt) / 1000)),
+      },
+      /** カンバン集計（自前メトリクス） */
+      kanban: kanbanSummary(),
       checkedAt: Date.now(),
     }
   }

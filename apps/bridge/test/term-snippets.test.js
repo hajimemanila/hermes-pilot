@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { listTermSnippets, TERM_SNIPPETS } from '../src/term-snippets.js'
+import { buildTermSnippets, listTermSnippets, TERM_SNIPPETS } from '../src/term-snippets.js'
 
 test('端末スニペット: id が一意で、バーは5〜8個', () => {
   const ids = new Set(TERM_SNIPPETS.map((s) => s.id))
@@ -35,14 +35,35 @@ test('解除+再起動は drain 削除と gateway restart を順に実行する'
   assert.ok(rm >= 0 && rs > rm, s.text)
 })
 
-test('再起動系は CLI か launchctl の実在ラベルを使う', () => {
-  const byId = Object.fromEntries(TERM_SNIPPETS.map((s) => [s.id, s.text]))
-  assert.equal(byId['t-gw-restart'], 'hermes gateway restart')
-  assert.match(byId['t-dash-restart'], /ai\.hermes\.dashboard$/)
-  assert.match(byId['t-mobile-restart'], /ai\.hermes\.hermes-mobile$/)
-  const labels = ['ai.hermes.dashboard', 'ai.hermes.hermes-mobile', 'ai.hermes.dsh-web']
-  for (const l of labels) {
-    assert.ok(TERM_SNIPPETS.some((s) => s.text.includes(l)), `${l} のスニペットがない`)
+test('再起動系は CLI か、Capability で分岐したサービス管理コマンドを使う', () => {
+  const mac = buildTermSnippets({ serviceManager: 'launchd', pilotServiceUnit: 'ai.hermes.pilot' })
+  const linux = buildTermSnippets({ serviceManager: 'systemd', pilotServiceUnit: 'hermes-pilot.service' })
+  assert.equal(mac.find((s) => s.id === 't-gw-restart').text, 'hermes gateway restart')
+  assert.equal(
+    mac.find((s) => s.id === 't-pilot-restart').text,
+    'launchctl kickstart -k gui/$(id -u)/ai.hermes.pilot',
+  )
+  assert.equal(
+    linux.find((s) => s.id === 't-pilot-restart').text,
+    'systemctl --user restart hermes-pilot.service',
+  )
+  assert.match(linux.find((s) => s.id === 't-pilot-status').text, /systemctl --user status hermes-pilot\.service/)
+  assert.notEqual(
+    mac.find((s) => s.id === 't-list').text,
+    linux.find((s) => s.id === 't-list').text,
+    '一覧コマンドもサービス管理方式で分岐する',
+  )
+})
+
+test('スニペットは個人環境のサービス名・ポートを含まない（公開プラグインの条件）', () => {
+  for (const caps of [
+    { serviceManager: 'launchd', pilotServiceUnit: 'ai.hermes.pilot' },
+    { serviceManager: 'systemd', pilotServiceUnit: 'hermes-pilot.service' },
+  ]) {
+    const text = buildTermSnippets(caps)
+      .map((s) => `${s.text} ${s.note}`)
+      .join('\n')
+    assert.ok(!/\b(8787|dsh|system-ops|git-ops|nanokvm)\b/i.test(text), `個人環境の依存が残っている:\n${text}`)
   }
 })
 

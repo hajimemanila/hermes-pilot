@@ -31,6 +31,13 @@ export function SettingsPane({ overview, notify, refresh }) {
   const [sessions, setSessions] = useState([])
   const [hapticOn, setHapticOn] = useState(() => isHapticEnabled())
 
+  // リポジトリ（自動スキャン先・追加・非表示）。SPEC §5.1
+  const [repoList, setRepoList] = useState([])
+  const [scanDirs, setScanDirs] = useState([])
+  const [scanDraft, setScanDraft] = useState('')
+  const [pathDraft, setPathDraft] = useState('')
+  const [repoBusy, setRepoBusy] = useState(false)
+
   // マイスニペット
   const [custom, setCustom] = useState([])
   const [customMax, setCustomMax] = useState(12)
@@ -77,6 +84,38 @@ export function SettingsPane({ overview, notify, refresh }) {
     setDraftHot(false)
   }
 
+  const loadRepos = useCallback(async () => {
+    try {
+      const d = await api('/api/repos')
+      setRepoList(Array.isArray(d?.repos) ? d.repos : [])
+      setScanDirs(Array.isArray(d?.scanDirs) ? d.scanDirs : [])
+      return true
+    } catch (e) {
+      notify(e.message)
+      return false
+    }
+  }, [notify])
+
+  /** リポジトリ設定の書き込み（追加・削除・走査先の更新）。 */
+  const saveRepos = useCallback(
+    async ({ method = 'POST', path = '/api/repos', body, done }) => {
+      setRepoBusy(true)
+      try {
+        const d = await api(path, { method, body })
+        setRepoList(Array.isArray(d?.repos) ? d.repos : [])
+        if (Array.isArray(d?.scanDirs)) setScanDirs(d.scanDirs)
+        notify(done)
+        return true
+      } catch (e) {
+        notify(e.message)
+        return false
+      } finally {
+        setRepoBusy(false)
+      }
+    },
+    [notify],
+  )
+
   const loadAudit = useCallback(async () => {
     try {
       const d = await api('/api/audit?lines=80')
@@ -91,10 +130,11 @@ export function SettingsPane({ overview, notify, refresh }) {
   useEffect(() => {
     loadAudit()
     loadSnippets()
+    loadRepos()
     api('/api/sessions?limit=5')
       .then((d) => setSessions(d.sessions ?? []))
       .catch(() => {})
-  }, [loadAudit, loadSnippets])
+  }, [loadAudit, loadSnippets, loadRepos])
 
   const openLog = async (name) => {
     try {
@@ -107,7 +147,8 @@ export function SettingsPane({ overview, notify, refresh }) {
 
   const mem = overview?.system?.memory
   const disk = overview?.system?.disk
-  const ops = overview?.ops
+  const bridge = overview?.bridge
+  const kanbanStats = overview?.kanban
 
   return (
     <div className="pane">
@@ -129,8 +170,14 @@ export function SettingsPane({ overview, notify, refresh }) {
           <b>{disk ? `${fmtBytes(disk.free)} 空き（${disk.percent}% 使用）` : '—'}</b>
         </div>
         <div className="kv">
-          <span>SystemOps</span>
-          <b className={ops?.ok === false ? 'bad-text' : ''}>{ops ? (ops.ok ? 'Clean' : 'Blocked') : '—'}</b>
+          <span>稼働状態</span>
+          <b className={bridge?.ok === false ? 'bad-text' : ''}>
+            {bridge ? (bridge.ok ? `正常（${bridge.uptimeSec}s）` : '切断') : '—'}
+          </b>
+        </div>
+        <div className="kv">
+          <span>判断待ち</span>
+          <b>{kanbanStats ? `${kanbanStats.reviewWaiting} 件 / 稼働 ${kanbanStats.running}` : '—'}</b>
         </div>
         <div className="kv">
           <span>最終確認</span>
@@ -246,6 +293,107 @@ export function SettingsPane({ overview, notify, refresh }) {
           </div>
         ))}
         {!sessions.length ? <div className="empty">なし</div> : null}
+      </div>
+
+      <div className="list-head">
+        <span>リポジトリ（{repoList.length}）</span>
+        <button
+          className="link"
+          disabled={repoBusy}
+          onClick={async () => {
+            haptic('tap')
+            await saveRepos({ path: '/api/repos/scan', done: '再スキャンしました' })
+          }}
+        >
+          再スキャン
+        </button>
+      </div>
+      <div className="list">
+        {repoList.map((r) => (
+          <div key={r.id} className="row static">
+            <span className="row-main" style={{ minWidth: 0 }}>
+              <span className="row-title">
+                {r.label}
+                {r.source === 'custom' ? (
+                  <span className="pill" style={{ marginLeft: 8 }}>
+                    手動
+                  </span>
+                ) : null}
+              </span>
+              <span className="row-sub" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {r.path} ・ {r.source} ・ ボード {r.boards?.length ?? 0}
+              </span>
+            </span>
+            <button
+              className="link"
+              disabled={repoBusy}
+              onClick={() => saveRepos({ method: 'DELETE', path: `/api/repos/${encodeURIComponent(r.id)}`, done: '一覧から外しました' })}
+            >
+              非表示
+            </button>
+          </div>
+        ))}
+        {!repoList.length ? <div className="empty">見つかりません（下の欄で追加）</div> : null}
+      </div>
+
+      <div className="list-head">
+        <span>自動スキャン先（直下 1 階層）</span>
+      </div>
+      <div className="list">
+        {scanDirs.map((d) => (
+          <div key={d} className="row static">
+            <span className="row-main" style={{ minWidth: 0 }}>
+              <span className="row-title mono">{d}</span>
+            </span>
+            <button
+              className="link"
+              disabled={repoBusy}
+              onClick={() => saveRepos({ body: { scanDirs: scanDirs.filter((x) => x !== d) }, done: '外しました' })}
+            >
+              削除
+            </button>
+          </div>
+        ))}
+        {!scanDirs.length ? <div className="empty">未設定（下の欄で追加）</div> : null}
+      </div>
+
+      <div className="card" style={{ marginTop: 10 }}>
+        <input
+          className="inp"
+          placeholder="走査先（例: ~/Projects）"
+          maxLength={200}
+          value={scanDraft}
+          onChange={(e) => setScanDraft(e.target.value)}
+        />
+        <button
+          className="btn"
+          disabled={repoBusy || !scanDraft.trim()}
+          style={{ marginTop: 8 }}
+          onClick={async () => {
+            const next = [...scanDirs, scanDraft.trim()]
+            if (await saveRepos({ body: { scanDirs: next }, done: '走査先を追加しました' })) setScanDraft('')
+          }}
+        >
+          走査先に追加
+        </button>
+        <input
+          className="inp"
+          placeholder="リポジトリのパス（例: ~/work/my-repo）"
+          maxLength={300}
+          value={pathDraft}
+          onChange={(e) => setPathDraft(e.target.value)}
+          style={{ marginTop: 8 }}
+        />
+        <button
+          className="btn"
+          disabled={repoBusy || !pathDraft.trim()}
+          style={{ marginTop: 8 }}
+          onClick={async () => {
+            if (await saveRepos({ body: { path: pathDraft.trim() }, done: 'リポジトリを追加しました' })) setPathDraft('')
+          }}
+        >
+          リポジトリを追加
+        </button>
       </div>
 
       <div className="list-head">

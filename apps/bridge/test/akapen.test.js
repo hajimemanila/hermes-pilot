@@ -304,15 +304,11 @@ test('createFromImage は assignee と target を付けて起票し、blocked �
   const { root } = tempBoard()
   const repoA = path.join(root, 'repo-a')
   fs.mkdirSync(path.join(repoA, '.git'), { recursive: true })
-  fs.mkdirSync(path.join(root, 'plugins', 'git-ops', 'config'), { recursive: true })
-  fs.writeFileSync(
-    path.join(root, 'plugins', 'git-ops', 'config', 'repos.json'),
-    JSON.stringify({ repos: [{ id: 'hermes-mobile-pwa', label: 'Mobile', path: repoA }] }),
-  )
   const calls = []
   const api = createAkapen(
     { kanbanRoot: path.join(root, 'kanban') },
     {
+      targets: () => [{ id: 'hermes-mobile-pwa', label: 'Mobile', path: repoA }],
       runKanban: async (a) => {
         calls.push(a)
         if (a[0] === 'create') return { code: 0, out: 'Created t_abcdef12  (ready, assignee=mobile)' }
@@ -330,22 +326,21 @@ test('createFromImage は assignee と target を付けて起票し、blocked �
   assert.deepEqual(calls.find((a) => a[0] === 'block').slice(0, 3), ['block', 't_abcdef12', '注釈待ち（画像から作成）'])
 })
 
-test('targets は Git Ops の登録リポジトリだけを返し、未登録の target は拒否する', async () => {
+test('targets は渡された登録リポジトリだけを返し、未登録の target は拒否する', async () => {
   const { root } = tempBoard()
   const repoA = path.join(root, 'repo-a')
   fs.mkdirSync(path.join(repoA, '.git'), { recursive: true })
-  fs.mkdirSync(path.join(root, 'plugins', 'git-ops', 'config'), { recursive: true })
-  fs.writeFileSync(
-    path.join(root, 'plugins', 'git-ops', 'config', 'repos.json'),
-    JSON.stringify({ repos: [{ id: 'hermes-mobile-pwa', label: 'Mobile', path: repoA }, { id: 'home', label: 'Home', path: root }] }),
-  )
   const calls = []
   const api = createAkapen(
     { kanbanRoot: path.join(root, 'kanban') },
-    { runKanban: async (a) => { calls.push(a); return a[0] === 'create' ? { code: 0, out: 'Created t_11112222' } : { code: 0, out: 'ok' } } },
+    {
+      // 一覧の出所は repos.js（ここでは差し替え）。akapen 側は絞り込みをしない
+      targets: () => [{ id: 'hermes-mobile-pwa', label: 'Mobile', path: repoA }],
+      runKanban: async (a) => { calls.push(a); return a[0] === 'create' ? { code: 0, out: 'Created t_11112222' } : { code: 0, out: 'ok' } },
+    },
   )
   const list = api.targets()
-  assert.equal(list.length, 1, 'git の無いパスとホームは除外')
+  assert.equal(list.length, 1)
   assert.equal(list[0].id, 'hermes-mobile-pwa')
 
   const png = 'data:image/png;base64,' + Buffer.from('x').toString('base64')
@@ -371,11 +366,6 @@ test('library は取得日時とリポジトリ名を返す（画像にリポジ
   const { root, workdir } = tempBoard()
   const repoA = path.join(root, 'repo-a')
   fs.mkdirSync(path.join(repoA, '.git'), { recursive: true })
-  fs.mkdirSync(path.join(root, 'plugins', 'git-ops', 'config'), { recursive: true })
-  fs.writeFileSync(
-    path.join(root, 'plugins', 'git-ops', 'config', 'repos.json'),
-    JSON.stringify({ repos: [{ id: 'demo-repo', label: 'Demo', path: repoA }, { id: 'home', label: 'Home', path: root }] }),
-  )
   // 赤ペンのタスク本文: image= は完全一致、label= は撮影名の前方一致に使う
   const db = new DatabaseSync(path.join(root, 'kanban', 'boards', 'mobile', 'kanban.db'))
   db.prepare('UPDATE tasks SET body = ? WHERE id = ?').run(
@@ -389,7 +379,10 @@ test('library は取得日時とリポジトリ名を返す（画像にリポジ
   fs.writeFileSync(path.join(workdir, 'shots', 'unknown-shot.png'), 'x')
   fs.writeFileSync(path.join(workdir, 'library', 'chat', '20261112-2105-shot.png'), 'x')
 
-  const api = createAkapen({ kanbanRoot: path.join(root, 'kanban') })
+  const api = createAkapen(
+    { kanbanRoot: path.join(root, 'kanban') },
+    { targets: () => [{ id: 'demo-repo', label: 'Demo', path: repoA }] },
+  )
   const byName = Object.fromEntries(api.library(20).map((i) => [i.name, i]))
 
   assert.deepEqual(byName['cockpit-03-202611122105-1.png'].repo, { id: 'demo-repo', label: 'Demo' }, 'image= の完全一致')
@@ -519,15 +512,11 @@ test('createFromImage は chat= を本文に付ける（注釈タスクの完了
   const { root } = tempBoard()
   const repoA = path.join(root, 'repo-a')
   fs.mkdirSync(path.join(repoA, '.git'), { recursive: true })
-  fs.mkdirSync(path.join(root, 'plugins', 'git-ops', 'config'), { recursive: true })
-  fs.writeFileSync(
-    path.join(root, 'plugins', 'git-ops', 'config', 'repos.json'),
-    JSON.stringify({ repos: [{ id: 'hermes-mobile-pwa', label: 'Mobile', path: repoA }] }),
-  )
   const calls = []
   const api = createAkapen(
     { kanbanRoot: path.join(root, 'kanban') },
     {
+      targets: () => [{ id: 'hermes-mobile-pwa', label: 'Mobile', path: repoA }],
       runKanban: async (a) => {
         calls.push(a)
         if (a[0] === 'create') return { code: 0, out: 'Created t_abcdef12  (ready, assignee=mobile)' }

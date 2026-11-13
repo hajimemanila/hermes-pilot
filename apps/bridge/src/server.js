@@ -21,6 +21,7 @@ import { createUsage } from './usage.js'
 import { createLive } from './live.js'
 import { createInbox } from './inbox.js'
 import { createRepos } from './repos.js'
+import { getCapabilities } from './capabilities.js'
 import { checkFrame, rejectionFrame } from './chat-profile.js'
 import { readTailText } from './tail.js'
 
@@ -41,11 +42,15 @@ function safeRequire(name) {
 }
 
 const cfg = loadConfig()
+const capabilities = getCapabilities()
 const auth = createAuth(cfg)
 const hermes = createHermesClient(cfg)
 const kanban = createKanban(cfg)
-const akapen = createAkapen(cfg)
-const ops = createOps(cfg, hermes, auth)
+// リポジトリ（作業ディレクトリ）↔ ボード。一覧は repos.json ＋ 1 階層スキャン
+// ＋ ボードの default_workdir ＋ 直近セッション cwd の統合（SPEC §5.1）
+const repos = createRepos(cfg, { boards: () => kanban.boards() })
+const akapen = createAkapen(cfg, { targets: () => repos.targets() })
+const ops = createOps(cfg, hermes, auth, { kanban })
 const gitinfo = createGitInfo(cfg)
 const discord = createDiscord(cfg)
 const search = createSearch(cfg)
@@ -92,8 +97,6 @@ const capture = createCapture(cfg)
 const usage = createUsage(cfg)
 const live = createLive(cfg, kanban)
 const inbox = createInbox(cfg, kanban)
-// リポジトリ（作業ディレクトリ）↔ ボード。一覧の出所は Git Ops の repos.json ひとつ
-const repos = createRepos(cfg, { targets: () => akapen.targets(), boards: () => kanban.boards() })
 // 起動時にコミットサマリを温める（初回のタスク一覧を待たせない）
 gitinfo.warm().catch(() => {})
 
@@ -283,30 +286,61 @@ async function handleApi(req, res, url) {
   if (a === 'overview') {
     const data = await ops.overview()
     // 実行中タスク数（アプリバッジ用）
-    try {
-      data.runningTasks = kanban
-        .boards()
-        .reduce((n, b) => n + Number(b.counts?.running ?? 0), 0)
-    } catch {
-      data.runningTasks = 0
-    }
+    data.runningTasks = Number(data.kanban?.running ?? 0)
     // 緊急停止（ESTOP）の状態
     data.paused = ops.paused()
     return sendJson(res, 200, data)
   }
 
+  // 実行環境の Capability（OS・サービス管理・CLI の有無）。SPEC §5.3
+  if (a === 'capabilities') {
+    return sendJson(res, 200, capabilities)
+  }
+
   // --- リポジトリ（作業ディレクトリ）とボード -------------------------------
-  // /api/repos                … 一覧（Git Ops の repos.json × カンバンボード）
-  // POST /api/repos/:id/board … 板が無いリポジトリにボードを 1 つ作る（UI が確認してから呼ぶ）
+  // GET    /api/repos            … 統合一覧 ＋ scanDirs
+  // POST   /api/repos            … { path, label? } で追加 / { scanDirs } で走査先を更新
+  // POST   /api/repos/scan       … 即時再スキャン（キャッシュ TTL 30 秒を飛ばす）
+  // POST   /api/repos/:id/board  … 板が無いリポジトリにボードを 1 つ作る
+  // DELETE /api/repos/:id        … custom から削除 / 自動検出は hidden へ
   if (a === 'repos') {
-    if (!b) return sendJson(res, 200, { repos: repos.list() })
-    if (c === 'board' && req.method === 'POST') {
+    if (!b && req.method === 'GET') {
+      return sendJson(res, 200, { repos: repos.list(), scanDirs: repos.scanDirs() })
+    }
+    if (!b && req.method === 'POST') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+      }
+      const body = await readJson(req)
+      const r = Array.isArray(body?.scanDirs) ? repos.setScanDirs(body.scanDirs) : repos.add(body)
+      auth.audit({ kind: 'repos.save', ok: Boolean(r.ok), path: body?.path ?? null })
+      if (!r.ok) return sendJson(res, 400, r)
+      return sendJson(res, 201, { ...r, repos: repos.list({ force: true }), scanDirs: repos.scanDirs() })
+    }
+    if (b === 'scan' && req.method === 'POST') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+      }
+      const r = repos.scan()
+      auth.audit({ kind: 'repos.scan', count: r.repos.length })
+      return sendJson(res, 200, r)
+    }
+    if (b && c === 'board' && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
         return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
       }
       const r = await repos.createBoard(b)
       auth.audit({ kind: 'repos.board.create', repo: b, board: r.board?.slug ?? null, ok: Boolean(r.ok) })
       return sendJson(res, r.ok ? 201 : 400, r)
+    }
+    if (b && req.method === 'DELETE') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendJson(res, 429, { error: { message: '操作が多すぎます' } })
+      }
+      const r = repos.remove(b)
+      auth.audit({ kind: 'repos.remove', repo: b, hidden: r.hidden ?? null, ok: Boolean(r.ok) })
+      if (!r.ok) return sendJson(res, 400, r)
+      return sendJson(res, 200, { ...r, repos: repos.list({ force: true }) })
     }
     return sendJson(res, 404, { error: { message: `unknown endpoint: ${url.pathname}` } })
   }
@@ -733,7 +767,7 @@ async function handleApi(req, res, url) {
 
   // --- 端末の定型コマンド ---------------------------------------------------
   if (a === 'snippets' && b === 'term' && req.method === 'GET') {
-    return sendJson(res, 200, { snippets: listTermSnippets() })
+    return sendJson(res, 200, { snippets: listTermSnippets(capabilities) })
   }
 
   // --- 定型スニペット ------------------------------------------------------

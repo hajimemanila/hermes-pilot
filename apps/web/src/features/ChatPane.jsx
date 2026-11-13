@@ -14,6 +14,7 @@ import {
   writePendingRepo,
 } from '../lib/repoPicker.js'
 import { pickResumeTarget, recentSessions } from '../lib/chatResume.js'
+import { orderProfiles } from '../lib/profileOrder.js'
 import { foldTranscriptMessages, mergeProgress, shortenPath } from '../lib/toolProgress.js'
 import { isWaiting } from '../lib/akapenView.js'
 import { api } from '../api.js'
@@ -1197,13 +1198,11 @@ export function ChatPane({
   const hotSnippets = snippets.filter((s) => s.hot).slice(0, 8)
 
   /**
-   * 新しい会話で選べるプロファイル（既定を先頭・毎回同じ順）。
+   * 新しい会話で選べるプロファイル。
+   * 並び順は (1) DEFAULT_PROFILE (2) 'default' (3) 直近利用順 (4) 名前順（SPEC §5.3）。
+   * 直近利用順はセッション一覧の最終活動時刻から作る（プロファイル名の決め打ちはしない）。
    */
-  const orderedProfiles = useMemo(() => {
-    const list = profiles.length ? profiles : [DEFAULT_PROFILE]
-    const rank = (p) => (p === DEFAULT_PROFILE ? 0 : p === 'default' ? 1 : p === 'nanokvm' ? 2 : 3)
-    return [...new Set(list)].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
-  }, [profiles])
+  const orderedProfiles = useMemo(() => orderProfiles(profiles, sessions, DEFAULT_PROFILE), [profiles, sessions])
 
   /** 前回選んだリポジトリ（Q4=A: 次回の初期値。シートを開くたびに読み直す）。 */
   const lastRepo = useMemo(() => readLastRepo(), [profileSheet])
@@ -1855,11 +1854,9 @@ export function ChatPane({
                     <span className="row-sub">
                       {p === 'default'
                         ? '普段の作業（Discord と同じプロファイル）'
-                        : p === 'mobile'
-                          ? 'PWA の既定（赤ペン・自走実装）'
-                          : p === 'nanokvm'
-                            ? '実機・nanoKVM 系の隔離プロファイル'
-                            : `${p} プロファイル`}
+                        : p === DEFAULT_PROFILE
+                          ? 'この端末の既定プロファイル'
+                          : `${p} プロファイル`}
                     </span>
                   </span>
                   <Icon name={repoPick === p ? 'check' : 'chevron'} size={16} />

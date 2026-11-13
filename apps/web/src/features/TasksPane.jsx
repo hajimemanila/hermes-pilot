@@ -342,7 +342,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
     }
   }
 
-  const ops = overview?.ops
+  const bridge = overview?.bridge
   const mem = overview?.system?.memory
   const disk = overview?.system?.disk
   const running = tasks.filter((t) => t.status === 'running').length
@@ -367,9 +367,9 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
       ) : null}
 
       <div className="strip">
-        <div className={`stat ${ops?.ok === false ? 'bad' : ops ? 'good' : ''}`}>
-          <span className="stat-k">SystemOps</span>
-          <span className="stat-v">{ops ? (ops.ok ? 'Clean' : 'Blocked') : '—'}</span>
+        <div className={`stat ${bridge?.ok === false ? 'bad' : bridge ? 'good' : ''}`}>
+          <span className="stat-k">ブリッジ</span>
+          <span className="stat-v">{bridge ? (bridge.ok ? '正常' : '切断') : '—'}</span>
         </div>
         <button className="stat" onClick={() => setUsageOpen(true)} aria-label="使用量の内訳">
           <span className="stat-k">24h</span>

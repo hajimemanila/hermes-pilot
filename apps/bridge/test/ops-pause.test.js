@@ -97,3 +97,56 @@ test('CLI が失敗したら例外（statusCode 502）', async () => {
   const { o } = ops({ runner: async () => ({ code: 1, out: 'boom' }) })
   await assert.rejects(() => o.pause('x'), (e) => e.statusCode === 502 && /boom/.test(e.message))
 })
+
+test('overview は Hermes 標準 API だけを叩く（外部プラグインのエンドポイントを呼ばない）', async () => {
+  const calls = []
+  const o = createOps(
+    { hermesHome: home(), version: '0.1.0', port: 4097 },
+    {
+      call: async (pathname) => {
+        calls.push(pathname)
+        if (pathname === '/api/status') return { status: 200, data: { version: '1.2.3', model: 'm' } }
+        return { status: 200, data: { cpu_count: 8 } }
+      },
+    },
+    fakeAuth(),
+    { kanban: { boards: () => [] } },
+  )
+  const ov = await o.overview()
+  assert.deepEqual(calls.sort(), ['/api/status', '/api/system/stats'])
+  assert.ok(!calls.some((c) => c.includes('/plugins/')), '外部プラグインは叩かない')
+  assert.equal(ov.hermes.version, '1.2.3')
+  assert.equal(ov.system.cpuCount, 8)
+  assert.equal(ov.bridge.ok, true)
+  assert.equal(ov.bridge.port, 4097)
+  assert.ok(ov.bridge.uptimeSec >= 0)
+  assert.equal(ov.ops, undefined, '旧 ops ブロックは返さない')
+})
+
+test('overview のカンバン集計は自前（稼働・判断待ち）で、板が落ちても 0 で返す', async () => {
+  const boards = [
+    { slug: 'a', counts: { running: 2, blocked: 1, ready: 3 } },
+    { slug: 'b', counts: { running: 1, blocked: 2 } },
+    { slug: 'old', archived: true, counts: { running: 9, blocked: 9 } },
+  ]
+  const o = createOps(
+    { hermesHome: home(), version: '0.1.0', port: 4097 },
+    { call: async () => ({ status: 500, data: null }) },
+    fakeAuth(),
+    { kanban: { boards: () => boards } },
+  )
+  const ov = await o.overview()
+  assert.deepEqual(ov.kanban, { boards: 2, running: 3, blocked: 3, ready: 3, reviewWaiting: 3 })
+  assert.equal(ov.hermes, null, 'status が落ちても他は返す')
+  assert.equal(ov.bridge.ok, false)
+
+  const broken = createOps({ hermesHome: home() }, { call: async () => ({ status: 200, data: {} }) }, fakeAuth(), {
+    kanban: {
+      boards: () => {
+        throw new Error('db locked')
+      },
+    },
+  })
+  const ov2 = await broken.overview()
+  assert.deepEqual(ov2.kanban, { boards: 0, running: 0, blocked: 0, ready: 0, reviewWaiting: 0 })
+})

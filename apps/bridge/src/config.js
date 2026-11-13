@@ -11,6 +11,9 @@ export function loadConfig() {
   const home = process.env.HOME ?? os.homedir()
   const hermesHome = process.env.HERMES_HOME ?? path.join(home, '.hermes')
   const dataDir = process.env.HM_DATA ?? path.join(hermesHome, 'mobile-pwa')
+  // 公開プラグインのデータ先（D1）。リポジトリ設定はここに置く（SPEC §3.2）
+  const pluginDataDir =
+    process.env.HP_DATA_DIR ?? path.join(hermesHome, 'plugin-data', 'hermes-pilot')
   return {
     version: VERSION,
     home,
@@ -25,6 +28,9 @@ export function loadConfig() {
     stateDb: process.env.HM_STATE_DB ?? path.join(hermesHome, 'state.db'),
     logDir: path.join(hermesHome, 'logs'),
     dataDir,
+    pluginDataDir,
+    /** リポジトリ設定（scanDirs / pinned / hidden / custom） */
+    reposPath: process.env.HP_REPOS_JSON ?? path.join(pluginDataDir, 'repos.json'),
     tokenPath: path.join(dataDir, 'token'),
     auditPath: path.join(dataDir, 'audit.jsonl'),
     cookieName: 'hm_session',

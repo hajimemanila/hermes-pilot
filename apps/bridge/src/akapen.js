@@ -717,30 +717,19 @@ export function createAkapen(cfg, opts = {}) {
 
 
   /**
-   * 注釈の反映先として選べるリポジトリ（Git Ops の repos.json が唯一の一覧）。
+   * 注釈の反映先として選べるリポジトリ（`repos.list()` が唯一の一覧）。
    * 自由入力は受けない（存在しないパスへ誤って起票しないため）。
    */
   function targets() {
-    const root = path.dirname(cfg.kanbanRoot || path.join(os.homedir(), '.hermes', 'kanban'))
-    const cfgPath = path.join(root, 'plugins', 'git-ops', 'config', 'repos.json')
-    let data = null
-    try {
-      data = JSON.parse(fs.readFileSync(cfgPath, 'utf8'))
-    } catch {
-      return []
-    }
-    const list = Array.isArray(data) ? data : data?.repos || []
+    const list = typeof opts.targets === 'function' ? opts.targets() : []
+    if (!Array.isArray(list)) return []
     const out = []
     for (const r of list) {
-      const raw = String(r?.path || '')
-      if (!raw) continue
-      const abs = path.resolve(raw.replace(/^~/, os.homedir()))
-      // ホームディレクトリ自体や .git の無いものは候補にしない
-      if (abs === os.homedir()) continue
-      if (!fs.existsSync(path.join(abs, '.git'))) continue
-      out.push({ id: String(r.id || ''), label: String(r.label || r.id || abs), path: abs })
+      const abs = String(r?.path ?? '')
+      const id = String(r?.id ?? '').trim()
+      if (!abs || !id) continue
+      out.push({ id, label: String(r.label ?? id), path: abs })
     }
-    out.sort((a, b) => (a.id === 'hermes-mobile-pwa' ? -1 : b.id === 'hermes-mobile-pwa' ? 1 : a.label.localeCompare(b.label)))
     return out
   }
 
@@ -754,7 +743,7 @@ export function createAkapen(cfg, opts = {}) {
   }
 
   /**
-   * 反映先パス → Git Ops の登録リポジトリ（**最長一致**）。
+   * 反映先パス → 登録済みリポジトリ（**最長一致**）。
    *
    * macOS は大文字小文字を区別しないので比較は小文字で行う（実測: ボードの
    * `target=` は `~/projects/hermes-mobile-pwa` と `~/Projects/hermes-mobile-pwa`
@@ -1077,7 +1066,7 @@ export function createAkapen(cfg, opts = {}) {
       return {
         ok: false,
         code: 'UNKNOWN_TARGET',
-        message: '対象リポジトリは Git Ops に登録済みのものから選んでください',
+        message: '対象リポジトリは登録済みのものから選んでください',
         targets: targets().map((x) => ({ id: x.id, label: x.label })),
       }
     }
