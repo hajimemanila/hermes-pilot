@@ -17,21 +17,13 @@ import {
   getLang,
   normalizePref,
   onLangChange,
+  readStoredPref,
   setLang as setActiveLang,
   t as translateCurrent,
   translate,
 } from './lang.js'
 
 const I18nContext = createContext(null)
-
-/** `localStorage['hm.lang']` を読む（読めない環境では null）。 */
-function readStoredPref() {
-  try {
-    return normalizePref(localStorage.getItem(STORAGE_KEY))
-  } catch {
-    return null
-  }
-}
 
 /** `localStorage` へ保存する（失敗は無視）。 */
 function writeStoredPref(pref) {
@@ -71,6 +63,15 @@ export function I18nProvider({ children, initial }) {
     setPrefState(normalized)
     writeStoredPref(normalized)
     setActiveLang(normalized === 'auto' ? detectLang('auto') : normalized)
+    // スニペットは言語を URL に載せて取り直す（リロードなしで切り替える・SPEC §3.1）
+    try {
+      if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+        window.dispatchEvent(new Event('hm:snippets'))
+        window.dispatchEvent(new Event('hm:term-snippets'))
+      }
+    } catch {
+      /* noop */
+    }
   }, [])
 
   const value = useMemo(

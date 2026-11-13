@@ -11,8 +11,15 @@ import { createKanban } from './kanban.js'
 import { createReview, injectReviewBridge } from './review.js'
 import { createReviewWatcher } from './review-watcher.js'
 import { createOps } from './ops.js'
-import { listSnippets, normalizeCustom, CUSTOM_MAX } from './snippets.js'
-import { listTermSnippets } from './term-snippets.js'
+import {
+  CUSTOM_MAX,
+  HOT_LIMIT,
+  allSnippets,
+  readSnippetStore,
+  writeSnippetStore,
+  BUILTIN_IDS,
+} from './snippets.js'
+import { allTermSnippets, TERM_BUILTIN_IDS } from './term-snippets.js'
 import { createGitInfo } from './gitinfo.js'
 import { createDiscord } from './discord.js'
 import { createSearch } from './search.js'
@@ -138,23 +145,65 @@ const inbox = createInbox(cfg, kanban)
 // 起動時にコミットサマリを温める（初回のタスク一覧を待たせない）
 gitinfo.warm().catch(() => {})
 
-// スニペット（ユーザー定義は小さな JSON に保存する）
-const snippetsPath = path.join(cfg.dataDir, 'snippets.json')
-function readCustomSnippets() {
-  try {
-    const d = JSON.parse(fs.readFileSync(snippetsPath, 'utf8'))
-    return normalizeCustom(d?.custom ?? [])
-  } catch {
-    return []
-  }
+// スニペット（組み込みの Hot/Hidden 上書き + ユーザー定義を小さな JSON に保存する・SPEC §3.4）
+const SNIPPET_STORE = {
+  chat: { file: path.join(cfg.dataDir, 'snippets.json'), ids: BUILTIN_IDS, withRun: false },
+  term: { file: path.join(cfg.dataDir, 'term-snippets.json'), ids: TERM_BUILTIN_IDS, withRun: true },
 }
-function writeCustomSnippets(list) {
-  fs.mkdirSync(cfg.dataDir, { recursive: true })
-  const normalized = normalizeCustom(list)
-  const tmp = `${snippetsPath}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify({ version: 1, custom: normalized }, null, 2), { mode: 0o600 })
-  fs.renameSync(tmp, snippetsPath)
-  return normalized
+
+/**
+ * スニペット設定を読む（version 1 は読取時に version 2 へ補完）。
+ * @param {'chat'|'term'} kind 種類
+ * @returns {{version: 2, overrides: Record<string, object>, custom: Array<object>}} 設定
+ */
+function loadSnippetStore(kind) {
+  const s = SNIPPET_STORE[kind]
+  return readSnippetStore(s.file, { ids: s.ids, withRun: s.withRun, max: CUSTOM_MAX })
+}
+
+/**
+ * スニペット設定を保存する（`reset: true` で既定に戻す）。
+ * @param {'chat'|'term'} kind 種類
+ * @param {{custom?: unknown, overrides?: unknown, reset?: boolean}} [body] 変更内容
+ * @returns {{version: 2, overrides: Record<string, object>, custom: Array<object>}} 保存した設定
+ */
+function saveSnippetStore(kind, body = {}) {
+  const s = SNIPPET_STORE[kind]
+  const prev = loadSnippetStore(kind)
+  const reset = body?.reset === true
+  const hasCustom = body != null && Object.prototype.hasOwnProperty.call(body, 'custom')
+  const hasOverrides = body != null && Object.prototype.hasOwnProperty.call(body, 'overrides')
+  return writeSnippetStore(
+    s.file,
+    {
+      custom: reset ? [] : hasCustom ? body.custom : prev.custom,
+      overrides: reset ? {} : hasOverrides ? body.overrides : prev.overrides,
+    },
+    { ids: s.ids, withRun: s.withRun, max: CUSTOM_MAX },
+  )
+}
+
+/**
+ * API 応答（`{snippets, allSnippets, overrides, custom, customMax, hotLimit, lang}`）。
+ * @param {'chat'|'term'} kind 種類
+ * @param {'en'|'ja'} lang 表示言語
+ * @returns {Record<string, unknown>} 応答
+ */
+function snippetPayload(kind, lang) {
+  const store = loadSnippetStore(kind)
+  const all =
+    kind === 'term'
+      ? allTermSnippets(capabilities, lang, store.overrides, store.custom)
+      : allSnippets(store.custom, lang, store.overrides)
+  return {
+    snippets: all.filter((s) => !s.hidden),
+    allSnippets: all,
+    overrides: store.overrides,
+    custom: store.custom,
+    customMax: CUSTOM_MAX,
+    hotLimit: HOT_LIMIT,
+    lang,
+  }
 }
 
 const MIME = {
@@ -902,27 +951,32 @@ async function handleApi(req, res, url) {
   }
 
   // --- 端末の定型コマンド ---------------------------------------------------
-  if (a === 'snippets' && b === 'term' && req.method === 'GET') {
-    return sendJson(res, 200, { snippets: listTermSnippets(capabilities, langOf(req, url)) })
+  if (a === 'snippets' && b === 'term') {
+    if (req.method === 'GET') return sendJson(res, 200, snippetPayload('term', langOf(req, url)))
+    if (req.method === 'PUT') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendError(res, 429, 'RATE_LIMITED')
+      }
+      const body = await readJson(req)
+      const saved = saveSnippetStore('term', body ?? {})
+      auth.audit({ kind: 'term_snippets.save', count: saved.custom.length, overrides: Object.keys(saved.overrides).length })
+      return sendJson(res, 200, snippetPayload('term', langOf(req, url)))
+    }
   }
 
   // --- 定型スニペット ------------------------------------------------------
   if (a === 'snippets') {
     if (req.method === 'GET') {
-      return sendJson(res, 200, {
-        snippets: listSnippets(readCustomSnippets(), langOf(req, url)),
-        customMax: CUSTOM_MAX,
-        lang: langOf(req, url),
-      })
+      return sendJson(res, 200, snippetPayload('chat', langOf(req, url)))
     }
     if (req.method === 'PUT') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
         return sendError(res, 429, 'RATE_LIMITED')
       }
       const body = await readJson(req)
-      const saved = writeCustomSnippets(body?.custom ?? [])
-      auth.audit({ kind: 'snippets.save', count: saved.length })
-      return sendJson(res, 200, { custom: saved, snippets: listSnippets(saved, langOf(req, url)) })
+      const saved = saveSnippetStore('chat', body ?? {})
+      auth.audit({ kind: 'snippets.save', count: saved.custom.length, overrides: Object.keys(saved.overrides).length })
+      return sendJson(res, 200, snippetPayload('chat', langOf(req, url)))
     }
   }
 

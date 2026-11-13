@@ -17,8 +17,10 @@ test('スニペット: id と hot は言語で変わらず、文面だけが変�
   assert.deepEqual(listSnippets([]), en)
   const diff = en.filter((s, i) => s.label !== ja[i].label || s.text !== ja[i].text)
   assert.ok(diff.length >= en.length - 2, `言語差がほぼ無い: ${en.length - diff.length} 件が同一`)
-  assert.equal(ja.find((s) => s.id === 'summary').label, 'まとめ')
-  assert.equal(en.find((s) => s.id === 'summary').label, 'Summary')
+  assert.equal(ja.find((s) => s.id === 'summary').label, '📝 要点まとめ')
+  assert.equal(en.find((s) => s.id === 'summary').label, '📝 Summary')
+  assert.equal(ja.find((s) => s.id === 'quick-review').label, '📋 Quick Review起票')
+  assert.equal(en.find((s) => s.id === 'quick-review').label, '📋 Quick Review')
 })
 
 test('スニペット: プレースホルダ情報は両言語で保たれる', () => {
@@ -47,10 +49,10 @@ test('端末スニペット: ラベル・説明は言語で変わり、コマン
   const ja = listTermSnippets(caps, 'ja')
   assert.deepEqual(en.map((s) => s.id), ja.map((s) => s.id))
   assert.deepEqual(en.map((s) => s.text), ja.map((s) => s.text))
-  assert.equal(en.find((s) => s.id === 't-gw-status').label, 'GW status')
+  assert.equal(en.find((s) => s.id === 't-gw-status').label, 'GW Status')
   assert.equal(ja.find((s) => s.id === 't-gw-status').label, 'GW状態')
   assert.match(ja.find((s) => s.id === 't-gw-status').note, /gateway/)
-  assert.match(en.find((s) => s.id === 't-gw-status').note, /Gateway/)
+  assert.match(en.find((s) => s.id === 't-gw-status').note, /gateway/)
   // 既定は英語
   assert.deepEqual(listTermSnippets(caps), en)
   assert.deepEqual(buildTermSnippets(caps, 'xx').map((s) => s.label), en.map((s) => s.label))

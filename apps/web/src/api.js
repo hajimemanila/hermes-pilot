@@ -1,7 +1,20 @@
 /** ブラウザ側 API クライアント。同一オリジン（:8444）なので Cookie がそのまま乗る。 */
-import { getLang } from './i18n/lang.js'
+import { getLang, translate } from './i18n/lang.js'
 
 export const BASE = ''
+
+/**
+ * エラーコードを現在の言語の表示文にする（辞書に無ければそのまま）。
+ * @param {string} code コード
+ * @param {string} fallback 既定文
+ * @returns {string} 表示文
+ */
+function localizedMessage(code, fallback) {
+  if (!code) return fallback
+  const key = `err.${code}`
+  const text = translate(getLang(), key)
+  return text === key ? fallback : text
+}
 
 /**
  * JSON リクエスト。表示言語を `Accept-Language` で送る（SPEC §6.1）。
@@ -23,8 +36,8 @@ export async function api(path, { method = 'GET', body } = {}) {
       body: body !== undefined ? JSON.stringify(body) : undefined,
     })
   } catch {
-    // 表示文は呼び出し側が `t('err.' + err.code)` で自言語化する（§6.3）
-    const err = new Error('Cannot reach the bridge')
+    // 表示文は `t('err.OFFLINE')`（SW の 503 も同じコードを返す・SPEC §1.2 G4）
+    const err = new Error(localizedMessage('OFFLINE', 'Cannot reach the bridge'))
     err.code = 'OFFLINE'
     throw err
   }
@@ -43,9 +56,10 @@ export async function api(path, { method = 'GET', body } = {}) {
       legacy?.message ??
       data?.detail ??
       `HTTP ${res.status}`
-    const err = new Error(message)
+    const code = data?.code ?? legacy?.code ?? null
+    const err = new Error(code === 'OFFLINE' ? localizedMessage('OFFLINE', message) : message)
     err.status = res.status
-    err.code = data?.code ?? legacy?.code ?? null
+    err.code = code
     err.params = data?.params ?? null
     throw err
   }

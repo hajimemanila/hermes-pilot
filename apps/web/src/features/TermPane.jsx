@@ -16,7 +16,7 @@ import { useI18n } from '../i18n/index.js'
  *   長押し = 挿入して実行（`run: true` のものだけ）
  */
 export function TermPane({ notify }) {
-  const { t } = useI18n()
+  const { lang, t } = useI18n()
   const tRef = useRef(t)
   tRef.current = t
   const hostRef = useRef(null)
@@ -105,12 +105,27 @@ export function TermPane({ notify }) {
     }
   }, [])
 
-  // スニペットを読む（失敗してもターミナルは使える）
+  // スニペットを読む（失敗してもターミナルは使える）。言語は URL に明示する（SPEC §3.1）
+  const langRef = useRef(lang)
+  langRef.current = lang
   useEffect(() => {
-    api('/api/snippets/term')
-      .then((d) => setSnippets(d.snippets ?? []))
-      .catch(() => {})
-  }, [])
+    let cancelled = false
+    const load = () => {
+      api(`/api/snippets/term?lang=${encodeURIComponent(lang)}`)
+        .then((d) => {
+          if (!cancelled && langRef.current === lang) setSnippets(d.snippets ?? [])
+        })
+        .catch(() => {})
+    }
+    load()
+    window.addEventListener('hm:term-snippets', load)
+    window.addEventListener('hm:lang', load)
+    return () => {
+      cancelled = true
+      window.removeEventListener('hm:term-snippets', load)
+      window.removeEventListener('hm:lang', load)
+    }
+  }, [lang])
 
   /** バーが増減したら PTY の桁数を合わせ直す。 */
   useEffect(() => {

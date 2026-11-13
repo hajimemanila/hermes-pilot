@@ -160,7 +160,7 @@ export function ChatPane({
   onConsumedOpen,
 }) {
   // 言語切替で再描画させるための購読（翻訳はモジュール側の t が現在の言語を読む）
-  useI18n()
+  const { lang } = useI18n()
   const [sessions, setSessions] = useState([])
   const [sid, setSid] = useState(null)
   const [storedSid, setStoredSid] = useState(null)
@@ -289,21 +289,30 @@ export function ChatPane({
     return list
   }, [])
 
-  /** 定型スニペットを読み込む。 */
+  /** 定型スニペットを読み込む（言語を URL に明示する・SPEC §3.1）。 */
+  const langRef = useRef(lang)
+  langRef.current = lang
   const loadSnippets = useCallback(async () => {
+    const at = lang
     try {
-      const d = await api('/api/snippets')
+      const d = await api(`/api/snippets?lang=${encodeURIComponent(at)}`)
+      // 遅れて届いた別言語の応答で上書きしない
+      if (langRef.current !== at) return
       setSnippets(d.snippets ?? [])
     } catch {
       /* 取れなくても入力は使える */
     }
-  }, [])
+  }, [lang])
 
   useEffect(() => {
     loadSnippets()
     const onUpdate = () => loadSnippets()
     window.addEventListener('hm:snippets', onUpdate)
-    return () => window.removeEventListener('hm:snippets', onUpdate)
+    window.addEventListener('hm:lang', onUpdate)
+    return () => {
+      window.removeEventListener('hm:snippets', onUpdate)
+      window.removeEventListener('hm:lang', onUpdate)
+    }
   }, [loadSnippets])
 
   /** state.db のツール実行履歴を会話ブロックへ復元する（再接続・切替後も足跡を残す）。 */
@@ -1633,7 +1642,7 @@ export function ChatPane({
             {hotSnippets.map((s) => (
               <button
                 key={s.id}
-                className="snippet-chip"
+                className={`snippet-chip${s.trigger ? ' trigger' : ''}`}
                 disabled={streaming}
                 title={s.text}
                 onPointerDown={() => {

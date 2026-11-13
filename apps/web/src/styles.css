@@ -1218,6 +1218,16 @@ button.stat:active {
   color: var(--accent);
 }
 
+/* 意思決定トリガー（Quick Review / Annotate Shot）。ティール＋アンバーのアクセント枠（SPEC §5.3） */
+.snippet-chip.trigger {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--surface), var(--surface)) padding-box,
+    linear-gradient(90deg, var(--accent), #f5b32d) border-box;
+  color: var(--text);
+  font-weight: 600;
+}
+
 .snippet-chip[disabled] {
   opacity: 0.4;
 }

@@ -149,3 +149,62 @@ test('フォーマッタは Intl で言語に追従する', () => {
   assert.notEqual(fmtDateTime(d, {}, 'ja'), fmtDateTime(d, {}, 'en'))
   setLocale('en')
 })
+
+test('スニペット編集 UI のキーがあり、err.OFFLINE は両言語で訳される', () => {
+  const required = [
+    'settings.snippets',
+    'settings.snippetChat',
+    'settings.snippetTerm',
+    'settings.snippetBuiltin',
+    'settings.snippetHot',
+    'settings.snippetHide',
+    'settings.snippetShow',
+    'settings.snippetReset',
+    'settings.snippetResetDone',
+    'settings.snippetAddTitle',
+    'settings.snippetAdd',
+    'settings.snippetEditTitle',
+    'settings.snippetEdit',
+    'settings.snippetSave',
+    'settings.snippetCancel',
+    'settings.snippetRun',
+    'settings.snippetCommandPlaceholder',
+    'settings.snippetHint',
+    'settings.customSnippets',
+    'err.OFFLINE',
+  ]
+  const missing = required.filter((k) => !(k in en) || !(k in ja))
+  assert.deepEqual(missing, [])
+  // SW の 503 `{ok:false, code:'OFFLINE'}` はフロントで `t('err.OFFLINE')` にする（G4）
+  setLang('en')
+  assert.equal(translate('en', 'err.OFFLINE'), 'Cannot reach the bridge')
+  setLang('ja')
+  assert.match(translate('ja', 'err.OFFLINE'), /ブリッジ/)
+  setLang('en')
+})
+
+test('setLang は hm:lang を発火する（スニペットをリロードなしで切り替える・SPEC §3.1）', () => {
+  const events = []
+  const prev = globalThis.window
+  globalThis.window = {
+    dispatchEvent: (e) => {
+      events.push(e)
+      return true
+    },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }
+  try {
+    setLang('en')
+    setLang('ja')
+    const last = events[events.length - 1]
+    assert.equal(last.type, 'hm:lang')
+    assert.equal(last.detail.lang, 'ja')
+    setLang('en')
+    assert.equal(getLang(), 'en')
+  } finally {
+    if (prev === undefined) delete globalThis.window
+    else globalThis.window = prev
+    setLang('en')
+  }
+})

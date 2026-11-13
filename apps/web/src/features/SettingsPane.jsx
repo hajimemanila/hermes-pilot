@@ -80,8 +80,293 @@ function PairQr({ rows, margin = 4, size = 300 }) {
   return <canvas ref={ref} className="pair-qr-canvas" role="img" aria-label="Pairing QR" />
 }
 
+/**
+ * スニペット設定（チャット / 端末の共通モデル・SPEC §3.4 / D13）。
+ * 組み込みの Hot / Hidden、ユーザー定義の追加・編集・削除、既定に戻す を扱う。
+ * 保存に成功したら `hm:snippets` / `hm:term-snippets` を発火して各画面を即時再読込させる。
+ */
+function SnippetsSection({ notify, lang }) {
+  const { t } = useI18n()
+  const [kind, setKind] = useState('chat')
+  const [data, setData] = useState({ chat: null, term: null })
+  const [draft, setDraft] = useState({ label: '', text: '', hot: false, run: true })
+  const [edit, setEdit] = useState(null)
+  const [busy, setBusy] = useState(false)
+
+  const path = kind === 'term' ? '/api/snippets/term' : '/api/snippets'
+  const eventName = kind === 'term' ? 'hm:term-snippets' : 'hm:snippets'
+  const cur = data[kind]
+  const overrides = cur?.overrides ?? {}
+  const custom = cur?.custom ?? []
+  const customMax = cur?.customMax ?? 16
+  const builtin = (cur?.allSnippets ?? []).filter((s) => !s.custom)
+  const mine = (cur?.allSnippets ?? []).filter((s) => s.custom)
+
+  const load = useCallback(async () => {
+    try {
+      const d = await api(`${path}?lang=${encodeURIComponent(lang)}`)
+      setData((prev) => ({ ...prev, [kind]: d }))
+    } catch (e) {
+      notify(e.message)
+    }
+  }, [path, kind, lang, notify])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const save = useCallback(
+    async (body, done) => {
+      setBusy(true)
+      try {
+        const d = await api(path, { method: 'PUT', body })
+        setData((prev) => ({ ...prev, [kind]: d }))
+        window.dispatchEvent(new Event(eventName))
+        if (done) notify(done)
+        return true
+      } catch (e) {
+        notify(e.message)
+        return false
+      } finally {
+        setBusy(false)
+      }
+    },
+    [path, kind, eventName, notify],
+  )
+
+  /** 組み込みの Hot を切り替える（override を書く）。 */
+  const toggleHot = (s) =>
+    save({ overrides: { ...overrides, [s.id]: { ...(overrides[s.id] ?? {}), hot: !s.hot } } })
+
+  /** 組み込みの表示 / 非表示を切り替える。 */
+  const toggleHidden = (s) =>
+    save({ overrides: { ...overrides, [s.id]: { ...(overrides[s.id] ?? {}), hidden: !s.hidden } } })
+
+  /** ユーザー定義を丸ごと保存する（追加・編集・削除の共通経路）。 */
+  const saveCustom = (list, done) => save({ custom: list }, done)
+
+  const toggleCustomHot = (s) =>
+    saveCustom(custom.map((x) => (x.id === s.id ? { ...x, hot: !x.hot } : x)))
+
+  const addDraft = async () => {
+    const label = draft.label.trim()
+    const text = draft.text.trim()
+    if (!label || !text) return notify(t('settings.needNameAndText'))
+    if (custom.length >= customMax) return notify(t('settings.snippetLimit', { max: customMax }))
+    const item = { label, text, hot: draft.hot }
+    if (kind === 'term') item.run = draft.run
+    const ok = await saveCustom([...custom, item], t('settings.saved'))
+    if (ok) setDraft({ label: '', text: '', hot: false, run: true })
+  }
+
+  const saveEdit = async () => {
+    if (!edit) return
+    const label = edit.label.trim()
+    const text = edit.text.trim()
+    if (!label || !text) return notify(t('settings.needNameAndText'))
+    const next = custom.map((x) =>
+      x.id === edit.id ? { ...x, label, text, hot: edit.hot, ...(kind === 'term' ? { run: edit.run } : {}) } : x,
+    )
+    const ok = await saveCustom(next, t('settings.saved'))
+    if (ok) setEdit(null)
+  }
+
+  /** 既定に戻す（チャット・端末の両方を初期化し、両画面に通知する・SPEC §3.4）。 */
+  const resetDefaults = async () => {
+    setBusy(true)
+    try {
+      const [chat, term] = await Promise.all([
+        api('/api/snippets', { method: 'PUT', body: { reset: true } }),
+        api('/api/snippets/term', { method: 'PUT', body: { reset: true } }),
+      ])
+      setData({ chat, term })
+      setEdit(null)
+      setDraft({ label: '', text: '', hot: false, run: true })
+      window.dispatchEvent(new Event('hm:snippets'))
+      window.dispatchEvent(new Event('hm:term-snippets'))
+      notify(t('settings.snippetResetDone'))
+    } catch (e) {
+      notify(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <div className="list-head">
+        <span>{t('settings.snippets')}</span>
+        <button className="link" disabled={busy} onClick={resetDefaults}>
+          {t('settings.snippetReset')}
+        </button>
+      </div>
+
+      <div className="chips" role="group" aria-label={t('settings.snippets')} style={{ marginBottom: 10 }}>
+        <button className={`chip${kind === 'chat' ? ' on' : ''}`} onClick={() => setKind('chat')}>
+          {t('settings.snippetChat')}
+        </button>
+        <button className={`chip${kind === 'term' ? ' on' : ''}`} onClick={() => setKind('term')}>
+          {t('settings.snippetTerm')}
+        </button>
+      </div>
+
+      <div className="list-head">
+        <span>{t('settings.snippetBuiltin')}</span>
+      </div>
+      <div className="list">
+        {builtin.map((s) => (
+          <div key={s.id} className="row static">
+            <span className="row-main" style={{ minWidth: 0 }}>
+              <span className="row-title" style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {s.label}
+              </span>
+              <span className="row-sub" style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {s.text.replace(/\n/g, ' ')}
+              </span>
+            </span>
+            <button
+              className={`chip${s.hot ? ' on' : ''}`}
+              disabled={busy}
+              onClick={() => toggleHot(s)}
+              aria-label={`${t('settings.snippetHot')} ${s.label}`}
+            >
+              {t('settings.snippetHot')}
+            </button>
+            <button
+              className={`chip${s.hidden ? '' : ' on'}`}
+              disabled={busy}
+              onClick={() => toggleHidden(s)}
+              aria-label={`${s.hidden ? t('settings.snippetShow') : t('settings.snippetHide')} ${s.label}`}
+            >
+              {s.hidden ? t('settings.snippetShow') : t('settings.snippetHide')}
+            </button>
+          </div>
+        ))}
+        {!builtin.length ? <div className="empty">{t('settings.snippetsEmpty')}</div> : null}
+      </div>
+
+      <div className="list-head">
+        <span>{t('settings.customSnippets', { count: custom.length, max: customMax })}</span>
+      </div>
+      <div className="list">
+        {mine.map((s) => (
+          <div key={s.id} className="row static">
+            <span className="row-main" style={{ minWidth: 0 }}>
+              <span className="row-title">
+                {s.label}
+                {s.hot ? <span className="pill" style={{ marginLeft: 8 }}>{t('settings.bar')}</span> : null}
+                {kind === 'term' && s.run ? <span className="pill" style={{ marginLeft: 6 }}>{t('term.run')}</span> : null}
+                {s.hidden ? <span className="pill" style={{ marginLeft: 6 }}>{t('settings.snippetHiddenPill')}</span> : null}
+              </span>
+              <span className="row-sub" style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {s.text.replace(/\n/g, ' ')}
+              </span>
+            </span>
+            <button className="link" disabled={busy} onClick={() => toggleCustomHot(s)}>
+              {t('settings.snippetHot')}
+            </button>
+            <button
+              className="link"
+              disabled={busy}
+              onClick={() => setEdit({ id: s.id, label: s.label, text: s.text, hot: s.hot, run: s.run !== false })}
+            >
+              {t('settings.snippetEdit')}
+            </button>
+            <button className="link" disabled={busy} onClick={() => saveCustom(custom.filter((x) => x.id !== s.id))}>
+              {t('settings.delete')}
+            </button>
+          </div>
+        ))}
+        {!mine.length ? <div className="empty">{t('settings.snippetsEmpty')}</div> : null}
+      </div>
+
+      {edit ? (
+        <div className="card" style={{ marginTop: 10 }}>
+          <div className="row-sub" style={{ marginBottom: 8 }}>{t('settings.snippetEditTitle')}</div>
+          <input
+            className="inp"
+            placeholder={t('settings.snippetNamePlaceholder')}
+            maxLength={20}
+            value={edit.label}
+            onChange={(e) => setEdit({ ...edit, label: e.target.value })}
+          />
+          <textarea
+            className="inp"
+            placeholder={kind === 'term' ? t('settings.snippetCommandPlaceholder') : t('settings.snippetTextPlaceholder')}
+            rows={3}
+            maxLength={400}
+            value={edit.text}
+            onChange={(e) => setEdit({ ...edit, text: e.target.value })}
+            style={{ marginTop: 8, resize: 'vertical', fontFamily: 'inherit' }}
+          />
+          <label className="row-sub" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
+            <input type="checkbox" checked={edit.hot} onChange={(e) => setEdit({ ...edit, hot: e.target.checked })} />
+            {t('settings.showInBar')}
+          </label>
+          {kind === 'term' ? (
+            <label className="row-sub" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+              <input type="checkbox" checked={edit.run} onChange={(e) => setEdit({ ...edit, run: e.target.checked })} />
+              {t('settings.snippetRun')}
+            </label>
+          ) : null}
+          <div className="row" style={{ marginTop: 10 }}>
+            <button className="btn" disabled={busy} onClick={saveEdit}>
+              {t('settings.snippetSave')}
+            </button>
+            <button className="link" style={{ marginLeft: 10 }} onClick={() => setEdit(null)}>
+              {t('settings.snippetCancel')}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="card" style={{ marginTop: 10 }}>
+        <div className="row-sub" style={{ marginBottom: 8 }}>{t('settings.snippetAddTitle')}</div>
+        <input
+          className="inp"
+          placeholder={t('settings.snippetNamePlaceholder')}
+          maxLength={20}
+          value={draft.label}
+          onChange={(e) => setDraft({ ...draft, label: e.target.value })}
+        />
+        <textarea
+          className="inp"
+          placeholder={kind === 'term' ? t('settings.snippetCommandPlaceholder') : t('settings.snippetTextPlaceholder')}
+          rows={3}
+          maxLength={400}
+          value={draft.text}
+          onChange={(e) => setDraft({ ...draft, text: e.target.value })}
+          style={{ marginTop: 8, resize: 'vertical', fontFamily: 'inherit' }}
+        />
+        <label className="row-sub" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
+          <input type="checkbox" checked={draft.hot} onChange={(e) => setDraft({ ...draft, hot: e.target.checked })} />
+          {t('settings.showInBar')}
+        </label>
+        {kind === 'term' ? (
+          <label className="row-sub" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+            <input type="checkbox" checked={draft.run} onChange={(e) => setDraft({ ...draft, run: e.target.checked })} />
+            {t('settings.snippetRun')}
+          </label>
+        ) : null}
+        <button
+          className="btn"
+          onClick={addDraft}
+          disabled={busy || custom.length >= customMax}
+          style={{ marginTop: 10 }}
+        >
+          {busy ? t('settings.saving') : t('settings.snippetAdd')}
+        </button>
+      </div>
+
+      <div className="row-sub" style={{ padding: '10px 6px 0', lineHeight: 1.7 }}>
+        {t('settings.snippetHint')}
+      </div>
+    </>
+  )
+}
+
 export function SettingsPane({ overview, notify, refresh }) {
-  const { t, pref, setPref } = useI18n()
+  const { lang, t, pref, setPref } = useI18n()
   const { pref: themePref, setPref: setThemePref } = useTheme()
   const install = useInstallState()
   const [diag, setDiag] = useState(null)
@@ -98,14 +383,6 @@ export function SettingsPane({ overview, notify, refresh }) {
   const [scanDraft, setScanDraft] = useState('')
   const [pathDraft, setPathDraft] = useState('')
   const [repoBusy, setRepoBusy] = useState(false)
-
-  // マイスニペット
-  const [custom, setCustom] = useState([])
-  const [customMax, setCustomMax] = useState(12)
-  const [draftLabel, setDraftLabel] = useState('')
-  const [draftText, setDraftText] = useState('')
-  const [draftHot, setDraftHot] = useState(false)
-  const [saving, setSaving] = useState(false)
 
   // ペアリング QR（SPEC §8.2）。認証済みセッションから 2 台目を迎える。
   const [pairing, setPairing] = useState(null)
@@ -135,44 +412,6 @@ export function SettingsPane({ overview, notify, refresh }) {
     },
     [notify, t],
   )
-
-  const loadSnippets = useCallback(async () => {
-    try {
-      const d = await api('/api/snippets')
-      setCustom((d.snippets ?? []).filter((s) => s.custom).map((s) => ({ id: s.id, label: s.label, text: s.text, hot: s.hot })))
-      setCustomMax(d.customMax ?? 12)
-    } catch (e) {
-      notify(e.message)
-    }
-  }, [notify])
-
-  const saveSnippets = useCallback(
-    async (next) => {
-      setSaving(true)
-      try {
-        const d = await api('/api/snippets', { method: 'PUT', body: { custom: next } })
-        setCustom((d.custom ?? []).map((s) => ({ id: s.id, label: s.label, text: s.text, hot: s.hot })))
-        window.dispatchEvent(new Event('hm:snippets'))
-        notify(t('settings.saved'))
-      } catch (e) {
-        notify(e.message)
-      } finally {
-        setSaving(false)
-      }
-    },
-    [notify, t],
-  )
-
-  const addDraft = () => {
-    const label = draftLabel.trim()
-    const text = draftText.trim()
-    if (!label || !text) return notify(t('settings.needNameAndText'))
-    if (custom.length >= customMax) return notify(t('settings.snippetLimit', { max: customMax }))
-    saveSnippets([...custom, { label, text, hot: draftHot }])
-    setDraftLabel('')
-    setDraftText('')
-    setDraftHot(false)
-  }
 
   const loadRepos = useCallback(async () => {
     try {
@@ -219,12 +458,11 @@ export function SettingsPane({ overview, notify, refresh }) {
 
   useEffect(() => {
     loadAudit()
-    loadSnippets()
     loadRepos()
     api('/api/sessions?limit=5')
       .then((d) => setSessions(d.sessions ?? []))
       .catch(() => {})
-  }, [loadAudit, loadSnippets, loadRepos])
+  }, [loadAudit, loadRepos])
 
   const openLog = async (name) => {
     try {
@@ -612,58 +850,7 @@ export function SettingsPane({ overview, notify, refresh }) {
         {!(audit ?? []).length ? <div className="empty">{t('settings.auditEmpty')}</div> : null}
       </div>
 
-      <div className="list-head">
-        <span>{t('settings.customSnippets', { count: custom.length, max: customMax })}</span>
-      </div>
-      <div className="list">
-        {custom.map((s) => (
-          <div key={s.id} className="row static">
-            <span className="row-main" style={{ minWidth: 0 }}>
-              <span className="row-title">
-                {s.label}
-                {s.hot ? <span className="pill" style={{ marginLeft: 8 }}>{t('settings.bar')}</span> : null}
-              </span>
-              <span className="row-sub" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {s.text.replace(/\n/g, ' ')}
-              </span>
-            </span>
-            <button
-              className="link"
-              disabled={saving}
-              onClick={() => saveSnippets(custom.filter((x) => x.id !== s.id))}
-            >
-              {t('settings.delete')}
-            </button>
-          </div>
-        ))}
-        {!custom.length ? <div className="empty">{t('settings.snippetsEmpty')}</div> : null}
-      </div>
-
-      <div className="card" style={{ marginTop: 10 }}>
-        <input
-          className="inp"
-          placeholder={t('settings.snippetNamePlaceholder')}
-          maxLength={20}
-          value={draftLabel}
-          onChange={(e) => setDraftLabel(e.target.value)}
-        />
-        <textarea
-          className="inp"
-          placeholder={t('settings.snippetTextPlaceholder')}
-          rows={3}
-          maxLength={400}
-          value={draftText}
-          onChange={(e) => setDraftText(e.target.value)}
-          style={{ marginTop: 8, resize: 'vertical', fontFamily: 'inherit' }}
-        />
-        <label className="row-sub" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
-          <input type="checkbox" checked={draftHot} onChange={(e) => setDraftHot(e.target.checked)} />
-          {t('settings.showInBar')}
-        </label>
-        <button className="btn" onClick={addDraft} disabled={saving || custom.length >= customMax} style={{ marginTop: 10 }}>
-          {saving ? t('settings.saving') : t('settings.addAndSave')}
-        </button>
-      </div>
+      <SnippetsSection notify={notify} lang={lang} />
 
       <div className="card" style={{ marginTop: 16 }}>
         <div className="row-sub" style={{ lineHeight: 1.7 }}>

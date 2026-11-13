@@ -107,8 +107,20 @@ export function translate(lang, key, vars) {
   return formatMessage(raw, vars)
 }
 
-let active = DEFAULT_LANG
+let active = detectLang(readStoredPref())
 const listeners = new Set()
+
+/**
+ * `localStorage['hm.lang']` を読む（読めない環境では null）。
+ * @returns {'en'|'ja'|'auto'|null} 保存値
+ */
+export function readStoredPref() {
+  try {
+    return normalizePref(localStorage.getItem(STORAGE_KEY))
+  } catch {
+    return null
+  }
+}
 
 /**
  * 現在の表示言語（React 外から読む）。
@@ -120,6 +132,7 @@ export function getLang() {
 
 /**
  * 表示言語を切り替え、`Intl` 系のフォーマッタと購読者へ伝える。
+ * `hm:lang` を発火するので、スニペット取得などはリロードなしで追従できる（SPEC §3.1）。
  * @param {'en'|'ja'|'auto'|unknown} next 言語（auto は現状維持）
  * @returns {'en'|'ja'} 反映後の言語
  */
@@ -135,6 +148,13 @@ export function setLang(next) {
     } catch {
       /* 購読者の失敗で言語切替を止めない */
     }
+  }
+  try {
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('hm:lang', { detail: { lang } }))
+    }
+  } catch {
+    /* SSR / テスト環境で CustomEvent が無いときは無視する */
   }
   return lang
 }
