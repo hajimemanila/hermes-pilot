@@ -1107,18 +1107,26 @@ export function ChatPane({ notify, chatReports = [], active = false, openRequest
           <div className="empty">
             <div>メッセージを送って開始</div>
             {recentSessions(sessions, profile, 2).length ? (
-              <div className="empty-recent">
+              <div className="empty-recent" aria-label="直前に開いていた会話">
+                <div className="empty-recent-head">直前に開いていた会話</div>
                 {recentSessions(sessions, profile, 2).map((x) => (
                   <button
                     key={x.id}
                     type="button"
-                    className="btn"
+                    className="empty-recent-row"
+                    title={x.title || x.id}
                     onClick={async () => {
                       const ok = await resumeInto(sockRef.current?.rpc, x.id, x.profile || profile)
                       if (ok?.ok) setStoredSid(x.id)
                     }}
                   >
-                    直前の会話を開く: {(x.title || x.id).slice(0, 18)}
+                    <span className="empty-recent-title">{x.title || x.id}</span>
+                    <span className="empty-recent-when">
+                      {relTime(toEpochMs(x.updated_at ?? x.started_at))}
+                    </span>
+                    <span className="empty-recent-mark" aria-hidden="true">
+                      ›
+                    </span>
                   </button>
                 ))}
               </div>

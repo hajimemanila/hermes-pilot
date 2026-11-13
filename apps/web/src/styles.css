@@ -1869,8 +1869,25 @@ button.stat:active {
 .ak-new-target-row { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
 .ak-new-target-row > span { flex: none; }
 .ak-new-target { flex: 1 1 auto; min-width: 0; }.empty { display: flex; flex-direction: column; align-items: center; gap: 10px; }
-.empty-recent { display: flex; flex-direction: column; gap: 6px; }
-.empty-recent .btn { font-size: 12.5px; }
+.empty-recent {
+  display: flex; flex-direction: column; gap: 6px;
+  width: 100%; max-width: 340px; margin: 0 auto; text-align: left;
+}
+.empty-recent-head { font-size: 10.5px; color: var(--muted); padding-left: 2px; }
+/* タイトルは途中で切らず 2 行まで見せる（18 文字スライスだと語の途中で切れていた） */
+.empty-recent-row {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 9px 10px; border-radius: 10px; border: 1px solid var(--line-strong);
+  background: var(--surface-2); color: var(--text); font: inherit;
+  font-size: 12.5px; text-align: left;
+}
+.empty-recent-row:active { filter: brightness(1.25); }
+.empty-recent-title {
+  flex: 1 1 auto; min-width: 0; line-height: 1.35; word-break: break-word;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.empty-recent-when { flex: none; font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.empty-recent-mark { flex: none; color: var(--accent-2); font-size: 14px; line-height: 1; }
 .thinking-text { margin-top: 4px; font-size: 11.5px; color: var(--muted); max-height: 3.2em; overflow: hidden; }
 /* チャットのツール進捗（Discord のツール表示に相当する行） */
 .tool-rows { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
