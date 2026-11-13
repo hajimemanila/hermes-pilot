@@ -924,3 +924,54 @@ test('approve はコメントが残せなかったとき記録を消して再挑
   assert.equal(retry.duplicate, false, '再挑戦は duplicate ではなく本処理からやり直す')
   assert.equal(fs.existsSync(path.join(workdir, 'shots', 'retry-01-1.approval.json')), true)
 })
+
+test('sheetPaths: .html でも .json シートでも回答は設問ファイルを上書きしない', async () => {
+  const { sheetPaths } = await import('../src/review.js')
+  assert.deepEqual(sheetPaths('sheets/a-1.html'), { dataRel: 'sheets/a-1.json', answerRel: 'sheets/a-1.answer.json' })
+  // mode=standard（.json シート）は設問と回答が同一ファイルに潰れていた（実測のバグ）
+  assert.deepEqual(sheetPaths('sheets/a-1.json'), { dataRel: 'sheets/a-1.json', answerRel: 'sheets/a-1.answer.json' })
+})
+
+test('answer: .json シート（mode=standard）でも設問 JSON を壊さず .answer.json に保存する', async () => {
+  const { root, workdir } = tempBoard()
+  const dbPath = path.join(root, 'kanban', 'boards', 'mobile', 'kanban.db')
+  const db = new DatabaseSync(dbPath)
+  db.prepare('INSERT INTO tasks (id,title,body,status,assignee,created_at) VALUES (?,?,?,?,?,?)').run(
+    't_std01',
+    '標準スモーク',
+    '本文\n[review] label=std-01 round=1 mode=standard sheet=sheets/std-01-1.json\n',
+    'blocked',
+    'mobile',
+    Math.floor(Date.now() / 1000),
+  )
+  db.close()
+  const questions = {
+    label: 'std-01',
+    round: 1,
+    mode: 'standard',
+    title: '標準スモーク',
+    questions: [
+      { id: 'q1', text: '問1', options: [{ id: 'A', recommended: true }, { id: 'B' }] },
+      { id: 'q2', text: '問2', options: [{ id: 'A' }, { id: 'B', recommended: true }] },
+    ],
+  }
+  const sheetFile = path.join(workdir, 'sheets', 'std-01-1.json')
+  fs.writeFileSync(sheetFile, JSON.stringify(questions))
+  const before = fs.readFileSync(sheetFile, 'utf8')
+
+  const api = createReview(
+    { kanbanRoot: path.join(root, 'kanban') },
+    { runKanban: async () => ({ code: 0, out: 'ok' }) },
+  )
+  const r = await api.answer('t_std01', { answers: [{ id: 'q1', choice: 'A' }, { id: 'q2', choice: 'B' }], by: 'hajime' })
+  assert.equal(r.ok, true)
+  assert.equal(fs.readFileSync(sheetFile, 'utf8'), before, '設問 JSON が上書きされた')
+  const answerFile = path.join(workdir, 'sheets', 'std-01-1.answer.json')
+  const saved = JSON.parse(fs.readFileSync(answerFile, 'utf8'))
+  assert.deepEqual(saved.answers.map((a) => `${a.id}:${a.choice}`), ['q1:A', 'q2:B'])
+  // 回答後もシート構造が読める（再回答・比較の前提）
+  const data = api.sheetData('t_std01')
+  assert.equal(data.ok, true)
+  assert.equal(data.data.questions.length, 2)
+  assert.equal(data.answer.answers[1].choice, 'B')
+})

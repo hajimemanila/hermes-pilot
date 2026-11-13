@@ -56,6 +56,23 @@ export function isSafeRel(rel) {
 }
 
 /**
+ * シートパスから「設問 JSON」と「回答 JSON」のパスを作る。
+ *
+ * `mode=sheet`（.html シート）と `mode=standard`（.json シート）の両方で、
+ * 回答が**設問ファイルを上書きしない**ようにする。以前は `.html` だけを置換して
+ * いたため、`.json` シートでは `replace` が効かず、回答が設問 JSON にそのまま
+ * 書き込まれて設問構造が失われていた（実測: p5-fasttrack-01-1.json が回答文に置換）。
+ * @param {string} sheetRel `sheets/<label>-<round>.html|.json`
+ * @returns {{dataRel: string, answerRel: string}} 設問と回答の相対パス
+ */
+export function sheetPaths(sheetRel) {
+  const rel = String(sheetRel || '')
+  const dataRel = rel.replace(/\.html?$/i, '.json')
+  const answerRel = dataRel.replace(/\.json$/i, '.answer.json')
+  return { dataRel, answerRel }
+}
+
+/**
  * 比較用（Before）画像の候補パスを優先順に返す（存在確認はしない純粋関数）。
  *
  * After = いまの下地画像（最新のスクショ）。Before = 前回の赤入れ／前ラウンドの画像。
@@ -544,10 +561,11 @@ export function createReview(cfg, opts = {}) {
       const ak = parseReviewLine(r.body)
       if (!ak) continue
       const sheetAbs = ak.sheet ? resolveInside(ak.sheet) : null
-      const dataRel = ak.sheet ? ak.sheet.replace(/\.html$/, '.json') : null
+      const paths = ak.sheet ? sheetPaths(ak.sheet) : null
+      const dataRel = paths ? paths.dataRel : null
       const dataAbs = dataRel ? resolveInside(dataRel) : null
       const sheet = dataAbs ? readJsonIfExists(dataAbs) : null
-      const answerRel = ak.sheet ? ak.sheet.replace(/\.html$/, '.answer.json') : null
+      const answerRel = paths ? paths.answerRel : null
       const answered = answerRel ? readJsonIfExists(resolveInside(answerRel) || '\0') : null
       out.push({
         id: r.id,
@@ -603,12 +621,12 @@ export function createReview(cfg, opts = {}) {
     if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
     const ak = parseReviewLine(b.body)
     if (!ak?.sheet) return { ok: false, code: 'NO_SHEET', message: 'このタスクにはシートがありません' }
-    const abs = resolveInside(ak.sheet.replace(/\.html$/, '.json'))
+    const abs = resolveInside(sheetPaths(ak.sheet).dataRel)
     const data = abs ? readJsonIfExists(abs) : null
     if (!data) return { ok: false, code: 'DATA_MISSING', message: 'sheet.json がありません' }
     // 回答の履歴（完了した項目を「なぜこの設計か」まで辿れるようにする）。
     // 回答は無いことがある（回答前に片付けた等）ので、無ければ null。
-    const answer = readJsonIfExists(resolveInside(ak.sheet.replace(/\.html$/, '.answer.json')) || '\0')
+    const answer = readJsonIfExists(resolveInside(sheetPaths(ak.sheet).answerRel) || '\0')
     return { ok: true, data, answer: answer || null, taskId: id, status: b.status }
   }
 
@@ -653,7 +671,7 @@ export function createReview(cfg, opts = {}) {
     const annotations = Array.isArray(payload?.annotations) ? payload.annotations : []
     const hash = answerHash({ answers, global, annotations })
 
-    const answerRel = ak.sheet.replace(/\.html$/, '.answer.json')
+    const answerRel = sheetPaths(ak.sheet).answerRel
     const answerDir = path.dirname(path.resolve(workdir(), answerRel))
     const answerFile = path.join(answerDir, path.basename(answerRel))
     const textFile = answerFile.replace(/\.answer\.json$/, '.answer.txt')
