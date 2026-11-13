@@ -24,7 +24,7 @@ import crypto from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { collectPairing, qrSvg, qrTerminal, tailscaleCommandCandidates } from '../apps/bridge/src/qr.js'
+import { collectPairing, qrPng, qrSvg, qrTerminal, tailscaleCommandCandidates } from '../apps/bridge/src/qr.js'
 import { createPairCodes } from '../apps/bridge/src/pair-codes.js'
 
 /** リポジトリのルート（このファイルは `bin/` の下）。 */
@@ -134,7 +134,7 @@ export function helpText() {
     '  hermes-pilot init                        First-run setup: data dirs, token, skills, pairing QR',
     '  hermes-pilot start [--port 4097] [--host 127.0.0.1] [--tls-port 8444]',
     '                                           Build the UI if needed and run the bridge',
-    '  hermes-pilot qr [--port 4097] [--tls-port 8444]',
+    '  hermes-pilot qr [--port 4097] [--tls-port 8444] [--png <path>]',
     '                                           Print the pairing URL and a terminal QR',
     '  hermes-pilot service install|uninstall|restart|status [--dry-run]',
     '                                           Keep the bridge running (launchd / systemd --user)',
@@ -330,7 +330,7 @@ export function mintPairCode(dataDir) {
  * @param {number} opts.port ポート
  * @param {boolean} [opts.svg] SVG も 1 行で出す
  */
-function printPairing({ token, port, tlsPort = null, dnsName = null, svg = false }) {
+function printPairing({ token, port, tlsPort = null, dnsName = null, svg = false, pngPath = null }) {
   const info = pairingInfo({ token, port, tlsPort, dnsName })
   out('', '接続先候補 / Pairing targets:')
   for (const t of info.targets) out(`  - ${t.label}: ${t.url}`)
@@ -338,11 +338,23 @@ function printPairing({ token, port, tlsPort = null, dnsName = null, svg = false
     out('', '到達可能なアドレスがありません（Tailscale か LAN を確認してください）。')
     return
   }
-  // 端末に収まらない QR を出すと、行が折り返すか上にスクロールして**欠けたコード**になる（実測:
-  // 64 文字トークンの URL は 27 行になり 80x24 で読めなかった）。収まる候補を選び、
-  // どれも収まらないときは URL と 8 文字コードの手入力へ誘導する。
+  // 端末の半角ブロックは行間が塗られず、カメラから見ると暗い横縞が QR を横切るため
+  // 読み取れない（実測: 別端末のスキャナも無反応）。PNG を書いて**画像として**出す。
+  if (pngPath) {
+    try {
+      const png = qrPng(info.best.url)
+      fs.mkdirSync(path.dirname(pngPath), { recursive: true })
+      fs.writeFileSync(pngPath, png, { mode: 0o600 })
+      out('', `QR 画像 / PNG: ${pngPath}`, '  → これを大きく開いてカメラで読み取ってください（${png.length} bytes）。')
+    } catch (err) {
+      out('', `QR 画像を書けませんでした: ${err?.message ?? err}`)
+    }
+  }
   const cols = process.stdout.columns || 80
   const rows = process.stdout.rows || 24
+  // 端末に収まらない QR を出すと、行が折り返すか上にスクロールして欠けたコードになる（実測:
+  // 64 文字トークンの URL は 27 行になり 80x24 で読めなかった）。収まる候補を選び、
+  // どれも収まらないときは PNG の案内だけにする。
   const dims = (s) => {
     const lines = s.split('\n')
     return { width: lines[0].replace(/\x1b\[[0-9;]*m/g, '').length, height: lines.length }
@@ -368,13 +380,13 @@ function printPairing({ token, port, tlsPort = null, dnsName = null, svg = false
     const d = dims(qrTerminal(info.best.url))
     out(
       '',
-      `QR はこの端末（${cols}x${rows}）に収まらないため省略しました（${d.width} 桁 x ${d.height} 行）。`,
-      '  → PC のブラウザで「設定 → ペアリング QR」を開いて読み取るか、上の 8 文字コードを「アプリトークン」欄に入れてください。',
+      `端末 QR はこの端末（${cols}x${rows}）に収まらないため省略しました（${d.width} 桁 x ${d.height} 行）。`,
+      '  → 上の PNG を開いて読み取るか、PC のブラウザで「設定 → ペアリング QR」を大きく表示してください。',
     )
     if (svg) out('', qrSvg(info.best.url))
     return
   }
-  out('', `QR（${pick.label}）— カメラで読み取ってください:`, '')
+  out('', `端末表示の QR（${pick.label}・参考）— 読み取れないときは上の PNG を使ってください:`, '')
   out(qr)
   if (svg) out('', qrSvg(info.best.url))
 }
@@ -438,7 +450,7 @@ export async function runInit(p, port, { tlsPort = null } = {}) {
     `  スキル / skills: ${installed.length ? installed.join(', ') : '（既に配置済み）'}`,
     `  移行 / migrate: ${migrated ? '実行' : '不要'}`,
   )
-  printPairing({ token: mintPairCode(p.dataDir), port, tlsPort })
+  printPairing({ token: mintPairCode(p.dataDir), port, tlsPort, pngPath: path.join(p.dataDir, 'pair-qr.png') })
   return { created, migrated, skills: installed }
 }
 
@@ -617,7 +629,7 @@ export async function runStart({ paths, port, host, tlsPort = null, dnsName = nu
     }
   }
   ensureToken(paths.tokenPath)
-  if (!noQr) printPairing({ token: mintPairCode(paths.dataDir), port, tlsPort, dnsName })
+  if (!noQr) printPairing({ token: mintPairCode(paths.dataDir), port, tlsPort, dnsName, pngPath: path.join(paths.dataDir, 'pair-qr.png') })
   process.env.HM_PORT = String(port)
   process.env.HM_HOST = host
   if (!process.env.HERMES_HOME) process.env.HERMES_HOME = paths.hermesHome
@@ -652,7 +664,14 @@ export async function main(argv = process.argv.slice(2)) {
   if (command === 'qr') {
     const { created } = ensureToken(paths.tokenPath)
     if (created) out(`トークンを新規作成しました / token created: ${paths.tokenPath}`)
-    printPairing({ token: mintPairCode(paths.dataDir), port, tlsPort, dnsName, svg: Boolean(flags.svg) })
+    printPairing({
+      token: mintPairCode(paths.dataDir),
+      port,
+      tlsPort,
+      dnsName,
+      svg: Boolean(flags.svg),
+      pngPath: typeof flags.png === 'string' ? flags.png : path.join(paths.dataDir, 'pair-qr.png'),
+    })
     return 0
   }
 

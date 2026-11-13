@@ -21,6 +21,8 @@ import {
   pairingTargets,
   qrMatrix,
   qrSvg,
+  qrPng,
+  qrRows,
   qrTerminal,
   reedSolomon,
   tailscaleCommandCandidates,
@@ -430,4 +432,35 @@ test('collectPairing: CLI が読めない環境では config の tailscaleDns �
     ifaces: { en0: [{ address: '192.168.1.42', family: 'IPv4', internal: false }] },
   })
   assert.equal(fromCli.dnsName, 'real.tail1.ts.net')
+})
+
+test('qrPng: PNG として妥当で、余白は白・モジュールは黒（整数スケール）', async () => {
+  const zlib = await import('node:zlib')
+  const png = qrPng('hermes-pilot', { margin: 4, scale: 4 })
+  assert.deepEqual([...png.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 'PNG 署名が違う')
+  const { size } = qrMatrix('hermes-pilot')
+  const w = (size + 8) * 4
+  assert.equal(png.readUInt32BE(16), w, 'IHDR の幅が違う')
+  assert.equal(png.readUInt32BE(20), w, 'IHDR の高さが違う')
+  assert.equal(png[24], 8, 'bit depth')
+  assert.equal(png[25], 0, 'colorType 0（グレースケール）')
+  // IDAT を取り出して展開し、余白とモジュールを確認する
+  const idatStart = png.indexOf(Buffer.from('IDAT', 'ascii')) + 4
+  const idatLen = png.readUInt32BE(png.indexOf(Buffer.from('IDAT', 'ascii')) - 4)
+  const raw = zlib.inflateSync(png.subarray(idatStart, idatStart + idatLen))
+  assert.equal(raw.length, (w + 1) * w, 'IDAT の長さ（フィルタ 1 バイト + 幅）')
+  assert.equal(raw[0], 0, '先頭行のフィルタ種別は 0')
+  assert.equal(raw[1], 0xff, '左上は余白（白）')
+  // 余白 4 モジュール分ずらした位置は左上のファインダ（暗）
+  const x = 4 * 4 + 1
+  const y = 4 * 4
+  assert.equal(raw[y * (w + 1) + 1 + x], 0x00, '左上ファインダが黒くない')
+})
+
+test('qrRows: フロントが canvas に描ける 0/1 行を返す（正方形・全行同長）', () => {
+  const rows = qrRows('http://192.168.100.67:4097/?token=ABCDEFGH')
+  assert.ok(rows.length >= 21)
+  assert.equal(rows.every((r) => r.length === rows.length), true, '正方形でない')
+  assert.equal(rows.every((r) => /^[01]+$/.test(r)), true, '0/1 以外が混じっている')
+  assert.equal(rows[0].slice(0, 7), '1111111', '左上ファインダが無い')
 })

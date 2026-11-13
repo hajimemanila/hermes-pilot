@@ -39,6 +39,47 @@ const THEME_CHOICES = [
   { value: 'system', key: 'settings.themeSystem' },
 ]
 
+/**
+ * ペアリング QR を canvas に**整数ピクセル**で描く。
+ *
+ * SVG を CSS で縮小すると 1 モジュールが 6.34px のような半端な幅になり、
+ * アンチエイリアスで境界がぼやけてスキャナが反応しない（実測）。canvas なら
+ * モジュール幅を整数に固定でき、devicePixelRatio でもシャープに描ける。
+ * @param {object} props 入力
+ * @param {string[]} props.rows 0/1 の行（'1' = 暗モジュール）
+ * @param {number} [props.margin] 余白モジュール数
+ * @param {number} [props.size] 目標の表示サイズ（px）
+ * @returns {React.ReactElement} canvas
+ */
+function PairQr({ rows, margin = 4, size = 300 }) {
+  const ref = React.useRef(null)
+  useEffect(() => {
+    const c = ref.current
+    if (!c || !rows?.length) return
+    const n = rows.length + margin * 2
+    const scale = Math.max(2, Math.floor(size / n))
+    const dpr = Math.min(3, window.devicePixelRatio || 1)
+    const px = n * scale
+    const unit = Math.round(scale * dpr)
+    c.width = px * dpr
+    c.height = px * dpr
+    c.style.width = `${px}px`
+    c.style.height = `${px}px`
+    const g = c.getContext('2d')
+    g.imageSmoothingEnabled = false
+    g.fillStyle = '#ffffff'
+    g.fillRect(0, 0, c.width, c.height)
+    g.fillStyle = '#000000'
+    for (let y = 0; y < rows.length; y += 1) {
+      for (let x = 0; x < rows[y].length; x += 1) {
+        if (rows[y][x] !== '1') continue
+        g.fillRect((x + margin) * unit, (y + margin) * unit, unit, unit)
+      }
+    }
+  }, [rows, margin, size])
+  return <canvas ref={ref} className="pair-qr-canvas" role="img" aria-label="Pairing QR" />
+}
+
 export function SettingsPane({ overview, notify, refresh }) {
   const { t, pref, setPref } = useI18n()
   const { pref: themePref, setPref: setThemePref } = useTheme()
@@ -642,7 +683,19 @@ export function SettingsPane({ overview, notify, refresh }) {
           <div className="row-sub" style={{ lineHeight: 1.6 }}>
             {t('settings.pairingScanHint')}
           </div>
-          {pairing.qrSvg ? (
+          {pairing.qrPng ? (
+            <div className="pair-qr">
+              <img className="pair-qr-img" src={pairing.qrPng} width={287} height={287} alt="Pairing QR" />
+            </div>
+          ) : pairing.qrRows ? (
+            <div className="pair-qr">
+              <PairQr
+                rows={pairing.qrRows}
+                margin={pairing.qrMargin ?? 4}
+                size={Math.min(320, Math.max(220, (typeof window !== 'undefined' ? window.innerWidth : 390) - 70))}
+              />
+            </div>
+          ) : pairing.qrSvg ? (
             <div className="pair-qr" dangerouslySetInnerHTML={{ __html: pairing.qrSvg }} />
           ) : (
             <div className="empty">{t('settings.pairingEmpty')}</div>

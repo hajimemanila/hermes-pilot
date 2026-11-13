@@ -1761,6 +1761,25 @@ button.stat:active {
   background: #fff;
 }
 
+/* canvas は整数ピクセルで描く（CSS で縮小しない）。ぼかすとスキャナが反応しない */
+.pair-qr-canvas {
+  display: block;
+  background: #fff;
+  border-radius: 8px;
+  image-rendering: pixelated;
+}
+
+/* PNG を 1:1 で出す（41 モジュール x 7px = 287px）。拡大時も境界をぼかさない */
+.pair-qr-img {
+  display: block;
+  width: 287px;
+  height: 287px;
+  max-width: 100%;
+  background: #fff;
+  border-radius: 8px;
+  image-rendering: pixelated;
+}
+
 /* ---------- ナビ ---------- */
 .nav {
   flex: 0 0 auto;

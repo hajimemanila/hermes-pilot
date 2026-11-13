@@ -12,6 +12,7 @@
  */
 
 import os from 'node:os'
+import zlib from 'node:zlib'
 
 /** 誤り訂正レベル M のブロック構造（型番: [EC コードワード/ブロック, 群1ブロック数, 群1データ長, 群2ブロック数, 群2データ長]）。 */
 const ECC_M = {
@@ -549,6 +550,95 @@ export function qrSvg(text, { margin = DEFAULT_MARGIN, dark = '#0a0f14', light =
     `<path d="${path}" fill="${dark}"/>` +
     `</svg>`
   )
+}
+
+/**
+ * 端末表示用の文字列をやめ、**画像**として書き出せる PNG を組み立てる。
+ *
+ * 端末の半角ブロックは行間（セルの隙間）が背景色で塗られず、カメラから見ると
+ * 暗い横縞が QR を横切るため読み取れない（実測: 80x24 の端末で別端末のスキャナも無反応）。
+ * モジュールを整数ピクセルで描いた PNG なら、画面でも印刷でも読める。
+ *
+ * 形式は 8bit グレースケール（colorType 0）。依存ゼロ（`node:zlib` のみ）。
+ * @param {string} text 内容
+ * @param {object} [opts] オプション
+ * @param {number} [opts.margin] 余白モジュール数（既定 4）
+ * @param {number} [opts.scale] 1 モジュールのピクセル数（既定 10）
+ * @returns {Buffer} PNG バイト列
+ */
+export function qrPng(text, { margin = 4, scale = 10 } = {}) {
+  const { size, modules } = qrMatrix(text)
+  const total = size + margin * 2
+  const w = total * scale
+  // 1 行 = フィルタ種別 1 バイト + グレースケール w バイト
+  const raw = Buffer.alloc((w + 1) * w, 0xff)
+  // フィルタ種別は 0（None）でなければならない（0xff のままだと不正な PNG になる）
+  for (let y = 0; y < w; y += 1) raw[y * (w + 1)] = 0x00
+  for (let my = 0; my < size; my += 1) {
+    for (let mx = 0; mx < size; mx += 1) {
+      if (!modules[my][mx]) continue
+      const x0 = (mx + margin) * scale
+      const y0 = (my + margin) * scale
+      for (let y = y0; y < y0 + scale; y += 1) {
+        const rowStart = y * (w + 1) + 1
+        raw.fill(0x00, rowStart + x0, rowStart + x0 + scale)
+      }
+    }
+  }
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(w, 0)
+  ihdr.writeUInt32BE(w, 4)
+  ihdr[8] = 8 // bit depth
+  ihdr[9] = 0 // grayscale
+  ihdr[10] = 0 // deflate
+  ihdr[11] = 0 // adaptive filter
+  ihdr[12] = 0 // no interlace
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', zlib.deflateSync(raw, { level: 9 })),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ])
+}
+
+/** CRC32（PNG のチャンク用）。 */
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256)
+  for (let n = 0; n < 256; n += 1) {
+    let c = n
+    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
+    table[n] = c >>> 0
+  }
+  return table
+})()
+
+/**
+ * PNG のチャンク（長さ・種別・データ・CRC）。
+ * @param {string} type 種別（4 文字）
+ * @param {Buffer} data データ
+ * @returns {Buffer} チャンク
+ */
+function pngChunk(type, data) {
+  const len = Buffer.alloc(4)
+  len.writeUInt32BE(data.length, 0)
+  const body = Buffer.concat([Buffer.from(type, 'ascii'), data])
+  let crc = 0xffffffff
+  for (const byte of body) crc = CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8)
+  const crcBuf = Buffer.alloc(4)
+  crcBuf.writeUInt32BE((crc ^ 0xffffffff) >>> 0, 0)
+  return Buffer.concat([len, body, crcBuf])
+}
+
+/**
+ * QR のモジュール行列を 0/1 の文字列配列にする（フロントエンドが canvas に
+ * 整数ピクセルで描くための形。SVG を CSS で縮小すると、モジュールが半端な
+ * ピクセルになりスキャナが反応しない）。
+ * @param {string} text 内容
+ * @returns {string[]} 1 行 1 文字列（'1' = 暗）
+ */
+export function qrRows(text) {
+  const { modules } = qrMatrix(text)
+  return modules.map((row) => row.map((v) => (v ? '1' : '0')).join(''))
 }
 
 /**

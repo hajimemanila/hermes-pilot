@@ -28,7 +28,7 @@ import { errorBody } from './api-errors.js'
 import { resolveLang } from './lang.js'
 import { checkFrame, rejectionFrame } from './chat-profile.js'
 import { readTailText } from './tail.js'
-import { collectPairing, qrSvg, tailscaleCommandCandidates } from './qr.js'
+import { collectPairing, qrPng, qrRows, qrSvg, tailscaleCommandCandidates } from './qr.js'
 
 const require = createRequire(import.meta.url)
 const pty = safeRequire('node-pty')
@@ -413,6 +413,13 @@ async function handleApi(req, res, url) {
       targets: info.targets,
       // 有効期限（ミリ秒エポック）。画面に「あと何分」を出せるようにする
       expiresAt: minted.expiresAt,
+      // フロントはこの行列を canvas に整数ピクセルで描く（SVG の CSS 縮小は半端な
+      // ピクセルになり、スキャナが反応しないため）。`qrSvg` は後方互換で残す。
+      qrRows: info.best ? qrRows(info.best.url) : null,
+      qrMargin: 4,
+      // 実画像（base64 PNG, 41 モジュール x 7px = 287px = 7px/モジュールの整数倍）。
+      // <img> ならどのブラウザでも canvas と違って確実に合成される。
+      qrPng: info.best ? `data:image/png;base64,${qrPng(info.best.url, { scale: 7 }).toString('base64')}` : null,
       qrSvg: info.best ? qrSvg(info.best.url) : null,
     })
   }
