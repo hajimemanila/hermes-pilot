@@ -2105,6 +2105,13 @@ button.t-pill:active {
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
 }
 
+/* チャット / 端末は下端に入力欄＋スニペット帯がある。トーストがそれを覆うと
+   押したい定型文が見えなくなる（P5 の 390x844 実測）。その 2 タブだけ持ち上げる。 */
+.toast.chat,
+.toast.term {
+  bottom: calc(var(--nav-h) + var(--safe-b) + 108px);
+}
+
 /* ---------- ログイン（殻だけ公開しているため） ---------- */
 .login {
   min-height: 100dvh;

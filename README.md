@@ -30,6 +30,47 @@ and puts kanban, chat, terminal and usage into a single installable PWA.
 - **No external plugins required** — repositories are found by scanning your project folders, and system
   status uses only the standard Hermes APIs.
 
+### Decision cockpit (v2)
+
+Five additions that shorten the loop from "the agent needs a decision" to "it is running again".
+Every one of them is reachable from the phone and from the standard dashboard.
+
+- **Spec Launchpad** — the Tasks tab reads `docs/SPEC-*.md` of the board's repository, lists the batches the
+  spec defines (`### Batch P1: …`) and files them as kanban tasks with one tap. A batch whose `[ID]` task is
+  still open is skipped, so double-taps and reloads never pile up duplicates.
+
+  ```bash
+  curl -s -H "x-client: mobile" "http://127.0.0.1:4097/api/specs?board=<board>&t=$(cat ~/.hermes/plugin-data/hermes-pilot/token)"
+  curl -s -X POST -H "x-client: mobile" -H "content-type: application/json" \
+       -d '{"board":"<board>","specRelPath":"docs/SPEC-PILOT-V2.md","batchIds":["P5"]}' \
+       "http://127.0.0.1:4097/api/specs/launch?t=$(cat ~/.hermes/plugin-data/hermes-pilot/token)"
+  ```
+
+- **1-Tap Fast-Track** — when a review sheet's questions carry recommended options, the pane shows
+  *⚡ Accept All Recommended (Q1:A · Q2:B) & Resume*: one tap sends every recommended answer, unblocks the
+  worker and jumps to the next waiting sheet (`POST /api/review/:id/answer`).
+
+- **Before ↔ After** — an annotation review that has a previous round (`*.before.png` or the previous
+  numbered shot) gets a compare toggle, so you can flip between the red pen you drew and the latest
+  screenshot; *✅ Looks Good* closes the task in one tap (`POST /api/review/:id/approve`).
+
+- **Standard dashboard integration** — the *Hermes Pilot* tab of the Hermes dashboard (`:9119`) manages
+  repositories (add / pin / hide / create board), chat & terminal snippets, and the bridge / gateway / audit
+  logs against the same files the PWA uses, so `scanDirs` is configured in exactly one place.
+
+  ```bash
+  npx hermes-pilot init --force      # refresh the dashboard plugin files after an upgrade
+  ```
+
+- **Snippet editing** — built-in snippets can be pinned to the chip bar (Hot) or hidden, and you can add,
+  edit, reorder and delete your own, for chat and terminal, in English and Japanese, with
+  *Reset to defaults*.
+
+  ```bash
+  curl -s -H "x-client: mobile" "http://127.0.0.1:4097/api/snippets?lang=en"      # chat
+  curl -s -H "x-client: mobile" "http://127.0.0.1:4097/api/snippets/term?lang=ja" # terminal
+  ```
+
 ## Requirements
 
 - Node.js **≥ 22.19**
@@ -144,7 +185,7 @@ review/        sheets/, shots/, library/, feed.jsonl, chat-reports.jsonl, task-c
 ```bash
 npm install                 # postinstall fixes node-pty permissions
 npm run dev                 # Vite on :4098, proxies /api and /ws to :4097
-npm test                    # unit tests (329)
+npm test                    # unit tests (402)
 npm run verify              # tests + PWA 34-point check + production build
 npm run deploy              # atomic, verified swap of apps/web/dist
 npm run migrate:pilot       # the same migration as `init`, on demand

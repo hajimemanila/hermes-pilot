@@ -18,12 +18,12 @@
 
 ### 1.2 監査で特定した不具合・ギャップ（今回修正必須の 4 点）
 
-| # | 箇所 (`file:line`) | 現象・原因 | 修正方針 |
-|---|---|---|---|
-| **G1** | `apps/web/src/features/ChatPane.jsx:293-307`<br>`apps/web/src/features/TermPane.jsx:109-113`<br>`apps/web/src/i18n/lang.js:110`<br>`apps/web/src/i18n/index.js:55` | **英語表示にしてもチャット/端末スニペットが日本語のまま残る**<br>① `ChatPane` はタブ移動時もアンマウントされない（`.pane-host.is-hidden`）が、`loadSnippets` の `useEffect` 依存配列に `lang` が無いため、設定タブで `English` に切り替えても再取得されない。<br>② `lang.js` の初期値 `active` が `localStorage['hm.lang']` を同期読み込みしておらず、親 `I18nProvider` の `useEffect` より先に子 `ChatPane` の初回 `useEffect` が走る。 | ① `lang.js` 初期化時に `detectLang(readStoredPref())` で `active` を同期確定し、`I18nProvider` の `setPref` でも即座に `setActiveLang` と `hm:snippets` イベントを発火させる。<br>② `ChatPane` / `TermPane` / `SettingsPane` のスニペット取得 URL に `?lang=${lang}` を明示付与し、`useEffect` の依存配列に `lang` を入れる。 |
-| **G2** | `apps/bridge/src/term-snippets.js:58,111`<br>`apps/bridge/src/server.js:905` | **端末スニペットに日本語 echo が残存 ＆ 設定画面から編集不可**<br>① `t-drain-clear` と `t-drain-state` のシェルコマンド内に `"drain marker を削除しました"` 等の日本語がハードコードされている。<br>② `GET /api/snippets/term` のみで `PUT` が無く、設定画面から追加・編集・Hot 切替ができない。 | ① シェル出力メッセージも言語別または英語標準に統一する。<br>② チャットと端末で共通の「組み込みオーバーライド（Hot/非表示）＋カスタム追加/編集/削除＋既定リセット」モデルを導入する。 |
-| **G3** | `apps/dashboard/pilot_dashboard.py:44-46,148-151`<br>`apps/bridge/src/repos.js:93-120` | **標準 Web UI の `scanDirs` 設定がブリッジ側のリポジトリ検出に反映されない**<br>標準ダッシュボード（`pilot_dashboard.py`）は `scanDirs` を `config.json` に読み書きしているが、ブリッジ本体（`repos.js`）は `repos.json` の `scanDirs` を読んでいるため、標準 Web UI でスキャン先を変えても PWA 側に効かない。 | 標準 Web UI のバックエンド（`pilot_dashboard.py` / `plugin_api.py`）がブリッジの `/api/repos`・`/api/snippets`・`/api/snippets/term`・`/api/logs`・`/api/audit`（または `repos.json` / `snippets.json` / `term-snippets.json`）を直接読み書き・プロキシして完全同期する。 |
-| **G4** | `apps/web/public/sw.js:5,33,54` | **Service Worker のキャッシュ名とオフライン文言が旧仕様のまま**<br>`CACHE = 'hermes-mobile-v12'`、503 応答が `'オフライン'` 固定になっている。 | `CACHE = 'hermes-pilot-v1'` に更新し、503 応答に `{ ok: false, code: 'OFFLINE', error: 'Offline' }` を返してフロント側の `t('err.OFFLINE')` で多言語表示する。 |
+| # | 箇所 (`file:line`) | 現象・原因 | 修正方針 | 状態（修正コミット） |
+|---|---|---|---|---|
+| **G1** | `apps/web/src/features/ChatPane.jsx:293-307`<br>`apps/web/src/features/TermPane.jsx:109-113`<br>`apps/web/src/i18n/lang.js:110`<br>`apps/web/src/i18n/index.js:55` | **英語表示にしてもチャット/端末スニペットが日本語のまま残る**<br>① `ChatPane` はタブ移動時もアンマウントされない（`.pane-host.is-hidden`）が、`loadSnippets` の `useEffect` 依存配列に `lang` が無いため、設定タブで `English` に切り替えても再取得されない。<br>② `lang.js` の初期値 `active` が `localStorage['hm.lang']` を同期読み込みしておらず、親 `I18nProvider` の `useEffect` より先に子 `ChatPane` の初回 `useEffect` が走る。 | ① `lang.js` 初期化時に `detectLang(readStoredPref())` で `active` を同期確定し、`I18nProvider` の `setPref` でも即座に `setActiveLang` と `hm:snippets` イベントを発火させる。<br>② `ChatPane` / `TermPane` / `SettingsPane` のスニペット取得 URL に `?lang=${lang}` を明示付与し、`useEffect` の依存配列に `lang` を入れる。 | ✅ **修正済み** `0967cf4`（P1）<br>P5 で実機相当（390x844 / 820x1180・EN/JA）に再検証: 設定で English に切り替え→リロード無しでチャット/端末のチップが英語化（`/api/snippets?lang=en` を実測） |
+| **G2** | `apps/bridge/src/term-snippets.js:58,111`<br>`apps/bridge/src/server.js:905` | **端末スニペットに日本語 echo が残存 ＆ 設定画面から編集不可**<br>① `t-drain-clear` と `t-drain-state` のシェルコマンド内に `"drain marker を削除しました"` 等の日本語がハードコードされている。<br>② `GET /api/snippets/term` のみで `PUT` が無く、設定画面から追加・編集・Hot 切替ができない。 | ① シェル出力メッセージも言語別または英語標準に統一する。<br>② チャットと端末で共通の「組み込みオーバーライド（Hot/非表示）＋カスタム追加/編集/削除＋既定リセット」モデルを導入する。 | ✅ **修正済み** `0967cf4`（P1）<br>echo は英語標準（`drain marker removed`）に統一、`PUT /api/snippets/term` と設定画面の編集 UI を追加。P5 で端末チップの EN/JA 切替を再検証 |
+| **G3** | `apps/dashboard/pilot_dashboard.py:44-46,148-151`<br>`apps/bridge/src/repos.js:93-120` | **標準 Web UI の `scanDirs` 設定がブリッジ側のリポジトリ検出に反映されない**<br>標準ダッシュボード（`pilot_dashboard.py`）は `scanDirs` を `config.json` に読み書きしているが、ブリッジ本体（`repos.js`）は `repos.json` の `scanDirs` を読んでいるため、標準 Web UI でスキャン先を変えても PWA 側に効かない。 | 標準 Web UI のバックエンド（`pilot_dashboard.py` / `plugin_api.py`）がブリッジの `/api/repos`・`/api/snippets`・`/api/snippets/term`・`/api/logs`・`/api/audit`（または `repos.json` / `snippets.json` / `term-snippets.json`）を直接読み書き・プロキシして完全同期する。 | ✅ **修正済み** `6ce14bd`（P4）<br>標準ダッシュボードのバックエンドがブリッジ API 優先・停止時は `repos.json` を tmp→rename（0600）で書き、`PUT /config` が `scanDirs` を両方へ同期。P4 実測: 保存後に `repos.json`・`config.json`・ブリッジ `GET /api/repos` が一致（equal=true） |
+| **G4** | `apps/web/public/sw.js:5,33,54` | **Service Worker のキャッシュ名とオフライン文言が旧仕様のまま**<br>`CACHE = 'hermes-mobile-v12'`、503 応答が `'オフライン'` 固定になっている。 | `CACHE = 'hermes-pilot-v1'` に更新し、503 応答に `{ ok: false, code: 'OFFLINE', error: 'Offline' }` を返してフロント側の `t('err.OFFLINE')` で多言語表示する。 | ✅ **修正済み** `0967cf4`（P1）<br>実測: `apps/web/public/sw.js:6` が `const CACHE = 'hermes-pilot-v1'`、`:17` が 503 に `{ok:false,code:'OFFLINE',error:'Offline'}` を返す |
 
 ---
 
@@ -305,3 +305,13 @@ Hermes Agent（DeepSeek V4.1 Flash）は以下の **5 バッチ（P1 → P2 → 
 - **受入条件（Verify）**:
   - `npm run verify` ＆ `npm run deploy` が成功すること。
   - `390×844`（スマホ）と `820×1180`（タブレット）で `en` / `ja` ともに `scrollWidth <= clientWidth`（横溢れゼロ）であり、チャットスニペットと端末スニペットが選択言語どおりに表示されていること。
+
+#### P5 実測結果（2026-11-14 ヘッドレス実測）
+
+- `npm run verify` → exit 0（**402 tests / fail 0**、check:pwa **34 項目 ok**、build ok）／ `npm run deploy` → 成功。
+- **8 通りマトリクス**: 390x844・820x1180 × `en`/`ja` × `dark`/`light` で 5 タブ（タスク / レビュー / チャット / 端末 / 設定）を通しで開き、`documentElement.scrollWidth === clientWidth`（390/390・820/820、**横溢れ 0 件／40 計測**）。スクショは `review/shots/pilot-p5-202611140205-1..40.after.png`。
+- **スニペットの言語追従**（G1）: 設定で `English` に切り替え→リロード無しでチャット `📋 Quick Review / 📸 Annotate Shot / …`・端末 `Restart Pilot / GW Status / …` に切替（`/api/snippets?lang=en`・`/api/snippets/term?lang=en` を実測）。`日本語` に戻すと即座に日本語へ復帰。
+- **Before ↔ After 比較・1 タップ検収**: 注釈タスクを作成 → 比較トグルが `🔀 After (latest)` ⇄ `🔀 Before (previous red pen)` で切替（画像も切替）→ `✅ Looks Good` でタスクが `done`（`result: Visual check passed`）に遷移（実測 `t_5089807b`）。
+- **Spec Launchpad**: リポジトリのあるボードで `🚀 Spec Launchpad … 5 batches` バーが出て、シートに P1〜P5 と起票済み表示。`POST /api/specs/launch` は既存の未完了バッチを `skipped: [{id: "P5", reason: "exists", taskId: "t_d0bca558"}]` として**重複起票しない**ことを実 API で確認。
+- **計器盤ピル**: `💎 99%` タップで Usage シート（Cost $4.71 / Input 4.99M / Output 2.19M / Cache read 825.93M (99.4%) / API calls 3,475 / Sessions 20）が開く。`⚡ Running 2 · <tool>` は実行中ツール名がライブ更新。
+- **直した不具合（P5）**: チャット/端末タブでトーストがスニペット帯と入力欄に重なり、押したい定型文が隠れていた（修正前の証拠: `pilot-p5-202611140156-13.after.png`）。`.toast.chat` / `.toast.term` の `bottom` を 108px 持ち上げ、修正後の実測はトースト下端 678px < スニペット帯上端 698px（重なり 0、`pilot-p5-202611140205-toast-fixed2.after.png`）。

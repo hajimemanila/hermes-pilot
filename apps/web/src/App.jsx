@@ -777,7 +777,8 @@ export function App() {
         })}
       </nav>
 
-      {toast ? <div className="toast">{toast.msg}</div> : null}
+      {/* トーストの位置はタブで変える（チャット/端末は下端に入力欄とスニペット帯がある・SPEC P5） */}
+      {toast ? <div className={`toast ${tab}`}>{toast.msg}</div> : null}
 
       {searchOpen ? (
         <SearchSheet

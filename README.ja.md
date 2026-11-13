@@ -29,6 +29,44 @@ English README: [`README.md`](README.md)
 - **外部プラグイン不要** — リポジトリはプロジェクトフォルダの 1 階層スキャンで見つけ、システム状態は
   Hermes 標準 API だけで組み立てます
 
+### 意思決定コックピット（v2）
+
+「エージェントが判断を待っている」から「また走り出した」までを最短にする 5 つ。スマホからも標準
+ダッシュボードからも触れます。
+
+- **Spec Launchpad** — タスクタブがボードのリポジトリの `docs/SPEC-*.md` を読み、`### Batch P1: …` の
+  バッチを一覧して 1 タップでカンバンに起票します。同じ `[ID]` の未完了タスクがあるバッチは飛ばすので、
+  二度押しや再読み込みで重複しません。
+
+  ```bash
+  curl -s -H "x-client: mobile" "http://127.0.0.1:4097/api/specs?board=<board>&t=$(cat ~/.hermes/plugin-data/hermes-pilot/token)"
+  curl -s -X POST -H "x-client: mobile" -H "content-type: application/json" \
+       -d '{"board":"<board>","specRelPath":"docs/SPEC-PILOT-V2.md","batchIds":["P5"]}' \
+       "http://127.0.0.1:4097/api/specs/launch?t=$(cat ~/.hermes/plugin-data/hermes-pilot/token)"
+  ```
+
+- **1 タップ一括承認（Fast-Track）** — 設問に推奨案があるシートでは
+  「⚡ 推奨案（Q1:A · Q2:B）で一括承認して再開」が出ます。1 タップで推奨をまとめて送信し、ワーカーを
+  unblock して次の判断待ちへ移ります（`POST /api/review/:id/answer`）。
+- **Before ↔ After 比較** — 前ラウンド（`*.before.png` または 1 つ前の連番スクショ）がある注釈レビューでは
+  比較トグルが出て、自分が入れた赤と最新スクショを切り替えて見られます。「✅ 検収 OK」で 1 タップ完了
+  （`POST /api/review/:id/approve`）。
+- **標準ダッシュボード連携** — Hermes ダッシュボード（`:9119`）の「Hermes Pilot」タブで、リポジトリ
+  （追加・ピン・非表示・ボード作成）、チャット＆端末スニペット、ブリッジ／GW／監査ログを、PWA と同じ
+  ファイルに対して操作できます（`scanDirs` の設定箇所は 1 か所だけ）。
+
+  ```bash
+  npx hermes-pilot init --force      # 更新後にダッシュボードのプラグインファイルを入れ替える
+  ```
+
+- **スニペット編集** — 組み込みも Hot（バー表示）/ 非表示を切替でき、自分用の追加・編集・並べ替え・削除が
+  チャットと端末の両方で、英語・日本語のまま行えます（「既定に戻す」つき）。
+
+  ```bash
+  curl -s -H "x-client: mobile" "http://127.0.0.1:4097/api/snippets?lang=ja"      # チャット
+  curl -s -H "x-client: mobile" "http://127.0.0.1:4097/api/snippets/term?lang=ja" # 端末
+  ```
+
 ## 必要なもの
 
 - Node.js **22.19 以上**
@@ -142,7 +180,7 @@ review/        sheets/, shots/, library/, feed.jsonl, chat-reports.jsonl, task-c
 ```bash
 npm install                 # postinstall が node-pty の権限を直す
 npm run dev                 # Vite :4098（/api・/ws は 4097 へプロキシ）
-npm test                    # 単体テスト（329 件）
+npm test                    # 単体テスト（402 件）
 npm run verify              # test + check:pwa（34 項目）+ 本番ビルド
 npm run deploy              # 検証付きで dist を原子的に切替（無停止）
 npm run migrate:pilot       # init と同じ移行を単体で実行
