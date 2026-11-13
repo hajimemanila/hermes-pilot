@@ -89,6 +89,36 @@ test('リースが無ければ空配列', () => {
   assert.equal(s.counts.turns, 0)
 })
 
+test('期限切れのリースは実行中として数えない（前日の行が稼働中に並ぶ不具合）', () => {
+  const dbPath = fixture()
+  const db = new DatabaseSync(dbPath)
+  const now = Date.now() / 1000
+  // 昨日のまま残ったリース（終わったターンの行が消えていない）
+  db.prepare('INSERT INTO session_turn_leases VALUES (?,?,?,?)').run(
+    's1', 'pid=9:turn=old:platform=local', now - 80000, now - 79700,
+  )
+  db.close()
+  const s = createLive({ home: '/nonexistent', stateDb: dbPath }, fakeKanban).snapshot()
+  assert.equal(s.turns.length, 2)
+  assert.equal(s.turns.some((t) => t.sessionId === 's1'), true) // 生きているリースは残る
+  assert.ok(s.turns.every((t) => (t.expiresInSec ?? 0) > 0))
+  assert.equal(s.counts.turns, 2)
+})
+
+test('期限の 60 秒以内は猶予として残す（更新の遅れを誤判定しない）', () => {
+  const dbPath = fixture()
+  const db = new DatabaseSync(dbPath)
+  const now = Date.now() / 1000
+  db.exec('DELETE FROM session_turn_leases')
+  db.prepare('INSERT INTO session_turn_leases VALUES (?,?,?,?)').run(
+    's2', 'pid=3:turn=late:platform=local', now - 30, now - 20,
+  )
+  db.close()
+  const s = createLive({ home: '/nonexistent', stateDb: dbPath }, fakeKanban).snapshot()
+  assert.equal(s.turns.length, 1)
+  assert.equal(s.turns[0].sessionId, 's2')
+})
+
 test('state.db が無くてもタスクは返す', () => {
   const s = createLive({ home: '/nonexistent', stateDb: '/nonexistent/state.db' }, fakeKanban).snapshot()
   assert.equal(s.ok, false)

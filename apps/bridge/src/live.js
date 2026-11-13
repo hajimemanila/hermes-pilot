@@ -18,11 +18,19 @@ export function platformOf(holder) {
   return m ? m[1] : null
 }
 
+/** リース期限の猶予（秒）。更新が数秒遅れても「終わった」と誤判定しない。 */
+const LEASE_GRACE_SEC = 60
+
 export function createLive(cfg, kanban) {
   const dbPath = cfg.stateDb ?? path.join(cfg.home ?? '', '.hermes', 'state.db')
 
   /**
    * 1つの DB から実行中ターンを読む。
+   *
+   * **期限切れのリースは実行中ではない。** ターンは 5 分のリースを更新しながら走るので、
+   * `expires_at` を過ぎた行は「終わったが行が残っている」もの（実測: 前日のリースが
+   * `expiresInSec=-79488` で稼働中として並んだ）。更新の遅れを吸収するため 60 秒だけ猶予を置く。
+   *
    * @param {{profile: string, path: string}} target DB情報
    * @param {number} at 現在時刻
    * @returns {Array<object>} ターン一覧
@@ -38,9 +46,10 @@ export function createLive(cfg, kanban) {
                   s.last_activity_at
              FROM session_turn_leases l
              LEFT JOIN sessions s ON s.id = l.conversation_id
+            WHERE l.expires_at > ?
             ORDER BY l.acquired_at DESC`,
         )
-        .all()
+        .all(at / 1000 - LEASE_GRACE_SEC)
       const lastToolStmt = db.prepare(
         `SELECT tool_name, timestamp FROM messages
           WHERE session_id = ? AND tool_name IS NOT NULL
