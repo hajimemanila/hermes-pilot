@@ -112,7 +112,7 @@ test('Dark: --text は 7:1 以上、--muted は 4.5:1 以上（既定テーマ�
 
 test('Light ブロックは色トークンをすべて上書きしている（暗色フォールバック漏れ防止）', () => {
   // レイアウト用（--nav-h / --safe-*）は色ではないので :root だけにある
-  const LAYOUT = new Set(['--nav-h', '--safe-b', '--safe-t'])
+  const LAYOUT = new Set(['--nav-h', '--safe-b', '--safe-t', '--safe-l', '--safe-r'])
   const missing = Object.keys(dark).filter((name) => !LAYOUT.has(name) && !light[name])
   assert.deepEqual(missing, [], `Light に無いトークン: ${missing.join(', ')}`)
 })

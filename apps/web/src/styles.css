@@ -59,6 +59,17 @@
   --nav-h: 58px;
   --safe-b: env(safe-area-inset-bottom, 0px);
   --safe-t: env(safe-area-inset-top, 0px);
+  /*
+   * 左右の safe-area（横向き・ノッチ・Android の 3 ボタンナビ）。
+   * `viewport-fit=cover`（apps/web/index.html:5）を指定しているので、指定しないと
+   * 横向きでノッチ／システムバーに内容が食われる。
+   * 足す場所は 1 箇所だけにする: 通常の画面は `.app` が左右を持つ（下の `.app` を参照）。
+   * `.sheet-wrap` のような `position: fixed` の被せ物は `.app` の padding の外に出るので、
+   * それぞれの側で足す（二重に足すと 2 倍の余白になる）。
+   * ノッチの無い端末・デスクトップでは `env()` が 0px に落ちるので、既存の見た目は変わらない。
+   */
+  --safe-l: env(safe-area-inset-left, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
 }
 
 /*
@@ -136,13 +147,22 @@ body {
   overscroll-behavior-y: none;
 }
 
+/*
+ * アプリの枠。上下の safe-area に加えて **左右も**ここで持つ。
+ *
+ * 左右を `.app` の padding で 1 回だけ入れるのが要点: 子（`.topbar` / `.pane` /
+ * `.split-master` / `.split-detail` / `.nav`）で個別に足すと、重なって余白が 2 倍になり、
+ * 横向きでコンテンツが狭くなる。背景（`--glass` のバー・ナビ）は端まで届かず
+ * ノッチ帯は body のグラデーションになるが、内容がノッチ／システムバーに食われない方が優先
+ * （`position: fixed` の被せ物だけは `.app` の外なので各側で足す）。
+ */
 .app {
   display: flex;
   flex-direction: column;
   height: 100%;
   max-height: 100dvh;
   overflow: hidden;
-  padding-top: var(--safe-t);
+  padding: var(--safe-t) var(--safe-r) 0 var(--safe-l);
 }
 
 .topbar {
@@ -941,7 +961,10 @@ button.t-pill:active {
   border-radius: 18px 18px 0 0;
   display: flex;
   flex-direction: column;
-  padding-bottom: var(--safe-b);
+  /* 固定の被せ物は `.app` の padding の外（画面いっぱい）に出るので、左右の
+     safe-area はここで持つ。内側の `.sheet-head` / `.sheet-body` は自分で
+     左右 padding を持つが、これは入れ子の別ボックスなので二重にはならない。 */
+  padding: 0 var(--safe-r) var(--safe-b) var(--safe-l);
   animation: rise 0.18s ease-out;
 }
 
@@ -4240,4 +4263,63 @@ html[data-vibe='serotonin'] .spec-receipt-btn {
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
+}
+
+/* ===========================================================================
+ * 横向きスマホ（高さ 430px 以下）— SPEC-i18n-resp §2 B4 / 決定 Q3=A
+ *
+ * 844×390 のような「横長・低い」画面では、縦の余白が既定のままだと
+ * 一覧＋操作が 1 画面に入らず、毎回スクロールしないと操作できない。
+ * 高さだけを見て詰める（幅は 820px 以上なので 2 ペインのまま）。
+ *
+ * - `--nav-h` 58 → 48（ボトムナビは触れる高さ 48px を保ちつつ 10px 稼ぐ）
+ * - トップバー 46 → 40
+ * - シート（詳細の被せ）のヘッダ・本文の余白を詰める
+ *
+ * 左右の safe-area は `.app` が持っているのでここでは触らない（二重にしない）。
+ * ファイル末尾に置くのは、後勝ちで既存の高さ・余白を確実に上書きするため。
+ * ========================================================================= */
+@media (max-height: 430px) {
+  :root {
+    --nav-h: 48px;
+  }
+
+  .topbar {
+    height: 40px;
+  }
+
+  .pane {
+    padding-top: 8px;
+  }
+
+  .strip {
+    margin-bottom: 7px;
+  }
+
+  /* 844×390 は幅も 820px 以上なので 2 ペイン。低い画面ぶん余白だけ詰める */
+  .split-master {
+    padding: 8px 10px calc(10px + var(--safe-b));
+  }
+
+  .split-detail {
+    padding: 0 14px calc(12px + var(--safe-b));
+  }
+
+  .split-detail-head {
+    margin: 0 -14px 6px;
+    padding: 8px 14px;
+  }
+
+  /* ボトムシートは低い画面では高さを活かす（既定 82dvh だと選択肢が 1 件しか見えない） */
+  .sheet {
+    max-height: 94dvh;
+  }
+
+  .sheet-head {
+    padding: 8px 12px 6px;
+  }
+
+  .sheet-body {
+    padding: 8px 12px 12px;
+  }
 }

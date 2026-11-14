@@ -8,4 +8,7 @@ apps/web/dist.next/
 apps/web/dist-demo/
 __pycache__/
 *.pyc
+# 実画面のスクショ（before/after）は成果物ではなく検証の入力。
+# 永続置き場は library（`~/.hermes/plugin-data/hermes-pilot/review/shots/`）なので追跡しない。
+shots/
 
