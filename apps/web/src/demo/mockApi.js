@@ -233,6 +233,8 @@ export function demoState() {
   return state
 }
 
+import { DEMO_SNIPPETS } from './snippets.js'
+
 /* ------------------------------------------------------------------ *
  * 画像（外部ファイルゼロ: SVG 文字列 -> data URL）
  * ------------------------------------------------------------------ */
@@ -724,8 +726,21 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
         hasMore: false,
         oldestId: 'm1',
       }
-    case 'snippets':
-      return { items: [] }
+    case 'snippets': {
+      // 本物のブリッジと同じ形を返す（`items: []` だと定型チップ帯が空になり、
+      // 「仕様の種」だけが残って見える・実測）。label/text は i18n の辞書に合わせる。
+      const lang = String(route.params?.get('lang') || 'en').slice(0, 2) === 'ja' ? 'ja' : 'en'
+      const set = DEMO_SNIPPETS[lang]
+      return {
+        snippets: set,
+        allSnippets: set,
+        overrides: {},
+        custom: [],
+        customMax: 16,
+        hotLimit: 8,
+        lang,
+      }
+    }
     case 'repos':
       return { repos: [{ id: 'hermes-pilot-demo', label: 'hermes-pilot (demo)', path: '/demo/hermes-pilot', board: DEMO_BOARD }] }
     case 'receipt':

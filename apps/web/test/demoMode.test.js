@@ -200,3 +200,22 @@ test('通常ビルドにデモが混ざらない: api.js は demo/ を import �
   // 差し込み口は globalThis 経由（= 本番では誰も入れないので分岐しない）
   assert.match(apiSrc, /__hmDemoFetch/)
 })
+
+test('demo snippets: 定型チップ帯とツールチップが埋まる形で返す（仕様の種だけにならない）', async () => {
+  const ja = await demoFetch('/api/snippets?lang=ja')
+  assert.ok(Array.isArray(ja.snippets) && ja.snippets.length >= 6, 'チップが空だと「仕様の種」だけが残る（実測）')
+  assert.equal(ja.snippets[0].id, 'quick-review')
+  assert.match(ja.snippets[0].label, /Quick Review/)
+  assert.ok(ja.snippets[0].text, 'tooltip（title）用の text が無い')
+  assert.equal(ja.snippets.filter((s) => s.hot).length, 6, 'Hot は 6 件')
+  assert.equal(ja.snippets.filter((s) => s.trigger).length, 2, '意思決定トリガーは 2 件')
+  assert.equal(ja.lang, 'ja')
+  assert.equal(ja.hotLimit, 8)
+  assert.deepEqual(ja.overrides, {})
+  assert.deepEqual(ja.custom, [])
+
+  const en = await demoFetch('/api/snippets?lang=en')
+  assert.equal(en.lang, 'en')
+  assert.match(en.snippets[0].label, /Quick Review/)
+  assert.notEqual(en.snippets[0].label, ja.snippets[0].label, '言語で切り替わっていない')
+})

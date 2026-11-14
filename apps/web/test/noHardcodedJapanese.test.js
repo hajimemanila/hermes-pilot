@@ -29,6 +29,7 @@ const GLYPHS = /＋/g
 /** 走査対象外のファイルと、その理由。 */
 const SKIP = new Map([
   ['lib/reviewPaste.js', 'シートと skill が出力する貼り付け形式（データ）なので日本語のまま'],
+  ['demo/snippets.js', 'デモ専用の定型スニペット（フィクスチャ・本番バンドル外）なので日本語のまま'],
 ])
 
 /**
