@@ -3570,22 +3570,23 @@ ol.md-list {
   }
 }
 
-/* コンボ（🔥 2x COMBO）のピル。計器盤の下に短く出る */
+/* コンボ（🔥 2x COMBO）のピル。バーストの少し上に出して、計器盤やタブと重ねない */
 .fx-combo-pill {
   position: absolute;
   left: 50%;
-  top: calc(var(--safe-t) + 56px);
+  top: calc(38% - 52px);
   transform: translateX(-50%);
   max-width: calc(100vw - 32px);
   padding: 5px 11px;
   border-radius: 999px;
-  background: rgba(251, 191, 36, 0.16);
+  background: rgba(28, 22, 6, 0.94);
   border: 1px solid rgba(251, 191, 36, 0.55);
   color: #ffe9b3;
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.04em;
   white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
   animation: fx-pop 180ms ease-out;
 }
 
@@ -3601,12 +3602,12 @@ ol.md-list {
   max-width: calc(100vw - 40px);
   padding: 12px 18px;
   border-radius: 16px;
-  background: linear-gradient(140deg, rgba(251, 191, 36, 0.2), rgba(45, 212, 191, 0.18));
+  background: linear-gradient(140deg, rgba(44, 34, 8, 0.96), rgba(8, 30, 34, 0.96));
   border: 1px solid rgba(251, 191, 36, 0.5);
   color: #fff7e0;
   font-size: 15px;
   font-weight: 700;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
   animation: fx-flash 2400ms ease-out forwards;
 }
 
@@ -3689,4 +3690,225 @@ html[data-vibe='serotonin'] .fx-allclear-card {
   html[data-vibe='dopamine'] .btn.fast-track {
     animation: none;
   }
+}
+
+/* ===========================================================================
+ * 完了レシート（🏆 Completion Receipt Card・SPEC-PILOT-V5 §3.3 ③ / D26③）
+ *
+ * Chat の統合レポートカード / Tasks の完走バナー / UsageSheet の 3 箇所から
+ * 1 タップで開くシート。中の Canvas は 1200×630 を CSS で縮小表示する。
+ * 390px 幅で横溢れしないこと（2 列グリッド + minmax(0,1fr) + overflow-wrap）。
+ * Dopamine はゴールド＆ティールの発光、Serotonin は端正なモノスペース調。
+ * ========================================================================= */
+
+.receipt-open-btn {
+  display: block;
+  width: 100%;
+  margin: 0 0 10px;
+}
+
+.spec-receipt-btn {
+  width: 100%;
+  margin: 0 0 10px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(232, 196, 122, 0.45);
+  background: rgba(232, 196, 122, 0.12);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.spec-receipt-btn:active {
+  transform: scale(0.99);
+}
+
+.receipt-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.receipt-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.receipt-head-icon {
+  flex: 0 0 auto;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.receipt-head-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.receipt-head-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.receipt-head-sub {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.receipt-preview {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  background: #06181f;
+}
+
+.receipt-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.receipt-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.receipt-kpi-label {
+  font-size: 10.5px;
+  color: var(--muted);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.receipt-kpi-value {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.receipt-kpi-note {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.receipt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.receipt-btn {
+  flex: 1 1 140px;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.35;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.receipt-btn.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.receipt-btn:active {
+  transform: scale(0.99);
+}
+
+.receipt-btn[disabled] {
+  opacity: 0.6;
+}
+
+.receipt-note {
+  font-size: 10.5px;
+  color: var(--muted);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.receipt-note.warn {
+  color: var(--warn);
+}
+
+/* Dopamine: ゴールド＆ティールのホログラム調 */
+.receipt-sheet.is-dopamine .receipt-preview {
+  border-color: rgba(232, 196, 122, 0.55);
+  box-shadow: 0 0 18px rgba(45, 212, 191, 0.16);
+}
+
+.receipt-sheet.is-dopamine .receipt-kpi {
+  border-color: rgba(232, 196, 122, 0.32);
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.06), rgba(45, 212, 191, 0.08));
+}
+
+.receipt-sheet.is-dopamine .receipt-kpi-value {
+  color: #ffd98a;
+}
+
+/* Serotonin: 端正なモノスペース調の監査サマリ */
+.receipt-sheet.is-serotonin .receipt-kpi-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 17px;
+  letter-spacing: -0.2px;
+}
+
+.receipt-sheet.is-serotonin .receipt-kpi {
+  background: var(--surface);
+}
+
+html[data-vibe='serotonin'] .receipt-open-btn,
+html[data-vibe='serotonin'] .spec-receipt-btn {
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+}
+
+@media (min-width: 820px) {
+  .receipt-kpis {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* Spec Seed の入口チップ（Chat の入力欄上 / Tasks の仕様ランチャー横） */
+.seed-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 2px 6px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
