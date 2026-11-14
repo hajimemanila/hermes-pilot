@@ -1396,7 +1396,9 @@ const server = http.createServer(async (req, res) => {
   } catch (err) {
     const status = err?.statusCode ?? 500
     if (status >= 500) console.error('[api] 失敗:', err)
-    sendError(res, status, status >= 500 ? 'INTERNAL' : 'BAD_REQUEST', { detail: String(err?.message ?? '') })
+    // `ApiError` など `code` / `params` を持つ throw はそのコードで返す（SPEC-i18n-resp B1）。
+    const code = typeof err?.code === 'string' && err.code ? err.code : status >= 500 ? 'INTERNAL' : 'BAD_REQUEST'
+    sendFailure(res, status, { code, params: err?.params, message: String(err?.message ?? '') })
   }
 })
 
