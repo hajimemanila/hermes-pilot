@@ -2826,54 +2826,90 @@ ol.md-list {
   border-color: var(--warn); background: rgba(250, 204, 21, .14); color: var(--text);
 }
 .ak-compare-pill:active { transform: scale(.98); }
-/* 赤入れせずに合格（1 タップ検収） */
-.ak-approve-row { padding: 0 12px 8px; }
-.ak-approve {
-  width: 100%; padding: 11px 12px; border-radius: 11px;
-  border: 1px solid var(--good-line, var(--line-strong)); background: var(--good-bg, var(--surface));
-  color: var(--good-fg, var(--text)); font-size: 13.5px; font-weight: 700;
+/* 赤入れ画面の本体。560px 以上（`wide`）では「画像｜操作列」の横並びにして
+   画像へ高さを全部渡す（タブレット横・2 ペインの詳細でスクショが小さくなる問題） */
+.ak-anno-body {
+  flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0;
 }
-.ak-approve:disabled { opacity: .55; }
+.ak-anno-side {
+  flex: none; display: flex; flex-direction: column; gap: 6px;
+  min-width: 0; padding: 6px 10px 10px;
+}
+.ak-anno.wide .ak-anno-body { flex-direction: row; }
+.ak-anno.wide .ak-anno-canvas-wrap { padding: 8px 10px; }
+.ak-anno.wide .ak-anno-side {
+  flex: 0 0 clamp(220px, 38%, 300px);
+  border-left: 1px solid var(--line);
+  padding: 8px 10px 10px;
+  overflow-y: auto;
+}
+/* 赤入れせずに合格（1 タップ検収）と アーカイブ を最下部に並べる判断バー */
+.ak-anno-actions { display: flex; gap: 8px; margin-top: auto; padding-top: 4px; }
+.ak-anno-actions > * { flex: 1 1 0; min-width: 0; }
+.ak-anno-done {
+  padding: 10px 12px; border-radius: 11px;
+  border: 1px solid var(--good-line, var(--line-strong)); background: var(--good-bg, var(--surface));
+  color: var(--good-fg, var(--text)); font-size: 13px; font-weight: 700;
+}
+.ak-anno-done:disabled { opacity: .55; }
+.ak-anno-actions .hold { width: auto; padding: 10px 8px; border-radius: 11px; }
+.ak-anno-actions .hold-label { font-size: 13px; }
+.ak-anno.wide .ak-anno-actions { flex-direction: column; }
+.ak-anno.wide .ak-anno-actions > * { flex: 0 0 auto; width: 100%; }
+/* 幅が狭い操作列では見出しを落としてチップに幅を回す（一覧は「＋」から） */
+.ak-anno.wide .ak-anno-bar-title { display: none; }
 .ak-anno-canvas {
   touch-action: none;            /* スクロール・ズームを止めて描画に専念させる */
   border-radius: 8px; background: #000;
   box-shadow: 0 10px 30px -18px rgba(0,0,0,.9);
 }
-.ak-anno-error { margin: 0 12px 6px; }
+.ak-anno-error { margin: 0 2px; }
 .ak-anno-tools {
-  display: flex; align-items: center; gap: 6px; padding: 8px 10px 10px;
-  border-top: 1px solid var(--line); flex-wrap: wrap;
+  display: flex; align-items: center; gap: 6px; padding: 0; flex-wrap: nowrap; min-width: 0;
 }
 .ak-anno-tool {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 8px 11px; border-radius: 10px; font-size: 12px;
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 38px; height: 36px; border-radius: 10px; font-size: 15px;
   border: 1px solid var(--line); background: var(--surface); color: var(--text);
 }
 .ak-anno-tool.on { border-color: var(--accent); background: rgba(45,212,191,.16); color: var(--rec-fg); }
 .ak-anno-tool:disabled { opacity: .45; }
 .ak-anno-note {
-  flex: 1 1 140px; min-width: 120px; padding: 8px 10px; border-radius: 10px;
+  flex: 1 1 auto; min-width: 0; height: 36px; padding: 0 10px; border-radius: 10px;
   border: 1px solid var(--line); background: var(--bg-2); color: var(--text); font: inherit; font-size: 12.5px;
 }
+.ak-anno.wide .ak-anno-tools { flex-wrap: wrap; }
+.ak-anno.wide .ak-anno-note { flex: 1 0 100%; }
 /* --- 1 タップ指示スタンプ（SPEC-PILOT-V5 §3.3 ②）
-   390px 幅で 2 段に折り返して収める（横スクロール・横溢れゼロ）。 */
-.ak-anno-stamps {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
-  padding: 6px 10px 0;
+   チャットの定型チップと同じ「1 行の横スクロール＋『＋』ドロワー」。折り返して
+   2 段にするとスクショの高さを奪うので、縦は 30px の 1 行に固定する。 */
+.ak-anno-bar {
+  display: flex; align-items: center; gap: 6px; min-width: 0; flex: none;
 }
-.ak-anno-stamps-title {
-  flex: 0 0 100%; font-size: 10px; font-weight: 700; letter-spacing: .04em;
-  text-transform: uppercase; color: var(--muted);
+.ak-anno-bar-title {
+  flex: none; font-size: 10px; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--muted); white-space: nowrap;
 }
+.ak-anno-stamps-scroll {
+  flex: 1 1 auto; min-width: 0; display: flex; gap: 6px; padding: 1px 0;
+  overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  mask-image: linear-gradient(90deg, #000 calc(100% - 14px), transparent);
+}
+.ak-anno-stamps-scroll::-webkit-scrollbar { display: none; }
 .ak-anno-stamp {
-  display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
-  padding: 6px 10px; border-radius: 999px;
+  flex: none; display: inline-flex; align-items: center; gap: 4px; height: 30px;
+  padding: 0 10px; border-radius: 999px;
   font-size: 11.5px; font-weight: 600; white-space: nowrap;
   border: 1px solid var(--line-strong); background: var(--surface); color: var(--text);
 }
 .ak-anno-stamp.on { border-color: var(--warn); background: rgba(245, 158, 11, .18); }
 .ak-anno-stamp:disabled { opacity: .45; }
 .ak-anno-stamp:active { transform: scale(.97); }
+.ak-anno-more {
+  flex: none; width: 30px; height: 30px; border-radius: 999px;
+  border: 1px solid var(--line-strong); background: var(--surface); color: var(--text); font-size: 14px;
+}
+.ak-anno-more-chev { flex: none; color: var(--muted); font-size: 16px; }
 .ak-head-actions { display: flex; gap: 6px; flex: none; }
 
 /* --- Quick Review: 一括承認（⚡）と 1 / N プログレス（SPEC §5.1） --- */

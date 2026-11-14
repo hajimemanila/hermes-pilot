@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
-import { CloseActions } from '../components/CloseActions.jsx'
+import { HoldButton, Sheet } from '../components/Ui.jsx'
 import {
   STAMPS,
   applyStampToStrokes,
@@ -38,6 +38,8 @@ const RED = '#e11d48'
 /** スタンプの小ピル（画像の上でも読めるアンバー）。 */
 const AMBER = '#f59e0b'
 const AMBER_INK = '#231603'
+/** これ以上の幅なら「画像｜操作列」の横並びにする（タブレット横・2 ペインの詳細）。 */
+const WIDE_MIN = 560
 
 export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
   const { t } = useI18n()
@@ -56,6 +58,12 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
   // Before ↔ After（SPEC §5.2.2）。比較相手が無いタスクではトグルを出さない
   const [compare, setCompare] = useState(false)
   const [approving, setApproving] = useState(false)
+  // スタンプは 1 行の横スクロール＋「＋」ドロワー（チャットの定型チップと同じ作法）
+  const [stampSheet, setStampSheet] = useState(false)
+  // 幅が広いとき（タブレット横・2 ペインの詳細）は操作列を右へ寄せ、画像に高さを全部渡す
+  const [wide, setWide] = useState(false)
+  const [closing, setClosing] = useState(false)
+  const rootRef = useRef(null)
   const baseSrc = `/api/review/${item.id}/image`
   const imgSrc = compare ? `${baseSrc}?compare=1` : baseSrc
 
@@ -131,6 +139,19 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
       if (ro) ro.disconnect()
     }
   }, [imgSrc, scheduleRedraw])
+
+  // 幅の判定（560px 以上で「画像｜操作列」の 2 ペイン）。CSS 側の @media ではなく
+  // 実測にするのは、2 ペイン（.split-detail）では画面幅と編集器の幅が違うため。
+  useEffect(() => {
+    const el = rootRef.current
+    if (!el) return undefined
+    const sync = () => setWide(el.clientWidth >= WIDE_MIN)
+    sync()
+    if (typeof ResizeObserver === 'undefined') return undefined
+    const ro = new ResizeObserver(sync)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   /** ポインタ座標 → CSS px（キャンバス左上基準）。 */
   function point(ev) {
@@ -276,8 +297,32 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
     }
   }
 
+  /**
+   * 一覧から外す（アーカイブ）。`hermes kanban archive` に対応する。
+   * 検収 OK と並べるために CloseActions の 2 段階 UI は使わず、同じ endpoint を
+   * 直接叩いて長押し確定だけ残している（誤タップで消えない）。
+   */
+  async function archive() {
+    if (closing) return
+    setClosing(true)
+    setError(null)
+    try {
+      const board = item.board || 'mobile'
+      const r = await api(`/api/boards/${encodeURIComponent(board)}/tasks/${encodeURIComponent(item.id)}/close`, {
+        method: 'POST',
+        body: { action: 'cancel', note: String(note ?? '').slice(0, 400) },
+      })
+      notify?.(r?.noop ? t('close.alreadyCancelled') : t('close.cancelled'))
+      onSubmitted?.({ closed: true })
+    } catch (e) {
+      setError(e?.message || t('annot.approveFailed'))
+    } finally {
+      setClosing(false)
+    }
+  }
+
   return (
-    <div className="ak-anno">
+    <div ref={rootRef} className={`ak-anno${wide ? ' wide' : ''}`}>
       <header className="ak-anno-head">
         <button
           className="ak-anno-close"
@@ -307,113 +352,163 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
         </button>
       </header>
 
-      <div className="ak-anno-canvas-wrap">
-        {item.review?.hasCompare ? (
-          <button
-            className={`ak-compare-pill${compare ? ' on' : ''}`}
-            type="button"
-            aria-pressed={compare}
-            title={t('annot.compareAria')}
-            onClick={() => {
-              haptic('tap')
-              setCompare((v) => !v)
-            }}
-          >
-            {compare ? t('annot.compareBefore') : t('annot.compareAfter')}
-          </button>
-        ) : null}
-        <div className="ak-anno-stage">
-          <canvas
-            ref={canvasRef}
-            className="ak-anno-canvas"
-            onPointerDown={onPointerDown}
-            onPointerMove={onPointerMove}
-            onPointerUp={onPointerUp}
-            onPointerCancel={onPointerUp}
-          />
+      <div className="ak-anno-body">
+        <div className="ak-anno-canvas-wrap">
+          {item.review?.hasCompare ? (
+            <button
+              className={`ak-compare-pill${compare ? ' on' : ''}`}
+              type="button"
+              aria-pressed={compare}
+              title={t('annot.compareAria')}
+              onClick={() => {
+                haptic('tap')
+                setCompare((v) => !v)
+              }}
+            >
+              {compare ? t('annot.compareBefore') : t('annot.compareAfter')}
+            </button>
+          ) : null}
+          <div className="ak-anno-stage">
+            <canvas
+              ref={canvasRef}
+              className="ak-anno-canvas"
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={onPointerUp}
+              onPointerCancel={onPointerUp}
+            />
+          </div>
+        </div>
+
+        <div className="ak-anno-side">
+          {/* 1 タップ指示スタンプ: チャットの定型チップと同じ「1 行 + ＋ ドロワー」 */}
+          <div className="ak-anno-bar">
+            <span className="ak-anno-bar-title">{t('annot.stampsTitle')}</span>
+            <div className="ak-anno-stamps-scroll" role="group" aria-label={t('annot.stampsAria')}>
+              {STAMPS.map((def) => (
+                <button
+                  key={def.id}
+                  type="button"
+                  className={`ak-anno-stamp${activeStamp === def.id ? ' on' : ''}`}
+                  aria-pressed={activeStamp === def.id}
+                  aria-label={t(def.key)}
+                  title={`${t(def.key)} — ${def.instruction}`}
+                  disabled={!ready || busy}
+                  onClick={() => applyStamp(def.id)}
+                >
+                  <span aria-hidden="true">{def.emoji}</span>
+                  {t(def.key)}
+                </button>
+              ))}
+            </div>
+            <button
+              className="ak-anno-more"
+              type="button"
+              onClick={() => {
+                haptic('tap')
+                setStampSheet(true)
+              }}
+              aria-label={t('annot.stampsMore')}
+            >
+              ＋
+            </button>
+          </div>
+
+          {error ? <div className="ak-error ak-anno-error">{error}</div> : null}
+
+          <div className="ak-anno-tools">
+            {TOOLS.map((toolDef) => (
+              <button
+                key={toolDef.id}
+                type="button"
+                className={`ak-anno-tool${tool === toolDef.id ? ' on' : ''}`}
+                onClick={() => {
+                  haptic('tap')
+                  setTool(toolDef.id)
+                }}
+                aria-pressed={tool === toolDef.id}
+                aria-label={t(toolDef.key)}
+                title={t(toolDef.key)}
+              >
+                <span aria-hidden="true">{toolDef.icon}</span>
+              </button>
+            ))}
+            <button
+              type="button"
+              className="ak-anno-tool"
+              onClick={() => {
+                haptic('tap')
+                undo()
+              }}
+              disabled={!count}
+              aria-label={t('annot.undo')}
+              title={t('annot.undo')}
+            >
+              <span aria-hidden="true">↩</span>
+            </button>
+            <input
+              className="ak-anno-note"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder={t('annot.notePlaceholder')}
+              maxLength={200}
+            />
+          </div>
+
+          {/* 最下部の判断バー: ✅ 完了（検収 OK）/ 📂 アーカイブ の 2 つだけ */}
+          {item.status === 'blocked' ? (
+            <div className="ak-anno-actions">
+              <button
+                className="ak-anno-done"
+                type="button"
+                disabled={approving || busy || closing}
+                aria-busy={approving}
+                onClick={approve}
+              >
+                {approving ? t('annot.sending') : t('annot.doneShort')}
+              </button>
+              <HoldButton
+                tone="danger"
+                ms={800}
+                label={t('annot.archiveShort')}
+                disabled={busy || closing}
+                onFire={archive}
+              />
+            </div>
+          ) : null}
         </div>
       </div>
 
-      {/* 1 タップ指示スタンプ（SPEC-PILOT-V5 §3.3 ② / D26）。キーボードを開かずに赤入れできる */}
-      <div className="ak-anno-stamps" role="group" aria-label={t('annot.stampsAria')}>
-        <span className="ak-anno-stamps-title">{t('annot.stampsTitle')}</span>
-        {STAMPS.map((def) => (
-          <button
-            key={def.id}
-            type="button"
-            className={`ak-anno-stamp${activeStamp === def.id ? ' on' : ''}`}
-            aria-pressed={activeStamp === def.id}
-            title={def.instruction}
-            disabled={!ready || busy}
-            onClick={() => applyStamp(def.id)}
-          >
-            <span aria-hidden="true">{def.emoji}</span>
-            {t(def.key)}
-          </button>
-        ))}
-      </div>
-
-      {item.status === 'blocked' ? (
-        <div className="ak-approve-row">
-          <button
-            className="ak-approve"
-            type="button"
-            disabled={approving || busy}
-            aria-busy={approving}
-            onClick={approve}
-          >
-            {approving ? t('annot.sending') : t('annot.looksGood')}
-          </button>
-        </div>
-      ) : null}
-
-      {error ? <div className="ak-error ak-anno-error">{error}</div> : null}
-
-      <div className="ak-anno-tools">
-        {TOOLS.map((toolDef) => (
-          <button
-            key={toolDef.id}
-            type="button"
-            className={`ak-anno-tool${tool === toolDef.id ? ' on' : ''}`}
-            onClick={() => {
-              haptic('tap')
-              setTool(toolDef.id)
-            }}
-            aria-pressed={tool === toolDef.id}
-          >
-            <span aria-hidden="true">{toolDef.icon}</span>
-            {t(toolDef.key)}
-          </button>
-        ))}
-        <button
-          type="button"
-          className="ak-anno-tool"
-          onClick={() => {
-            haptic('tap')
-            undo()
-          }}
-          disabled={!count}
-        >
-          {t('annot.undo')}
-        </button>
-        <input
-          className="ak-anno-note"
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          placeholder={t('annot.notePlaceholder')}
-          maxLength={200}
-        />
-      </div>
-
-      {item.status === 'blocked' ? (
-        <div className="close-actions" style={{ padding: '0 12px 10px' }}>
-          <CloseActions
-            board={item.board || 'mobile'}
-            taskId={item.id}
-            notify={notify}
-            onClosed={() => onSubmitted?.({ closed: true })}
-          />
-        </div>
+      {stampSheet ? (
+        <Sheet title={t('annot.stampSheetTitle')} onClose={() => setStampSheet(false)}>
+          <div className="list">
+            {STAMPS.map((def) => (
+              <button
+                key={def.id}
+                className="list-item"
+                onClick={() => {
+                  applyStamp(def.id)
+                  setStampSheet(false)
+                }}
+              >
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span className="row-title" style={{ display: 'block' }}>
+                    {def.emoji} {t(def.key)}
+                  </span>
+                  <span className="row-sub" style={{ display: 'block' }}>
+                    {def.instruction}
+                  </span>
+                </span>
+                <span aria-hidden="true" className="ak-anno-more-chev">
+                  ›
+                </span>
+              </button>
+            ))}
+          </div>
+          <div className="row-sub" style={{ padding: '12px 6px 18px', lineHeight: 1.7 }}>
+            {t('annot.stampsHint')}
+          </div>
+        </Sheet>
       ) : null}
     </div>
   )
