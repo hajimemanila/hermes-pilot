@@ -2386,6 +2386,35 @@ ol.md-list {
   box-shadow: 0 0 0 2px rgba(6, 22, 26, 0.96);
 }
 
+/* チャットドロワー上部の操作バー（↻ 更新 / ✓ すべて既読・SPEC-PILOT-V4 §3.1 / D22③）。
+   390px 幅でも折り返さず横溢れしないよう、2 つを等分（`flex: 1` ＋ `min-width: 0`）にする。 */
+.drawer-actions {
+  display: flex;
+  gap: 8px;
+  padding: 4px 2px 10px;
+  align-items: stretch;
+}
+
+.drawer-actions .btn {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.drawer-actions .drawer-mark-read {
+  color: var(--good);
+  border-color: rgba(52, 211, 153, 0.45);
+}
+
+.drawer-actions .drawer-mark-read:disabled {
+  color: var(--muted);
+  border-color: var(--line-strong);
+}
+
 .toast {
   position: fixed;
   left: 50%;
@@ -3164,4 +3193,217 @@ ol.md-list {
   .split-detail .ak-anno-canvas-wrap {
     min-height: 0;
   }
+}
+
+/* ===========================================================================
+ * パイプライン統合レポート（SPEC-PILOT-V4 §3.3 ② / D20③）
+ *
+ * チャットのタイムラインに出す折りたたみカードと、Tasks タブの完走サマリバナー。
+ * 390px 幅で横溢れしないこと（ヘッダは 1 行に収め、長い名前は省略記号で切る）。
+ * ========================================================================= */
+
+.msg.report-card {
+  display: block;
+  align-self: stretch;
+  margin: 6px 12px;
+  padding: 0;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--accent-2);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.msg.report-card.is-halted {
+  border-left-color: var(--bad);
+}
+
+.report-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.report-card-head:active {
+  background: var(--rec-bg);
+}
+
+.report-card-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.report-chip {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  line-height: 1.6;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+}
+
+.report-chip.done {
+  color: var(--good);
+  border-color: var(--good-line);
+  background: var(--good-bg);
+}
+
+.report-chip.halted {
+  color: var(--warn);
+  border-color: var(--warn);
+  background: rgba(245, 158, 11, 0.14);
+}
+
+.report-card-time,
+.report-card-caret {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.report-card-summary {
+  padding: 0 10px 8px 30px;
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-card-body {
+  padding: 2px 10px 8px;
+  max-height: 60vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  font-size: 12.5px;
+  word-break: break-word;
+}
+
+.report-card-body .md-body {
+  font-size: 12.5px;
+}
+
+.report-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--line);
+}
+
+.report-card-btn {
+  flex: 0 1 auto;
+  max-width: 100%;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.4;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-card-btn.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.report-card-btn:active {
+  transform: scale(0.98);
+}
+
+/* ---------- Tasks タブ: 直近の完走サマリバナー ---------- */
+.pipeline-summary-card {
+  margin-bottom: 10px;
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--good);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.pipeline-summary-card.is-halted {
+  border-left-color: var(--warn);
+}
+
+.pipeline-summary-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+}
+
+.pipeline-summary-head::-webkit-details-marker {
+  display: none;
+}
+
+.pipeline-summary-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.pipeline-summary-sub {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.pipeline-summary-when {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.pipeline-summary-body {
+  padding: 2px 10px 10px;
+  font-size: 12.5px;
+  max-height: 55vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  word-break: break-word;
+}
+
+.pipeline-summary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
 }

@@ -18,6 +18,46 @@ export const REPORT_LINES = 3
 export const ACTIVE_CHAT_KEY = 'hm.storedSid'
 /** 新規会話未送信中でも引き継ぐ、直前の会話 ID の保存キー。 */
 export const LAST_CHAT_KEY = 'hm.lastStoredSid'
+/**
+ * 「宛先の会話が決まらなかった」パイプライン統合レポートの仮想セッション ID
+ * （SPEC-PILOT-V4 §3.2 ② / §3.3: 対象 repo の最新通常会話も無いとき）。
+ * 既読管理（`setSeen`）も通常のセッション ID と同じ扱いで通る。
+ */
+export const LATEST_REPORT_ID = '__latest__'
+
+/**
+ * パイプライン統合レポート（`kind: 'pipeline'`）が持つ追加フィールド。
+ * ブリッジが `chat-reports.jsonl` の行に載せた値をそのまま UI まで運ぶ。
+ */
+export const PIPELINE_KEYS = [
+  'kind',
+  'status',
+  'board',
+  'spec',
+  'repoPath',
+  'markdown',
+  'followUpPrompt',
+  'counts',
+]
+
+/**
+ * 行がパイプライン統合レポートか（既存のレビュー完了 1 行には影響しない）。
+ * @param {{kind?: string}|null|undefined} row
+ * @returns {boolean}
+ */
+export function isPipelineReport(row) {
+  return String(row?.kind ?? '') === 'pipeline'
+}
+
+/** 追加フィールドだけを取り出す（未定義・null は落とす）。 */
+function pipelineExtras(row) {
+  const out = {}
+  for (const k of PIPELINE_KEYS) {
+    const v = row?.[k]
+    if (v !== undefined && v !== null) out[k] = v
+  }
+  return out
+}
 
 /** 現在（または新規未送信時は直前）の会話セッション ID を返す。 */
 export function readActiveChatId(storage = globalThis.localStorage) {
@@ -92,6 +132,8 @@ export function reportLines(items, sessionIdOrIds, limit = REPORT_LINES) {
       text: String(i.text ?? ''),
       taskId: String(i.taskId ?? ''),
       label: i.label ?? null,
+      // パイプライン統合レポートは本文・宛先・相談プロンプトも UI まで運ぶ（§3.3 ①）
+      ...pipelineExtras(i),
     }))
 }
 
@@ -124,6 +166,8 @@ export function otherUnreadReports(items, seen, currentIds = []) {
         taskId: String(i?.taskId ?? ''),
         label: i?.label ?? null,
         text: String(i?.text ?? ''),
+        // `__latest__` バナーからリポジトリ・ボード・相談プロンプトへ辿れるようにする
+        ...pipelineExtras(i),
       })
     }
   }
@@ -176,6 +220,56 @@ export function setSeen(seen, sessionId, at) {
 }
 
 /**
+ * その会話に届いている完了報告のうち最も新しい `at`（無ければ 0）。
+ *
+ * 既読として書く時刻をこれと `Date.now()` の大きい方にすると、サーバ側 `at` が端末の
+ * 時計より数秒〜数分先でも緑のバッジが消える（時刻スキュー・SPEC-PILOT-V4 §3.1 / D22①）。
+ *
+ * @param {Array<{at: number, sessionId: string}>} items `/api/review/chat-reports` の items
+ * @param {string|string[]} sessionIdOrIds 単一 ID または ID 配列
+ * @returns {number} 最新の `at`（epoch ms・無ければ 0）
+ */
+export function maxReportAtFor(items, sessionIdOrIds) {
+  const ids = new Set(
+    (Array.isArray(sessionIdOrIds) ? sessionIdOrIds : [sessionIdOrIds])
+      .map((x) => String(x ?? '').trim())
+      .filter(Boolean),
+  )
+  if (!ids.size) return 0
+  let max = 0
+  for (const i of Array.isArray(items) ? items : []) {
+    if (!ids.has(String(i?.sessionId ?? '').trim())) continue
+    const at = Number(i?.at)
+    if (Number.isFinite(at) && at > max) max = at
+  }
+  return max
+}
+
+/**
+ * 全報告を既読にした新しい map（ドロワーの「✓ すべて既読」・D22③）。
+ *
+ * 会話ごとに `Math.max(now, その会話の最新 at)` を書くので、未来時刻の報告も既読になる。
+ *
+ * @param {Record<string, number>} prevSeenMap 会話ごとの既読時刻
+ * @param {Array<{at: number, sessionId: string}>} items `/api/review/chat-reports` の items
+ * @param {number} now 現在時刻（epoch ms）
+ * @returns {Record<string, number>} 新しい map
+ */
+export function markAllReportsSeenMap(prevSeenMap, items, now) {
+  const stamp = Number(now) > 0 ? Math.floor(Number(now)) : Date.now()
+  let map = readSeenMap(prevSeenMap)
+  const latest = new Map()
+  for (const i of Array.isArray(items) ? items : []) {
+    const sid = String(i?.sessionId ?? '').trim()
+    const at = Number(i?.at)
+    if (!sid || !Number.isFinite(at)) continue
+    if (at > (latest.get(sid) ?? 0)) latest.set(sid, at)
+  }
+  for (const [sid, at] of latest) map = setSeen(map, sid, Math.max(stamp, at))
+  return map
+}
+
+/**
  * 時刻表現（epoch sec/ms・ISO文字列）を epoch ms に正規化する。解釈不能なら null。
  *
  * @param {number|string|null|undefined} raw
@@ -196,6 +290,68 @@ export function toEpochMs(raw) {
   }
   const ms = Date.parse(s)
   return Number.isFinite(ms) && ms > 0 ? ms : null
+}
+
+/**
+ * タイムラインに出す報告を引くための ID 配列を作る（SPEC-PILOT-V4 §3.3 ①②）。
+ *
+ * `'__latest__'`（宛先の会話が決まらなかった統合レポート）は**開いている会話のリポジトリに
+ * 一致するときだけ**合流させる。無条件に混ぜると別リポジトリの完走報告が今の会話に現れる。
+ *
+ * @param {string|string[]} currentIds 現在開いている会話の ID 群
+ * @param {Array<{sessionId?: string, repoPath?: string}>} items `/api/review/chat-reports` の items
+ * @param {string} [repoPath] 開いている会話のリポジトリ（`repo.path`）
+ * @returns {string[]}
+ */
+export function reportIdsFor(currentIds, items, repoPath = '') {
+  const ids = (Array.isArray(currentIds) ? currentIds : [currentIds])
+    .map((x) => String(x ?? '').trim())
+    .filter(Boolean)
+  const path = String(repoPath ?? '').trim().toLowerCase()
+  if (!path || ids.includes(LATEST_REPORT_ID)) return ids
+  const hit = (Array.isArray(items) ? items : []).some(
+    (i) =>
+      String(i?.sessionId ?? '').trim() === LATEST_REPORT_ID &&
+      String(i?.repoPath ?? '').trim().toLowerCase() === path,
+  )
+  return hit ? [...ids, LATEST_REPORT_ID] : ids
+}
+
+/**
+ * 統合レポートの 1 行要約（バナー・折りたたみ時の見出しに使う）。
+ *
+ * Markdown の記号を落として最初の非空行を返す。長すぎるときは末尾を `…` にする
+ * （390px 幅で折り返しが破綻しないように）。
+ *
+ * @param {{summary?: string, markdown?: string, text?: string}|null|undefined} report
+ * @param {number} [max] 最大文字数
+ * @returns {string}
+ */
+export function reportSummaryLine(report, max = 96) {
+  const raw = String(report?.summary ?? report?.markdown ?? report?.text ?? '')
+  const limit = Math.max(8, Number(max) || 96)
+  for (const line of raw.split('\n')) {
+    const s = line
+      .replace(/^\s*(?:[>#]+|[-*+]|\d+\.)\s*/, '')
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/[*_`~]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (!s) continue
+    return s.length > limit ? `${s.slice(0, limit - 1)}…` : s
+  }
+  return ''
+}
+
+/**
+ * 「次の一手を相談」で入力欄に置く文面（レポートが持つ `followUpPrompt` が優先）。
+ * @param {{followUpPrompt?: string}|null|undefined} report
+ * @param {string} [fallback] 訳文（レポートに相談文が無いとき）
+ * @returns {string}
+ */
+export function followUpPromptFor(report, fallback = '') {
+  const own = String(report?.followUpPrompt ?? '').trim()
+  return own || String(fallback ?? '').trim()
 }
 
 /**

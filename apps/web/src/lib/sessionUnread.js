@@ -100,6 +100,10 @@ export function bootstrapSessionSeen(prevMap, sessions, now) {
 
 /**
  * その会話を「見た」として現在のメッセージ数を記録する（行の新着ピルを消す）。
+ *
+ * **単調増加**: 渡された数が既存の記録より小さくても後退させない（SPEC-PILOT-V4 §3.1 / D22①）。
+ * 後退させると、古い `message_count` を渡した瞬間に読んだはずの会話が `NEW` に戻る。
+ *
  * @param {Record<string, {count: number, at: number}>} prevMap 既読 map
  * @param {string} sessionId 会話 ID
  * @param {number} messageCount いま見えているメッセージ数
@@ -113,9 +117,63 @@ export function markSessionSeen(prevMap, sessionId, messageCount, now) {
   const at = Number(now) > 0 ? Math.floor(Number(now)) : Date.now()
   const out = pruneSessionSeen(prevMap)
   const prev = out[sid]
+  const known = prev?.count ?? 0
   out[sid] = {
-    count: Number.isFinite(count) && count >= 0 ? Math.floor(count) : (prev?.count ?? 0),
+    count: Number.isFinite(count) && count >= 0 ? Math.max(known, Math.floor(count)) : known,
     at,
+  }
+  return pruneSessionSeen(out)
+}
+
+/**
+ * いま表示している会話（`activeDrawerSid`）の `message_count` を既読として追従させる。
+ *
+ * これをしないと、会話 B を開いている間にポーリングで B の件数が増えた分が記録されず、
+ * 会話 A へ戻った瞬間に B が `NEW` / `+N` で再点灯する（実機 I9①）。
+ * 見ている会話が一覧に無い（新着でまだ反映されていない等）ときは何も変えない。
+ *
+ * @param {Record<string, {count: number, at: number}>} prevMap 既読 map
+ * @param {Array<{id: string, message_count?: number}>} sessions `/api/sessions` の一覧
+ * @param {string|null} activeDrawerSid 表示中の会話 ID
+ * @param {number} now 現在時刻（epoch ms）
+ * @returns {Record<string, {count: number, at: number}>} 新しい map
+ */
+export function syncActiveSessionSeen(prevMap, sessions, activeDrawerSid, now) {
+  const sid = String(activeDrawerSid ?? '').trim()
+  const out = pruneSessionSeen(prevMap)
+  if (!sid) return out
+  const target = (Array.isArray(sessions) ? sessions : []).find((s) => String(s?.id ?? '').trim() === sid)
+  if (!target) return out
+  const prev = out[sid]
+  const count = Math.max(0, Math.floor(Number(target?.message_count) || 0))
+  if (count > (prev?.count ?? -1)) {
+    const at = Number(now) > 0 ? Math.floor(Number(now)) : Date.now()
+    out[sid] = { count: Math.max(prev?.count ?? 0, count), at }
+  }
+  return pruneSessionSeen(out)
+}
+
+/**
+ * 一覧の全会話を「見た」にする（ドロワーの「✓ すべて既読」・D22③）。
+ *
+ * 記録済みの会話は `count` を後退させない（`Math.max`）。新着で一覧に載ったばかりの
+ * 会話も現在の `message_count` で埋まる。
+ *
+ * @param {Record<string, {count: number, at: number}>} prevMap 既読 map
+ * @param {Array<{id: string, message_count?: number}>} sessions `/api/sessions` の一覧
+ * @param {number} now 現在時刻（epoch ms）
+ * @returns {Record<string, {count: number, at: number}>} 新しい map
+ */
+export function markAllSessionsSeen(prevMap, sessions, now) {
+  const out = pruneSessionSeen(prevMap)
+  const at = Number(now) > 0 ? Math.floor(Number(now)) : Date.now()
+  for (const s of Array.isArray(sessions) ? sessions : []) {
+    const sid = String(s?.id ?? '').trim()
+    if (!sid) continue
+    out[sid] = {
+      count: Math.max(0, Math.floor(Number(s?.message_count) || 0), out[sid]?.count ?? 0),
+      at,
+    }
   }
   return pruneSessionSeen(out)
 }

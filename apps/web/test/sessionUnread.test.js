@@ -13,11 +13,13 @@ import {
   SESSION_SEEN_LIMIT,
   bootstrapSessionSeen,
   drawerUnreadCount,
+  markAllSessionsSeen,
   markSessionSeen,
   pruneSessionSeen,
   readSessionSeen,
   serializeSessionSeen,
   sessionRowBadges,
+  syncActiveSessionSeen,
   unreadRepliesLabel,
 } from '../src/lib/sessionUnread.js'
 
@@ -160,4 +162,61 @@ test('unreadRepliesLabel は 1 件を NEW、2 件以上を +N にする', () => 
   assert.equal(unreadRepliesLabel(1), 'NEW')
   assert.equal(unreadRepliesLabel(3), '+3')
   assert.equal(unreadRepliesLabel(null), '')
+})
+
+test('syncActiveSessionSeen は表示中の会話の message_count 増加を既読へ追従させる（I9①）', () => {
+  const now = 1_700_000_000_000
+  const seen = { a: { count: 3, at: 1 }, b: { count: 4, at: 1 } }
+  // 会話 b を開いている間に b が 4 → 9 に増えた
+  const next = syncActiveSessionSeen(seen, [sess('a', 3), sess('b', 9)], 'b', now)
+  assert.deepEqual(next.b, { count: 9, at: now }, '表示中の会話は増分も既読にする')
+  assert.deepEqual(next.a, { count: 3, at: 1 }, '別会話は触らない')
+
+  // 増えていなければ時刻も動かさない
+  assert.deepEqual(syncActiveSessionSeen(next, [sess('b', 9)], 'b', now + 1000).b, { count: 9, at: now })
+})
+
+test('syncActiveSessionSeen: 別会話へ切り替えても NEW / +N が復活しない', () => {
+  const now = 1_700_000_000_000
+  const sessions = [sess('a', 3), sess('b', 9)]
+  // b を開いている間のポーリングで b の件数が増えた
+  let seen = bootstrapSessionSeen({}, sessions, now)
+  seen = syncActiveSessionSeen(seen, [sess('a', 3), sess('b', 12)], 'b', now + 1)
+  // 次に a を開いた（activeDrawerSid が a に変わる）
+  const badgesB = sessionRowBadges({ session: sess('b', 12), seenMap: seen, activeDrawerSid: 'a' })
+  assert.equal(badgesB.unreadReplies, 0, '読んだ会話が NEW / +N で再点灯している')
+  const badgesA = sessionRowBadges({ session: sess('a', 3), seenMap: seen, activeDrawerSid: 'a' })
+  assert.equal(badgesA.unreadReplies, 0, '表示中の会話も新着にしない')
+})
+
+test('syncActiveSessionSeen は対象が無い・ID が空なら map を壊さない', () => {
+  const seen = { a: { count: 3, at: 1 } }
+  assert.deepEqual(syncActiveSessionSeen(seen, [sess('a', 3)], 'zzz', 9), seen, '一覧に無い ID')
+  assert.deepEqual(syncActiveSessionSeen(seen, [sess('a', 3)], null, 9), seen, 'ID が無い')
+  assert.deepEqual(syncActiveSessionSeen(seen, null, 'a', 9), seen, '一覧が無い')
+  assert.deepEqual(syncActiveSessionSeen({}, [sess('n', 0)], 'n', 9), { n: { count: 0, at: 9 } }, '初見も登録')
+})
+
+test('markSessionSeen は件数を後退させない（古い count で NEW が戻らない）', () => {
+  const map = markSessionSeen({ a: { count: 9, at: 1 } }, 'a', 4, 5)
+  assert.equal(map.a.count, 9, '既読済みの件数を下げない')
+  assert.equal(map.a.at, 5)
+})
+
+test('markAllSessionsSeen は全会話を一括で既読にする（✓ すべて既読）', () => {
+  const now = 1_700_000_000_000
+  const sessions = [sess('a', 3), sess('b', 9), sess('c', 0)]
+  const map = markAllSessionsSeen({ a: { count: 12, at: 1 } }, sessions, now)
+  assert.deepEqual(map, {
+    a: { count: 12, at: now },
+    b: { count: 9, at: now },
+    c: { count: 0, at: now },
+  }, '記録済みは後退させず、全件の時刻を進める')
+
+  for (const s of sessions) {
+    const b = sessionRowBadges({ session: s, seenMap: map, activeDrawerSid: 'other' })
+    assert.equal(b.unreadReplies, 0, `${s.id} が一括既読後も新着のまま`)
+  }
+  assert.deepEqual(markAllSessionsSeen({}, [], now), {}, '一覧が空なら何もしない')
+  assert.deepEqual(markAllSessionsSeen({}, [{ id: '' }], now), {}, 'ID の無い行は無視')
 })

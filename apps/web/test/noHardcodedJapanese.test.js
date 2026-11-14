@@ -32,7 +32,52 @@ const SKIP = new Map([
 ])
 
 /**
- * `/* *\/` と `//` を落とす（文字列内の `//` は残す）。行数は保つ。
+ * 直前の意味のある文字（空白・改行を読み飛ばした最後の出力）から、`/` が
+ * **正規表現リテラルの開始**かどうかを判定する。
+ *
+ * 素朴に `"`/`'`/`` ` `` だけを見て文字列モードへ入ると、`/[*_`~]/g` のような
+ * 正規表現の中のバッククォートで以降が全部「文字列」になり、コメント除去が止まって
+ * **存在しない日本語（コメント中の日本語）を違反として報告する**（実測: `reportSummaryLine`）。
+ *
+ * @param {string[]} out これまでに出力した文字（1 文字ずつ）
+ * @returns {boolean} 正規表現の開始位置か
+ */
+function regexAt(out) {
+  let k = out.length - 1
+  while (k >= 0 && /\s/.test(out[k])) k -= 1
+  if (k < 0) return true
+  const prev = out[k]
+  if (prev === ')' || prev === ']' || prev === '}') return false
+  if ('(,=:[!&|?{};+-*%~^<>'.includes(prev)) return true
+  if (/[A-Za-z_$]/.test(prev)) {
+    let start = k
+    while (start >= 0 && /[A-Za-z0-9_$]/.test(out[start])) start -= 1
+    const word = out.slice(start + 1, k + 1).join('')
+    return REGEX_KEYWORDS.has(word)
+  }
+  // 数字・`"`/`'`/`` ` `` の直後は除算（`1 / 2`）
+  return false
+}
+
+/** `return /re/` のように直後が正規表現になり得るキーワード。 */
+const REGEX_KEYWORDS = new Set([
+  'return',
+  'typeof',
+  'instanceof',
+  'case',
+  'in',
+  'of',
+  'delete',
+  'void',
+  'new',
+  'do',
+  'else',
+  'yield',
+  'await',
+])
+
+/**
+ * `/* *\/` と `//` を落とす（文字列・正規表現リテラル内の `//` は残す）。行数は保つ。
  * @param {string} src ソース
  * @returns {string} コメント除去後
  */
@@ -42,6 +87,7 @@ export function stripComments(src) {
   const n = src.length
   let mode = 'code'
   let quote = ''
+  let inClass = false
   while (i < n) {
     const c = src[i]
     const nx = src[i + 1]
@@ -54,6 +100,14 @@ export function stripComments(src) {
       if (c === '/' && nx === '*') {
         mode = 'block'
         i += 2
+        continue
+      }
+      // 正規表現リテラル（中に `"` `'` `` ` `` `/` が入っても文字列・コメント扱いしない）
+      if (c === '/' && regexAt(out)) {
+        mode = 'regex'
+        inClass = false
+        out.push(c)
+        i += 1
         continue
       }
       if (c === '"' || c === "'" || c === '`') {
@@ -79,6 +133,20 @@ export function stripComments(src) {
         continue
       }
       if (c === '\n') out.push('\n')
+      i += 1
+      continue
+    }
+    if (mode === 'regex') {
+      if (c === '\\') {
+        out.push(src.slice(i, i + 2))
+        i += 2
+        continue
+      }
+      if (c === '[') inClass = true
+      else if (c === ']') inClass = false
+      else if (c === '/' && !inClass) mode = 'code'
+      else if (c === '\n') mode = 'code' // 閉じ忘れで以降を飲み込まない
+      out.push(c)
       i += 1
       continue
     }
@@ -145,6 +213,24 @@ test('除外リストは実在し、理由が書かれている', () => {
     assert.ok(fs.existsSync(path.join(SRC, rel)), `${rel} が存在しない（除外リストが古い）`)
     assert.ok(why.trim().length > 0, `${rel} の除外理由が空`)
   }
+})
+
+test('コメント除去は正規表現リテラル内の記号で壊れない（検出器の自己検証）', () => {
+  const src = [
+    'const s = a.replace(/[*_`~]/g, "")',
+    '// これはコメント',
+    'const q = b.replace(/[\'"]/g, "")',
+    '/* ブロック',
+    'コメント */',
+    'const w = "日本語"',
+    '',
+  ].join('\n')
+  const stripped = stripComments(src)
+  assert.ok(!stripped.includes('これはコメント'), '正規表現の直後の行コメントも落ちる')
+  assert.ok(!stripped.includes('ブロック'), '正規表現の直後のブロックコメントも落ちる')
+  assert.ok(stripped.includes('日本語'), '文字列の日本語は残って検出される')
+  assert.equal(stripped.split('\n').length, src.split('\n').length, '行数は保たれる')
+  assert.ok(stripComments('const d = a / b\n// コメント\n').includes('a / b'), '除算を正規表現と誤認しない')
 })
 
 test('コメント除去は文字列内の // を壊さない（検出器の自己検証）', () => {

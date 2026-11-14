@@ -22,12 +22,19 @@ import { api } from '../api.js'
 import { composerHeight } from '../lib/composerSize.js'
 import { shouldSendOnEnter } from '../lib/composerKey.js'
 import {
+  LATEST_REPORT_ID,
   LAST_CHAT_KEY,
   SEEN_MAP_KEY,
+  followUpPromptFor,
+  isPipelineReport,
+  markAllReportsSeenMap,
+  maxReportAtFor,
   mergeTimeline,
   otherUnreadReports,
   readSeenMap,
+  reportIdsFor,
   reportLines,
+  reportSummaryLine,
   setSeen,
   toEpochMs,
   unreadSessions,
@@ -36,10 +43,12 @@ import {
   SESSION_SEEN_KEY,
   bootstrapSessionSeen,
   drawerUnreadCount as countDrawerUnread,
+  markAllSessionsSeen,
   markSessionSeen,
   readSessionSeen,
   serializeSessionSeen,
   sessionRowBadges,
+  syncActiveSessionSeen,
   unreadRepliesLabel,
 } from '../lib/sessionUnread.js'
 import { Icon, Loader, RefreshButton, Sheet, fmtBytes, fmtDateTime, relTime } from '../components/Ui.jsx'
@@ -79,6 +88,53 @@ function MarkdownBody({ text, onCopyCode, copyLabel }) {
     [text, onCopyCode, copyLabel],
   )
   return node
+}
+
+/**
+ * パイプライン統合レポートのリッチカード（SPEC-PILOT-V4 §3.3 ② / D20③）。
+ *
+ * タイムライン上で「統合 Markdown サマリ」を折りたたみ可能なカードとして出し、
+ *  - 💬 次の一手を相談 … 相談文を入力欄へ下書きセット（誤送信しない・1 タップで確認送信）
+ *  - 📋 ボードを見る … `hm:open-board` で Tasks タブの該当ボードへ移る
+ * の 2 つの導線を持つ。`kind: 'pipeline'` 以外の報告（レビュー完了 1 行）は従来どおり。
+ */
+function PipelineReportCard({ report, open, onToggle, onDiscuss, onOpenBoard, onCopyCode }) {
+  const halted = String(report?.status ?? '') === 'halted'
+  const body = String(report?.markdown || report?.text || '')
+  return (
+    <div className={`msg report-card${halted ? ' is-halted' : ''}`} title={fmtDateTime(report?.at)}>
+      <button type="button" className="report-card-head" onClick={onToggle} aria-expanded={Boolean(open)}>
+        <span className="report-card-icon" aria-hidden="true">
+          {halted ? '⚠️' : '🎉'}
+        </span>
+        <span className="report-card-title">{report?.label || t('chat.pipelineReport')}</span>
+        <span className={`report-chip ${halted ? 'halted' : 'done'}`}>
+          {halted ? t('chat.reportHalted') : t('chat.reportDone')}
+        </span>
+        <span className="report-card-time">{relTime(report?.at)}</span>
+        <span className="report-card-caret" aria-hidden="true">
+          {open ? '▾' : '▸'}
+        </span>
+      </button>
+      {open ? (
+        <div className="report-card-body">
+          <MarkdownBody text={body} onCopyCode={onCopyCode} copyLabel={t('chat.copy')} />
+        </div>
+      ) : (
+        <div className="report-card-summary">{reportSummaryLine(report)}</div>
+      )}
+      <div className="report-card-actions">
+        <button type="button" className="report-card-btn primary" onClick={onDiscuss}>
+          {t('chat.discussNextSteps')}
+        </button>
+        {report?.board ? (
+          <button type="button" className="report-card-btn" onClick={onOpenBoard}>
+            {t('chat.openBoard')}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  )
 }
 
 /** ツール行の一覧（タップで省略前の全文を展開）。 */
@@ -121,6 +177,12 @@ function ToolRows({ rows, prefix, expandedMap, onToggle }) {
 }
 
 /**
+ * ドロワーを開いたときの自動リフレッシュの最短間隔（SPEC-PILOT-V4 §3.1 / D22②・1.5s スロットル）。
+ * 開け閉めを繰り返しても `/api/sessions` を叩きすぎないようにする。
+ */
+const DRAWER_REFRESH_THROTTLE_MS = 1500
+
+/**
  * チャットタブ。ブリッジの /ws/chat 経由で Hermes の JSON-RPC（/api/ws）を話す。
  *
  * 添付は Hermes 自身の口を使う（ブリッジ側にストレージを持たない）:
@@ -138,6 +200,8 @@ export function ChatPane({
   active = false,
   openRequest = null,
   onConsumedOpen,
+  discussRequest = null,
+  onConsumedDiscuss,
 }) {
   // 言語切替で再描画させるための購読（翻訳はモジュール側の t が現在の言語を読む）
   const { lang } = useI18n()
@@ -161,11 +225,18 @@ export function ChatPane({
   const [workerFeed, setWorkerFeed] = useState(null)
   const [usage, setUsage] = useState(null)
   const [drawer, setDrawer] = useState(false)
+  // ドロワーの「↻ 更新」の実行中表示（D22③）
+  const [drawerRefreshing, setDrawerRefreshing] = useState(false)
   const [thinking, setThinking] = useState('')
   const [dcLink, setDcLink] = useState(null)
   // レビューの完了報告（起票した会話にだけ流れる 1 行。行の取得は App が 1 回だけ行う）
   // と、会話一覧の行に出す「新着の点」の既読（端末に残す）。
   const [seenMap, setSeenMap] = useState({})
+  /*
+   * 統合レポートカードの開閉（キー＝報告の key）。未指定は「最新 1 件だけ展開」を既定にする
+   * （古いレポートが積まれると会話が押し流されるため・§3.3 ②）。
+   */
+  const [reportOpen, setReportOpen] = useState({})
   // resume できない会話（カンバン作業ログ等）は読み取り専用で表示する
   const [readonly, setReadonly] = useState(null)
   // いま話しているプロファイル（SPEC-PROFILE-CHAT）。既定は DEFAULT_PROFILE（mobile）
@@ -206,9 +277,20 @@ export function ChatPane({
   const repoRef = useRef(null)
   const reposRef = useRef([])
   const sessionsRef = useRef([])
+  /*
+   * 最新の完了報告（`chatReports` の props）を ref でも持つ（SPEC-PILOT-V4 §3.1 / D22①）。
+   * `markReportsSeen` を `useCallback([])` のままにするため、依存配列に props を足さずに
+   * 最新値を読む。時刻スキューの吸収に「その会話の最新 at」が要る。
+   */
+  const chatReportsRef = useRef([])
+  chatReportsRef.current = Array.isArray(chatReports) ? chatReports : []
   const listRef = useRef(null)
   // 過去履歴を先頭に足したときのスクロール基準（layout effect で使い捨てる）
   const prependAnchorRef = useRef(null)
+  // ドロワー自動リフレッシュのスロットル（最後に走った時刻・D22②）
+  const drawerRefreshAtRef = useRef(0)
+  // 稼働中ターン数の前回値（減少＝ワーカー完了で一覧を取り直す・D22②）
+  const prevLiveCountRef = useRef(0)
   // 配列添字ではなく「ブロック実体ごとに一意で安定した key」を作るための記録。
   // mid が無い（ライブ生成中・resume 直後）ブロックは `at` が同値になることがあり、
   // 素朴な `at-<at>` だと key 衝突で React が古い DOM を残す（実測: state 43 件 / DOM 45 件）。
@@ -425,8 +507,6 @@ export function ChatPane({
         const resolvedSid = res.resumed ?? target
         setStoredSid(resolvedSid)
         setProfile(prof || 'default')
-        // 開いた＝見た（返信新着のピルを消す・D16②）
-        markReadRef.current?.(resolvedSid, sessionsRef.current.find((s) => String(s.id) === String(resolvedSid))?.message_count)
         const cwd = res.info?.cwd ?? res.cwd ?? ''
         if (cwd) {
           ensureRepos().then((list) => {
@@ -436,6 +516,19 @@ export function ChatPane({
           setRepo(null)
         }
         const msgs = Array.isArray(res.messages) ? res.messages : []
+        /*
+         * 開いた＝見た（返信新着のピルを消す・D16② / SPEC-PILOT-V4 §3.1 D22①）。
+         * 一覧の `message_count` はドロワーを開いた時点で古いことがある（I9②）ので、
+         * **実際に読んだメッセージ数**との大きい方を記録する。小さい方を書くと直後の
+         * ポーリングで差分が新着として再点灯する。
+         */
+        markReadRef.current?.(
+          resolvedSid,
+          Math.max(
+            Number(sessionsRef.current.find((s) => String(s.id) === String(resolvedSid))?.message_count) || 0,
+            msgs.length,
+          ),
+        )
         setBlocks(
           msgs
             .filter((m) => m.role === 'user' || m.role === 'assistant')
@@ -686,7 +779,16 @@ export function ChatPane({
     )
   }, [reviewItems, currentIds, repo])
   const isWorking = Boolean(streaming || activeLiveTurn)
-  const reports = useMemo(() => reportLines(chatReports, currentIds), [chatReports, currentIds])
+  /*
+   * 統合レポート（`kind: 'pipeline'`）は「宛先の会話」に加えて、リポジトリが一致する
+   * `'__latest__'` 宛の報告も合流させる（§3.2 ② / §3.3 ①）。読み取り専用の閲覧中は
+   * 親チャットの報告を混ぜない（既存の `currentIds` と同じ境界）。
+   */
+  const reportIds = useMemo(
+    () => reportIdsFor(currentIds, chatReports, readonly ? '' : repo?.path ?? ''),
+    [currentIds, chatReports, readonly, repo?.path],
+  )
+  const reports = useMemo(() => reportLines(chatReports, reportIds), [chatReports, reportIds])
   const timeline = useMemo(() => mergeTimeline(blocks, reports), [blocks, reports])
   const lastReportKey = reports.length ? reports[reports.length - 1].key : ''
 
@@ -780,11 +882,17 @@ export function ChatPane({
     }
   }, [])
 
-  /** その会話の新着を既読にする（行の点を消す）。 */
+  /** その会話の新着を既読にする（行の点を消す）。 **時刻スキュー対策込み**（D22①）。 */
   const markReportsSeen = useCallback((id) => {
     if (!id) return
+    /*
+     * サーバ側 `at` が端末時計より先（数秒〜数分）だと `Date.now()` だけを書いても
+     * `at <= seen` が偽のままになり緑の件数バッジが消えない（実機 I9③）。
+     * その会話に届いている最新 `at` との大きい方を既読時刻にする。
+     */
+    const latestAt = maxReportAtFor(chatReportsRef.current, id)
     setSeenMap((prev) => {
-      const next = setSeen(prev, id, Date.now())
+      const next = setSeen(prev, id, Math.max(Date.now(), latestAt))
       try {
         localStorage.setItem(SEEN_MAP_KEY, JSON.stringify(next))
       } catch {
@@ -814,10 +922,15 @@ export function ChatPane({
 
   // 初回の一覧読み込みで、初見の会話をベースライン登録する
   // （しないと起動直後に全会話が返信新着として一斉に点く）。
+  // さらに**表示中の会話**は一覧の `message_count` 増加に追従させて既読を進める（D22①）。
+  // ここが無いと、開いている会話の増分が記録されず、別会話へ移った瞬間に NEW / +N が戻る。
   useEffect(() => {
     if (!sessions.length) return
     setSessionSeen((prev) => {
-      const next = bootstrapSessionSeen(prev, sessions, Date.now())
+      const stamp = Date.now()
+      const boot = bootstrapSessionSeen(prev, sessions, stamp)
+      const next =
+        active && activeDrawerSid ? syncActiveSessionSeen(boot, sessions, activeDrawerSid, stamp) : boot
       try {
         localStorage.setItem(SESSION_SEEN_KEY, serializeSessionSeen(next))
       } catch {
@@ -825,7 +938,7 @@ export function ChatPane({
       }
       return next
     })
-  }, [sessions])
+  }, [sessions, active, activeDrawerSid])
 
   // 復帰（スリープ・タブ切替）の合図で会話一覧を取り直す（App のバッジ同期と同時）。
   useEffect(() => {
@@ -836,6 +949,80 @@ export function ChatPane({
     window.addEventListener('hm:wake-sync', onWake)
     return () => window.removeEventListener('hm:wake-sync', onWake)
   }, [loadSessions])
+
+  /**
+   * ドロワーの一覧と完了報告を取り直す（D22②）。
+   *
+   * `openDrawer()`（≡ を押した瞬間）と、稼働中ワーカーが 1 つ終わった瞬間に呼ぶ。
+   * 既定は `DRAWER_REFRESH_THROTTLE_MS`（1.5s）で間引く — 開け閉めの連打で
+   * `/api/sessions` を叩き続けないため。`force` はボタン押下用。
+   */
+  const refreshDrawerData = useCallback(
+    async ({ force = false } = {}) => {
+      const at = Date.now()
+      if (!force && at - drawerRefreshAtRef.current < DRAWER_REFRESH_THROTTLE_MS) return true
+      drawerRefreshAtRef.current = at
+      try {
+        window.dispatchEvent(new CustomEvent('hm:refresh-reports'))
+        const rpcNow = sockRef.current?.rpc
+        if (connRef.current === 'ready' && rpcNow) {
+          setDrawerRefreshing(true)
+          try {
+            await loadSessions(rpcNow)
+          } finally {
+            setDrawerRefreshing(false)
+          }
+        }
+        return true
+      } catch {
+        return false
+      }
+    },
+    [loadSessions],
+  )
+
+  /** `≡` でドロワーを開く（開いた瞬間に最新化する・D22②）。 */
+  const openDrawer = useCallback(() => {
+    setDrawer(true)
+    refreshDrawerData()
+  }, [refreshDrawerData])
+
+  /*
+   * 稼働中のターンが減った＝ワーカーが 1 つ終わった可能性が高いので、
+   * そのまま一覧と完了報告を取り直す（ドロワーを開き直さなくてもバッジが揃う・D22②）。
+   */
+  useEffect(() => {
+    const n = Array.isArray(liveTurns) ? liveTurns.length : 0
+    const prev = prevLiveCountRef.current
+    prevLiveCountRef.current = n
+    if (prev > 0 && n < prev) refreshDrawerData({ force: true })
+  }, [liveTurns, refreshDrawerData])
+
+  /**
+   * ドロワー上部の「✓ すべて既読」（D22③）。
+   * 返信新着（`hm.session.seen.v1`）と完了報告（`hm.chatReportSeen`）の**両方**を一括で既読にする。
+   */
+  const markAllDrawerRead = useCallback(() => {
+    const stamp = Date.now()
+    setSessionSeen((prev) => {
+      const next = markAllSessionsSeen(prev, sessions, stamp)
+      try {
+        localStorage.setItem(SESSION_SEEN_KEY, serializeSessionSeen(next))
+      } catch {
+        /* noop */
+      }
+      return next
+    })
+    setSeenMap((prev) => {
+      const next = markAllReportsSeenMap(prev, chatReportsRef.current, stamp)
+      try {
+        localStorage.setItem(SEEN_MAP_KEY, JSON.stringify(next))
+      } catch {
+        /* noop */
+      }
+      return next
+    })
+  }, [sessions])
 
   const unreadIds = useMemo(() => unreadSessions(chatReports, seenMap), [chatReports, seenMap])
   const otherUnreads = useMemo(
@@ -910,6 +1097,53 @@ export function ChatPane({
     },
     [notify],
   )
+
+  /**
+   * 相談文を入力欄へ下書きセットする（**送信はしない**・SPEC-PILOT-V4 §3.3 ② / D20③）。
+   *
+   * 誤送信を避けるため `prompt.submit` は呼ばず、ユーザーが読んで 1 タップで送れる状態にする。
+   * オートリサイズとフォーカスまで済ませるので、続けて書き足せる。
+   */
+  const prefillComposer = useCallback((prompt) => {
+    const body = String(prompt ?? '').trim()
+    if (!body) return
+    setText(body)
+    requestAnimationFrame(() => {
+      const el = taRef.current
+      if (!el) return
+      try {
+        el.focus({ preventScroll: false })
+      } catch {
+        el.focus()
+      }
+      el.style.height = 'auto'
+      fitComposer(el)
+      try {
+        el.setSelectionRange(body.length, body.length)
+      } catch {
+        /* selection API の無い環境でも入力欄には入っている */
+      }
+    })
+  }, [])
+
+  /** 統合レポートカードの「💬 次の一手を相談」。 */
+  const discussReport = useCallback(
+    (report) => {
+      haptic('tap')
+      prefillComposer(followUpPromptFor(report, t('chat.discussFallback')))
+    },
+    [prefillComposer],
+  )
+
+  /** 統合レポートカードの「📋 ボードを見る」（App が Tasks タブへ切り替える）。 */
+  const openReportBoard = useCallback((report) => {
+    haptic('tap')
+    try {
+      window.dispatchEvent(new CustomEvent('hm:open-board', { detail: { board: report?.board ?? null } }))
+    } catch {
+      /* noop */
+    }
+  }, [])
 
   // 開いている会話の新着はタイムラインに出ている＝見えている。既読にして点を残さない
   // （タブを離れている間、または別の会話に届いた分だけが点になる）。
@@ -1209,8 +1443,15 @@ export function ChatPane({
         })
         // 読み取り専用でも開いた＝見た（D16②）。ここで親チャット `storedSid` は触らない
         // （リロード時は最後の通常会話へ戻る既存挙動を保つための境界）。
-        markReadRef.current?.(sessionId, sessionsRef.current.find((s) => String(s.id) === String(sessionId))?.message_count)
+        // 一覧の `message_count` が古い場合に備え、実際に読んだ数との大きい方を記録する（D22①）。
         const { blocks: folded } = foldTranscriptMessages(d.messages ?? [], toEpochMs)
+        markReadRef.current?.(
+          sessionId,
+          Math.max(
+            Number(sessionsRef.current.find((s) => String(s.id) === String(sessionId))?.message_count) || 0,
+            Array.isArray(d.messages) ? d.messages.length : 0,
+          ),
+        )
         setBlocks(folded)
         setTranscriptMeta({
           sessionId,
@@ -1288,6 +1529,31 @@ export function ChatPane({
     openSessionSafe(openRequest.id, openRequest.messageId ?? null, openRequest.profile || 'default')
     onConsumedOpen?.()
   }, [openRequest, openSessionSafe, onConsumedOpen])
+
+  /*
+   * Tasks タブの完走サマリバナー「💬 チャットで次の一手を相談」からの依頼
+   * （SPEC-PILOT-V4 §3.3 ③ / D20③）。App が `hm:discuss-pipeline` を受けて渡す。
+   *
+   *  - 有効なセッション ID … その会話を開いて相談文を置く
+   *  - `'__latest__'` / 空 … repo が一致する新しい会話を作って相談文を置く
+   * どちらも送信はしない（ユーザーが読んでから 1 タップ）。
+   */
+  useEffect(() => {
+    if (!discussRequest) return
+    const target = String(discussRequest.sessionId ?? '').trim()
+    const repoPath = String(discussRequest.repoPath ?? '').trim().toLowerCase()
+    if (target && target !== LATEST_REPORT_ID) {
+      const found = sessionsRef.current.find((s) => String(s.id) === target)
+      openSessionSafe(target, null, found?.profile || profile || DEFAULT_PROFILE)
+    } else {
+      const matched = (reposRef.current || []).find(
+        (x) => x?.path && String(x.path).trim().toLowerCase() === repoPath,
+      )
+      startSession(profile || DEFAULT_PROFILE, matched ?? null, discussRequest.board ? { slug: discussRequest.board } : null)
+    }
+    prefillComposer(followUpPromptFor({ followUpPrompt: discussRequest.prompt }, t('chat.discussFallback')))
+    onConsumedDiscuss?.()
+  }, [discussRequest, openSessionSafe, startSession, prefillComposer, onConsumedDiscuss, profile])
 
   // --- スニペット ---------------------------------------------------------
 
@@ -1425,7 +1691,7 @@ export function ChatPane({
           className="icon-btn"
           onClick={() => {
             haptic('tap')
-            setDrawer(true)
+            openDrawer()
           }}
           aria-label={drawerUnread ? t('chat.sessionsAria', { n: drawerUnread }) : t('chat.sessions')}
         >
@@ -1489,7 +1755,11 @@ export function ChatPane({
         <div className="chat-report-banner" role="status">
           <span className="chat-report-banner-text">
             {t('chat.otherReport', {
-              label: otherUnreads[0].label || otherUnreads[0].taskId || otherUnreads[0].text.slice(0, 28),
+              label:
+                otherUnreads[0].label ||
+                otherUnreads[0].taskId ||
+                reportSummaryLine(otherUnreads[0], 40) ||
+                String(otherUnreads[0].text ?? '').slice(0, 28),
             })}
           </span>
           <button
@@ -1498,8 +1768,34 @@ export function ChatPane({
             onClick={() => {
               haptic('tap')
               const u = otherUnreads[0]
+              /*
+               * 宛先の会話が決まらなかった統合レポート（`__latest__`・§3.2 ②）:
+               *  - すでに通常会話を開いている → そのタイムラインへ合流（`reportIdsFor` が載せる）
+               *  - まだ開いていない → repo を突き合わせて新しい会話を作り、相談文まで置く
+               * 会話 ID が分かっている通常の報告は従来どおりその会話を開く。
+               */
+              if (u.sessionId === LATEST_REPORT_ID) {
+                const target = storedRef.current ?? sidRef.current
+                if (target) {
+                  markReportsSeen(LATEST_REPORT_ID)
+                  requestAnimationFrame(() => {
+                    const el = listRef.current
+                    if (el) el.scrollTop = el.scrollHeight
+                  })
+                  return
+                }
+                const repoPath = String(u.repoPath ?? '').trim().toLowerCase()
+                const matched = (repos || []).find(
+                  (x) => x?.path && String(x.path).trim().toLowerCase() === repoPath,
+                )
+                startSession(profile || DEFAULT_PROFILE, matched ?? null, u.board ? { slug: u.board } : null)
+                markReportsSeen(LATEST_REPORT_ID)
+                prefillComposer(followUpPromptFor(u, t('chat.discussFallback')))
+                return
+              }
               const found = sessions.find((s) => String(s.id) === u.sessionId)
               openSessionSafe(u.sessionId, null, found?.profile || profile || DEFAULT_PROFILE)
+              prefillComposer(followUpPromptFor(u, ''))
             }}
           >
             {t('chat.open')}
@@ -1584,6 +1880,26 @@ export function ChatPane({
         {timeline.map((item) => {
           if (item.kind === 'report') {
             const r = item.report
+            if (isPipelineReport(r)) {
+              // 統合レポートはリッチカード（§3.3 ②）。既定は最新 1 件だけ展開する。
+              const ri = reports.findIndex((x) => x.key === r.key)
+              const isNewest = ri === reports.length - 1
+              const isOpen = r.key in reportOpen ? Boolean(reportOpen[r.key]) : isNewest
+              return (
+                <PipelineReportCard
+                  key={r.key}
+                  report={r}
+                  open={isOpen}
+                  onToggle={() => {
+                    haptic('tap')
+                    setReportOpen((prev) => ({ ...prev, [r.key]: !isOpen }))
+                  }}
+                  onDiscuss={() => discussReport(r)}
+                  onOpenBoard={() => openReportBoard(r)}
+                  onCopyCode={copyCode}
+                />
+              )
+            }
             return (
               <div key={r.key} className="msg report" title={fmtDateTime(r.at)}>
                 <span className="report-body">🖊 {r.text}</span>
@@ -2229,6 +2545,26 @@ export function ChatPane({
 
       {drawer ? (
         <Sheet title={t('chat.drawerTitle')} onClose={() => setDrawer(false)}>
+          {/* ドロワー上部の操作バー（D22③）: ↻ 更新 / ✓ すべて既読 */}
+          <div className="drawer-actions">
+            <RefreshButton
+              variant="btn"
+              label={t('chat.drawerRefresh')}
+              busy={drawerRefreshing}
+              onRefresh={() => refreshDrawerData({ force: true })}
+            />
+            <button
+              type="button"
+              className="btn drawer-mark-read"
+              disabled={!drawerUnread && !otherUnreads.length}
+              onClick={() => {
+                haptic('tap')
+                markAllDrawerRead()
+              }}
+            >
+              <span aria-hidden="true">✓</span> {t('chat.markAllRead')}
+            </button>
+          </div>
           <button className="row" onClick={openProfileSheet}>
             <span className="row-main">
               <span className="row-title">{t('chat.newChat')}</span>
