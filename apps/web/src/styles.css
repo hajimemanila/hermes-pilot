@@ -3963,7 +3963,8 @@ html[data-vibe='serotonin'] .spec-receipt-btn {
   }
 }
 
-/* Spec Seed の入口チップ（Chat の入力欄上 / Tasks の仕様ランチャー横） */
+/* Spec Seed の入口チップ（Tasks の仕様ランチャー横）。
+   Chat は定型チップと同じ 1 行（.action-bar 先頭）に置くので .seed-entry を使わない（注釈 1402） */
 .seed-entry {
   display: flex;
   align-items: center;

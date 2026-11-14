@@ -2366,8 +2366,24 @@ export function ChatPane({
         onDismiss={(b) => setSpecDismissed((prev) => [...prev, b.path])}
       />
 
-      {hotSnippets.length ? (
+      {hotSnippets.length || !readonly ? (
         <div className="action-bar">
+          {/* 🎙️ Spec Seed（SPEC V5 §3.3 ① D26①）: 一行メモ／音声から仕様策定を始める。
+              注釈 1402: 定型チップと同じ一行に置く（別行の .seed-entry にしない） */}
+          {!readonly ? (
+            <button
+              type="button"
+              className="snippet-chip trigger"
+              onClick={() => {
+                haptic('tap')
+                setSeedOpen(true)
+              }}
+              aria-label={t('seed.openAria')}
+              disabled={streaming}
+            >
+              🎙️ {t('seed.title')}
+            </button>
+          ) : null}
           <div className="chips-scroll">
             {hotSnippets.map((s) => (
               <button
@@ -2400,24 +2416,6 @@ export function ChatPane({
           </div>
           <button className="snippet-chip add" onClick={() => setSnippetSheet(true)} aria-label={t('chat.snippetListAria')}>
             ＋
-          </button>
-        </div>
-      ) : null}
-
-      {/* 🎙️ Spec Seed（SPEC V5 §3.3 ① D26①）: 一行メモ／音声から仕様策定を始める */}
-      {!readonly ? (
-        <div className="seed-entry">
-          <button
-            type="button"
-            className="snippet-chip trigger"
-            onClick={() => {
-              haptic('tap')
-              setSeedOpen(true)
-            }}
-            aria-label={t('seed.openAria')}
-            disabled={streaming}
-          >
-            🎙️ {t('seed.title')}
           </button>
         </div>
       ) : null}
