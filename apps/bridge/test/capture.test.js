@@ -12,10 +12,14 @@ test('normalizeCapture はタイトルの空白を畳み、既定値を埋める
 })
 
 test('タイトル必須・長さ上限・ボード名の検証', () => {
-  assert.throws(() => normalizeCapture({ board: 'b', title: '  ' }), /タイトル/)
-  assert.throws(() => normalizeCapture({ board: 'b', title: 'x'.repeat(201) }), /200/)
-  assert.throws(() => normalizeCapture({ board: '../etc', title: 'x' }), /ボード名/)
-  assert.throws(() => normalizeCapture({ board: '', title: 'x' }), /ボード名/)
+  // 表示文はコード＋辞書で自言語化する（SPEC-i18n-resp B2）。テストはコードで固定する。
+  assert.throws(() => normalizeCapture({ board: 'b', title: '  ' }), (e) => e.code === 'TASK_TITLE_REQUIRED')
+  assert.throws(
+    () => normalizeCapture({ board: 'b', title: 'x'.repeat(201) }),
+    (e) => e.code === 'TASK_TITLE_TOO_LONG' && e.params.max === 200,
+  )
+  assert.throws(() => normalizeCapture({ board: '../etc', title: 'x' }), (e) => e.code === 'BOARD_NAME_INVALID')
+  assert.throws(() => normalizeCapture({ board: '', title: 'x' }), (e) => e.code === 'BOARD_NAME_INVALID')
 })
 
 test('priority は 0..9 に丸め、不正なら0', () => {
@@ -95,5 +99,6 @@ test('create: 入力エラーは ok:false で返し、例外にしない', async
   const cap = createCapture({ hermesBin: '/nonexistent/hermes' })
   const r = await cap.create({ board: 'b', title: '' })
   assert.equal(r.ok, false)
-  assert.match(r.error, /タイトル/)
+  assert.equal(r.code, 'TASK_TITLE_REQUIRED', 'コードで返し、PWA が自言語化する')
+  assert.equal(r.error, 'A title is required', '文言は英語既定（応答 JSON に日本語を残さない）')
 })

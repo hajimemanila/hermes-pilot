@@ -93,9 +93,13 @@ test('resume は hermes resume を実行して ESTOP を消す', async () => {
   assert.equal(auth.rows.at(-1).kind, 'gateway.resume')
 })
 
-test('CLI が失敗したら例外（statusCode 502）', async () => {
+test('CLI が失敗したら例外（statusCode 502・コードは CLI_FAILED）', async () => {
   const { o } = ops({ runner: async () => ({ code: 1, out: 'boom' }) })
-  await assert.rejects(() => o.pause('x'), (e) => e.statusCode === 502 && /boom/.test(e.message))
+  await assert.rejects(
+    () => o.pause('x'),
+    (e) => e.statusCode === 502 && e.code === 'CLI_FAILED' && e instanceof Error,
+    // 失敗理由（CLI 出力）は応答に載せず、コードで自言語化する（SPEC-i18n-resp B2）
+  )
 })
 
 test('overview は Hermes 標準 API だけを叩く（外部プラグインのエンドポイントを呼ばない）', async () => {

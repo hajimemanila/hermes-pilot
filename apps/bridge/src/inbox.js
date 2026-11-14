@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { execFile } from 'node:child_process'
+import { ApiError } from './api-errors.js'
 
 /**
  * 承認待ちインボックス。
@@ -25,7 +26,7 @@ const CLOSE_ACTIONS = new Set(['done', 'cancel'])
 function assertBoard(board) {
   const slug = String(board ?? '')
   if (!/^[a-z0-9][a-z0-9_-]{0,40}$/i.test(slug)) {
-    throw Object.assign(new Error('ボード名が不正です'), { statusCode: 400 })
+    throw new ApiError('BOARD_NAME_INVALID', {}, 400)
   }
   return slug
 }
@@ -38,7 +39,7 @@ function assertBoard(board) {
 function assertTaskId(id) {
   const tid = String(id ?? '')
   if (!/^t_[0-9a-z]+$/i.test(tid)) {
-    throw Object.assign(new Error('タスクIDが不正です'), { statusCode: 400 })
+    throw new ApiError('TASK_ID_INVALID', {}, 400)
   }
   return tid
 }
@@ -50,7 +51,7 @@ function assertTaskId(id) {
  */
 export function normalizeComment(raw) {
   const body = String(raw ?? '').trim()
-  if (!body) throw Object.assign(new Error('コメントを入力してください'), { statusCode: 400 })
+  if (!body) throw new ApiError('COMMENT_REQUIRED', {}, 400)
   if (body.length > TEXT_MAX) return body.slice(0, TEXT_MAX)
   return body
 }
@@ -180,11 +181,11 @@ export function createInbox(cfg, kanban) {
   async function comment(board, id, text, by = 'mobile') {
     const body = normalizeComment(text)
     if (!/^t_[0-9a-z]+$/i.test(String(id))) {
-      throw Object.assign(new Error('タスクIDが不正です'), { statusCode: 400 })
+      throw new ApiError('TASK_ID_INVALID', {}, 400)
     }
     const res = await run(cfg, ['kanban', '--board', board, 'comment', id, body, '--author', String(by).slice(0, 40)])
     if (res.code !== 0) {
-      throw Object.assign(new Error((res.out || 'コメントに失敗しました').slice(0, 400)), { statusCode: 502 })
+      throw new ApiError('COMMENT_FAILED', {}, 502)
     }
     return { ok: true, id, output: res.out.slice(0, 400), at: Date.now() }
   }
@@ -244,11 +245,11 @@ export function createInbox(cfg, kanban) {
     const tid = assertTaskId(id)
     const act = String(action ?? '')
     if (!CLOSE_ACTIONS.has(act)) {
-      throw Object.assign(new Error('action は done か cancel を指定してください'), { statusCode: 400 })
+      throw new ApiError('ACTION_INVALID', { action: act }, 400)
     }
     const before = statusOf(b, tid)
     if (before == null) {
-      throw Object.assign(new Error('タスクが見つかりません'), { statusCode: 404 })
+      throw new ApiError('TASK_NOT_FOUND', {}, 404)
     }
     const actor = String(by ?? 'mobile').slice(0, 40)
     const text = String(note ?? '').trim().slice(0, 400)
@@ -278,7 +279,7 @@ export function createInbox(cfg, kanban) {
         : ['kanban', '--board', b, 'archive', tid]
     const res = await run(cfg, args)
     if (res.code !== 0) {
-      throw Object.assign(new Error((res.out || '操作に失敗しました').slice(0, 400)), { statusCode: 502 })
+      throw new ApiError('CLI_FAILED', {}, 502)
     }
     const after = statusOf(b, tid)
     return {
@@ -307,20 +308,20 @@ export function createInbox(cfg, kanban) {
     const tid = assertTaskId(id)
     const before = statusOf(b, tid)
     if (before == null) {
-      throw Object.assign(new Error('タスクが見つかりません'), { statusCode: 404 })
+      throw new ApiError('TASK_NOT_FOUND', {}, 404)
     }
     if (before === 'ready' || before === 'running') {
       return { ok: true, board: b, id: tid, status: before, noop: true, at: Date.now() }
     }
     if (before !== 'blocked') {
-      throw Object.assign(new Error(`blocked ではないため再開できません (${before})`), { statusCode: 409 })
+      throw new ApiError('TASK_STATE_LOCKED', { status: before }, 409)
     }
     const actor = String(by ?? 'mobile').slice(0, 40)
     const text = String(note ?? '').trim().slice(0, 400)
     if (text) {
       const cRes = await run(cfg, ['kanban', '--board', b, 'comment', tid, text, '--author', actor])
       if (cRes.code !== 0) {
-        throw Object.assign(new Error((cRes.out || 'コメントに失敗しました').slice(0, 400)), { statusCode: 502 })
+        throw new ApiError('COMMENT_FAILED', {}, 502)
       }
     }
     const res = await run(cfg, [
@@ -328,7 +329,7 @@ export function createInbox(cfg, kanban) {
       '--reason', text || 'PWAから再開',
     ])
     if (res.code !== 0) {
-      throw Object.assign(new Error((res.out || '再開に失敗しました').slice(0, 400)), { statusCode: 502 })
+      throw new ApiError('CLI_FAILED', {}, 502)
     }
     const after = statusOf(b, tid)
     return {

@@ -12,6 +12,8 @@
  *   （流すと `_profile_home()` 側の解決に任せることになり、失敗の見え方が遠くなる）
  */
 
+import { errorBody } from './api-errors.js'
+
 /** `profile` を受けてよい RPC。`prompt.submit` はセッションに束縛済みなので対象外。 */
 export const PROFILE_METHODS = new Set(['session.create', 'session.resume'])
 
@@ -60,10 +62,15 @@ export function checkFrame(text, allowed) {
   const name = String(raw).trim()
   const allow = new Set([ALWAYS, ...(allowed ?? [])])
   if (!isSafeProfileName(name) || !allow.has(name)) {
+    // 日本語を返さない: 文言は英語既定（`err.PROFILE_UNKNOWN`）で組み、コードで自言語化させる。
+    // `message` は WS の JSON-RPC 拒否フレーム（`rejectionFrame`）が読む。
+    const failure = errorBody('PROFILE_UNKNOWN', { profile: String(raw).slice(0, 60) })
     return {
       ok: false,
       id: msg.id ?? null,
-      message: `不明なプロファイルです: ${String(raw).slice(0, 60)}`,
+      message: failure.error,
+      code: failure.code,
+      params: failure.params,
       profile: name,
       method,
     }

@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
+import { ApiError } from './api-errors.js'
 
 /**
  * カンバン（SQLite）の読み取りと、実行中タスクの中断。
@@ -111,7 +112,7 @@ export function createKanban(cfg) {
     const p = path.join(boardsRoot, slug, 'kanban.db')
     if (fs.existsSync(p)) return p
     if (fs.existsSync(defaultDb)) return defaultDb
-    throw Object.assign(new Error(`ボード "${slug}" が見つかりません`), { statusCode: 404 })
+    throw new ApiError('BOARD_NOT_FOUND', { board: slug }, 404)
   }
 
   /**
@@ -167,7 +168,7 @@ export function createKanban(cfg) {
     const db = new DatabaseSync(dbFor(slug), { readOnly: true })
     try {
       const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id)
-      if (!row) throw Object.assign(new Error(`タスク "${id}" が見つかりません`), { statusCode: 404 })
+      if (!row) throw new ApiError('TASK_NOT_FOUND', { id }, 404)
       const events = safeAll(
         db,
         `SELECT kind, payload, created_at FROM task_events WHERE task_id = ? ORDER BY id DESC LIMIT 40`,
@@ -225,7 +226,7 @@ export function createKanban(cfg) {
   async function abort(slug, id, reason = 'mobile kill switch') {
     const detail = task(slug, id)
     if (detail.status !== 'running' && !detail.workerPid) {
-      throw Object.assign(new Error(`タスクは実行中ではありません（${detail.status}）`), { statusCode: 409 })
+      throw new ApiError('TASK_STATE_LOCKED', { status: detail.status }, 409)
     }
     const reclaim = await runKanban(slug, ['reclaim', id, '--reason', reason])
     const block = await runKanban(slug, ['block', id, `モバイルから中断: ${reason}`, '--kind', 'needs_input'])

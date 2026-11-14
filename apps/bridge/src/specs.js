@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
+import { ApiError } from './api-errors.js'
 
 /**
  * Spec Launchpad — `docs/SPEC-*.md` を検出し、バッチ見出しをカンバンへ一括起票する。
@@ -341,11 +342,11 @@ export function findOpenBatchTask(tasks, batchId) {
 export function resolveSpecPath(repoPath, relPath) {
   const root = path.resolve(String(repoPath ?? ''))
   const rel = String(relPath ?? '').trim()
-  if (!rel) throw Object.assign(new Error('spec のパスがありません'), { statusCode: 400 })
-  if (path.isAbsolute(rel)) throw Object.assign(new Error('spec はリポジトリからの相対パスで指定してください'), { statusCode: 400 })
+  if (!rel) throw new ApiError('SPEC_PATH_REQUIRED', {}, 400)
+  if (path.isAbsolute(rel)) throw new ApiError('SPEC_PATH_NOT_RELATIVE', {}, 400)
   const abs = path.resolve(root, rel)
   if (abs !== root && !abs.startsWith(root + path.sep)) {
-    throw Object.assign(new Error('spec がリポジトリの外を指しています'), { statusCode: 400 })
+    throw new ApiError('SPEC_PATH_OUTSIDE', {}, 400)
   }
   return abs
 }
@@ -552,35 +553,35 @@ export function createSpecs(cfg = {}, deps = {}) {
   async function launchSpec(input = {}) {
     const board = String(input.board ?? '').trim()
     if (!/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(board)) {
-      return { ok: false, created: [], skipped: [], failed: [], error: 'ボード名が不正です' }
+      return { ok: false, created: [], skipped: [], failed: [], code: 'BOARD_NAME_INVALID' }
     }
     const repoPath = String(input.repoPath ?? '').trim()
     if (!repoPath || !path.isAbsolute(repoPath)) {
-      return { ok: false, created: [], skipped: [], failed: [], error: 'リポジトリのパスが不正です' }
+      return { ok: false, created: [], skipped: [], failed: [], code: 'INVALID_REPO' }
     }
     const specRelPath = String(input.specRelPath ?? '').trim()
     let file = ''
     try {
       file = resolveSpecPath(repoPath, specRelPath)
     } catch (e) {
-      return { ok: false, created: [], skipped: [], failed: [], error: e.message }
+      return { ok: false, created: [], skipped: [], failed: [], code: e.code, params: e.params, error: e.message }
     }
 
     let text = ''
     try {
       text = fs.readFileSync(file, 'utf8')
     } catch {
-      return { ok: false, created: [], skipped: [], failed: [], error: `spec を読めません: ${specRelPath}` }
+      return { ok: false, created: [], skipped: [], failed: [], code: 'SPEC_READ_FAILED', params: { path: specRelPath } }
     }
     const parsed = parseSpec(text)
     if (!parsed.batches.length) {
-      return { ok: false, created: [], skipped: [], failed: [], error: 'バッチ見出し（### Batch <ID>: <Title>）が見つかりません' }
+      return { ok: false, created: [], skipped: [], failed: [], code: 'SPEC_BATCH_HEADING_MISSING' }
     }
 
     const wanted = Array.isArray(input.batchIds) ? new Set(input.batchIds.map((x) => String(x ?? '').trim())) : null
     const batches = parsed.batches.filter((b) => !wanted || wanted.size === 0 || wanted.has(b.id))
     if (!batches.length) {
-      return { ok: false, created: [], skipped: [], failed: [], error: '選択したバッチが spec にありません' }
+      return { ok: false, created: [], skipped: [], failed: [], code: 'SPEC_BATCH_NOT_FOUND' }
     }
 
     const assignee = String(input.assignee ?? '').trim()
@@ -617,13 +618,14 @@ export function createSpecs(cfg = {}, deps = {}) {
         failed.push({
           id: batch.id,
           title,
-          error: (res.stderr || res.stdout || 'kanban create に失敗しました').trim().slice(0, 400),
+          code: 'CREATE_FAILED',
+          error: (res.stderr || res.stdout || '').trim().slice(0, 400),
         })
         continue
       }
       const task = parseCreatedTask(res.stdout)
       if (!task?.id) {
-        failed.push({ id: batch.id, title, error: 'タスクIDを取得できませんでした' })
+        failed.push({ id: batch.id, title, code: 'TASK_ID_MISSING' })
         continue
       }
       created.push({ id: batch.id, title, taskId: task.id, status: task.status ?? 'ready' })

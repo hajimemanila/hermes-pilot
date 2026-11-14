@@ -47,7 +47,9 @@ test('未知のプロファイル・注入は -32602 で止める', () => {
       continue
     }
     assert.equal(r.ok, false, bad)
-    assert.match(r.message, /不明なプロファイル/)
+    assert.equal(r.code, 'PROFILE_UNKNOWN', '表示はコード＋辞書で自言語化する')
+    assert.equal(r.params.profile, bad)
+    assert.doesNotMatch(r.message, /[\u3040-\u30ff\u4e00-\u9fff]/, '文言に日本語を残さない')
     const err = JSON.parse(rejectionFrame(r.id, r.message))
     assert.equal(err.id, 1)
     assert.equal(err.error.code, -32602)

@@ -56,7 +56,7 @@ const fakeKanban = {
 }
 
 test('normalizeComment は空を拒否し、長すぎる本文を切る', () => {
-  assert.throws(() => normalizeComment('   '), /コメント/)
+  assert.throws(() => normalizeComment('   '), (e) => e.code === 'COMMENT_REQUIRED')
   assert.equal(normalizeComment('  ok  '), 'ok')
   assert.equal(normalizeComment('x'.repeat(3000)).length, 2000)
 })

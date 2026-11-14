@@ -441,13 +441,13 @@ export function createRepos(cfg = {}, deps = {}) {
    */
   function add(input = {}) {
     const raw = String(input?.path ?? '').trim()
-    if (!raw) return { ok: false, error: 'パスを入れてください' }
+    if (!raw) return { ok: false, code: 'REPO_PATH_REQUIRED' }
     if (raw === '~' || normalizePath(raw) === normalizePath(os.homedir())) {
-      return { ok: false, error: 'ホームディレクトリは追加できません' }
+      return { ok: false, code: 'REPO_PATH_FORBIDDEN' }
     }
     const abs = expandHome(raw)
-    if (!path.isAbsolute(abs)) return { ok: false, error: '絶対パスで指定してください' }
-    if (!isGitRepo(abs)) return { ok: false, error: 'Git リポジトリではありません（.git がありません）' }
+    if (!path.isAbsolute(abs)) return { ok: false, code: 'REPO_PATH_INVALID' }
+    if (!isGitRepo(abs)) return { ok: false, code: 'REPO_NOT_GIT' }
     const config = readConfig()
     const key = normalizePath(abs)
     const custom = config.custom.filter((c) => normalizePath(c.path) !== key)
@@ -470,9 +470,9 @@ export function createRepos(cfg = {}, deps = {}) {
    */
   function remove(id) {
     const want = String(id ?? '').trim()
-    if (!want) return { ok: false, error: 'id がありません' }
+    if (!want) return { ok: false, code: 'REPO_ID_REQUIRED' }
     const repo = list().find((r) => r.id === want)
-    if (!repo) return { ok: false, error: '未登録のリポジトリです' }
+    if (!repo) return { ok: false, code: 'REPO_NOT_FOUND' }
     const config = readConfig()
     const key = normalizePath(repo.path)
     const wasCustom = config.custom.some((c) => normalizePath(c.path) === key)
@@ -489,20 +489,20 @@ export function createRepos(cfg = {}, deps = {}) {
    * @returns {{ok: boolean, scanDirs?: string[], error?: string}} 結果
    */
   function setScanDirs(dirs) {
-    if (!Array.isArray(dirs)) return { ok: false, error: 'scanDirs は配列で指定してください' }
+    if (!Array.isArray(dirs)) return { ok: false, code: 'SCAN_DIRS_INVALID' }
     const clean = []
     for (const raw of dirs) {
       const s = String(raw ?? '').trim()
       if (!s) continue
       const abs = expandHome(s)
-      if (!path.isAbsolute(abs)) return { ok: false, error: `絶対パスではありません: ${s}` }
+      if (!path.isAbsolute(abs)) return { ok: false, code: 'SCAN_DIR_NOT_ABSOLUTE', params: { path: s } }
       if (normalizePath(abs) === normalizePath(os.homedir())) {
-        return { ok: false, error: 'ホームディレクトリ直下は走査できません（サブディレクトリを指定してください）' }
+        return { ok: false, code: 'SCAN_DIR_FORBIDDEN' }
       }
       try {
-        if (!fs.statSync(abs).isDirectory()) return { ok: false, error: `ディレクトリではありません: ${s}` }
+        if (!fs.statSync(abs).isDirectory()) return { ok: false, code: 'SCAN_DIR_NOT_DIRECTORY', params: { path: s } }
       } catch {
-        return { ok: false, error: `存在しません: ${s}` }
+        return { ok: false, code: 'SCAN_DIR_MISSING', params: { path: s } }
       }
       if (!clean.includes(s)) clean.push(s)
     }
@@ -524,17 +524,17 @@ export function createRepos(cfg = {}, deps = {}) {
    */
   async function createBoard(repoId) {
     const repo = list().find((r) => r.id === String(repoId ?? ''))
-    if (!repo) return { ok: false, error: '未登録のリポジトリです' }
+    if (!repo) return { ok: false, code: 'REPO_NOT_FOUND' }
     if (repo.boards.length) {
       const hit = repo.boards.find((b) => b.current) ?? repo.boards[0]
       return { ok: true, created: false, board: hit }
     }
-    if (!isSafeBoardSlug(repo.id)) return { ok: false, error: 'ボード名に使えない id です' }
+    if (!isSafeBoardSlug(repo.id)) return { ok: false, code: 'BOARD_NAME_INVALID' }
     const args = ['kanban', 'boards', 'create', repo.id, '--name', repo.label, '--default-workdir', repo.path]
     const res = await run(args)
     if (res.code !== 0) {
-      const msg = (res.stderr || res.stdout || 'ボードを作成できませんでした').trim().slice(0, 400)
-      return { ok: false, error: msg }
+      const msg = (res.stderr || res.stdout || '').trim().slice(0, 400)
+      return { ok: false, code: 'CREATE_FAILED', error: msg }
     }
     invalidate()
     return { ok: true, created: true, board: { slug: repo.id, name: repo.label, current: false } }

@@ -439,6 +439,7 @@
   "err.COMMENT_FAILED": "コメントを投稿できませんでした",
   "err.ACTION_INVALID": "不明な操作です: {action}",
   "err.CLI_FAILED": "Hermes のコマンドに失敗しました",
+  "err.HERMES_REJECTED": "Hermes が操作を拒否しました（HTTP {status}）",
   "err.CREATE_FAILED": "タスクの作成に失敗しました",
   "err.UNKNOWN_TARGET": "対象が不明です。登録済みのリポジトリから選んでください",
   "err.SPEC_PATH_REQUIRED": "spec のパスが必要です",

@@ -17,12 +17,13 @@ const demoSocketImpl = () => globalThis.__hmDemoSocket ?? null
  * エラーコードを現在の言語の表示文にする（辞書に無ければそのまま）。
  * @param {string} code コード
  * @param {string} fallback 既定文
+ * @param {Record<string, unknown>} [params] `{status}` などのプレースホルダ値
  * @returns {string} 表示文
  */
-function localizedMessage(code, fallback) {
+function localizedMessage(code, fallback, params) {
   if (!code) return fallback
   const key = `err.${code}`
-  const text = translate(getLang(), key)
+  const text = translate(getLang(), key, params)
   return text === key ? fallback : text
 }
 
@@ -64,16 +65,19 @@ export async function api(path, { method = 'GET', body } = {}) {
   if (!res.ok) {
     // エラー応答は `{ok:false, code, error, params}`（§6.3）。旧 `{error:{message}}` も読む。
     const legacy = data?.error && typeof data.error === 'object' ? data.error : null
-    const message =
+    const code = data?.code ?? legacy?.code ?? null
+    const params = data?.params ?? legacy?.params ?? null
+    const fallback =
       (typeof data?.error === 'string' ? data.error : null) ??
       legacy?.message ??
       data?.detail ??
       `HTTP ${res.status}`
-    const code = data?.code ?? legacy?.code ?? null
-    const err = new Error(code === 'OFFLINE' ? localizedMessage('OFFLINE', message) : message)
+    // 表示は必ず辞書（`err.<CODE>`）を優先する。辞書に無いコードだけブリッジの英語既定文へ落とす。
+    // ここが「JA 表示なのに英語」「EN 表示なのに日本語」を無くす本丸（SPEC-i18n-resp B2）。
+    const err = new Error(localizedMessage(code, fallback, params))
     err.status = res.status
     err.code = code
-    err.params = data?.params ?? null
+    err.params = params
     throw err
   }
   return data

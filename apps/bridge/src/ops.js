@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
+import { ApiError } from './api-errors.js'
 
 /**
  * 運用系（状態の俯瞰 + キルスイッチ）。
@@ -108,18 +109,18 @@ export function createOps(cfg, hermes, auth, deps = {}) {
   async function gateway(action, confirm, by = 'mobile') {
     const pathname = GATEWAY_ACTIONS.get(action)
     if (!pathname) {
-      throw Object.assign(new Error(`不明な操作です: ${action}`), { statusCode: 400 })
+      throw new ApiError('ACTION_INVALID', { action }, 400)
     }
     const expected = action === 'drain' ? 'DRAIN' : action.toUpperCase()
     if (String(confirm ?? '').toUpperCase() !== expected) {
-      throw Object.assign(new Error(`確認語が一致しません（${expected}）`), { statusCode: 400 })
+      throw new ApiError('CONFIRM_MISMATCH', { expected }, 400)
     }
     const res = await hermes.call(pathname, { method: 'POST', body: {}, timeoutMs: 30000 })
     const ok = res.status >= 200 && res.status < 300
     auth.audit({ kind: `gateway.${action}`, ok, status: res.status, by, result: res.data })
     if (!ok) {
       const detail = res.data?.detail ?? res.data?.error?.message ?? `HTTP ${res.status}`
-      throw Object.assign(new Error(`Hermes が拒否しました: ${detail}`), { statusCode: 502 })
+      throw new ApiError('HERMES_REJECTED', { status: res.status }, 502)
     }
     return { ok, action, result: res.data, at: Date.now() }
   }
@@ -160,7 +161,7 @@ export function createOps(cfg, hermes, auth, deps = {}) {
     const state = paused()
     auth.audit({ kind: 'gateway.pause', ok: res.code === 0, by, reason, state })
     if (res.code !== 0) {
-      throw Object.assign(new Error((res.out || 'pause に失敗しました').slice(0, 400)), { statusCode: 502 })
+      throw new ApiError('CLI_FAILED', {}, 502)
     }
     return { ok: true, action: 'pause', state, output: res.out.slice(0, 400), at: Date.now() }
   }
@@ -175,7 +176,7 @@ export function createOps(cfg, hermes, auth, deps = {}) {
     const state = paused()
     auth.audit({ kind: 'gateway.resume', ok: res.code === 0, by, state })
     if (res.code !== 0) {
-      throw Object.assign(new Error((res.out || 'resume に失敗しました').slice(0, 400)), { statusCode: 502 })
+      throw new ApiError('CLI_FAILED', {}, 502)
     }
     return { ok: true, action: 'resume', state, output: res.out.slice(0, 400), at: Date.now() }
   }

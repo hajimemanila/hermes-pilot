@@ -427,7 +427,7 @@ async function serveStatic(req, res, pathname) {
   // SPA フォールバック
   const index = await readFirst(dirs.map((d) => path.join(d, 'index.html')))
   if (!index) {
-    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }).end('UI 未ビルド（npm run build）')
+    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }).end('UI not built (run npm run build)')
     return
   }
   res.writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-cache' }).end(index.buf)

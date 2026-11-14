@@ -57,6 +57,7 @@ export const ERROR_MESSAGES = {
   COMMENT_FAILED: 'Could not post the comment',
   ACTION_INVALID: 'Unknown action: {action}',
   CLI_FAILED: 'The Hermes command failed',
+  HERMES_REJECTED: 'Hermes rejected the operation (HTTP {status})',
   CREATE_FAILED: 'Creating the task failed',
   UNKNOWN_TARGET: 'Unknown target. Choose a registered repository',
 

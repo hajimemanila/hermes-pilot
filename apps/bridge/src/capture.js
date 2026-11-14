@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import crypto from 'node:crypto'
+import { ApiError } from './api-errors.js'
 
 /**
  * クイック起票。
@@ -21,14 +22,14 @@ const DEDUPE_MS = 10 * 60_000
 export function normalizeCapture(input = {}) {
   const board = String(input.board ?? '').trim()
   if (!/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(board)) {
-    throw Object.assign(new Error('ボード名が不正です'), { statusCode: 400 })
+    throw new ApiError('BOARD_NAME_INVALID', {}, 400)
   }
   const title = String(input.title ?? '')
     .replace(/\s+/g, ' ')
     .trim()
-  if (!title) throw Object.assign(new Error('タイトルを入れてください'), { statusCode: 400 })
+  if (!title) throw new ApiError('TASK_TITLE_REQUIRED', {}, 400)
   if (title.length > TITLE_MAX) {
-    throw Object.assign(new Error(`タイトルは${TITLE_MAX}文字までです`), { statusCode: 400 })
+    throw new ApiError('TASK_TITLE_TOO_LONG', { max: TITLE_MAX }, 400)
   }
   const body = String(input.body ?? '').trim().slice(0, BODY_MAX)
   const p = Number(input.priority ?? 0)
@@ -101,7 +102,7 @@ export function createCapture(cfg = {}) {
     try {
       c = normalizeCapture(input)
     } catch (e) {
-      return { ok: false, created: false, error: e.message }
+      return { ok: false, created: false, code: e.code, params: e.params, error: e.message }
     }
     sweep()
     const key = dedupeKey(c, input.idempotencyKey)
@@ -111,8 +112,8 @@ export function createCapture(cfg = {}) {
     const res = await run(buildCreateArgs(c))
 
     if (res.code !== 0) {
-      const msg = (res.stderr || res.stdout || 'kanban create に失敗しました').trim().slice(0, 400)
-      return { ok: false, created: false, error: msg }
+      const msg = (res.stderr || res.stdout || '').trim().slice(0, 400)
+      return { ok: false, created: false, code: 'CREATE_FAILED', error: msg }
     }
 
     let task = null
@@ -124,7 +125,7 @@ export function createCapture(cfg = {}) {
       task = m ? { id: m[1] } : null
     }
     if (!task?.id) {
-      return { ok: false, created: false, error: 'タスクIDを取得できませんでした' }
+      return { ok: false, created: false, code: 'TASK_ID_MISSING' }
     }
 
     const out = {

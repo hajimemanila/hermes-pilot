@@ -608,23 +608,23 @@ export function createReview(cfg, opts = {}) {
   /** シート HTML（認可は呼び出し側）。 */
   function sheetHtml(id) {
     const b = bodyOf(id)
-    if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
+    if (!b) return { ok: false, code: 'NOT_FOUND' }
     const ak = parseReviewLine(b.body)
-    if (!ak?.sheet) return { ok: false, code: 'NO_SHEET', message: 'このタスクにはシートがありません' }
+    if (!ak?.sheet) return { ok: false, code: 'NO_SHEET' }
     const abs = resolveInside(ak.sheet)
-    if (!abs) return { ok: false, code: 'SHEET_MISSING', message: 'シートが見つかりません' }
+    if (!abs) return { ok: false, code: 'SHEET_MISSING' }
     return { ok: true, html: fs.readFileSync(abs, 'utf8'), path: abs }
   }
 
   /** シートの構造化データ（PWA のネイティブフォーム用）。 */
   function sheetData(id) {
     const b = bodyOf(id)
-    if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
+    if (!b) return { ok: false, code: 'NOT_FOUND' }
     const ak = parseReviewLine(b.body)
-    if (!ak?.sheet) return { ok: false, code: 'NO_SHEET', message: 'このタスクにはシートがありません' }
+    if (!ak?.sheet) return { ok: false, code: 'NO_SHEET' }
     const abs = resolveInside(sheetPaths(ak.sheet).dataRel)
     const data = abs ? readJsonIfExists(abs) : null
-    if (!data) return { ok: false, code: 'DATA_MISSING', message: 'sheet.json がありません' }
+    if (!data) return { ok: false, code: 'DATA_MISSING' }
     // 回答の履歴（完了した項目を「なぜこの設計か」まで辿れるようにする）。
     // 回答は無いことがある（回答前に片付けた等）ので、無ければ null。
     const answer = readJsonIfExists(resolveInside(sheetPaths(ak.sheet).answerRel) || '\0')
@@ -661,9 +661,9 @@ export function createReview(cfg, opts = {}) {
    */
   async function answer(id, payload) {
     const b = bodyOf(id)
-    if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
+    if (!b) return { ok: false, code: 'NOT_FOUND' }
     const ak = parseReviewLine(b.body)
-    if (!ak?.sheet) return { ok: false, code: 'NO_SHEET', message: 'このタスクにはシートがありません' }
+    if (!ak?.sheet) return { ok: false, code: 'NO_SHEET' }
 
     const sheetAbs = resolveInside(ak.sheet)
     const dataAbs = resolveInside(ak.sheet.replace(/\.html$/, '.json'))
@@ -701,7 +701,7 @@ export function createReview(cfg, opts = {}) {
         sha256: hash,
         status,
         moved: status,
-        message: '同じ回答が既に保存されています',
+        code: 'REVIEW_ALREADY_ANSWERED',
         output: moved.out.slice(0, 400),
       }
     }
@@ -712,7 +712,7 @@ export function createReview(cfg, opts = {}) {
         ok: false,
         code: 'NOT_WAITING',
         status: b.status,
-        message: `レビュー待ちではありません（現在: ${b.status}）`,
+        params: { status: b.status },
       }
     }
 
@@ -774,7 +774,7 @@ export function createReview(cfg, opts = {}) {
   /** 反映が違うとき review に戻す。 */
   async function reopen(id, reason) {
     const b = bodyOf(id)
-    if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
+    if (!b) return { ok: false, code: 'NOT_FOUND' }
     const out = await runKanban(['request-changes', id, String(reason || 'レビューの再確認をお願いします')])
     return { ok: out.code === 0, status: b.status, output: out.out.slice(0, 800) }
   }
@@ -825,9 +825,9 @@ export function createReview(cfg, opts = {}) {
    */
   async function approve(id, payload = {}) {
     const b = bodyOf(id)
-    if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
+    if (!b) return { ok: false, code: 'NOT_FOUND' }
     const ak = parseReviewLine(b.body)
-    if (!ak?.image) return { ok: false, code: 'NO_IMAGE', message: '注釈タスクではありません' }
+    if (!ak?.image) return { ok: false, code: 'NO_IMAGE' }
     if (payload?.chat) rememberTaskChat(id, payload.chat)
 
     const note = String(payload?.note ?? '').slice(0, 400)
@@ -846,7 +846,7 @@ export function createReview(cfg, opts = {}) {
         status: adv.status,
         moved: adv.moved,
         files: { approval: rel },
-        message: '検収は既に記録されています',
+        code: 'APPROVAL_ALREADY_RECORDED',
         output: adv.out.slice(0, 400),
       }
     }
@@ -855,7 +855,7 @@ export function createReview(cfg, opts = {}) {
         ok: false,
         code: 'NOT_WAITING',
         status: b.status,
-        message: `注釈待ちではありません（現在: ${b.status}）`,
+        params: { status: b.status },
       }
     }
 
@@ -904,10 +904,10 @@ export function createReview(cfg, opts = {}) {
   function thumb(rel) {
     const s = String(rel || '')
     if (!s.startsWith('thumbs/') || !/\.(png|jpe?g|webp)$/i.test(s)) {
-      return { ok: false, code: 'BAD_THUMB', message: '挿絵のパスが不正です' }
+      return { ok: false, code: 'BAD_THUMB' }
     }
     const abs = resolveInside(s)
-    if (!abs) return { ok: false, code: 'THUMB_MISSING', message: '挿絵が見つかりません' }
+    if (!abs) return { ok: false, code: 'THUMB_MISSING' }
     const ext = path.extname(abs).toLowerCase()
     const type = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
     return { ok: true, data: fs.readFileSync(abs), type }
@@ -917,14 +917,14 @@ export function createReview(cfg, opts = {}) {
   /** 注釈の下地画像（annotated=true なら赤入れ済み、compare=true なら前回の赤入れ）。 */
   function image(id, opts = {}) {
     const b = bodyOf(id)
-    if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
+    if (!b) return { ok: false, code: 'NOT_FOUND' }
     const ak = parseReviewLine(b.body)
-    if (!ak?.image) return { ok: false, code: 'NO_IMAGE', message: 'このタスクには下地画像がありません' }
+    if (!ak?.image) return { ok: false, code: 'NO_IMAGE' }
     let rel = ak.image
     if (opts?.compare) {
       // 比較（Before）: 前回の赤入れ／前ラウンドの画像。無ければ 404 で UI がトグルを隠す
       const cmp = compareRelOf(id, ak, siblingIndex())
-      if (!cmp) return { ok: false, code: 'NO_COMPARE', message: '比較できる前回の画像がありません' }
+      if (!cmp) return { ok: false, code: 'NO_COMPARE' }
       rel = cmp
     } else if (opts?.annotated) {
       const jsonAbs = resolveInside(ak.image.replace(/\.(png|jpe?g)$/i, '.annotation.json'))
@@ -932,7 +932,7 @@ export function createReview(cfg, opts = {}) {
       if (data?.annotated_image) rel = data.annotated_image
     }
     const abs = resolveInside(rel)
-    if (!abs) return { ok: false, code: 'IMAGE_MISSING', message: '下地画像が見つかりません' }
+    if (!abs) return { ok: false, code: 'IMAGE_MISSING' }
     const ext = path.extname(abs).toLowerCase()
     const type = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
     return { ok: true, data: fs.readFileSync(abs), type, path: abs, rel }
@@ -941,13 +941,13 @@ export function createReview(cfg, opts = {}) {
   /** 送信済みの注釈（無ければ null）。 */
   function annotation(id) {
     const b = bodyOf(id)
-    if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
+    if (!b) return { ok: false, code: 'NOT_FOUND' }
     const ak = parseReviewLine(b.body)
-    if (!ak?.image) return { ok: false, code: 'NO_IMAGE', message: '注釈タスクではありません' }
+    if (!ak?.image) return { ok: false, code: 'NO_IMAGE' }
     const rel = ak.image.replace(/\.(png|jpe?g)$/i, '.annotation.json')
     const abs = resolveInside(rel)
     const data = abs ? readJsonIfExists(abs) : null
-    if (!data) return { ok: false, code: 'NO_ANNOTATION', message: 'まだ注釈はありません' }
+    if (!data) return { ok: false, code: 'NO_ANNOTATION' }
     return { ok: true, data, status: b.status }
   }
 
@@ -957,23 +957,23 @@ export function createReview(cfg, opts = {}) {
    */
   async function saveAnnotation(id, payload) {
     const b = bodyOf(id)
-    if (!b) return { ok: false, code: 'NOT_FOUND', message: 'タスクがありません' }
+    if (!b) return { ok: false, code: 'NOT_FOUND' }
     const ak = parseReviewLine(b.body)
-    if (!ak?.image) return { ok: false, code: 'NO_IMAGE', message: 'このタスクには下地画像がありません' }
+    if (!ak?.image) return { ok: false, code: 'NO_IMAGE' }
     if (b.status !== 'blocked') {
-      return { ok: false, code: 'NOT_WAITING', status: b.status, message: `注釈待ちではありません（現在: ${b.status}）` }
+      return { ok: false, code: 'NOT_WAITING', status: b.status, params: { status: b.status } }
     }
     if (payload?.chat) rememberTaskChat(id, payload.chat)
 
     const raw = String(payload?.annotated_image || '')
     const m = /^data:(image\/(?:png|jpeg));base64,([A-Za-z0-9+/=]+)$/.exec(raw)
-    if (!m) return { ok: false, code: 'BAD_IMAGE', message: 'annotated_image は data:image/(png|jpeg);base64,… で送ってください' }
+    if (!m) return { ok: false, code: 'BAD_IMAGE' }
     const buf = Buffer.from(m[2], 'base64')
     const MAX = 12 * 1024 * 1024
-    if (buf.length > MAX) return { ok: false, code: 'TOO_LARGE', message: `画像が大きすぎます（${Math.round(buf.length / 1024)}KB > 12MB）` }
+    if (buf.length > MAX) return { ok: false, code: 'TOO_LARGE' }
 
     const baseAbs = resolveInside(ak.image)
-    if (!baseAbs) return { ok: false, code: 'IMAGE_MISSING', message: '下地画像が見つかりません' }
+    if (!baseAbs) return { ok: false, code: 'IMAGE_MISSING' }
     const sha = crypto.createHash('sha256').update(buf).digest('hex')
     const baseSha = crypto.createHash('sha256').update(fs.readFileSync(baseAbs)).digest('hex')
     const ext = m[1] === 'image/png' ? '.png' : '.jpg'
@@ -1327,14 +1327,14 @@ export function createReview(cfg, opts = {}) {
 
   /** library の画像を返す（allowlist 内のみ）。 */
   function libraryFile(rel) {
-    if (!isSafeRel(rel)) return { ok: false, code: 'BAD_PATH', message: 'パスが不正です' }
+    if (!isSafeRel(rel)) return { ok: false, code: 'BAD_PATH' }
     const lower = String(rel).toLowerCase()
     if (!(lower.startsWith('library/') || lower.startsWith('shots/'))) {
-      return { ok: false, code: 'OUTSIDE', message: 'library / shots 配下のみ配信します' }
+      return { ok: false, code: 'OUTSIDE' }
     }
-    if (!/\.(png|jpe?g|webp)$/.test(lower)) return { ok: false, code: 'BAD_EXT', message: '画像ではありません' }
+    if (!/\.(png|jpe?g|webp)$/.test(lower)) return { ok: false, code: 'BAD_EXT' }
     const abs = resolveInside(rel)
-    if (!abs) return { ok: false, code: 'NOT_FOUND', message: 'ファイルがありません' }
+    if (!abs) return { ok: false, code: 'NOT_FOUND' }
     const ext = path.extname(abs).toLowerCase()
     const type = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
     return { ok: true, data: fs.readFileSync(abs), type }
@@ -1359,18 +1359,18 @@ export function createReview(cfg, opts = {}) {
 
     if (source === 'upload') {
       const m = /^data:(image\/(?:png|jpeg));base64,([A-Za-z0-9+/=]+)$/.exec(String(payload?.image || ''))
-      if (!m) return { ok: false, code: 'BAD_IMAGE', message: 'image は data:image/(png|jpeg);base64,… で送ってください' }
+      if (!m) return { ok: false, code: 'BAD_IMAGE' }
       buf = Buffer.from(m[2], 'base64')
       ext = m[1] === 'image/png' ? '.png' : '.jpg'
-      if (buf.length > 12 * 1024 * 1024) return { ok: false, code: 'TOO_LARGE', message: '画像が大きすぎます（12MB 上限）' }
+      if (buf.length > 12 * 1024 * 1024) return { ok: false, code: 'TOO_LARGE' }
     } else {
       const rel = String(payload?.path || '')
-      if (!isSafeRel(rel)) return { ok: false, code: 'BAD_PATH', message: 'path が不正です' }
+      if (!isSafeRel(rel)) return { ok: false, code: 'BAD_PATH' }
       if (!(rel.toLowerCase().startsWith('library/') || rel.toLowerCase().startsWith('shots/'))) {
-        return { ok: false, code: 'OUTSIDE', message: 'library / shots 配下の画像だけ使えます' }
+        return { ok: false, code: 'OUTSIDE' }
       }
       const abs = resolveInside(rel)
-      if (!abs) return { ok: false, code: 'NOT_FOUND', message: '画像が見つかりません' }
+      if (!abs) return { ok: false, code: 'NOT_FOUND' }
       buf = fs.readFileSync(abs)
       const e = path.extname(abs).toLowerCase()
       ext = e === '.jpg' || e === '.jpeg' ? '.jpg' : e === '.webp' ? '.webp' : '.png'
@@ -1393,7 +1393,6 @@ export function createReview(cfg, opts = {}) {
       return {
         ok: false,
         code: 'UNKNOWN_TARGET',
-        message: '対象リポジトリは登録済みのものから選んでください',
         targets: targets().map((x) => ({ id: x.id, label: x.label })),
       }
     }

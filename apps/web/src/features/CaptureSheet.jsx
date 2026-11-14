@@ -108,7 +108,8 @@ export function CaptureSheet({ board, boards, defaultBoard, onClose, onCreated, 
         },
       })
       if (!r?.ok) {
-        notify?.(r?.error ?? t('capture.failed'))
+        // 文言はコード＋辞書で自言語化する（SPEC-i18n-resp B2）。空文字なら既定文へ落とす。
+        notify?.(r?.error || t('capture.failed'))
         return
       }
       notify?.(r.created ? t('capture.created', { id: r.task.id }) : t('capture.already', { id: r.task.id }))
