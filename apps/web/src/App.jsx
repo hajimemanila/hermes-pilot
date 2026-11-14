@@ -146,6 +146,14 @@ export function App() {
   const [chatStreaming, setChatStreaming] = useState(false)
   const [reviewFocus, setReviewFocus] = useState(null)
   const [pendingChatOpen, setPendingChatOpen] = useState(null)
+  /*
+   * パイプライン完走サマリの導線（SPEC-PILOT-V4 §3.3 ③ / D20③）。
+   *  - pendingDiscuss: Tasks タブのバナー「💬 チャットで次の一手を相談」→ ChatPane が会話を開いて相談文を置く
+   *  - focusBoard: ChatPane の「📋 ボードを見る」→ Tasks タブがそのボードへ切り替える
+   * どちらも nonce 付きで持つ（同じ内容の連打でも 1 回ずつ効かせる）。
+   */
+  const [pendingDiscuss, setPendingDiscuss] = useState(null)
+  const [focusBoard, setFocusBoard] = useState(null)
   // 計器盤（SPEC §5.5）: 使用量（60 秒キャッシュ）と、そこから開くシート
   const [usageData, setUsageData] = useState(null)
   const [usageOpen, setUsageOpen] = useState(false)
@@ -258,15 +266,28 @@ export function App() {
       setTab('chat')
       if (!chatMountedRef.current && e.detail) setPendingChatOpen(e.detail)
     }
+    // 統合レポートの導線はチャットをアンマウントしない設計なので、pending で渡せば届く
+    const onDiscussPipeline = (e) => {
+      setTab('chat')
+      setPendingDiscuss({ ...(e.detail || {}), nonce: Date.now() })
+    }
+    const onOpenBoard = (e) => {
+      setTab('tasks')
+      setFocusBoard({ board: e.detail?.board ?? null, nonce: Date.now() })
+    }
     window.addEventListener('hm:chat-unread', onOtherUnread)
     window.addEventListener('hm:chat-streaming', onChatStreaming)
     window.addEventListener('hm:open-review', onOpenReview)
     window.addEventListener('hm:open-session', onOpenSession)
+    window.addEventListener('hm:discuss-pipeline', onDiscussPipeline)
+    window.addEventListener('hm:open-board', onOpenBoard)
     return () => {
       window.removeEventListener('hm:chat-unread', onOtherUnread)
       window.removeEventListener('hm:chat-streaming', onChatStreaming)
       window.removeEventListener('hm:open-review', onOpenReview)
       window.removeEventListener('hm:open-session', onOpenSession)
+      window.removeEventListener('hm:discuss-pipeline', onDiscussPipeline)
+      window.removeEventListener('hm:open-board', onOpenBoard)
     }
   }, [])
 
@@ -767,6 +788,8 @@ export function App() {
               refresh={refresh}
               notify={notify}
               initialInbox={deepLink?.open === 'inbox' ? deepLink : null}
+              focusBoard={focusBoard}
+              onConsumedFocusBoard={() => setFocusBoard(null)}
             />
           ) : tab === 'review' ? (
             <ReviewPane notify={notify} focusRequest={reviewFocus} onConsumedFocus={() => setReviewFocus(null)} />
@@ -797,6 +820,8 @@ export function App() {
                   active={tab === 'chat'}
                   openRequest={pendingChatOpen}
                   onConsumedOpen={() => setPendingChatOpen(null)}
+                  discussRequest={pendingDiscuss}
+                  onConsumedDiscuss={() => setPendingDiscuss(null)}
                 />
               </ErrorBoundary>
             </div>

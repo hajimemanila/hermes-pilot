@@ -333,6 +333,32 @@ export function ChatPane({
   }, [])
 
   /**
+   * 統合レポートの `repoPath` から、その会話を作るべきリポジトリを探す。
+   *
+   * リポジトリ一覧は遅延取得（`ensureRepos`）なので、まだ取れていなければここで取りに行く。
+   * これをしないと、Tasks タブのバナーから相談を始めてもリポジトリが決まらず、
+   * `'__latest__'` 宛のレポートがタイムラインに合流しない（実測）。
+   */
+  const findRepoByPath = useCallback(
+    async (repoPath) => {
+      const path = String(repoPath ?? '').trim().toLowerCase()
+      if (!path) return null
+      const pick = (list) =>
+        (Array.isArray(list) ? list : []).find(
+          (x) => x?.path && String(x.path).trim().toLowerCase() === path,
+        ) ?? null
+      const hit = pick(reposRef.current)
+      if (hit) return hit
+      try {
+        return pick(await ensureRepos())
+      } catch {
+        return null
+      }
+    },
+    [ensureRepos],
+  )
+
+  /**
    * セッション一覧を取り直す。
    *
    * `session.list`（WS/JSON-RPC）は既定プロファイルのゲートウェイにしか届かないため、
@@ -1108,7 +1134,7 @@ export function ChatPane({
     const body = String(prompt ?? '').trim()
     if (!body) return
     setText(body)
-    requestAnimationFrame(() => {
+    const focus = () => {
       const el = taRef.current
       if (!el) return
       try {
@@ -1123,7 +1149,11 @@ export function ChatPane({
       } catch {
         /* selection API の無い環境でも入力欄には入っている */
       }
-    })
+    }
+    // タブ切替・新規会話の直後は入力欄がまだ出ていないことがある。rAF と少し後の 2 回試す
+    // （実測: 1 回目だけだとフォーカスが body のまま残った）。
+    requestAnimationFrame(focus)
+    setTimeout(focus, 150)
   }, [])
 
   /** 統合レポートカードの「💬 次の一手を相談」。 */
@@ -1539,21 +1569,38 @@ export function ChatPane({
    * どちらも送信はしない（ユーザーが読んでから 1 タップ）。
    */
   useEffect(() => {
-    if (!discussRequest) return
+    if (!discussRequest) return undefined
+    let alive = true
     const target = String(discussRequest.sessionId ?? '').trim()
-    const repoPath = String(discussRequest.repoPath ?? '').trim().toLowerCase()
-    if (target && target !== LATEST_REPORT_ID) {
-      const found = sessionsRef.current.find((s) => String(s.id) === target)
-      openSessionSafe(target, null, found?.profile || profile || DEFAULT_PROFILE)
-    } else {
-      const matched = (reposRef.current || []).find(
-        (x) => x?.path && String(x.path).trim().toLowerCase() === repoPath,
-      )
-      startSession(profile || DEFAULT_PROFILE, matched ?? null, discussRequest.board ? { slug: discussRequest.board } : null)
+    const run = async () => {
+      if (target && target !== LATEST_REPORT_ID) {
+        const found = sessionsRef.current.find((s) => String(s.id) === target)
+        openSessionSafe(target, null, found?.profile || profile || DEFAULT_PROFILE)
+      } else {
+        const matched = await findRepoByPath(discussRequest.repoPath)
+        if (!alive) return
+        startSession(
+          profile || DEFAULT_PROFILE,
+          matched ?? null,
+          discussRequest.board ? { slug: discussRequest.board } : null,
+        )
+      }
+      prefillComposer(followUpPromptFor({ followUpPrompt: discussRequest.prompt }, t('chat.discussFallback')))
+      onConsumedDiscuss?.()
     }
-    prefillComposer(followUpPromptFor({ followUpPrompt: discussRequest.prompt }, t('chat.discussFallback')))
-    onConsumedDiscuss?.()
-  }, [discussRequest, openSessionSafe, startSession, prefillComposer, onConsumedDiscuss, profile])
+    run()
+    return () => {
+      alive = false
+    }
+  }, [
+    discussRequest,
+    openSessionSafe,
+    startSession,
+    prefillComposer,
+    onConsumedDiscuss,
+    profile,
+    findRepoByPath,
+  ])
 
   // --- スニペット ---------------------------------------------------------
 
@@ -1784,13 +1831,11 @@ export function ChatPane({
                   })
                   return
                 }
-                const repoPath = String(u.repoPath ?? '').trim().toLowerCase()
-                const matched = (repos || []).find(
-                  (x) => x?.path && String(x.path).trim().toLowerCase() === repoPath,
-                )
-                startSession(profile || DEFAULT_PROFILE, matched ?? null, u.board ? { slug: u.board } : null)
                 markReportsSeen(LATEST_REPORT_ID)
                 prefillComposer(followUpPromptFor(u, t('chat.discussFallback')))
+                findRepoByPath(u.repoPath).then((matched) => {
+                  startSession(profile || DEFAULT_PROFILE, matched ?? null, u.board ? { slug: u.board } : null)
+                })
                 return
               }
               const found = sessions.find((s) => String(s.id) === u.sessionId)

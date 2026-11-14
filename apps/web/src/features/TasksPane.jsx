@@ -1,4 +1,4 @@
-import React, { useRef, useCallback, useEffect, useState } from 'react'
+import React, { useRef, useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api.js'
 import { HoldButton, Icon, Loader, RefreshButton, Sheet, Spinner, relTime } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
@@ -8,6 +8,8 @@ import { LiveSheet } from './LiveSheet.jsx'
 import { InboxSheet } from './InboxSheet.jsx'
 import { pendingCount } from '../lib/reviewView.js'
 import { fmtCost } from '../lib/format.js'
+import { followUpPromptFor, readActiveChatId, reportSummaryLine, toEpochMs } from '../lib/chatReports.js'
+import { renderMarkdown } from '../lib/markdown.js'
 import { useI18n } from '../i18n/index.js'
 import { useSplitLayout } from '../lib/useSplitLayout.js'
 
@@ -36,11 +38,13 @@ function readStoredBoard() {
   }
 }
 
-export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
+export function TasksPane({ overview, refresh, notify, initialInbox = null, focusBoard = null, onConsumedFocusBoard }) {
   const { t } = useI18n()
   const [boards, setBoards] = useState([])
   const [board, setBoard] = useState(null)
   const [tasks, setTasks] = useState([])
+  // 直近のパイプライン完走サマリ（SPEC-PILOT-V4 §3.3 ③ / D20③）。無ければバナーを出さない。
+  const [latestReport, setLatestReport] = useState(null)
   const [detail, setDetail] = useState(null)
   const [killOpen, setKillOpen] = useState(false)
   const [confirmText, setConfirmText] = useState('')
@@ -277,6 +281,80 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
     return () => clearInterval(id)
   }, [board, loadTasks])
 
+  /* 稼働中（running / ready / todo）が 0 か。0 に変わった瞬間に完走レポートを取り直す。 */
+  const idle = !tasks.some((x) => x.status === 'running' || x.status === 'ready' || x.status === 'todo')
+
+  /*
+   * 直近のパイプライン完走サマリ（SPEC-PILOT-V4 §3.3 ③ / D20③）。
+   * ブリッジ（V4-2 の watcher）が `GET /api/specs/reports` を生やす前は 404 になるので、
+   * 取れないことは異常ではない — バナーを出さないだけで画面は壊さない。
+   */
+  useEffect(() => {
+    if (!board) {
+      setLatestReport(null)
+      return undefined
+    }
+    let alive = true
+    const load = () =>
+      api(`/api/specs/reports?board=${encodeURIComponent(board)}&limit=1`)
+        .then((d) => {
+          if (!alive) return
+          const list = Array.isArray(d?.reports) ? d.reports : Array.isArray(d?.items) ? d.items : []
+          setLatestReport(list[0] ?? null)
+        })
+        .catch(() => {
+          if (alive) setLatestReport(null)
+        })
+    load()
+    const id = setInterval(() => document.visibilityState === 'visible' && load(), 30_000)
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [board, idle])
+
+  /* 直近 24 時間のレポートだけをバナーに出す（古い完走を常設しない）。 */
+  const reportRecent = useMemo(() => {
+    const at = toEpochMs(latestReport?.at)
+    return Boolean(at) && Date.now() - at < 24 * 60 * 60 * 1000
+  }, [latestReport])
+
+  /* バナーの本文（統合 Markdown サマリ）は Markdown として読ませる。 */
+  const latestReportBody = useMemo(
+    () => (latestReport?.markdown ? renderMarkdown(latestReport.markdown) : null),
+    [latestReport],
+  )
+
+  /** バナーの「💬 チャットで次の一手を相談」: App 経由でチャットタブへ渡す（§3.3 ③）。 */
+  const discussLatestReport = useCallback(() => {
+    if (!latestReport) return
+    haptic('tap')
+    try {
+      window.dispatchEvent(
+        new CustomEvent('hm:discuss-pipeline', {
+          detail: {
+            sessionId: latestReport.sessionId ?? null,
+            repoPath: latestReport.repoPath ?? null,
+            board: latestReport.board ?? board,
+            prompt: followUpPromptFor(latestReport, ''),
+            title: latestReport.label ?? null,
+          },
+        }),
+      )
+    } catch {
+      /* noop */
+    }
+  }, [latestReport, board])
+
+  /* ChatPane の「📋 ボードを見る」で Tasks タブへ来たとき、そのボードを選ぶ。 */
+  useEffect(() => {
+    if (!focusBoard?.board) return
+    // ボード一覧の取得前に消費すると選択が空振りする（実測: チップが既定のまま残った）
+    if (!boards.length) return
+    if (boards.some((b) => b.slug === focusBoard.board)) setBoard(focusBoard.board)
+    onConsumedFocusBoard?.()
+  }, [focusBoard, boards, onConsumedFocusBoard])
+
   const openTask = async (task) => {
     setDetail({ loading: true, ...task })
     setDiff(null)
@@ -419,7 +497,14 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
     try {
       const r = await api('/api/specs/launch', {
         method: 'POST',
-        body: { board, specRelPath: currentSpec.path, batchIds: specSel, assignee: 'mobile' },
+        body: {
+          board,
+          specRelPath: currentSpec.path,
+          batchIds: specSel,
+          assignee: 'mobile',
+          // 直近に操作していた会話へ紐づける（完走レポートの宛先・§3.2 ② / §3.3 ③）
+          chat: readActiveChatId(globalThis.localStorage) || undefined,
+        },
       })
       haptic('success')
       notify(t('tasks.specLaunched', { created: (r.created ?? []).length, skipped: (r.skipped ?? []).length }))
@@ -622,6 +707,35 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null }) {
             <Icon name="chevron" size={14} />
           </span>
         </button>
+      ) : null}
+
+      {/*
+        直近のパイプライン完走サマリ（SPEC-PILOT-V4 §3.3 ③ / D20③）。
+        Spec Launchpad の直下に控えめに出し、展開すると統合 Markdown の全文が読める。
+        稼働中タスクがあるときは「直近 24 時間の完走」だけを出す（進行中の邪魔をしない）。
+      */}
+      {latestReport && (idle || reportRecent) ? (
+        <details className={`pipeline-summary-card${String(latestReport.status ?? '') === 'halted' ? ' is-halted' : ''}`}>
+          <summary className="pipeline-summary-head">
+            <span className="pipeline-summary-icon" aria-hidden="true">
+              {String(latestReport.status ?? '') === 'halted' ? '⚠️' : '🎉'}
+            </span>
+            <span className="pipeline-summary-title">{latestReport.label || t('tasks.pipelineSummary')}</span>
+            <span className="pipeline-summary-sub">{reportSummaryLine(latestReport, 48)}</span>
+            <span className="pipeline-summary-when">{relTime(toEpochMs(latestReport.at) || 0)}</span>
+          </summary>
+          <div className="pipeline-summary-body">
+            {latestReportBody}
+            <div className="pipeline-summary-actions">
+              <button type="button" className="report-card-btn primary" onClick={discussLatestReport}>
+                {t('tasks.discussReport')}
+              </button>
+              <button type="button" className="report-card-btn" onClick={() => setLatestReport(null)}>
+                {t('tasks.pipelineDismiss')}
+              </button>
+            </div>
+          </div>
+        </details>
       ) : null}
 
       <div className="strip">
