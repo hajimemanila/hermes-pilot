@@ -534,6 +534,7 @@
   "annot.looksGood": "✅ 検収 OK（完了にする）",
   "annot.doneShort": "✅ 完了",
   "annot.archiveShort": "📂 アーカイブ",
+  "annot.holdHint": "長押し",
   "annot.stampsMore": "指示スタンプの一覧を開く",
   "annot.stampSheetTitle": "🏷️ 指示スタンプ",
   "annot.stampsHint": "スタンプは最後の赤入れに付きます。赤がまだ無いときは中央に枠を作って付けます。",

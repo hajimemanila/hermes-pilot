@@ -471,6 +471,7 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
                 tone="danger"
                 ms={800}
                 label={t('annot.archiveShort')}
+                hint={t('annot.holdHint')}
                 disabled={busy || closing}
                 onFire={archive}
               />

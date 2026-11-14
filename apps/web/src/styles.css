@@ -43,7 +43,10 @@
   --rec-bg: rgba(45, 212, 191, 0.16);
   --rec-fg: #c9fff8;
   --discord: #a5b4fc;
-  --danger-line: var(--danger-line);
+  /* .hold.danger / .ak-error などの破壊的アクセントの枠線。以前は自己参照
+     （var(--danger-line)）で値が無効になり、border-color が currentColor
+     ＝白文字色に落ちて「白枠のボタン」になっていた（Dark のみ）。 */
+  --danger-line: rgba(248, 113, 113, 0.42);
   --dot-done: #3f6b6a;
   --glint: #c7fff7;
   --user-bubble: linear-gradient(180deg, #11706c, #0d5a57);
@@ -2843,17 +2846,39 @@ ol.md-list {
   padding: 8px 10px 10px;
   overflow-y: auto;
 }
-/* 赤入れせずに合格（1 タップ検収）と アーカイブ を最下部に並べる判断バー */
-.ak-anno-actions { display: flex; gap: 8px; margin-top: auto; padding-top: 4px; }
-.ak-anno-actions > * { flex: 1 1 0; min-width: 0; }
+/* 赤入れせずに合格（1 タップ検収）と アーカイブ を最下部に並べる判断バー。
+   2 つは同じ寸法・同じ文字サイズで並べる（以前はアーカイブ側だけ 15px/左寄せ・
+   白枠で「ボタンに見えない」状態だった）。アーカイブは長時間押しで確定するので、
+   ラベル横に「長押し」のピルを出して操作方法を明示し、押下中は塗りが伸びる。 */
+.ak-anno-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: auto; padding-top: 4px; }
+.ak-anno-actions > * { min-width: 0; min-height: 44px; }
 .ak-anno-done {
   padding: 10px 12px; border-radius: 11px;
   border: 1px solid var(--good-line, var(--line-strong)); background: var(--good-bg, var(--surface));
   color: var(--good-fg, var(--text)); font-size: 13px; font-weight: 700;
+  transition: transform .08s ease;
 }
+.ak-anno-done:active { transform: scale(.985); }
 .ak-anno-done:disabled { opacity: .55; }
-.ak-anno-actions .hold { width: auto; padding: 10px 8px; border-radius: 11px; }
-.ak-anno-actions .hold-label { font-size: 13px; }
+.ak-anno-actions .hold {
+  width: auto; padding: 10px 8px; border-radius: 11px;
+  text-align: center; font-size: 13px; font-weight: 700;
+  transition: transform .08s ease;
+}
+.ak-anno-actions .hold:active { transform: scale(.985); }
+.ak-anno-actions .hold.danger {
+  border-color: var(--danger-line); background: var(--danger-bg); color: var(--danger-fg);
+}
+.ak-anno-actions .hold-label {
+  display: inline-block; font-size: 13px; font-weight: 700; text-align: center; white-space: nowrap;
+}
+.ak-anno-actions .hold-hint {
+  position: relative; display: inline-block; margin-left: 5px; padding: 1px 5px;
+  border-radius: 999px; border: 1px solid var(--danger-line); color: var(--muted);
+  font-size: 9.5px; font-weight: 700; letter-spacing: .02em; vertical-align: 1px;
+}
+.ak-anno-actions .hold-fill { background: rgba(248, 113, 113, .45); }
+.ak-anno-actions .hold:disabled { opacity: .55; }
 .ak-anno.wide .ak-anno-actions { flex-direction: column; }
 .ak-anno.wide .ak-anno-actions > * { flex: 0 0 auto; width: 100%; }
 /* 幅が狭い操作列では見出しを落としてチップに幅を回す（一覧は「＋」から） */

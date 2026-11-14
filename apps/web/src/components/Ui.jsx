@@ -262,9 +262,12 @@ export function Sheet({ title, onClose, children }) {
 
 /**
  * 長押しで確定するボタン（破壊的操作の誤爆防止）。
- * @param {{onFire: Function, ms?: number, label: string, sub?: string, tone?: string, disabled?: boolean}} props
+ * `hint` を渡すとラベル横に小さな操作方法のピル（例: 「長押し」）を出す。
+ * 押下中は `.hold-fill` が左から伸びるので、押していることが見える。
+ * @param {{onFire: Function, ms?: number, label: string, sub?: string, hint?: string,
+ *          tone?: string, disabled?: boolean}} props
  */
-export function HoldButton({ onFire, ms = 1500, label, sub, tone = 'danger', disabled }) {
+export function HoldButton({ onFire, ms = 1500, label, sub, hint, tone = 'danger', disabled }) {
   const [progress, setProgress] = useState(0)
   const timer = useRef(null)
   const raf = useRef(null)
@@ -305,6 +308,7 @@ export function HoldButton({ onFire, ms = 1500, label, sub, tone = 'danger', dis
     >
       <span className="hold-fill" style={{ transform: `scaleX(${progress})` }} />
       <span className="hold-label">{label}</span>
+      {hint ? <span className="hold-hint">{hint}</span> : null}
       {sub ? <span className="hold-sub">{sub}</span> : null}
     </button>
   )

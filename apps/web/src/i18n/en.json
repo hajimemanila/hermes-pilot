@@ -534,6 +534,7 @@
   "annot.looksGood": "✅ Looks Good (Mark Done)",
   "annot.doneShort": "✅ Done",
   "annot.archiveShort": "📂 Archive",
+  "annot.holdHint": "hold",
   "annot.stampsMore": "Open the full list of stamps",
   "annot.stampSheetTitle": "🏷️ Instruction stamps",
   "annot.stampsHint": "A stamp attaches to the last red mark. With no mark yet, a box is placed in the middle.",
