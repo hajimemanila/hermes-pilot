@@ -75,15 +75,16 @@ test('listSnippets はユーザー定義を後ろに足す', () => {
   assert.equal(list.filter((s) => s.hot).length, SNIPPETS.filter((s) => s.hot).length + 1)
 })
 
-test('既定セットは SPEC §3.2 の14個（Hot 6・trigger 2）で順序も仕様どおり', () => {
+test('既定セットは SPEC §3.2 の14個＋仕様の種（Hot 7・trigger 3）で順序も仕様どおり', () => {
   assert.deepEqual(
     SNIPPETS.map((s) => s.id),
     [
+      // 仕様の種はバーの先頭（別建てのボタンをやめて組み込みに統合）
+      'spec-seed',
       'quick-review',
       'annotate-shot',
       'approve',
       'spec-kanban',
-      'spec-seed',
       'retry',
       'summary',
       'git-diff',
@@ -98,9 +99,12 @@ test('既定セットは SPEC §3.2 の14個（Hot 6・trigger 2）で順序も�
   )
   assert.equal(SNIPPETS.length, 15)
   const hot = SNIPPETS.filter((s) => s.hot)
-  assert.equal(hot.length, 6)
+  assert.equal(hot.length, 7)
   assert.equal(hot.length <= HOT_LIMIT, true)
-  assert.deepEqual(SNIPPETS.filter((s) => s.trigger).map((s) => s.id), ['quick-review', 'annotate-shot'])
+  assert.deepEqual(SNIPPETS.filter((s) => s.trigger).map((s) => s.id), ['spec-seed', 'quick-review', 'annotate-shot'])
+  // 仕様の種だけ input に流し込まずシートを開く（action で UI が分岐）
+  assert.equal(SNIPPETS[0].action, 'seed')
+  assert.equal(SNIPPETS.filter((s) => s.action).length, 1)
   assert.equal(SNIPPETS.every((s) => s.hidden === false), true)
 })
 

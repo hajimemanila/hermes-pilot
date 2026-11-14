@@ -16,11 +16,28 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 /** @typedef {{label: string, text: string, placeholder?: string}} SnippetText */
-/** @typedef {{id: string, hot?: boolean, trigger?: boolean, en: SnippetText, ja: SnippetText}} BuiltinSnippet */
+/** @typedef {{id: string, hot?: boolean, trigger?: boolean, action?: string, en: SnippetText, ja: SnippetText}} BuiltinSnippet */
 
 /** @type {BuiltinSnippet[]} */
 const BUILTIN = [
-  // --- Hot 6（バーに出す）----------------------------------------------------
+  // --- Hot（バーに出す）-----------------------------------------------------
+  {
+    id: 'spec-seed',
+    hot: true,
+    trigger: true,
+    // 入力欄に文字を流し込むのではなく、1 行メモのシートを開く（仕様の種）
+    action: 'seed',
+    en: {
+      label: '🎙️ Spec Seed',
+      text:
+        'Start a spec interview from this one-line note: put the 2-3 open design decisions on a Quick Review sheet (each with recommended: true), wait for my 1-tap answer, then write docs/SPEC-<SLUG>.md with Execution Mode, 目的, 変更ファイル and 受入条件 per batch.',
+    },
+    ja: {
+      label: '🎙️ 仕様の種',
+      text:
+        'この一行メモから仕様策定インタビューを始めて。設計論点を2〜3問の Quick Review シート（各問 recommended: true）にして1タップ回答を待ち、回答後に docs/SPEC-<SLUG>.md をバッチごとの Execution Mode・目的・変更ファイル・受入条件つきで書いて。',
+    },
+  },
   {
     id: 'quick-review',
     hot: true,
@@ -75,19 +92,6 @@ const BUILTIN = [
       label: '🚀 SPECから自走',
       text:
         'このリポジトリの最新の docs/SPEC-*.md を読み、バッチ順にカンバンタスクを起票して最初のバッチから自走を開始して。',
-    },
-  },
-  {
-    id: 'spec-seed',
-    en: {
-      label: '🎙️ Spec Seed',
-      text:
-        'Start a spec interview from this one-line note: put the 2-3 open design decisions on a Quick Review sheet (each with recommended: true), wait for my 1-tap answer, then write docs/SPEC-<SLUG>.md with Execution Mode, 目的, 変更ファイル and 受入条件 per batch.',
-    },
-    ja: {
-      label: '🎙️ 仕様の種',
-      text:
-        'この一行メモから仕様策定インタビューを始めて。設計論点を2〜3問の Quick Review シート（各問 recommended: true）にして1タップ回答を待ち、回答後に docs/SPEC-<SLUG>.md をバッチごとの Execution Mode・目的・変更ファイル・受入条件つきで書いて。',
     },
   },
   {
@@ -214,6 +218,8 @@ function toUi(s, lang) {
     label: src.label,
     hot: Boolean(s.hot),
     trigger: Boolean(s.trigger),
+    // `action: 'seed'` は入力欄に流し込まず、シートを開くチップ（仕様の種）
+    ...(s.action ? { action: String(s.action) } : {}),
     hidden: false,
     custom: false,
     hasPlaceholder: Boolean(src.placeholder),
