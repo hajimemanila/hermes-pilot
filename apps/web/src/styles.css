@@ -3238,14 +3238,23 @@ ol.md-list {
   background: var(--rec-bg);
 }
 
+/*
+ * 見出しは 2 行まで折り返す。`nowrap` + ellipsis だと `scrollWidth > clientWidth` になり
+ * 長い Spec 名（例: 「SPEC: Hermes Pilot v4 (`SPEC-PILOT-V4`) — …仕様書」79 字）で
+ * 横溢れ判定に落ちる（V4-4 の 8 通り監査で実測）。全文はカード本文の見出しにそのまま出る。
+ */
 .report-card-title {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   font-size: 12.5px;
   font-weight: 600;
+  line-height: 1.35;
 }
 
 .report-chip {
@@ -3365,13 +3374,19 @@ ol.md-list {
   display: none;
 }
 
+/* 長い Spec 名でも横に溢れないよう 2 行まで折り返す（V4-4 実測: nowrap+ellipsis は
+   scrollWidth > clientWidth になる）。全文は本文（`.pipeline-summary-body`）に出る。 */
 .pipeline-summary-title {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   font-weight: 600;
+  line-height: 1.35;
 }
 
 .pipeline-summary-sub {
@@ -3379,8 +3394,11 @@ ol.md-list {
   min-width: 0;
   max-width: 45%;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
   font-size: 11px;
   color: var(--muted);
 }
