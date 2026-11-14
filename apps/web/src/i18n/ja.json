@@ -778,7 +778,6 @@
   "demo.steps.3.hint": "Before ↔ After を比べ、赤入れスタンプを押すか「👍 これで OK」で検収します。",
   "demo.steps.4.title": "実行サマリとレシート",
   "demo.steps.4.hint": "Tasks の統合完了サマリを開き、完了レシートをシェアします。",
-
   "seed.title": "仕様の種",
   "seed.lead": "一行で十分です。Architect が 1タップの設計インタビューにして、仕様書まで仕上げます。",
   "seed.placeholder": "何を仕様化しますか？",
@@ -813,7 +812,6 @@
   "seed.bannerLater": "あとで",
   "seed.bannerFiled": "{n} バッチを起票しました",
   "seed.bannerAria": "起票できる仕様書があります",
-
   "settings.secPipeline": "パイプライン＆Architect",
   "settings.pipelineLead": "A2B パイプラインを軽く保つ: 長文の質問を並べず、実行モードを守り、仕様書はスマホから起票します。",
   "settings.pipelineRunner": "Architect のランナー",
@@ -828,5 +826,6 @@
   "settings.pipelineApplied": "適用済み",
   "settings.pipelineMissing": "未適用",
   "settings.pipelineJobs": "Architect ジョブ",
-  "settings.pipelinePending": "未起票の仕様書"
+  "settings.pipelinePending": "未起票の仕様書",
+  "tasks.pipelineCollapse": "折りたたむ"
 }

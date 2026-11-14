@@ -900,8 +900,16 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
               <button type="button" className="report-card-btn" onClick={() => openReceipt(latestReport)}>
                 {t('receipt.open')}
               </button>
-              <button type="button" className="report-card-btn" onClick={() => setLatestReport(null)}>
-                {t('tasks.pipelineDismiss')}
+              {/* ここは「折りたたむ」。カードごと消すとタスクタブから報告が消える（実機） */}
+              <button
+                type="button"
+                className="report-card-btn"
+                onClick={(e) => {
+                  const d = e.currentTarget.closest('details')
+                  if (d) d.open = false
+                }}
+              >
+                {t('tasks.pipelineCollapse')}
               </button>
             </div>
           </div>
@@ -1129,33 +1137,33 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
           <div className="row-sub mono" style={{ padding: '0 2px 8px' }}>
             {currentSpec.path}
           </div>
+          {/* 1 行 1 バッチ。タップで展開して Execution Mode と日時を読む（実機: 全部展開は読みにくい） */}
           <div className="pick-list">
             {currentSpec.batches.map((b) => {
               const task = specProg.byId.get(b.id) ?? null
               const done = task && (task.status === 'done' || task.status === 'archived')
+              const stateText = task
+                ? STATUS_KEY[task.status]
+                  ? t(STATUS_KEY[task.status])
+                  : task.status
+                : t('tasks.specNotFiled')
               return (
-                <div key={b.id} className="pick-item">
-                  <span className={`dot ${task?.status ?? 'todo'}`} />
-                  <span className="pick-main">
-                    <span className="pick-title">
+                <details key={b.id} className="pick-item history-row">
+                  <summary className="history-summary">
+                    <span className={`dot ${task?.status ?? 'todo'}`} />
+                    <span className="history-title" title={`[${b.id}] ${b.title}`}>
                       [{b.id}] {b.title}
                     </span>
+                    <span className="history-state">{done ? t('tasks.specDoneBadge') : stateText}</span>
+                    <Icon name="chevron" size={14} />
+                  </summary>
+                  <div className="history-body">
                     <ModePill batch={b} t={t} />
                     <span className="pick-sub">
-                      {[
-                        task
-                          ? STATUS_KEY[task.status]
-                            ? t(STATUS_KEY[task.status])
-                            : task.status
-                          : t('tasks.specNotFiled'),
-                        task?.completedAt ? relTime(task.completedAt) : null,
-                      ]
-                        .filter(Boolean)
-                        .join(' · ')}
+                      {[stateText, task?.completedAt ? relTime(task.completedAt) : null].filter(Boolean).join(' · ')}
                     </span>
-                  </span>
-                  {done ? <span className="pick-badge">{t('tasks.specDoneBadge')}</span> : null}
-                </div>
+                  </div>
+                </details>
               )
             })}
           </div>

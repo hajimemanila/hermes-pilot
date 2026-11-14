@@ -1143,19 +1143,18 @@ export function ChatPane({
    * worker / UI セッション宛ての報告は `/api/sessions` に現れないため、これが無いと
    * 「どの会話に報告が入ったのか」を UI から辿れない（実機フィードバック）。
    */
-  /**
-   * 直近 24 時間のパイプライン報告（既読でも「どの会話に入ったか」は出し続ける）。
-   * 未読かどうかはナビのバッジ側で扱う。
-   */
-  const unseenPipelines = useMemo(() => recentPipelineReports(chatReports), [chatReports])
+  /** 直近 24 時間のパイプライン報告（会話一覧に居る場合の📋印用・既読でも残す）。 */
+  const recentPipelines = useMemo(() => recentPipelineReports(chatReports), [chatReports])
+  /** 未読のパイプライン報告（会話一覧に宛先が無いものだけを「専用行」として出す）。 */
+  const unseenPipelines = useMemo(() => unseenPipelineReports(chatReports, seenMap), [chatReports, seenMap])
   const drawerOrphanReports = useMemo(
     () => orphanPipelineReports(unseenPipelines, (sessions ?? []).map((x) => x.id)),
     [unseenPipelines, sessions],
   )
-  /** パイプライン報告が届いている会話 ID（一覧に居る場合の行ハイライト用）。 */
+  /** パイプライン報告が届いている会話 ID（一覧に居る場合の📋印用）。 */
   const pipelineSessionIds = useMemo(
-    () => new Set(unseenPipelines.map((r) => String(r.sessionId))),
-    [unseenPipelines],
+    () => new Set(recentPipelines.map((r) => String(r.sessionId))),
+    [recentPipelines],
   )
 
   /** 会話ごとの未読完了報告の**件数**（ドロワーの行に数字のピルを出す・D16②）。 */

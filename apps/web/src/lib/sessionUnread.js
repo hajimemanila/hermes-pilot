@@ -27,7 +27,8 @@ function normalizeRecord(rec) {
   const at = Number(rec.at)
   if (!Number.isFinite(count) || count < 0) return null
   if (!Number.isFinite(at) || at <= 0) return null
-  return { count: Math.floor(count), at: Math.floor(at) }
+  // `opened` を落とすと「一度でも開いたか」の判定が消える（実機の未読バッジ調査）
+  return { count: Math.floor(count), at: Math.floor(at), opened: rec.opened === true }
 }
 
 /**
@@ -93,7 +94,8 @@ export function bootstrapSessionSeen(prevMap, sessions, now) {
   for (const s of Array.isArray(sessions) ? sessions : []) {
     const sid = String(s?.id ?? '').trim()
     if (!sid || Object.prototype.hasOwnProperty.call(out, sid)) continue
-    out[sid] = { count: Math.max(0, Math.floor(Number(s?.message_count) || 0)), at: stamp }
+    // 開いたことがない会話。件数が増えても「未読」にしない（worker 会話が +64 等で並ぶ・実機）
+    out[sid] = { count: Math.max(0, Math.floor(Number(s?.message_count) || 0)), at: stamp, opened: false }
   }
   return pruneSessionSeen(out)
 }
@@ -121,6 +123,8 @@ export function markSessionSeen(prevMap, sessionId, messageCount, now) {
   out[sid] = {
     count: Number.isFinite(count) && count >= 0 ? Math.max(known, Math.floor(count)) : known,
     at,
+    // 「一度でも開いた」会話だけ新着ピルを出す
+    opened: true,
   }
   return pruneSessionSeen(out)
 }
@@ -148,7 +152,8 @@ export function syncActiveSessionSeen(prevMap, sessions, activeDrawerSid, now) {
   const count = Math.max(0, Math.floor(Number(target?.message_count) || 0))
   if (count > (prev?.count ?? -1)) {
     const at = Number(now) > 0 ? Math.floor(Number(now)) : Date.now()
-    out[sid] = { count: Math.max(prev?.count ?? 0, count), at }
+    // いま開いている会話なので opened:true（新着ピルは出さない）
+    out[sid] = { count: Math.max(prev?.count ?? 0, count), at, opened: true }
   }
   return pruneSessionSeen(out)
 }
@@ -173,6 +178,8 @@ export function markAllSessionsSeen(prevMap, sessions, now) {
     out[sid] = {
       count: Math.max(0, Math.floor(Number(s?.message_count) || 0), out[sid]?.count ?? 0),
       at,
+      // 「すべて既読」は開いていない会話も既読にする（以後の増分だけ新着）
+      opened: out[sid]?.opened === true,
     }
   }
   return pruneSessionSeen(out)
@@ -238,7 +245,9 @@ export function sessionRowBadges({
   const unreadReports = unreadReportCount(unreadReportMap, sid)
   const record = seenMap && typeof seenMap === 'object' ? normalizeRecord(seenMap[sid]) : null
   const count = Math.max(0, Math.floor(Number(session?.message_count) || 0))
-  const unreadReplies = !isActive && record && count > record.count ? Math.max(1, count - record.count) : 0
+  const opened = record?.opened === true
+  // 開いたことのない会話は件数が増えても未読にしない（過去の worker 会話が +N で並ぶ・実機）
+  const unreadReplies = !isActive && opened && count > record.count ? Math.max(1, count - record.count) : 0
   return { isActive, isRunning, unreadReports, unreadReplies }
 }
 

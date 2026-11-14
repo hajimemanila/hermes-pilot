@@ -778,7 +778,6 @@
   "demo.steps.3.hint": "Compare Before ↔ After, then stamp a redline or tap “Looks Good”.",
   "demo.steps.4.title": "Summary & receipt",
   "demo.steps.4.hint": "Open the completion summary on Tasks and share the receipt.",
-
   "seed.title": "Spec Seed",
   "seed.lead": "One line is enough. The Architect turns it into a 1-tap design interview, then into a spec.",
   "seed.placeholder": "What should we spec out?",
@@ -813,7 +812,6 @@
   "seed.bannerLater": "Later",
   "seed.bannerFiled": "Filed {n} batches",
   "seed.bannerAria": "Spec ready to file",
-
   "settings.secPipeline": "Pipeline & Architect",
   "settings.pipelineLead": "Keep the A2B pipeline lean: no wall-of-text questions, execution modes obeyed, specs filed from the phone.",
   "settings.pipelineRunner": "Architect runner",
@@ -828,5 +826,6 @@
   "settings.pipelineApplied": "applied",
   "settings.pipelineMissing": "not applied",
   "settings.pipelineJobs": "Architect jobs",
-  "settings.pipelinePending": "Unfiled specs"
+  "settings.pipelinePending": "Unfiled specs",
+  "tasks.pipelineCollapse": "Collapse"
 }

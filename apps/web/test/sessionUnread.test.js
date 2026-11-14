@@ -29,7 +29,7 @@ const sess = (id, message_count, extra = {}) => ({ id, message_count, ...extra }
 test('bootstrapSessionSeen は初見の会話を現在のメッセージ数でベースライン登録する', () => {
   const now = 1_700_000_000_000
   const map = bootstrapSessionSeen({}, [sess('a', 12), sess('b', 0)], now)
-  assert.deepEqual(map, { a: { count: 12, at: now }, b: { count: 0, at: now } })
+  assert.deepEqual(map, { a: { count: 12, at: now, opened: false }, b: { count: 0, at: now, opened: false } })
 })
 
 test('bootstrapSessionSeen は初回に全会話が未読にならない（返信新着 0 件）', () => {
@@ -47,11 +47,12 @@ test('bootstrapSessionSeen は記録済みの会話を上書きしない（増�
   const map = bootstrapSessionSeen(prev, [sess('a', 9), sess('b', 2)], 2)
   assert.equal(map.a.count, 3, '記録済みは据え置き')
   assert.equal(map.a.at, 1)
-  assert.deepEqual(map.b, { count: 2, at: 2 }, '初見だけ登録')
+  assert.deepEqual(map.b, { count: 2, at: 2, opened: false }, '初見だけ登録')
 })
 
 test('sessionRowBadges: 別会話でメッセージが増えたときだけ unreadReplies が出る', () => {
-  const seen = { a: { count: 5, at: 1 }, b: { count: 5, at: 1 } }
+  // `opened: true` は「一度でも開いた会話」。開いていない会話は件数が増えても未読にしない（実機）
+  const seen = { a: { count: 5, at: 1, opened: true }, b: { count: 5, at: 1, opened: true } }
   const a = sessionRowBadges({ session: sess('a', 9), seenMap: seen, activeDrawerSid: 'a' })
   assert.equal(a.unreadReplies, 0, '表示中の会話は新着にしない')
 
@@ -114,7 +115,7 @@ test('sessionRowBadges は欠けた入力で落ちない', () => {
 test('markSessionSeen はメッセージ数を記録し、未読を消す', () => {
   const now = 1_700_000_000_123
   const map = markSessionSeen({ a: { count: 2, at: 1 } }, 'a', 7, now)
-  assert.deepEqual(map.a, { count: 7, at: now })
+  assert.deepEqual(map.a, { count: 7, at: now, opened: true })
   const b = sessionRowBadges({ session: sess('a', 7), seenMap: map, activeDrawerSid: 'other' })
   assert.equal(b.unreadReplies, 0)
 })
@@ -138,7 +139,8 @@ test('pruneSessionSeen / readSessionSeen / serializeSessionSeen: 上限と壊れ
   assert.deepEqual(readSessionSeen('not json'), {})
   assert.deepEqual(readSessionSeen('[]'), {})
   assert.deepEqual(readSessionSeen({ a: { count: 'x', at: 1 } }), {}, '数値でない count は捨てる')
-  assert.deepEqual(readSessionSeen('{"a":{"count":2,"at":3}}'), { a: { count: 2, at: 3 } })
+  assert.deepEqual(readSessionSeen('{"a":{"count":2,"at":3}}'), { a: { count: 2, at: 3, opened: false } })
+  assert.deepEqual(readSessionSeen('{"a":{"count":2,"at":3,"opened":true}}'), { a: { count: 2, at: 3, opened: true } })
 
   const text = serializeSessionSeen(pruned)
   assert.deepEqual(readSessionSeen(text), pruned, '書いて読んで元に戻る')
@@ -169,11 +171,11 @@ test('syncActiveSessionSeen は表示中の会話の message_count 増加を既�
   const seen = { a: { count: 3, at: 1 }, b: { count: 4, at: 1 } }
   // 会話 b を開いている間に b が 4 → 9 に増えた
   const next = syncActiveSessionSeen(seen, [sess('a', 3), sess('b', 9)], 'b', now)
-  assert.deepEqual(next.b, { count: 9, at: now }, '表示中の会話は増分も既読にする')
-  assert.deepEqual(next.a, { count: 3, at: 1 }, '別会話は触らない')
+  assert.deepEqual(next.b, { count: 9, at: now, opened: true }, '表示中の会話は増分も既読にする')
+  assert.deepEqual(next.a, { count: 3, at: 1, opened: false }, '別会話は触らない')
 
   // 増えていなければ時刻も動かさない
-  assert.deepEqual(syncActiveSessionSeen(next, [sess('b', 9)], 'b', now + 1000).b, { count: 9, at: now })
+  assert.deepEqual(syncActiveSessionSeen(next, [sess('b', 9)], 'b', now + 1000).b, { count: 9, at: now, opened: true })
 })
 
 test('syncActiveSessionSeen: 別会話へ切り替えても NEW / +N が復活しない', () => {
@@ -190,11 +192,11 @@ test('syncActiveSessionSeen: 別会話へ切り替えても NEW / +N が復活�
 })
 
 test('syncActiveSessionSeen は対象が無い・ID が空なら map を壊さない', () => {
-  const seen = { a: { count: 3, at: 1 } }
+  const seen = { a: { count: 3, at: 1, opened: false } }
   assert.deepEqual(syncActiveSessionSeen(seen, [sess('a', 3)], 'zzz', 9), seen, '一覧に無い ID')
   assert.deepEqual(syncActiveSessionSeen(seen, [sess('a', 3)], null, 9), seen, 'ID が無い')
   assert.deepEqual(syncActiveSessionSeen(seen, null, 'a', 9), seen, '一覧が無い')
-  assert.deepEqual(syncActiveSessionSeen({}, [sess('n', 0)], 'n', 9), { n: { count: 0, at: 9 } }, '初見も登録')
+  assert.deepEqual(syncActiveSessionSeen({}, [sess('n', 0)], 'n', 9), { n: { count: 0, at: 9, opened: true } }, '初見も登録')
 })
 
 test('markSessionSeen は件数を後退させない（古い count で NEW が戻らない）', () => {
@@ -208,9 +210,9 @@ test('markAllSessionsSeen は全会話を一括で既読にする（✓ すべ�
   const sessions = [sess('a', 3), sess('b', 9), sess('c', 0)]
   const map = markAllSessionsSeen({ a: { count: 12, at: 1 } }, sessions, now)
   assert.deepEqual(map, {
-    a: { count: 12, at: now },
-    b: { count: 9, at: now },
-    c: { count: 0, at: now },
+    a: { count: 12, at: now, opened: false },
+    b: { count: 9, at: now, opened: false },
+    c: { count: 0, at: now, opened: false },
   }, '記録済みは後退させず、全件の時刻を進める')
 
   for (const s of sessions) {

@@ -2318,6 +2318,26 @@ ol.md-list {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
+/* 履歴の 1 行バッチ（詳細はタップで展開）。行の高さを揃えて一覧性を上げる */
+.history-row > summary { list-style: none; cursor: pointer; }
+.history-row > summary::-webkit-details-marker { display: none; }
+.history-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.history-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.history-state { flex: 0 0 auto; font-size: 11px; color: var(--muted); }
+.history-body { padding: 6px 2px 2px 18px; display: flex; flex-direction: column; gap: 4px; }
+
 /* パイプライン報告が届いている会話の行タイトルに付ける印 */
 .row-report-mark { margin-right: 4px; font-size: 12px; }
 
