@@ -59,6 +59,89 @@ function pipelineExtras(row) {
   return out
 }
 
+/**
+ * 未見のパイプライン完了レポート（宛先セッションごとに最新 1 件・新しい順）。
+ *
+ * ナビの「タスク」バッジ用。`seen[sessionId]` より新しいものだけを返す。
+ * 会話一覧に存在しない宛先（worker / UI セッション）でも、報告そのものは
+ * 「まだ見ていない成果」なので数える。
+ * @param {Array<object>} items `chat-reports` の items
+ * @param {Record<string, number>} seen 既読時刻の map
+ * @param {string|string[]} [currentIds] いま見ている会話（除く）
+ * @returns {Array<{sessionId: string, at: number, taskId: string, label: string|null, text: string, board?: string, repoPath?: string}>} 未見の報告
+ */
+export function unseenPipelineReports(items, seen = {}, currentIds = []) {
+  const skip = new Set((Array.isArray(currentIds) ? currentIds : [currentIds]).map((x) => String(x ?? '')))
+  const latest = new Map()
+  for (const i of Array.isArray(items) ? items : []) {
+    if (!isPipelineReport(i)) continue
+    const sid = String(i?.sessionId ?? '').trim()
+    const at = Number(i?.at)
+    if (!sid || skip.has(sid) || !Number.isFinite(at)) continue
+    if (at <= (Number(seen?.[sid]) || 0)) continue
+    const prev = latest.get(sid)
+    if (!prev || at >= prev.at) {
+      latest.set(sid, {
+        sessionId: sid,
+        at,
+        taskId: String(i?.taskId ?? ''),
+        label: i?.label ?? null,
+        text: String(i?.text ?? ''),
+        ...pipelineExtras(i),
+      })
+    }
+  }
+  return [...latest.values()].sort((a, b) => b.at - a.at)
+}
+
+/**
+ * 直近のパイプライン完了レポート（既定 24 時間・宛先ごとに最新 1 件）。
+ *
+ * ドロワーの「どの会話に報告が入ったか」表示用。既読かどうかとは独立に出す
+ * （既読にしたあとでも「どこにあったか」を辿れる必要がある・実機フィードバック）。
+ * @param {Array<object>} items `chat-reports` の items
+ * @param {object} [opts] 条件
+ * @param {number} [opts.now] 現在時刻（ms）
+ * @param {number} [opts.maxAgeMs] さかのぼる範囲（既定 24 時間）
+ * @returns {Array<object>} 直近の報告（新しい順）
+ */
+export function recentPipelineReports(items, { now = Date.now(), maxAgeMs = 24 * 60 * 60 * 1000 } = {}) {
+  const floor = Number(now) - Number(maxAgeMs)
+  const latest = new Map()
+  for (const i of Array.isArray(items) ? items : []) {
+    if (!isPipelineReport(i)) continue
+    const sid = String(i?.sessionId ?? '').trim()
+    const at = Number(i?.at)
+    if (!sid || !Number.isFinite(at) || at < floor) continue
+    const prev = latest.get(sid)
+    if (!prev || at >= prev.at) {
+      latest.set(sid, {
+        sessionId: sid,
+        at,
+        taskId: String(i?.taskId ?? ''),
+        label: i?.label ?? null,
+        text: String(i?.text ?? ''),
+        ...pipelineExtras(i),
+      })
+    }
+  }
+  return [...latest.values()].sort((a, b) => b.at - a.at)
+}
+
+/**
+ * 会話一覧に宛先が無いパイプライン報告（ドロワーに専用行として出す）。
+ *
+ * worker / UI セッション宛ての報告は `/api/sessions` の一覧に現れないため、
+ * これが無いと「どの会話に報告が入ったか」を UI 上たどれない（実測）。
+ * @param {Array<{sessionId?: string}>} reports `unseenPipelineReports` などの報告
+ * @param {string[]} sessionIds 会話一覧の ID
+ * @returns {Array<object>} 会話一覧に無い報告
+ */
+export function orphanPipelineReports(reports, sessionIds = []) {
+  const ids = new Set((Array.isArray(sessionIds) ? sessionIds : []).map((x) => String(x ?? '')))
+  return (Array.isArray(reports) ? reports : []).filter((r) => r && !ids.has(String(r.sessionId ?? '')))
+}
+
 /** 現在（または新規未送信時は直前）の会話セッション ID を返す。 */
 export function readActiveChatId(storage = globalThis.localStorage) {
   try {

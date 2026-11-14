@@ -30,7 +30,10 @@ import {
   markAllReportsSeenMap,
   maxReportAtFor,
   mergeTimeline,
+  orphanPipelineReports,
   otherUnreadReports,
+  recentPipelineReports,
+  unseenPipelineReports,
   readSeenMap,
   reportIdsFor,
   reportLines,
@@ -1056,6 +1059,27 @@ export function ChatPane({
     [chatReports, seenMap, currentIds],
   )
 
+  /**
+   * 会話一覧に宛先が無いパイプライン完了レポート（ドロワーに専用行として出す）。
+   *
+   * worker / UI セッション宛ての報告は `/api/sessions` に現れないため、これが無いと
+   * 「どの会話に報告が入ったのか」を UI から辿れない（実機フィードバック）。
+   */
+  /**
+   * 直近 24 時間のパイプライン報告（既読でも「どの会話に入ったか」は出し続ける）。
+   * 未読かどうかはナビのバッジ側で扱う。
+   */
+  const unseenPipelines = useMemo(() => recentPipelineReports(chatReports), [chatReports])
+  const drawerOrphanReports = useMemo(
+    () => orphanPipelineReports(unseenPipelines, (sessions ?? []).map((x) => x.id)),
+    [unseenPipelines, sessions],
+  )
+  /** パイプライン報告が届いている会話 ID（一覧に居る場合の行ハイライト用）。 */
+  const pipelineSessionIds = useMemo(
+    () => new Set(unseenPipelines.map((r) => String(r.sessionId))),
+    [unseenPipelines],
+  )
+
   /** 会話ごとの未読完了報告の**件数**（ドロワーの行に数字のピルを出す・D16②）。 */
   const unreadReportMap = useMemo(() => {
     const map = {}
@@ -1163,6 +1187,35 @@ export function ChatPane({
       prefillComposer(followUpPromptFor(report, t('chat.discussFallback')))
     },
     [prefillComposer],
+  )
+
+  /**
+   * ドロワーの「レポート」行（会話一覧に宛先が無い報告）を開く。
+   * 既読にしてから App へ渡し、対象 repo の会話を開いて相談文を置いてもらう。
+   */
+  const openOrphanReport = useCallback(
+    (report) => {
+      if (!report) return
+      haptic('tap')
+      markReportsSeen(report.sessionId)
+      try {
+        window.dispatchEvent(
+          new CustomEvent('hm:discuss-pipeline', {
+            detail: {
+              sessionId: report.sessionId ?? null,
+              repoPath: report.repoPath ?? null,
+              board: report.board ?? null,
+              prompt: followUpPromptFor(report, t('chat.discussFallback')),
+              title: report.label ?? null,
+            },
+          }),
+        )
+      } catch {
+        /* noop */
+      }
+      setDrawer(false)
+    },
+    [markReportsSeen, prefillComposer],
   )
 
   /** 統合レポートカードの「📋 ボードを見る」（App が Tasks タブへ切り替える）。 */
@@ -2610,6 +2663,29 @@ export function ChatPane({
               <span aria-hidden="true">✓</span> {t('chat.markAllRead')}
             </button>
           </div>
+          {/* 会話一覧に宛先が無い完了レポート（worker/UI セッション宛て）は
+              専用行として先頭に出す。タップで該当 repo の会話を開いて相談文を置く。 */}
+          {drawerOrphanReports.map((u) => (
+            <button
+              key={`report:${u.sessionId}`}
+              className="row drawer-report-row"
+              title={t('chat.unreadReportTitle')}
+              onClick={() => openOrphanReport(u)}
+            >
+              <span className="row-main">
+                <span className="row-title">
+                  <span aria-hidden="true">📋</span> {u.label || t('chat.pipelineReport')}
+                </span>
+                <span className="row-sub">
+                  {u.board ? `${u.board} · ` : ''}
+                  {t('chat.reportNoSession')}
+                </span>
+              </span>
+              <span className="row-badge done" aria-hidden="true">
+                {'!'}
+              </span>
+            </button>
+          ))}
           <button className="row" onClick={openProfileSheet}>
             <span className="row-main">
               <span className="row-title">{t('chat.newChat')}</span>
@@ -2633,7 +2709,9 @@ export function ChatPane({
             return (
               <button
                 key={key}
-                className={`row${badge.isActive ? ' on' : ''}`}
+                className={`row${badge.isActive ? ' on' : ''}${
+                  badge.unreadReports || pipelineSessionIds.has(String(s.id)) ? ' has-report' : ''
+                }`}
                 title={
                   badge.unreadReports
                     ? t('chat.unreadReportTitle')
@@ -2647,6 +2725,11 @@ export function ChatPane({
               >
                 <span className="row-main">
                   <span className="row-title">
+                    {pipelineSessionIds.has(String(s.id)) ? (
+                      <span className="row-report-mark" title={t('chat.pipelineReport')} aria-label={t('chat.pipelineReport')}>
+                        📋
+                      </span>
+                    ) : null}
                     {s.title || s.id}
                     {isRo ? (
                       <span className="row-ro" title={t('chat.readonly')}>

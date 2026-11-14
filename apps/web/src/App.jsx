@@ -4,7 +4,15 @@ import { readDeepLink } from './lib/deeplink.js'
 import { api } from './api.js'
 import { appBadgeCount, navBadgeState, pendingCount, runningCount, unseenNotices, waitingCount } from './lib/reviewView.js'
 import { cachePercent, gwState, latestToolName, reviewJumpTarget, runningTotal } from './lib/telemetry.js'
-import { SEEN_MAP_KEY, SEEN_NAV_KEY, newerThan, otherUnreadReports, readActiveChatId, readSeenMap } from './lib/chatReports.js'
+import {
+  SEEN_MAP_KEY,
+  SEEN_NAV_KEY,
+  newerThan,
+  otherUnreadReports,
+  readActiveChatId,
+  readSeenMap,
+  unseenPipelineReports,
+} from './lib/chatReports.js'
 import { TasksPane } from './features/TasksPane.jsx'
 import { ChatPane } from './features/ChatPane.jsx'
 import { SettingsPane } from './features/SettingsPane.jsx'
@@ -138,6 +146,13 @@ export function App() {
    * q3=B で「点だけ（数字を出さない）」。数字は判断待ち専用のままにする。
    */
   const [chatReportItems, setChatReportItems] = useState([])
+  /**
+   * 未見のパイプライン完了レポート数（ナビのタスクタブに出す）。
+   *
+   * 報告カードはタスクタブに出るのに、ナビには何も出ていなかった（実機フィードバック）。
+   * 宛先セッションが会話一覧に無い報告でも「まだ見ていない成果」なので数える。
+   */
+  const [pipelineUnseen, setPipelineUnseen] = useState(0)
   const [chatUnread, setChatUnread] = useState(0)
   const [otherChatUnread, setOtherChatUnread] = useState(0)
   const [liveTurns, setLiveTurns] = useState(0)
@@ -173,6 +188,26 @@ export function App() {
       chatSeenRef.current = 0
     }
   }, [])
+
+  /**
+   * タスクタブを開いたら、その上部に出ている完了報告カードを「見た」ことにする。
+   * 既読は `SEEN_MAP_KEY`（会話ごとの既読時刻）に報告の `at` で書き、ナビのバッジを消す。
+   */
+  useEffect(() => {
+    if (tab !== 'tasks' || !pipelineUnseen) return
+    try {
+      const seenMap = readSeenMap(localStorage.getItem(SEEN_MAP_KEY))
+      const now = Date.now()
+      const next = { ...seenMap }
+      for (const r of unseenPipelineReports(chatReportItems, seenMap)) {
+        next[r.sessionId] = Math.max(now, Number(r.at) || 0)
+      }
+      localStorage.setItem(SEEN_MAP_KEY, JSON.stringify(next))
+      setPipelineUnseen(0)
+    } catch {
+      /* 保存できなくても表示は続ける */
+    }
+  }, [tab, pipelineUnseen, chatReportItems])
 
   /** チャットタブを開いた時刻を「見た」として端末に残す（ナビの点を消す）。 */
   const markChatSeen = useCallback(() => {
@@ -302,14 +337,16 @@ export function App() {
         if (tabRef.current === 'chat') markChatSeen()
         setChatReportItems(items)
         setChatUnread(newerThan(items, chatSeenRef.current).length)
-        if (!chatMountedRef.current) {
-          try {
-            const seenMap = readSeenMap(localStorage.getItem(SEEN_MAP_KEY))
+        try {
+          const seenMap = readSeenMap(localStorage.getItem(SEEN_MAP_KEY))
+          // 未見のパイプライン報告はナビのタスクバッジに出す
+          setPipelineUnseen(unseenPipelineReports(items, seenMap).length)
+          if (!chatMountedRef.current) {
             const activeId = readActiveChatId(localStorage)
             setOtherChatUnread(otherUnreadReports(items, seenMap, activeId ? [activeId] : []).length)
-          } catch {
-            /* noop */
           }
+        } catch {
+          /* noop */
         }
         /*
          * チャットタブを開いたままでも気づけるように、新しい報告が届いたらトーストを出す
@@ -834,7 +871,10 @@ export function App() {
           // 丸バッジはタスクタブ（承認待ち）とレビュータブ（判断待ち）にだけ出す。
           // タブ内の表示とは別物で、ここは下部ナビのアイコン右上の小さな丸。
           const label = t(item.key)
-          const badge = item.id === 'review' ? reviewWaiting : item.id === 'tasks' ? inboxPending : 0
+          // タスクタブは「承認待ち」に加えて、未見のパイプライン完了レポートも数える
+          // （報告カードはタスクタブに出るのにナビに何も出ていなかった・実機）
+          const tasksBadge = inboxPending + pipelineUnseen
+          const badge = item.id === 'review' ? reviewWaiting : item.id === 'tasks' ? tasksBadge : 0
           const tasksRunning = (Number(overview?.runningTasks) || 0) + liveTurns
           // レビュータブは「判断待ち（数字） > 未読の完了（緑の点） > 反映中（青の点）」の順で 1 つだけ出す。
           // タスクタブは「承認待ち（数字） > 稼働中（青の点）」、チャットタブは「未読完了（緑の点） > 応答中（青の点）」。
@@ -842,7 +882,7 @@ export function App() {
             item.id === 'review'
               ? navBadgeState({ waiting: reviewWaiting, unseen: reviewUnseen, running: reviewRunning })
               : item.id === 'tasks'
-                ? navBadgeState({ waiting: inboxPending, running: tasksRunning })
+                ? navBadgeState({ waiting: tasksBadge, running: tasksRunning })
                 : item.id === 'chat'
                   ? navBadgeState({ unseen: Math.max(chatUnread, otherChatUnread), running: chatStreaming ? 1 : 0 })
                   : null

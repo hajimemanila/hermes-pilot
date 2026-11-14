@@ -288,3 +288,45 @@ test('otherUnreadReports は __latest__ バナー用に board / repoPath / follo
   const seen = setSeen({}, LATEST_REPORT_ID, Date.parse('2026-11-15T10:05:00Z'))
   assert.deepEqual(otherUnreadReports(items, seen, ['chat-cur']), [])
 })
+
+test('unseenPipelineReports: 未見のパイプライン報告だけを宛先ごとに最新 1 件で返す', async () => {
+  const { unseenPipelineReports } = await import('../src/lib/chatReports.js')
+  const items = [
+    { at: 100, sessionId: 's1', taskId: 'pipeline:a', kind: 'pipeline', board: 'b1', text: 'old' },
+    { at: 300, sessionId: 's1', taskId: 'pipeline:a', kind: 'pipeline', board: 'b1', text: 'new' },
+    { at: 200, sessionId: 's2', taskId: 'pipeline:b', kind: 'pipeline', board: 'b2', text: 'x' },
+    { at: 400, sessionId: 's2', taskId: 't_chat', text: 'レビュー完了' }, // 通常報告は対象外
+  ]
+  // 未読ゼロ
+  assert.equal(unseenPipelineReports(items, {}).length, 2)
+  // s1 の最新（at=300）まで既読 → s2 だけ残る
+  const r = unseenPipelineReports(items, { s1: 300 })
+  assert.deepEqual(r.map((x) => x.sessionId), ['s2'])
+  assert.equal(r[0].board, 'b2')
+  // いま見ている会話は除外
+  assert.equal(unseenPipelineReports(items, {}, ['s2']).map((x) => x.sessionId).join(','), 's1')
+  assert.equal(unseenPipelineReports(items, {}, ['s1'])[0].text, 'x', '同じ宛先は最新 1 件')
+})
+
+test('orphanPipelineReports: 会話一覧に無い宛先の報告だけを残す', async () => {
+  const { orphanPipelineReports } = await import('../src/lib/chatReports.js')
+  const reports = [{ sessionId: 'ui-session' }, { sessionId: 'local-abc' }]
+  assert.deepEqual(orphanPipelineReports(reports, ['local-abc']).map((r) => r.sessionId), ['ui-session'])
+  assert.equal(orphanPipelineReports(reports, ['ui-session', 'local-abc']).length, 0)
+  assert.deepEqual(orphanPipelineReports(null, []), [])
+})
+
+test('recentPipelineReports: 直近 24 時間の報告を宛先ごとに最新 1 件で返す（既読でも消えない）', async () => {
+  const { recentPipelineReports } = await import('../src/lib/chatReports.js')
+  const now = 1_000_000_000
+  const items = [
+    { at: now - 1000, sessionId: 'a', kind: 'pipeline', board: 'b1', text: 'new' },
+    { at: now - 5000, sessionId: 'a', kind: 'pipeline', board: 'b1', text: 'old' },
+    { at: now - 25 * 60 * 60 * 1000, sessionId: 'b', kind: 'pipeline', text: 'stale' },
+    { at: now - 1000, sessionId: 'c', text: 'review 完了' },
+  ]
+  const r = recentPipelineReports(items, { now })
+  assert.deepEqual(r.map((x) => x.sessionId), ['a'])
+  assert.equal(r[0].text, 'new')
+  assert.equal(recentPipelineReports(items, { now, maxAgeMs: 60 * 60 * 1000 }).length, 1)
+})

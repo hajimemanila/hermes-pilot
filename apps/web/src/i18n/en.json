@@ -669,5 +669,6 @@
   "tasks.pipelineSummary": "Latest pipeline run",
   "tasks.discussReport": "💬 Discuss next steps in chat",
   "tasks.pipelineDismiss": "Dismiss",
-  "tasks.specNote": "Each batch becomes a kanban task titled [ID] Title with the spec path, target and Verify criteria. Batches already filed on this board are skipped."
+  "tasks.specNote": "Each batch becomes a kanban task titled [ID] Title with the spec path, target and Verify criteria. Batches already filed on this board are skipped.",
+  "chat.reportNoSession": "No chat linked (opens the matching workspace)"
 }

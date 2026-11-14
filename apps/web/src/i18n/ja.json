@@ -669,5 +669,6 @@
   "tasks.pipelineSummary": "直近のパイプライン完走",
   "tasks.discussReport": "💬 チャットで次の一手を相談",
   "tasks.pipelineDismiss": "閉じる",
-  "tasks.specNote": "各バッチは「[ID] タイトル」のカンバンタスクになり、本文に spec パス・target・抜粋（Verify 受入条件）が入ります。このボードで起票済みのバッチはスキップします。"
+  "tasks.specNote": "各バッチは「[ID] タイトル」のカンバンタスクになり、本文に spec パス・target・抜粋（Verify 受入条件）が入ります。このボードで起票済みのバッチはスキップします。",
+  "chat.reportNoSession": "会話なし（対応する作業場所で開く）"
 }

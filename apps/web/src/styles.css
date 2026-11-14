@@ -2204,6 +2204,18 @@ ol.md-list {
   image-rendering: pixelated;
 }
 
+/* 完了報告が届いている会話の行（ドロワー）。左のアクセントで「どこに入ったか」を示す */
+.row.has-report {
+  box-shadow: inset 3px 0 0 var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+/* パイプライン報告が届いている会話の行タイトルに付ける印 */
+.row-report-mark { margin-right: 4px; font-size: 12px; }
+
+/* 会話一覧に宛先が無い完了レポート（worker/UI セッション宛て）の専用行 */
+.row.drawer-report-row .row-title { color: var(--accent); }
+
 /* PNG を 1:1 で出す（41 モジュール x 7px = 287px）。拡大時も境界をぼかさない */
 .pair-qr-img {
   display: block;
