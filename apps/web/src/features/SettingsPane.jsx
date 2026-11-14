@@ -4,6 +4,8 @@ import { useInstallState, swState } from '../lib/useInstallState.js'
 import { diagnosePwa } from '../lib/pwaDiagnose.js'
 import { RefreshButton, Sheet, Spinner, fmtBytes, fmtDateTime, relTime } from '../components/Ui.jsx'
 import { haptic, isHapticEnabled, setHapticEnabled } from '../lib/haptic.js'
+import { getActiveVibe, onVibeChange, setVibe } from '../lib/vibe.js'
+import { isSoundEnabled, playSound, setSoundEnabled } from '../lib/soundFx.js'
 import { foldAudit } from '../lib/auditFold.js'
 import { useI18n } from '../i18n/index.js'
 import { LANGS } from '../i18n/lang.js'
@@ -38,6 +40,12 @@ const THEME_CHOICES = [
   { value: 'dark', key: 'settings.themeDark' },
   { value: 'light', key: 'settings.themeLight' },
   { value: 'system', key: 'settings.themeSystem' },
+]
+
+/** Vibe Mode の選択肢（SPEC-PILOT-V5 §3.1 / D24）。Serotonin でもハプティックは残る。 */
+const VIBE_CHOICES = [
+  { value: 'dopamine', key: 'settings.vibeDopamine' },
+  { value: 'serotonin', key: 'settings.vibeSerotonin' },
 ]
 
 /**
@@ -408,6 +416,10 @@ export function SettingsPane({ overview, notify, refresh }) {
   const [logName, setLogName] = useState('gateway')
   const [sessions, setSessions] = useState([])
   const [hapticOn, setHapticOn] = useState(() => isHapticEnabled())
+  // Vibe Mode と効果音（SPEC-PILOT-V5 §3.1 / D24）。切替はその場で `<html data-vibe>` に効く
+  const [vibeMode, setVibeMode] = useState(() => getActiveVibe())
+  const [soundOn, setSoundOn] = useState(() => isSoundEnabled())
+  useEffect(() => onVibeChange(setVibeMode), [])
 
   // リポジトリ（自動スキャン先・追加・非表示）。SPEC §5.1
   const [repoList, setRepoList] = useState([])
@@ -588,6 +600,34 @@ export function SettingsPane({ overview, notify, refresh }) {
           ))}
         </div>
 
+        {/* Vibe Mode（SPEC-PILOT-V5 §3.1 / D24）。画面切替なしで 1 タップ */}
+        <div className="list-head">
+          <span>{t('settings.vibe')}</span>
+        </div>
+        <div className="chips" style={{ marginBottom: 6 }} role="group" aria-label={t('settings.vibe')}>
+          {VIBE_CHOICES.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              className={`chip vibe-chip${vibeMode === o.value ? ' on' : ''}`}
+              aria-pressed={vibeMode === o.value}
+              onClick={() => {
+                haptic('tap')
+                setVibe(o.value)
+                setVibeMode(o.value)
+                // Dopamine に切り替えた瞬間だけ「鳴る・光る」を確かめられるようにする
+                if (o.value === 'dopamine') playSound('approve')
+                notify?.(t('settings.vibeSwitched', { mode: t(o.key) }))
+              }}
+            >
+              {t(o.key)}
+            </button>
+          ))}
+        </div>
+        <p className="row-sub" style={{ marginBottom: 8, lineHeight: 1.6 }}>
+          {t('settings.vibeHint')}
+        </p>
+
         <div className="kv" style={{ alignItems: 'center' }}>
           <span>{t('settings.haptics')}</span>
           <button
@@ -600,6 +640,32 @@ export function SettingsPane({ overview, notify, refresh }) {
               const next = setHapticEnabled(!hapticOn)
               setHapticOn(next)
               if (next) haptic('tap')
+            }}
+          >
+            <span className="hm-switch-knob" />
+          </button>
+        </div>
+
+        {/* 効果音（Web Audio 合成・外部ファイルなし）。Dopamine のときだけ意味を持つ */}
+        <div className="kv" style={{ alignItems: 'center', marginTop: 8 }}>
+          <span>
+            {t('settings.sound')}
+            <span className="row-sub" style={{ display: 'block', lineHeight: 1.5, marginTop: 2 }}>
+              {t('settings.soundHint')}
+            </span>
+          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={soundOn}
+            aria-label={t('settings.sound')}
+            className={`hm-switch${soundOn ? ' on' : ''}`}
+            onClick={() => {
+              const next = setSoundEnabled(!soundOn)
+              setSoundOn(next)
+              haptic('tap')
+              // ON にした瞬間に 1 音鳴らして確かめられるようにする（ユーザー操作内なので iOS でも鳴る）
+              if (next) playSound('approve')
             }}
           >
             <span className="hm-switch-knob" />

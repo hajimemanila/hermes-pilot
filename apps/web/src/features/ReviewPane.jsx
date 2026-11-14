@@ -4,6 +4,7 @@ import { api } from '../api.js'
 import { CloseActions } from '../components/CloseActions.jsx'
 import { Icon, Loader, RefreshButton, Sheet, Spinner, fmtTime, relTime } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
+import { celebrate } from '../lib/vibe.js'
 import { readActiveChatId } from '../lib/chatReports.js'
 import { AnnotationEditor } from './AnnotationEditor.jsx'
 import { answerRows, capturedLabel, DONE_LIMIT, doneHint, extractRecommendedAnswers, groupItems, isWaiting, nextWaiting, repoLabel, thumbCaption } from '../lib/reviewView.js'
@@ -981,7 +982,14 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
    * 送信後（レビュー回答 Q2-B）: 閉じずに次の判断待ちを開く。
    * 残りが無いときだけ閉じる。送れた実感はトーストで補う。
    */
-  async function handleSubmitted(answeredId, result) {
+  async function handleSubmitted(answeredId, result, kind) {
+    /*
+     * 送信が通った瞬間の祝祭（SPEC-PILOT-V5 §3.1 / D24）。
+     * Dopamine はパーティクル・コンボ・効果音、Serotonin は基本ハプティックだけ。
+     */
+    const celebrateKind = result?.duplicate ? null : kind || (result?.files?.approval ? 'stamp' : 'approve')
+    if (celebrateKind) celebrate(celebrateKind)
+
     const items = await load()
     // 検収（approve）は「送信」ではなく「合格」なので、トーストの頭を差し替える
     const head = result?.duplicate
@@ -1000,6 +1008,8 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
     closeSheet()
     // 最後の 1 件を送り終えたら「全件完了」をバナーで知らせる（SPEC §5.1）
     setAllClear(true)
+    // 全件消化の祝祭（Dopamine は 🎉 + ファンファーレ、Serotonin は success の触覚だけ）
+    celebrate('allClear')
     notify?.(t('review.noneLeft', { head }))
   }
 
@@ -1013,12 +1023,12 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
     if (!open || fastBusy || !fastTrack.canFastTrack) return
     setFastBusy(true)
     try {
-      haptic('success')
       const r = await api(`/api/review/${open.id}/answer`, {
         method: 'POST',
         body: { answers: fastTrack.answers, global: '', by: 'mobile', chat: readActiveChatId() },
       })
-      await handleSubmitted(open.id, r)
+      // 祝祭（多段バイブ・パーティクル・効果音）は送信成功後に handleSubmitted が出す
+      await handleSubmitted(open.id, r, 'fastTrack')
     } catch (e) {
       notify?.(e?.message || t('review.fastTrackFailed'))
     } finally {

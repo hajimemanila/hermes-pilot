@@ -3504,3 +3504,189 @@ ol.md-list {
   padding-top: 8px;
   border-top: 1px solid var(--line);
 }
+
+/* ---------- Vibe Mode（Dopamine ⇄ Serotonin）・SPEC-PILOT-V5 §3.1 / D24 ----------
+   既定（`data-vibe` 未設定）は現行 V4 のフラットな外観。Dopamine の装飾は
+   `html[data-vibe="dopamine"]` の下だけに置くので、Serotonin の端末では
+   初回描画のちらつきも起きない。 */
+
+/* 演出レイヤ（1 枚だけ・レイアウトに影響しない・タップを横取りしない） */
+.fx-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.fx-layer.off {
+  display: none;
+}
+
+.fx-burst {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
+.fx-particle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--warn);
+  opacity: 0;
+  animation: fx-fly 620ms cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+}
+
+.fx-particle.gold {
+  background: #fbbf24;
+  box-shadow: 0 0 6px rgba(251, 191, 36, 0.7);
+}
+
+.fx-particle.teal {
+  background: var(--accent);
+  box-shadow: 0 0 6px rgba(45, 212, 191, 0.7);
+}
+
+.fx-particle.gold-dim {
+  background: #f59e0b;
+}
+
+.fx-particle.mint {
+  background: var(--accent-2);
+}
+
+@keyframes fx-fly {
+  0% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--fx-dx, 0px), var(--fx-dy, 0px), 0) rotate(var(--fx-rot, 0deg));
+  }
+}
+
+/* コンボ（🔥 2x COMBO）のピル。計器盤の下に短く出る */
+.fx-combo-pill {
+  position: absolute;
+  left: 50%;
+  top: calc(var(--safe-t) + 56px);
+  transform: translateX(-50%);
+  max-width: calc(100vw - 32px);
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: rgba(251, 191, 36, 0.16);
+  border: 1px solid rgba(251, 191, 36, 0.55);
+  color: #ffe9b3;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  animation: fx-pop 180ms ease-out;
+}
+
+/* 全件消化（🎉 All Clear!）のフラッシュカード */
+.fx-allclear-card {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100vw - 40px);
+  padding: 12px 18px;
+  border-radius: 16px;
+  background: linear-gradient(140deg, rgba(251, 191, 36, 0.2), rgba(45, 212, 191, 0.18));
+  border: 1px solid rgba(251, 191, 36, 0.5);
+  color: #fff7e0;
+  font-size: 15px;
+  font-weight: 700;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  animation: fx-flash 2400ms ease-out forwards;
+}
+
+@keyframes fx-pop {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
+}
+
+@keyframes fx-flash {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.9);
+  }
+  12% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  75% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -58%) scale(0.98);
+  }
+}
+
+/* Vibe セグメント（設定タブ）。選択中だけ色を変える */
+html[data-vibe='dopamine'] .chip.vibe-chip.on {
+  border-color: rgba(251, 191, 36, 0.6);
+  background: rgba(251, 191, 36, 0.14);
+  color: #ffe9b3;
+}
+
+html[data-vibe='serotonin'] .chip.vibe-chip.on {
+  border-color: var(--accent);
+  background: var(--rec-bg);
+  color: var(--rec-fg);
+}
+
+/* Dopamine: 一括承認ボタンの微細なパルス発光（押したくなるが眩しくない） */
+html[data-vibe='dopamine'] .btn.fast-track {
+  border-color: rgba(251, 191, 36, 0.5);
+  background: linear-gradient(180deg, rgba(45, 212, 191, 0.22), rgba(251, 191, 36, 0.16));
+  animation: vibe-pulse 2600ms ease-in-out infinite;
+}
+
+html[data-vibe='dopamine'] .ak-allclear {
+  border-color: rgba(251, 191, 36, 0.5);
+  background: linear-gradient(140deg, rgba(251, 191, 36, 0.16), rgba(45, 212, 191, 0.14));
+}
+
+@keyframes vibe-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.16), 0 6px 18px rgba(45, 212, 191, 0.1);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.4), 0 8px 26px rgba(45, 212, 191, 0.22);
+  }
+}
+
+/* Serotonin: 現行 V4 と完全同等（演出・パルスを出さない） */
+html[data-vibe='serotonin'] .fx-layer,
+html[data-vibe='serotonin'] .fx-combo-pill,
+html[data-vibe='serotonin'] .fx-allclear-card {
+  display: none;
+}
+
+/* 端末が「視差効果を減らす」設定なら、Dopamine でもアニメーションは止める */
+@media (prefers-reduced-motion: reduce) {
+  .fx-particle,
+  .fx-combo-pill,
+  .fx-allclear-card,
+  html[data-vibe='dopamine'] .btn.fast-track {
+    animation: none;
+  }
+}

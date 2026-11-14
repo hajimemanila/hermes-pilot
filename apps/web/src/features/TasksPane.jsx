@@ -2,6 +2,7 @@ import React, { useRef, useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api.js'
 import { HoldButton, Icon, Loader, RefreshButton, Sheet, Spinner, relTime } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
+import { celebrate } from '../lib/vibe.js'
 import { CaptureSheet } from './CaptureSheet.jsx'
 import { UsageSheet } from './UsageSheet.jsx'
 import { LiveSheet } from './LiveSheet.jsx'
@@ -532,7 +533,8 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
           chat: readActiveChatId(globalThis.localStorage) || undefined,
         },
       })
-      haptic('success')
+      // 一括起票の祝祭（SPEC-PILOT-V5 §3.1 / D24: Dopamine は演出＋音、Serotonin は触覚だけ）
+      celebrate('launch')
       notify(t('tasks.specLaunched', { created: (r.created ?? []).length, skipped: (r.skipped ?? []).length }))
       setSpecSheetOpen(false)
       setSpecSel([])

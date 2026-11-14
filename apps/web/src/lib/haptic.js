@@ -45,6 +45,29 @@ export function setHapticEnabled(enabled, storage = globalThis.localStorage) {
 }
 
 /**
+ * 任意の振動パターン（`navigator.vibrate` の配列形式）を鳴らす。
+ *
+ * Vibe Mode の Dopamine 演出（多段バイブ）用。ON/OFF の判定は `haptic()` と同じで、
+ * `hm.haptic` が OFF なら音も振動も出さない（SPEC-PILOT-V5 §3.1 / D24:
+ * Serotonin でも基本ハプティックは維持する、という方針は `haptic()` 側が担う）。
+ *
+ * @param {number[]|number} pattern 振動パターン
+ * @param {{vibrate?: Function}} [nav]
+ * @param {{getItem: Function}} [storage]
+ * @returns {boolean}
+ */
+export function hapticPattern(pattern, nav = globalThis.navigator, storage = globalThis.localStorage) {
+  if (!Array.isArray(pattern) && typeof pattern !== 'number') return false
+  if (!isHapticEnabled(storage)) return false
+  if (typeof nav?.vibrate !== 'function') return false
+  try {
+    return Boolean(nav.vibrate(Array.isArray(pattern) ? pattern.slice() : pattern))
+  } catch {
+    return false
+  }
+}
+
+/**
  * 短い振動を鳴らす。
  * @param {'tap'|'action'|'heavy'|'success'|'error'} [kind]
  * @param {{vibrate?: Function}} [nav]

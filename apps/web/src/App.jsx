@@ -21,7 +21,9 @@ import { SearchSheet } from './features/SearchSheet.jsx'
 import { UsageSheet } from './features/UsageSheet.jsx'
 import { LiveSheet } from './features/LiveSheet.jsx'
 import { Icon, Loader } from './components/Ui.jsx'
+import { FxLayer } from './components/FxLayer.jsx'
 import { haptic } from './lib/haptic.js'
+import { initVibe } from './lib/vibe.js'
 import { useI18n } from './i18n/index.js'
 import { t as tGlobal } from './i18n/lang.js'
 import { initTheme } from './lib/theme.js'
@@ -111,6 +113,15 @@ export function App() {
    * `<meta name="theme-color">` の更新も内部で行う。
    */
   useEffect(() => initTheme(), [])
+
+  /*
+   * Vibe Mode（Dopamine ⇄ Serotonin・SPEC-PILOT-V5 §3.1 / D24）。
+   * 保存値 → 無ければ端末の `prefers-reduced-motion` で自動選択し、`<html data-vibe>` を当てる。
+   * 冪等なので再マウントしても安全。Serotonin でもハプティック（`haptic.js`）は止めない。
+   */
+  useEffect(() => {
+    initVibe()
+  }, [])
 
   const [tab, setTab] = useState(
     deepLink?.open === 'inbox' || deepLink?.open === 'tasks' ? 'tasks' : deepLink?.open === 'chat' ? 'chat' : 'tasks',
@@ -944,6 +955,9 @@ export function App() {
       {/* 計器盤の ⚡ / 💎 から開くシート（どのタブにいても同じものが出る） */}
       {liveOpen ? <LiveSheet notify={notify} onClose={() => setLiveOpen(false)} /> : null}
       {usageOpen ? <UsageSheet data={usageData} hours={24} onClose={() => setUsageOpen(false)} /> : null}
+
+      {/* Dopamine のパーティクル・コンボ・オールクリア演出（Serotonin では何も出さない） */}
+      <FxLayer />
     </div>
   )
 }
