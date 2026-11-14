@@ -59,7 +59,23 @@ test('訳文は空でなく、英語と日本語が同一ではない（訳し�
   }
   assert.deepEqual(empty, [])
   // 記号のみ・固有名詞のみのキー（GW / 日本語 / English）は除いて比較する
-  const sameAllowed = new Set(['status.gw', 'settings.languageEn', 'settings.languageJa', 'common.ok'])
+  const sameAllowed = new Set([
+    'status.gw',
+    'settings.languageEn',
+    'settings.languageJa',
+    'common.ok',
+    // 言語に依存しない値（記号・実寸・仕様で固定された英語ラベル。SPEC V5 §3.3）
+    'receipt.value.na', // 欠損値のダッシュ
+    'receipt.canvas.size', // 1200×630 の Canvas 実寸
+    'receipt.canvas.titleSerotonin', // Serotonin モードは "AUTONOMOUS EXECUTION SUMMARY" 固定
+    // Demo 筐体のデバイス名・モード名（言語に依存しない固有名詞。SPEC V5 §3.4）
+    'demo.view.phone',
+    'demo.view.tablet',
+    'demo.vibe.dopamine',
+    'demo.vibe.serotonin',
+    'demo.theme.dark',
+    'demo.theme.light',
+  ])
   const untranslated = Object.keys(en).filter((k) => !sameAllowed.has(k) && en[k] === ja[k])
   assert.deepEqual(untranslated, [], `未翻訳の疑い: ${untranslated.join(', ')}`)
 })

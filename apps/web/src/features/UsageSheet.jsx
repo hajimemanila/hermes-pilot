@@ -1,23 +1,40 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { Sheet, fmtNumber, relTime } from '../components/Ui.jsx'
 import { fmtCost, fmtTokens, fmtPct } from '../lib/format.js'
 import { useI18n } from '../i18n/index.js'
+import { haptic } from '../lib/haptic.js'
+import { MissionReceiptSheet } from './MissionReceiptSheet.jsx'
 
 /**
  * 使用量シート。期間内のコスト・トークン・キャッシュ率とモデル別内訳。
  * データはブリッジの /api/usage（state.db を読み取り専用で集計）。
+ *
+ * 上部の 1 タップ導線から完了レシート（SPEC-PILOT-V5 §3.3 ③ / D26③）を開ける。
+ * `board` / `spec` は任意（渡されなければ全プロファイル合算のレシートになる）。
  */
-export function UsageSheet({ data, hours = 24, onClose }) {
+export function UsageSheet({ data, hours = 24, onClose, board = null, spec = null }) {
   const { t } = useI18n()
   const totals = data?.totals
   const ok = Boolean(data?.ok)
+  const [receiptOpen, setReceiptOpen] = useState(false)
 
   return (
+    <>
     <Sheet title={t('usage.title', { hours })} onClose={onClose}>
       {!ok ? (
         <div className="empty">{data?.reason ?? t('usage.failed')}</div>
       ) : (
         <>
+          <button
+            type="button"
+            className="report-card-btn primary receipt-open-btn"
+            onClick={() => {
+              haptic('tap')
+              setReceiptOpen(true)
+            }}
+          >
+            {t('receipt.create')}
+          </button>
           <div className="card" style={{ marginBottom: 10 }}>
             <div className="kv">
               <span>{t('usage.cost')}</span>
@@ -107,5 +124,14 @@ export function UsageSheet({ data, hours = 24, onClose }) {
         </>
       )}
     </Sheet>
+    {receiptOpen ? (
+      <MissionReceiptSheet
+        board={board}
+        spec={spec}
+        hours={hours}
+        onClose={() => setReceiptOpen(false)}
+      />
+    ) : null}
+    </>
   )
 }

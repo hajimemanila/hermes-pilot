@@ -27,10 +27,18 @@ import { createSearch } from './search.js'
 import { createTranscript } from './transcript.js'
 import { createCapture } from './capture.js'
 import { createUsage } from './usage.js'
+import { createTelemetry } from './telemetry.js'
 import { createLive } from './live.js'
 import { createInbox } from './inbox.js'
 import { createRepos, normalizePath } from './repos.js'
 import { createSpecs, listSpecs } from './specs.js'
+import { createArchitect, sanitizeRunner } from './architect.js'
+import {
+  DEFAULT_SKILLS_SRC,
+  getOptimizeStatus,
+  optimizeAntigravitySkills,
+  optimizeHermesSoul,
+} from './pipeline-optimizer.js'
 import { createPairCodes } from './pair-codes.js'
 import { getCapabilities } from './capabilities.js'
 import { errorBody } from './api-errors.js'
@@ -96,6 +104,12 @@ const kanban = createKanban(cfg)
 const repos = createRepos(cfg, { boards: () => kanban.boards() })
 // Spec Launchpad（`docs/SPEC-*.md` → バッチ → カンバン一括起票）。SPEC §5.4 / D15④
 const specs = createSpecs(cfg, { tasks: (board) => kanban.tasks(board, { limit: 200 }), listSpecs })
+// Architect（仕様の種 → SPEC / A2B）。OPT-IN の `agy` CLI は公式サブプロセス起動のみ（SPEC V5 §3.2）
+const architect = createArchitect(cfg, {
+  listSpecs,
+  readTasks: (board) => kanban.tasks(board, { limit: 200 }),
+  hasAgyCli: () => Boolean(getCapabilities().hasAgyCli),
+})
 const review = createReview(cfg, { targets: () => repos.targets() })
 // 完了・ブロックの記録はブリッジ内蔵（D7）。外部 cron は要らない。
 const reviewWatcher = createReviewWatcher(cfg, { review })
@@ -146,6 +160,13 @@ async function listStateDbs() {
 }
 const capture = createCapture(cfg)
 const usage = createUsage(cfg)
+// Zero-Typing 実行サマリ（完了レシート・SPEC-PILOT-V5 §3.3 ③ / D26③）。
+// usage / 完走レポート / カンバン / audit.jsonl を読むだけで、書き込みはしない。
+const telemetry = createTelemetry(cfg, {
+  usage,
+  reports: (opts) => readPipelineReports(cfg.reviewDir, opts),
+  tasks: (board) => kanban.tasks(board, { limit: 200 }),
+})
 const live = createLive(cfg, kanban)
 const inbox = createInbox(cfg, kanban)
 // 起動時にコミットサマリを温める（初回のタスク一覧を待たせない）
@@ -621,6 +642,121 @@ async function handleApi(req, res, url) {
     return sendError(res, 404, 'UNKNOWN_ENDPOINT', { path: url.pathname })
   }
 
+  // --- A2B パイプライン最適化（第3段 / SPEC §3.2・D25③） ----------------------
+  // GET  /api/pipeline/status                    … 適用済みか（中身は返さない）
+  // POST /api/pipeline/optimize { soul?, skills? }
+  //                                              … SOUL.md へ冪等追記＋スキル配置
+  if (a === 'pipeline') {
+    if (b === 'status' && req.method === 'GET') {
+      return sendJson(
+        res,
+        200,
+        getOptimizeStatus({
+          hermesHome: cfg.hermesHome,
+          home: cfg.home,
+          skillsSrcDir: DEFAULT_SKILLS_SRC,
+        }),
+      )
+    }
+    if (b === 'optimize' && req.method === 'POST') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendError(res, 429, 'RATE_LIMITED')
+      }
+      const body = await readJson(req)
+      // 既定は SOUL とスキル配置の両方。片方だけ試したいときは明示的に false を渡す。
+      const doSoul = body?.soul !== false
+      const doSkills = body?.skills !== false
+      const soul = doSoul ? optimizeHermesSoul({ hermesHome: cfg.hermesHome }) : null
+      const skills = doSkills ? optimizeAntigravitySkills({ home: cfg.home, skillsSrcDir: DEFAULT_SKILLS_SRC }) : null
+      const ok = (soul?.ok ?? true) && (skills?.ok ?? true)
+      auth.audit({
+        kind: 'pipeline.optimize',
+        soul: soul?.mode ?? null,
+        soulChanged: Boolean(soul?.changed),
+        skillTargets: skills?.targets?.length ?? 0,
+        ok,
+      })
+      return sendJson(res, ok ? 200 : 500, {
+        ok,
+        soul,
+        skills,
+        status: getOptimizeStatus({ hermesHome: cfg.hermesHome, home: cfg.home, skillsSrcDir: DEFAULT_SKILLS_SRC }),
+      })
+    }
+    return sendError(res, 404, 'UNKNOWN_ENDPOINT', { path: url.pathname })
+  }
+
+  // --- Architect（仕様の種 → SPEC）／ハイブリッド A2B（SPEC V5 §3.2・§3.3① / D23・D25・D26①）--
+  // POST /api/architect/seed { repo?, board?, seedText, runner?, autoStart?, chat?, lang? }
+  //      … 202 で `{ok, jobId, status}` を即返し、Architect は背後で走る（画面を待たせない）
+  // GET  /api/architect/jobs?board=<slug>&repo=<id>
+  //      … ジョブ / 完成 SPEC（`spec_ready`）/ 未起票 SPEC（一括起票カードの材料）
+  // GET  /api/architect/config ・ PUT /api/architect/config { runner }
+  //      … 実行ランナー（既定 `hermes`、Opt-in で `antigravity`）
+  if (a === 'architect') {
+    if (b === 'config') {
+      if (req.method === 'GET') {
+        return sendJson(res, 200, {
+          ok: true,
+          ...architect.getConfig(),
+          hasAgyCli: Boolean(getCapabilities().hasAgyCli),
+        })
+      }
+      if (req.method === 'PUT' || req.method === 'POST') {
+        if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+          return sendError(res, 429, 'RATE_LIMITED')
+        }
+        const body = await readJson(req)
+        const r = architect.setConfig({ runner: sanitizeRunner(body?.runner) })
+        auth.audit({ kind: 'architect.config', runner: r.runner ?? null, ok: Boolean(r.ok) })
+        if (!r.ok) return sendFailure(res, 409, r)
+        return sendJson(res, 200, { ok: true, ...architect.getConfig(), hasAgyCli: Boolean(getCapabilities().hasAgyCli) })
+      }
+      return sendError(res, 405, 'METHOD_NOT_ALLOWED')
+    }
+
+    if (b === 'seed' && req.method === 'POST') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendError(res, 429, 'RATE_LIMITED')
+      }
+      const body = await readJson(req)
+      const target = resolveSpecRepo({ repoId: body?.repo, boardSlug: body?.board })
+      if (!target) return sendError(res, 404, 'NOT_FOUND', { resource: 'repo' })
+      const board = String(body?.board ?? target.board ?? '').trim()
+      const r = await architect.seed({
+        repoPath: target.path,
+        board,
+        seedText: body?.seedText,
+        runner: body?.runner,
+        autoStart: Boolean(body?.autoStart),
+        chat: body?.chat,
+        lang: body?.lang,
+      })
+      auth.audit({
+        kind: 'architect.seed',
+        board,
+        repo: target.repo,
+        runner: r.runner ?? null,
+        autoStart: Boolean(body?.autoStart),
+        chars: String(body?.seedText ?? '').length,
+        ok: Boolean(r.ok),
+      })
+      // 202: ジョブは動き出したが、SPEC はまだ無い（PWA は jobs をポーリングする）
+      return r.ok ? sendJson(res, 202, r) : sendFailure(res, 400, r)
+    }
+
+    if (b === 'jobs' && req.method === 'GET') {
+      const board = String(url.searchParams.get('board') ?? '').trim()
+      const target = resolveSpecRepo({ repoId: url.searchParams.get('repo'), boardSlug: board || null })
+      const snapshot = await architect.jobs({
+        board,
+        ...(target?.path ? { include: { repoPath: target.path, board: target.board ?? board } } : {}),
+      })
+      return sendJson(res, 200, snapshot)
+    }
+    return sendError(res, 404, 'UNKNOWN_ENDPOINT', { path: url.pathname })
+  }
+
   if (a === 'boards') {
     // /api/boards                                        … ボード一覧
     // /api/boards/:slug/tasks                            … タスク一覧（git / Discord 付き）
@@ -986,6 +1122,23 @@ async function handleApi(req, res, url) {
   if (a === 'usage' && req.method === 'GET') {
     const r = usage.summary({ hours: Number(url.searchParams.get('hours') ?? 24), dbs: await listStateDbs() })
     return r.ok ? sendJson(res, 200, r) : sendFailure(res, 500, r)
+  }
+
+  // --- Zero-Typing 実行サマリ（完了レシート）-----------------------------------
+  // /api/telemetry/receipt?board=<slug>&spec=<rel>&hours=24
+  //   コスト / キャッシュ率 / 推定節約額 / 操作メトリクス（タップ・赤入れ・入力文字）を
+  //   読み取り専用で集計する。欠損は 500 にせず、その項目を null ＋ missing で返す。
+  if (a === 'telemetry' && b === 'receipt' && req.method === 'GET') {
+    if (!readAllowed('telemetry', cfg.rate.maxReads ?? 240, cfg.rate.windowMs)) {
+      return sendError(res, 429, 'RATE_LIMITED')
+    }
+    const r = telemetry.receipt({
+      board: String(url.searchParams.get('board') ?? '').trim(),
+      spec: String(url.searchParams.get('spec') ?? '').trim(),
+      hours: Number(url.searchParams.get('hours') ?? 24),
+      dbs: await listStateDbs(),
+    })
+    return sendJson(res, 200, r)
   }
 
   // --- 横断検索 --------------------------------------------------------------

@@ -5,6 +5,10 @@ import { haptic } from '../lib/haptic.js'
 import { celebrate } from '../lib/vibe.js'
 import { CaptureSheet } from './CaptureSheet.jsx'
 import { UsageSheet } from './UsageSheet.jsx'
+import { MissionReceiptSheet } from './MissionReceiptSheet.jsx'
+import { SpecSeedSheet } from './SpecSeedSheet.jsx'
+import { SpecReadyBanner } from '../components/SpecReadyBanner.jsx'
+import { pickSpecBanner } from '../lib/specSeed.js'
 import { LiveSheet } from './LiveSheet.jsx'
 import { InboxSheet } from './InboxSheet.jsx'
 import { pendingCount } from '../lib/reviewView.js'
@@ -24,6 +28,28 @@ const STATUS_KEY = {
   failed: 'tasks.status.failed',
   archived: 'tasks.status.archived',
   todo: 'tasks.status.todo',
+}
+
+/**
+ * Execution Mode → バッチ横のモードピル辞書キー（SPEC V5 §3.2）。
+ * `mode` が無い過去 SPEC のバッチではピルを出さない。
+ */
+const MODE_KEY = {
+  'zero-stop': 'tasks.modeZeroStop',
+  'fast-track-review': 'tasks.modeFastTrack',
+  'visual-gate': 'tasks.modeVisualGate',
+}
+
+/**
+ * バッチのモードピル（未宣言なら null）。
+ * @param {{mode?: string|null}} batch バッチ
+ * @param {(key: string) => string} t 翻訳
+ * @returns {React.ReactElement|null} ピル
+ */
+function ModePill({ batch, t }) {
+  const key = MODE_KEY[batch?.mode]
+  if (!key) return null
+  return <span className={`spec-mode is-${batch.mode}`}>{t(key)}</span>
 }
 
 /**
@@ -60,6 +86,8 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
   // 使用量（24h）
   const [usageData, setUsageData] = useState(null)
   const [usageOpen, setUsageOpen] = useState(false)
+  // 完了レシート（SPEC-PILOT-V5 §3.3 ③ / D26③）。ボードと Spec を渡して 1 タップで開く。
+  const [receiptCtx, setReceiptCtx] = useState(null)
   const [liveOpen, setLiveOpen] = useState(false)
   const [liveTurns, setLiveTurns] = useState(0)
   const [inboxCount, setInboxCount] = useState(0)
@@ -72,6 +100,11 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
   const [specBusy, setSpecBusy] = useState(false)
   // 全バッチ完了後に開く履歴（Q3=A）。起票シートとは別のシートにする
   const [specHistoryOpen, setSpecHistoryOpen] = useState(false)
+  // 🎙️ Spec Seed と A2B クイック起票カード（SPEC-PILOT-V5 §3.2・§3.3 ① / D23・D26①）
+  const [seedOpen, setSeedOpen] = useState(false)
+  const [architectJobs, setArchitectJobs] = useState(null)
+  const [architectFiling, setArchitectFiling] = useState(false)
+  const [architectDismissed, setArchitectDismissed] = useState([])
   // ウィジェットからのディープリンク（?open=inbox&task=…）を1回だけ反映
   const [inboxFocus, setInboxFocus] = useState(null)
 
@@ -284,6 +317,72 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
     const id = setInterval(() => document.visibilityState === 'visible' && loadTasks(board), 5000)
     return () => clearInterval(id)
   }, [board, loadTasks])
+
+  /*
+   * A2B クイック起票カードの材料（GET /api/architect/jobs・SPEC V5 §3.2 D23）。
+   * Seed していなくても「未起票の新しい SPEC」があればカードを出す（pending）。
+   * 20 秒ごと。旧ブリッジ（404）ではカードを出さないだけ。
+   */
+  const loadArchitectJobs = useCallback(async () => {
+    if (!board) {
+      setArchitectJobs(null)
+      return
+    }
+    try {
+      const d = await api(`/api/architect/jobs?board=${encodeURIComponent(board)}`)
+      if (d?.ok) setArchitectJobs(d)
+    } catch {
+      setArchitectJobs(null)
+    }
+  }, [board])
+
+  useEffect(() => {
+    loadArchitectJobs()
+    const id = setInterval(() => document.visibilityState === 'visible' && loadArchitectJobs(), 20_000)
+    return () => clearInterval(id)
+  }, [loadArchitectJobs])
+
+  /** 出すカードは 1 枚だけ（完成 SPEC 優先・× で閉じたものは再表示しない）。 */
+  const specBanner = useMemo(() => {
+    const picked = pickSpecBanner({
+      specReady: architectJobs?.specReady ?? [],
+      pending: architectJobs?.pending ?? [],
+    })
+    if (!picked || architectDismissed.includes(picked.path)) return null
+    return picked
+  }, [architectJobs, architectDismissed])
+
+  /** バナーから未起票バッチを一括起票する（既起票はブリッジ側でスキップ＝冪等）。 */
+  const fileSpecBatches = useCallback(
+    async (banner) => {
+      if (!banner || architectFiling || !board) return
+      setArchitectFiling(true)
+      try {
+        const activeChat = readActiveChatId(globalThis.localStorage)
+        const r = await api('/api/specs/launch', {
+          method: 'POST',
+          body: {
+            board,
+            specRelPath: banner.path,
+            batchIds: banner.ids,
+            ...(activeChat ? { chat: activeChat } : {}),
+          },
+        })
+        notify(t('seed.bannerFiled', { n: (r?.created ?? []).length }))
+        try {
+          celebrate('launch')
+        } catch {
+          /* 演出は本質ではない */
+        }
+        await Promise.all([loadArchitectJobs(), loadTasks(board)])
+      } catch (e) {
+        notify(e?.message ?? t('seed.failed'))
+      } finally {
+        setArchitectFiling(false)
+      }
+    },
+    [architectFiling, board, notify, t, loadArchitectJobs, loadTasks],
+  )
 
   /* 稼働中（running / ready / todo）が 0 か。0 に変わった瞬間に完走レポートを取り直す。 */
   const idle = !tasks.some((x) => x.status === 'running' || x.status === 'ready' || x.status === 'todo')
@@ -517,6 +616,18 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
     setSpecHistoryOpen(true)
   }
 
+  /**
+   * 完了レシート（🏆）を開く。既定は「いま見ているボード ＋ 表示中の Spec」。
+   * 完走レポートがあればそちらの board / spec を優先する（別ボードの完走でも正しい対象になる）。
+   */
+  const openReceipt = (report = null) => {
+    haptic('tap')
+    setReceiptCtx({
+      board: report?.board ?? board ?? null,
+      spec: report?.spec ?? currentSpec?.path ?? null,
+    })
+  }
+
   /** 選んだバッチを 1 タップで一括起票し、そのまま自走に乗せる。 */
   const launchBatches = async () => {
     if (!currentSpec || !specSel.length || !board) return
@@ -721,6 +832,29 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
         </button>
       ) : null}
 
+      {/* A2B クイック起票カード（SPEC V5 §3.2 D23）: 仕様書ができた瞬間に 1 タップ起票 */}
+      <SpecReadyBanner
+        banner={specBanner}
+        busy={architectFiling}
+        onFile={fileSpecBatches}
+        onDismiss={(b) => setArchitectDismissed((prev) => [...prev, b.path])}
+      />
+
+      {/* 🎙️ Spec Seed（SPEC V5 §3.3 ① D26①）: 仕様ランチャーの隣から 1 タップで種を撒く */}
+      <div className="seed-entry">
+        <button
+          type="button"
+          className="snippet-chip trigger"
+          onClick={() => {
+            haptic('tap')
+            setSeedOpen(true)
+          }}
+          aria-label={t('seed.openAria')}
+        >
+          🎙️ {t('seed.title')}
+        </button>
+      </div>
+
       {/* Spec Launchpad（SPEC §5.4）: ボードのリポジトリに SPEC があれば常設のバー。
           全バッチ完了後は「✅ 全バッチ完了」カードになり、タップで履歴（縦リスト）を開く（Q3=A） */}
       {currentSpec ? (
@@ -739,6 +873,13 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
             {t('tasks.specBatchCount', { n: currentSpec.batches.length })}
             <Icon name="chevron" size={14} />
           </span>
+        </button>
+      ) : null}
+
+      {/* 全バッチ完了時の 1 タップ導線（🏆 完了レシート・SPEC-PILOT-V5 §3.3 ③ / D26③） */}
+      {currentSpec && specAllDone ? (
+        <button type="button" className="spec-receipt-btn" onClick={() => openReceipt()} aria-label={t('receipt.open')}>
+          {t('receipt.open')}
         </button>
       ) : null}
 
@@ -762,6 +903,9 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
             <div className="pipeline-summary-actions">
               <button type="button" className="report-card-btn primary" onClick={discussLatestReport}>
                 {t('tasks.discussReport')}
+              </button>
+              <button type="button" className="report-card-btn" onClick={() => openReceipt(latestReport)}>
+                {t('receipt.open')}
               </button>
               <button type="button" className="report-card-btn" onClick={() => setLatestReport(null)}>
                 {t('tasks.pipelineDismiss')}
@@ -848,6 +992,17 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
         </Sheet>
       )}
 
+      {seedOpen ? (
+        <SpecSeedSheet
+          board={board ?? ''}
+          repo={specsInfo?.repo ?? null}
+          chat={readActiveChatId(globalThis.localStorage) || null}
+          notify={notify}
+          onClose={() => setSeedOpen(false)}
+          onSeeded={() => loadArchitectJobs()}
+        />
+      ) : null}
+
       {specSheetOpen && currentSpec ? (
         <Sheet title={t('tasks.specSheetTitle')} onClose={() => !specBusy && setSpecSheetOpen(false)}>
           {specList.length > 1 ? (
@@ -906,6 +1061,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
                     <span className="row-title">
                       [{b.id}] {b.title}
                     </span>
+                    <ModePill batch={b} t={t} />
                     {b.objective ? <span className="row-sub">{b.objective.slice(0, 140)}</span> : null}
                   </span>
                   {filed ? (
@@ -946,6 +1102,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
                     <span className="pick-title">
                       [{b.id}] {b.title}
                     </span>
+                    <ModePill batch={b} t={t} />
                     <span className="pick-sub">
                       {[
                         task
@@ -1130,7 +1287,23 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
         />
       ) : null}
 
-      {usageOpen ? <UsageSheet data={usageData} hours={24} onClose={() => setUsageOpen(false)} /> : null}
+      {usageOpen ? (
+        <UsageSheet
+          data={usageData}
+          hours={24}
+          board={board}
+          spec={currentSpec?.path ?? null}
+          onClose={() => setUsageOpen(false)}
+        />
+      ) : null}
+      {receiptCtx ? (
+        <MissionReceiptSheet
+          board={receiptCtx.board}
+          spec={receiptCtx.spec}
+          onClose={() => setReceiptCtx(null)}
+          notify={notify}
+        />
+      ) : null}
 
       {inboxOpen ? (
         <InboxSheet

@@ -21,6 +21,11 @@ import { isWaiting } from '../lib/reviewView.js'
 import { api } from '../api.js'
 import { composerHeight } from '../lib/composerSize.js'
 import { shouldSendOnEnter } from '../lib/composerKey.js'
+import { MissionReceiptSheet } from './MissionReceiptSheet.jsx'
+import { SpecSeedSheet } from './SpecSeedSheet.jsx'
+import { SpecReadyBanner } from '../components/SpecReadyBanner.jsx'
+import { pickSpecBanner } from '../lib/specSeed.js'
+import { celebrate } from '../lib/vibe.js'
 import {
   LATEST_REPORT_ID,
   LAST_CHAT_KEY,
@@ -101,7 +106,7 @@ function MarkdownBody({ text, onCopyCode, copyLabel }) {
  *  - 📋 ボードを見る … `hm:open-board` で Tasks タブの該当ボードへ移る
  * の 2 つの導線を持つ。`kind: 'pipeline'` 以外の報告（レビュー完了 1 行）は従来どおり。
  */
-function PipelineReportCard({ report, open, onToggle, onDiscuss, onOpenBoard, onCopyCode }) {
+function PipelineReportCard({ report, open, onToggle, onDiscuss, onOpenBoard, onCopyCode, onReceipt }) {
   const halted = String(report?.status ?? '') === 'halted'
   const body = String(report?.markdown || report?.text || '')
   return (
@@ -129,6 +134,9 @@ function PipelineReportCard({ report, open, onToggle, onDiscuss, onOpenBoard, on
       <div className="report-card-actions">
         <button type="button" className="report-card-btn primary" onClick={onDiscuss}>
           {t('chat.discussNextSteps')}
+        </button>
+        <button type="button" className="report-card-btn" onClick={onReceipt}>
+          {t('receipt.open')}
         </button>
         {report?.board ? (
           <button type="button" className="report-card-btn" onClick={onOpenBoard}>
@@ -240,6 +248,14 @@ export function ChatPane({
    * （古いレポートが積まれると会話が押し流されるため・§3.3 ②）。
    */
   const [reportOpen, setReportOpen] = useState({})
+  // 完了レシート（SPEC-PILOT-V5 §3.3 ③ / D26③）。統合レポートカードから開く。
+  const [receiptCtx, setReceiptCtx] = useState(null)
+  // 🎙️ Spec Seed（SPEC-PILOT-V5 §3.3 ① / D26①）。音声/一行メモから仕様策定を始める。
+  const [seedOpen, setSeedOpen] = useState(false)
+  // 仕様書の準備完了（A2B クイック起票カード・§3.2 D23）。
+  const [specJobs, setSpecJobs] = useState(null)
+  const [specFiling, setSpecFiling] = useState(false)
+  const [specDismissed, setSpecDismissed] = useState([])
   // resume できない会話（カンバン作業ログ等）は読み取り専用で表示する
   const [readonly, setReadonly] = useState(null)
   // いま話しているプロファイル（SPEC-PROFILE-CHAT）。既定は DEFAULT_PROFILE（mobile）
@@ -421,6 +437,68 @@ export function ChatPane({
       window.removeEventListener('hm:lang', onUpdate)
     }
   }, [loadSnippets])
+
+  /**
+   * A2B クイック起票カードの材料（`GET /api/architect/jobs`・SPEC V5 §3.2 D23）。
+   *
+   * Architect が仕様書を書き終えた瞬間にバナーを出すため、表示中は 20 秒ごとに見る。
+   * 旧ブリッジ（404）では黙ってカードを出さない。
+   */
+  const seedBoard = repo?.boards?.[0]?.slug ?? ''
+  const loadSpecJobs = useCallback(async () => {
+    try {
+      const qs = seedBoard ? `?board=${encodeURIComponent(seedBoard)}` : ''
+      const d = await api(`/api/architect/jobs${qs}`)
+      if (d?.ok) setSpecJobs(d)
+    } catch {
+      setSpecJobs(null)
+    }
+  }, [seedBoard])
+
+  useEffect(() => {
+    if (!active && !seedOpen) return undefined
+    loadSpecJobs()
+    const timer = setInterval(loadSpecJobs, 20_000)
+    return () => clearInterval(timer)
+  }, [active, seedOpen, loadSpecJobs])
+
+  /** 出すカードは 1 枚だけ（完成 SPEC 優先・× で閉じたものは再表示しない）。 */
+  const specBanner = useMemo(() => {
+    const picked = pickSpecBanner({ specReady: specJobs?.specReady ?? [], pending: specJobs?.pending ?? [] })
+    if (!picked || specDismissed.includes(picked.path)) return null
+    return picked
+  }, [specJobs, specDismissed])
+
+  /** バナーから未起票バッチを一括起票する（既起票はブリッジ側でスキップ）。 */
+  const fileSpecBatches = useCallback(
+    async (banner) => {
+      if (!banner || specFiling) return
+      setSpecFiling(true)
+      try {
+        const r = await api('/api/specs/launch', {
+          method: 'POST',
+          body: {
+            ...(seedBoard ? { board: seedBoard } : {}),
+            specRelPath: banner.path,
+            batchIds: banner.ids,
+            ...(sid ? { chat: sid } : {}),
+          },
+        })
+        notify(t('seed.bannerFiled', { n: (r?.created ?? []).length }))
+        try {
+          celebrate('launch')
+        } catch {
+          /* 演出は本質ではない */
+        }
+        await loadSpecJobs()
+      } catch (e) {
+        notify(e?.message ?? t('seed.failed'))
+      } finally {
+        setSpecFiling(false)
+      }
+    },
+    [seedBoard, specFiling, sid, notify, t, loadSpecJobs],
+  )
 
   /** state.db のツール実行履歴を会話ブロックへ復元する（再接続・切替後も足跡を残す）。 */
   const hydrateTranscriptTools = useCallback(async (sessionId, prof = 'default') => {
@@ -1228,6 +1306,15 @@ export function ChatPane({
     }
   }, [])
 
+  /**
+   * 統合レポートカードの「🏆 完了レシート」（SPEC-PILOT-V5 §3.3 ③ / D26③）。
+   * レポートの board / spec をそのまま渡すので、別ボードの完走でも対象がずれない。
+   */
+  const openReportReceipt = useCallback((report) => {
+    haptic('tap')
+    setReceiptCtx({ board: report?.board ?? null, spec: report?.spec ?? null })
+  }, [])
+
   // 開いている会話の新着はタイムラインに出ている＝見えている。既読にして点を残さない
   // （タブを離れている間、または別の会話に届いた分だけが点になる）。
   useEffect(() => {
@@ -1993,6 +2080,7 @@ export function ChatPane({
                     setReportOpen((prev) => ({ ...prev, [r.key]: !isOpen }))
                   }}
                   onDiscuss={() => discussReport(r)}
+                  onReceipt={() => openReportReceipt(r)}
                   onOpenBoard={() => openReportBoard(r)}
                   onCopyCode={copyCode}
                 />
@@ -2270,6 +2358,14 @@ export function ChatPane({
         </div>
       ) : null}
 
+      {/* A2B クイック起票カード（SPEC V5 §3.2 D23）: 仕様書ができた瞬間に 1 タップで起票 */}
+      <SpecReadyBanner
+        banner={specBanner}
+        busy={specFiling}
+        onFile={fileSpecBatches}
+        onDismiss={(b) => setSpecDismissed((prev) => [...prev, b.path])}
+      />
+
       {hotSnippets.length ? (
         <div className="action-bar">
           <div className="chips-scroll">
@@ -2304,6 +2400,24 @@ export function ChatPane({
           </div>
           <button className="snippet-chip add" onClick={() => setSnippetSheet(true)} aria-label={t('chat.snippetListAria')}>
             ＋
+          </button>
+        </div>
+      ) : null}
+
+      {/* 🎙️ Spec Seed（SPEC V5 §3.3 ① D26①）: 一行メモ／音声から仕様策定を始める */}
+      {!readonly ? (
+        <div className="seed-entry">
+          <button
+            type="button"
+            className="snippet-chip trigger"
+            onClick={() => {
+              haptic('tap')
+              setSeedOpen(true)
+            }}
+            aria-label={t('seed.openAria')}
+            disabled={streaming}
+          >
+            🎙️ {t('seed.title')}
           </button>
         </div>
       ) : null}
@@ -2448,6 +2562,17 @@ export function ChatPane({
             {t('chat.attachNote')}
           </div>
         </Sheet>
+      ) : null}
+
+      {seedOpen ? (
+        <SpecSeedSheet
+          board={seedBoard}
+          repo={repo?.id ?? null}
+          chat={sid ?? activeDrawerSid ?? null}
+          notify={notify}
+          onClose={() => setSeedOpen(false)}
+          onSeeded={() => loadSpecJobs()}
+        />
       ) : null}
 
       {snippetSheet ? (
@@ -2771,6 +2896,15 @@ export function ChatPane({
             )
           })}
         </Sheet>
+      ) : null}
+
+      {receiptCtx ? (
+        <MissionReceiptSheet
+          board={receiptCtx.board}
+          spec={receiptCtx.spec}
+          onClose={() => setReceiptCtx(null)}
+          notify={notify}
+        />
       ) : null}
     </div>
   )
