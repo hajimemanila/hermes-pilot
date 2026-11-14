@@ -52,7 +52,8 @@
     "check:oauth": "node scripts/check-oauth-boundary.mjs",
     "check:pwa:live": "python3 scripts/check-pwa.py --url http://127.0.0.1:4097",
     "check:pwa:selftest": "python3 scripts/check-pwa.py --self-test",
-    "verify": "npm test && npm run check:pwa && npm run check:oauth && npm run build",
+    "audit:responsive": "node scripts/audit-responsive.mjs",
+    "verify": "npm test && npm run check:pwa && npm run check:oauth && npm run build && npm run audit:responsive",
     "deploy": "node scripts/deploy.mjs",
     "migrate:pilot": "node scripts/migrate-to-hermes-pilot.mjs"
   },

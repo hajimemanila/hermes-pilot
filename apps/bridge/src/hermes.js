@@ -1,8 +1,13 @@
+import { ApiError } from './api-errors.js'
+
 /**
  * 既存 Hermes サーバ（127.0.0.1:9119）への薄いクライアント。
  *
  * セッショントークンは起動時に env か SPA の HTML から解決し、**端末には返さない**。
  * ダッシュボードが再起動してトークンが変わった場合は 401 を見て 1 回だけ再解決する。
+ *
+ * 失敗は `ApiError('HERMES_TOKEN_MISSING')` で返す（日本語の `new Error('…')` を投げると
+ * `sendFailure` の `detail` として画面にそのまま出る＝i18n の穴。`test/i18nLeak.test.js` が検出）。
  *
  * @param {object} cfg 設定
  * @returns {object} クライアント
@@ -16,7 +21,7 @@ export function createHermesClient(cfg) {
     const res = await fetch(`${cfg.hermesBase}/`, { signal: AbortSignal.timeout(5000) })
     const html = await res.text()
     const m = /window\.__HERMES_SESSION_TOKEN__\s*=\s*"([^"]+)"/.exec(html)
-    if (!m) throw new Error('Hermes のセッショントークンを取得できません（ダッシュボード停止？）')
+    if (!m) throw new ApiError('HERMES_TOKEN_MISSING', {}, 503)
     return m[1]
   }
 

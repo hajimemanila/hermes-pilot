@@ -2653,6 +2653,13 @@ ol.md-list {
 .ak-page { padding-bottom: 24px; }
 .ak-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 12px 2px 6px; }
 .ak-head > div { flex: 1 1 auto; min-width: 0; }
+/*
+ * 狭い左ペイン（680–819px の 280px マスター）では、題名の右に「注釈」「再読み込み」を
+ * 並べると題名の箱が 51–56px まで潰れ、`レビュー` が「レビュ／ー」に割れて見切れる（実測・744×1024）。
+ * 題名に 96px を確保できないときはボタンを 2 行目へ折り返す（380px の 820px 以上では折り返さない）。
+ */
+.split-master .ak-head { flex-wrap: wrap; }
+.split-master .ak-head > div { flex: 1 1 auto; min-width: 96px; }
 .ak-tabs { padding: 2px 0 4px; }
 .ak-readonly { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
 .ak-head .btn { width: auto; flex: 0 0 auto; padding: 6px 14px; }

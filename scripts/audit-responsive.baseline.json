@@ -1,0 +1,29 @@
+{
+  "_note": "acceptance baseline: 44px 未満のタップ対象と文字切れの受理済みパターン。新顔は違反、消えた項目は stale。生成: node scripts/audit-responsive.mjs --update-baseline",
+  "tap": [
+    "button.add.snippet-chip",
+    "button.ak-new-btn.btn",
+    "button.btn.hm-btn-inner",
+    "button.btn.hm-refresh-btn",
+    "button.chat-report-btn",
+    "button.chat-report-btn.primary",
+    "button.chip",
+    "button.chip.on",
+    "button.chip.on.vibe-chip",
+    "button.chip.vibe-chip",
+    "button.gem.t-pill",
+    "button.gw.ok.t-pill",
+    "button.hm-refresh-btn.icon-btn",
+    "button.hm-refresh-btn.link",
+    "button.hm-switch.on",
+    "button.icon-btn",
+    "button.link",
+    "button.plus",
+    "button.run.t-pill",
+    "button.settings-nav-chip",
+    "button.snippet-chip",
+    "button.snippet-chip.trigger",
+    "textarea>div.composer"
+  ],
+  "clip": []
+}
