@@ -81,4 +81,25 @@ if (!DEMO && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch(() => {})
   })
+  /*
+   * 更新の反映: 新しい Service Worker が制御を取ったら**一度だけ**再読み込みする。
+   * これを入れないと、ホーム画面から起動したままの PWA は古いバンドルのまま動き続け、
+   * 「直したはずの UI が反映されない」状態になる（実測: 端末で旧レイアウトが残った）。
+   * ループ防止に sessionStorage のフラグを使い、読み込み後に消す。
+   */
+  const RELOAD_KEY = 'hm.swReload'
+  try {
+    if (sessionStorage.getItem(RELOAD_KEY) === '1') sessionStorage.removeItem(RELOAD_KEY)
+  } catch {
+    /* noop */
+  }
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    try {
+      if (sessionStorage.getItem(RELOAD_KEY) === '1') return
+      sessionStorage.setItem(RELOAD_KEY, '1')
+    } catch {
+      /* sessionStorage が使えなくても 1 回だけ再読み込みする */
+    }
+    window.location.reload()
+  })
 }

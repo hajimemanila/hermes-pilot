@@ -1748,6 +1748,8 @@ export function ChatPane({
   const insertSnippet = useCallback(
     (s, sendNow = false) => {
       setSnippetSheet(false)
+      // 1 タップにつき 1 回だけ振動させる（ここで一度だけ鳴らし、先の分岐では鳴らさない）
+      haptic('tap')
       // 仕様の種は「文字を流し込む」チップではなく、1 行メモのシートを開く
       if (s?.action === 'seed') {
         setSeedOpen(true)
@@ -1776,7 +1778,7 @@ export function ChatPane({
         el.style.height = 'auto'
         fitComposer(el)
       })
-      haptic('tap')
+      // 振動は関数の先頭で 1 回だけ（ここで鳴らすと挿入時に 2 回になった・実測）
     },
     [text, sendText],
   )
