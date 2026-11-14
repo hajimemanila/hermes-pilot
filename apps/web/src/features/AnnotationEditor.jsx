@@ -1,6 +1,15 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
 import { CloseActions } from '../components/CloseActions.jsx'
+import {
+  STAMPS,
+  applyStampToStrokes,
+  composeNote,
+  lastStampId,
+  stampById,
+  stampPills,
+  strokesToMarks,
+} from '../lib/annotationStamps.js'
 import { readActiveChatId } from '../lib/chatReports.js'
 import { haptic } from '../lib/haptic.js'
 import { useI18n } from '../i18n/index.js'
@@ -14,6 +23,9 @@ import { useI18n } from '../i18n/index.js'
  * - **イベントは PointerEvent のみ**（pointerdown / pointermove / pointerup）。
  *   mouse と touch を書き分けない（`touch-action: none` でスクロールも止める）
  * - ツールは ペン / 矢印 / 矩形 / Undo の 4 つだけ。色・太さ・テキストは持たない
+ * - **1 タップ指示スタンプ（SPEC-PILOT-V5 §3.3 ②）**: 6 種のチップで、最後のストロークに
+ *   `stamp` を紐づける（未描画なら中央に自動ボックス）。送信 `note` には指示一覧を
+ *   自動合成するので、キーボードを開かずに赤入れを送れる
  */
 
 const TOOLS = [
@@ -23,6 +35,9 @@ const TOOLS = [
 ]
 
 const RED = '#e11d48'
+/** スタンプの小ピル（画像の上でも読めるアンバー）。 */
+const AMBER = '#f59e0b'
+const AMBER_INK = '#231603'
 
 export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
   const { t } = useI18n()
@@ -36,6 +51,8 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
   const [error, setError] = useState(null)
   const [note, setNote] = useState('')
   const [count, setCount] = useState(0)
+  // 最後のストロークに付いているスタンプ（チップの on 表示用）
+  const [activeStamp, setActiveStamp] = useState(null)
   // Before ↔ After（SPEC §5.2.2）。比較相手が無いタスクではトグルを出さない
   const [compare, setCompare] = useState(false)
   const [approving, setApproving] = useState(false)
@@ -75,6 +92,7 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
     ctx.scale(dpr, dpr)
     ctx.drawImage(img, 0, 0, box.w, box.h)
     for (const s of strokesRef.current) drawStroke(ctx, s)
+    drawStampPills(ctx, strokesRef.current, box.w, box.h)
   }, [layout])
 
   // レイアウトが 0 の瞬間（初回マウント直後）に描かないよう、次フレームで再試行する
@@ -155,12 +173,33 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
       cur.points = cur.points.filter((_, i) => i % 2 === 0 || i === cur.points.length - 1)
       setCount(strokesRef.current.length)
     }
+    setActiveStamp(lastStampId(strokesRef.current))
     redraw()
   }
 
   function undo() {
     strokesRef.current.pop()
     setCount(strokesRef.current.length)
+    setActiveStamp(lastStampId(strokesRef.current))
+    redraw()
+  }
+
+  /**
+   * 1 タップ指示スタンプを押す（SPEC-PILOT-V5 §3.3 ②）。
+   *
+   * 最後のストロークに紐づけ、1 本も無ければ中央に自動ボックスを作る
+   * （＝赤を引かずにスタンプだけで送信できる）。判定は純関数側に置いてある。
+   */
+  function applyStamp(id) {
+    if (!ready || busy) return
+    haptic('tap')
+    const box = layout()
+    const res = applyStampToStrokes(strokesRef.current, id, box ? { w: box.w, h: box.h } : null)
+    if (!res.stamp) return
+    strokesRef.current = res.strokes
+    setCount(res.strokes.length)
+    setActiveStamp(res.stamp.id)
+    setError(null)
     redraw()
   }
 
@@ -188,18 +227,20 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
     setError(null)
     try {
       const canvas = canvasRef.current
-      const w = canvas.width
-      const h = canvas.height
-      const marks = strokesRef.current.map((s) => ({
-        tool: s.tool,
-        points: s.points.map(([x, y]) => [
-          Math.round((x / (w / (window.devicePixelRatio || 1))) * 1000) / 1000,
-          Math.round((y / (h / (window.devicePixelRatio || 1))) * 1000) / 1000,
-        ]),
-      }))
+      const dpr = window.devicePixelRatio || 1
+      const marks = strokesToMarks(strokesRef.current, {
+        width: canvas.width / dpr,
+        height: canvas.height / dpr,
+      })
       const r = await api(`/api/review/${item.id}/annotation`, {
         method: 'POST',
-        body: { annotated_image: exportDataUrl(), note, marks, by: 'mobile', chat: readActiveChatId() },
+        body: {
+          annotated_image: exportDataUrl(),
+          note: composeNote(note, strokesRef.current),
+          marks,
+          by: 'mobile',
+          chat: readActiveChatId(),
+        },
       })
       notify?.(r?.duplicate ? t('annot.duplicate') : t('annot.sent'))
       onSubmitted?.(r)
@@ -293,6 +334,25 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
         </div>
       </div>
 
+      {/* 1 タップ指示スタンプ（SPEC-PILOT-V5 §3.3 ② / D26）。キーボードを開かずに赤入れできる */}
+      <div className="ak-anno-stamps" role="group" aria-label={t('annot.stampsAria')}>
+        <span className="ak-anno-stamps-title">{t('annot.stampsTitle')}</span>
+        {STAMPS.map((def) => (
+          <button
+            key={def.id}
+            type="button"
+            className={`ak-anno-stamp${activeStamp === def.id ? ' on' : ''}`}
+            aria-pressed={activeStamp === def.id}
+            title={def.instruction}
+            disabled={!ready || busy}
+            onClick={() => applyStamp(def.id)}
+          >
+            <span aria-hidden="true">{def.emoji}</span>
+            {t(def.key)}
+          </button>
+        ))}
+      </div>
+
       {item.status === 'blocked' ? (
         <div className="ak-approve-row">
           <button
@@ -357,6 +417,46 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
       ) : null}
     </div>
   )
+}
+
+/**
+ * スタンプ付きストロークのそばに `#1 💥` のアンバーピルを描く（SPEC §3.3 ②）。
+ *
+ * ピルはストロークの終点に置き、キャンバス外へはみ出さないよう内側へ寄せる。
+ * アンバー＋濃色文字なので、赤入れやスクショ上でも読める。
+ */
+function drawStampPills(ctx, strokes, w, h) {
+  const pills = stampPills(strokes)
+  if (!pills.length) return
+  ctx.save()
+  ctx.font = '700 11px system-ui, -apple-system, "Segoe UI", sans-serif'
+  ctx.textBaseline = 'middle'
+  for (const p of pills) {
+    const pts = p.stroke?.points || []
+    const [ax, ay] = pts[pts.length - 1] || [0, 0]
+    const text = `#${p.index} ${p.emoji}`
+    const padX = 6
+    const pw = ctx.measureText(text).width + padX * 2
+    const ph = 18
+    const r = ph / 2
+    const x = Math.max(1, Math.min(ax - pw / 2, w - pw - 1))
+    const y = Math.max(1, Math.min(ay + 8, h - ph - 1))
+    ctx.beginPath()
+    ctx.moveTo(x + r, y)
+    ctx.arcTo(x + pw, y, x + pw, y + ph, r)
+    ctx.arcTo(x + pw, y + ph, x, y + ph, r)
+    ctx.arcTo(x, y + ph, x, y, r)
+    ctx.arcTo(x, y, x + pw, y, r)
+    ctx.closePath()
+    ctx.fillStyle = AMBER
+    ctx.fill()
+    ctx.strokeStyle = 'rgba(0, 0, 0, .35)'
+    ctx.lineWidth = 1
+    ctx.stroke()
+    ctx.fillStyle = AMBER_INK
+    ctx.fillText(text, x + padX, y + ph / 2 + 0.5)
+  }
+  ctx.restore()
 }
 
 /** 1 ストロークを描く（CSS px 座標系）。 */
