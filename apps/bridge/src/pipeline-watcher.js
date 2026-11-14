@@ -386,16 +386,41 @@ function waveHash(tasks) {
   return crypto.createHash('sha1').update(ids.join(',')).digest('hex').slice(0, 10)
 }
 
-export function createPipelineWatcher(cfg = {}, opts = {}) {
-  const intervalMs = Math.max(1000, Number(opts.intervalMs) || 10_000)
-  const now = typeof opts.now === 'function' ? opts.now : () => Date.now()
-  const log = opts.logger ?? console
-  const reviewRoot =
+/**
+ * `review/` のルート（`chat-reports.jsonl` などの置き場）。
+ *
+ * SPEC V5-3 の Architect（`architect.js`）も同じファイルへ `spec_ready` を書くため、
+ * 解決規則をここ 1 箇所に寄せる。
+ * @param {object} [cfg] 設定（`reviewDir` / `pluginDataDir` / `kanbanRoot`）
+ * @returns {string} ディレクトリ
+ */
+export function reviewRootFor(cfg = {}) {
+  return (
     cfg.reviewDir ??
     path.join(
       cfg.pluginDataDir ?? path.join(cfg.kanbanRoot ?? '.', '..', 'plugin-data', 'hermes-pilot'),
       'review',
     )
+  )
+}
+
+/**
+ * `chat-reports.jsonl` へ 1 行追記する（パイプライン完了と Architect の仕様完成が同じ列に並ぶ）。
+ * @param {object} [cfg] 設定
+ * @param {object} row 行（`kind` を持つ）
+ * @returns {string} 書き込んだファイル
+ */
+export function appendChatReport(cfg = {}, row = {}) {
+  const file = path.join(reviewRootFor(cfg), 'chat-reports.jsonl')
+  appendJsonl(file, row)
+  return file
+}
+
+export function createPipelineWatcher(cfg = {}, opts = {}) {
+  const intervalMs = Math.max(1000, Number(opts.intervalMs) || 10_000)
+  const now = typeof opts.now === 'function' ? opts.now : () => Date.now()
+  const log = opts.logger ?? console
+  const reviewRoot = reviewRootFor(cfg)
   const statePath = path.join(reviewRoot, 'pipeline-watcher-state.json')
   const chatReportsPath = path.join(reviewRoot, 'chat-reports.jsonl')
   const reportsPath = path.join(reviewRoot, 'pipeline-reports.jsonl')

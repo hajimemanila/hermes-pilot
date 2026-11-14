@@ -123,6 +123,25 @@
       resetSnippets: "Reset",
       resetArmed: "Tap again to reset",
       snippetsFileOnly: "Bridge offline — only the saved custom entries can be edited.",
+      pipelineTitle: "Pipeline & Architect",
+      pipelineLead: "Who drafts the spec, and the one-tap A2B optimization (SOUL.md + skills).",
+      pipelineRunner: "Architect runner",
+      pipelineHermes: "Hermes Native",
+      pipelineAgy: "Antigravity (agy)",
+      pipelineAgyOk: "Opt-in available — the official agy CLI runs as a subprocess; no token access.",
+      pipelineAgyMissing: "agy CLI not found on this machine — Hermes Native only.",
+      pipelineSoul: "SOUL.md",
+      pipelineSkills: "Skills",
+      pipelineApplied: "applied",
+      pipelineMissing: "not applied",
+      pipelineJobs: "Architect jobs",
+      pipelinePending: "Unfiled specs",
+      pipelineOptimize: "Optimize now",
+      pipelineOptimizing: "Optimizing…",
+      pipelineOptimized: "Applied",
+      pipelineUnavailable: "Pipeline API unavailable",
+      pipelineEmpty: "No Architect jobs yet.",
+      pipelineBatches: "{n} batches",
       logsTitle: "Logs & audit",
       logsLead: "Tail of the gateway, error, bridge and audit logs. Tokens are redacted before they reach this page.",
       logGateway: "Gateway",
@@ -238,6 +257,25 @@
       resetSnippets: "既定に戻す",
       resetArmed: "もう一度タップでリセット",
       snippetsFileOnly: "ブリッジ停止中 — 保存済みのカスタムだけ編集できます。",
+      pipelineTitle: "パイプライン＆Architect",
+      pipelineLead: "仕様書を誰が書くか、そして 1 タップの A2B 最適化（SOUL.md ＋ スキル）。",
+      pipelineRunner: "Architect のランナー",
+      pipelineHermes: "Hermes Native",
+      pipelineAgy: "Antigravity (agy)",
+      pipelineAgyOk: "Opt-in 可能 — 公式 agy CLI を子プロセス起動します。トークンには触れません。",
+      pipelineAgyMissing: "このマシンに agy CLI がありません — Hermes Native のみ。",
+      pipelineSoul: "SOUL.md",
+      pipelineSkills: "スキル",
+      pipelineApplied: "適用済み",
+      pipelineMissing: "未適用",
+      pipelineJobs: "Architect ジョブ",
+      pipelinePending: "未起票の仕様書",
+      pipelineOptimize: "今すぐ最適化",
+      pipelineOptimizing: "適用中…",
+      pipelineOptimized: "適用しました",
+      pipelineUnavailable: "パイプライン API が使えません",
+      pipelineEmpty: "Architect ジョブはまだありません。",
+      pipelineBatches: "{n} バッチ",
       logsTitle: "ログ・監査",
       logsLead: "ゲートウェイ・エラー・ブリッジ・監査ログの末尾。トークンは秘匿してから返します。",
       logGateway: "ゲートウェイ",
@@ -435,6 +473,7 @@
     { id: "hp-sec-repos", key: "reposTitle" },
     { id: "hp-sec-settings", key: "settingsTitle" },
     { id: "hp-sec-snippets", key: "snippetsTitle" },
+    { id: "hp-sec-pipeline", key: "pipelineTitle" },
     { id: "hp-sec-logs", key: "logsTitle" },
     { id: "hp-sec-service", key: "serviceTitle" },
     { id: "hp-sec-links", key: "linksTitle" }
@@ -513,6 +552,172 @@
   }
 
   // ------------------------------------------------------------------ sections
+
+  /**
+   * Pipeline & Architect (SPEC V5 §3.2 / D25): who writes the spec, and the
+   * one-tap A2B optimization. Both buttons run on the bridge so the audit trail
+   * records them; this card only reflects what the bridge reports back.
+   */
+  function PipelineSection(props) {
+    var t = props.t;
+    var dataState = useState(null);
+    var data = dataState[0];
+    var setData = dataState[1];
+    var busyState = useState(false);
+    var busy = busyState[0];
+    var setBusy = busyState[1];
+    var errState = useState(null);
+    var err = errState[0];
+    var setErr = errState[1];
+    var noteState = useState(null);
+    var note = noteState[0];
+    var setNote = noteState[1];
+
+    var load = useCallback(function () {
+      return request("/pipeline")
+        .then(function (res) {
+          if (res.status === 200 && res.body && res.body.ok) {
+            setData(res.body);
+            setErr(null);
+          } else {
+            setErr(reasonOf(res, t.pipelineUnavailable));
+          }
+        })
+        .catch(function (e) {
+          setErr(String((e && e.message) || e));
+        });
+    }, [t.pipelineUnavailable]);
+
+    useEffect(function () {
+      load();
+    }, [load]);
+
+    function act(body) {
+      setBusy(true);
+      setNote(null);
+      return request("/pipeline", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body)
+      })
+        .then(function (res) {
+          if (res.status === 200 && res.body && res.body.ok) {
+            setNote(body.action === "optimize" ? t.pipelineOptimized : t.reposSaved);
+            setErr(null);
+            return load();
+          }
+          setErr(reasonOf(res, t.pipelineUnavailable));
+        })
+        .catch(function (e) {
+          setErr(String((e && e.message) || e));
+        })
+        .then(function () {
+          setBusy(false);
+        });
+    }
+
+    var runner = (data && data.runner) || "hermes";
+    var hasAgy = Boolean(data && data.hasAgyCli);
+    var pipeline = data && data.pipeline;
+    var soulApplied = Boolean(pipeline && pipeline.soul && pipeline.soul.applied);
+    var skillsPresent = pipeline && pipeline.hermes && Array.isArray(pipeline.hermes.present) ? pipeline.hermes.present.length : 0;
+    var jobs = (data && data.jobs) || [];
+    var pending = (data && data.pending) || [];
+
+    return h(
+      Card,
+      { id: "hp-sec-pipeline", title: t.pipelineTitle, hint: t.pipelineLead },
+      err ? h("p", { className: "hp-error" }, err) : null,
+      note ? h("p", { className: "hp-hint" }, note) : null,
+      data && data.notice ? h("p", { className: "hp-hint" }, data.notice) : null,
+      h(Chip, { label: t.pipelineRunner, value: runner === "antigravity" ? t.pipelineAgy : t.pipelineHermes }),
+      h(
+        "div",
+        { className: "hp-actions" },
+        h(
+          "button",
+          {
+            type: "button",
+            className: "hp-btn hp-btn-sm" + (runner === "hermes" ? " hp-btn-primary" : ""),
+            "aria-pressed": runner === "hermes",
+            disabled: busy,
+            onClick: function () {
+              act({ action: "setRunner", runner: "hermes" });
+            }
+          },
+          t.pipelineHermes
+        ),
+        h(
+          "button",
+          {
+            type: "button",
+            className: "hp-btn hp-btn-sm" + (runner === "antigravity" ? " hp-btn-primary" : ""),
+            "aria-pressed": runner === "antigravity",
+            disabled: busy || !hasAgy,
+            title: hasAgy ? t.pipelineAgyOk : t.pipelineAgyMissing,
+            onClick: function () {
+              act({ action: "setRunner", runner: "antigravity" });
+            }
+          },
+          t.pipelineAgy
+        )
+      ),
+      h("p", { className: "hp-hint" }, hasAgy ? t.pipelineAgyOk : t.pipelineAgyMissing),
+      h(
+        "div",
+        { className: "hp-kv" },
+        h("span", null, t.pipelineSoul),
+        h("strong", null, soulApplied ? t.pipelineApplied : t.pipelineMissing)
+      ),
+      h("div", { className: "hp-kv" }, h("span", null, t.pipelineSkills), h("strong", null, String(skillsPresent))),
+      h("div", { className: "hp-kv" }, h("span", null, t.pipelineJobs), h("strong", null, String(jobs.length))),
+      h("div", { className: "hp-kv" }, h("span", null, t.pipelinePending), h("strong", null, String(pending.length))),
+      pending.length
+        ? h(
+            "ul",
+            { className: "hp-list" },
+            pending.map(function (row) {
+              return h(
+                "li",
+                { key: "pending-" + row.path },
+                h("span", null, row.title || row.path),
+                " ",
+                h("span", { className: "hp-hint" }, t.pipelineBatches.replace("{n}", String(row.pendingCount || 0)))
+              );
+            })
+          )
+        : null,
+      !jobs.length ? h("p", { className: "hp-hint" }, t.pipelineEmpty) : null,
+      h(
+        "div",
+        { className: "hp-actions" },
+        h(
+          "button",
+          {
+            type: "button",
+            className: "hp-btn hp-btn-primary",
+            disabled: busy || !data || data.source === "offline",
+            onClick: function () {
+              act({ action: "optimize" });
+            }
+          },
+          busy ? t.pipelineOptimizing : t.pipelineOptimize
+        ),
+        h(
+          "button",
+          {
+            type: "button",
+            className: "hp-btn hp-btn-sm",
+            disabled: busy,
+            onClick: function () {
+              load();
+            }
+          },
+          t.refresh
+        )
+      )
+    );
+  }
 
   function StatusBar(props) {
     var t = props.t;
@@ -1833,6 +2038,7 @@
       h(RepositoriesSection, { t: t, tick: tick, onChanged: load }),
       h(SettingsSection, { t: t, onSaved: bump, onLangChange: changeLang, langChoice: langChoice }),
       h(SnippetsSection, { t: t, lang: lang, onChanged: load }),
+      h(PipelineSection, { t: t }),
       h(LogsSection, { t: t }),
       h(ServiceSection, { t: t, onChanged: load }),
       h(LinksSection, { t: t, status: status })

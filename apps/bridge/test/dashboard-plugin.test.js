@@ -603,3 +603,100 @@ print(json.dumps({
   assert.equal(out.autoLang, 'auto', 'config.json の lang は en|ja|auto（auto = ブラウザ追従）')
 })
 
+
+// ---------------------------------- 5. V5-3: pipeline & architect panel
+
+test('plugin_api.py: /pipeline の GET/POST を公開する（SPEC V5 §3.2 / D25）', () => {
+  const py = read('plugin_api.py')
+  assert.ok(py.includes('@router.get("/pipeline")'), 'GET /pipeline が必要')
+  assert.ok(py.includes('@router.post("/pipeline")'), 'POST /pipeline が必要')
+  assert.ok(py.includes('logic.build_pipeline'), 'ロジックは pilot_dashboard.py 側に置く')
+  assert.ok(py.includes('logic.pipeline_action'))
+})
+
+test('index.js: パイプラインカードを登録する（ナビ・本体の両方）', () => {
+  const js = read('index.js')
+  assert.match(js, /id: "hp-sec-pipeline", key: "pipelineTitle"/)
+  assert.match(js, /h\(PipelineSection, \{ t: t \}\)/)
+  assert.match(js, /request\("\/pipeline"/)
+  assert.doesNotMatch(js, /[0-9a-f]{64}/i, 'index.js に 64 文字 hex を置かない')
+})
+
+test('pilot_dashboard.py: build_pipeline が runner/適用状態/未起票を返し、トークンを漏らさない', () => {
+  const script = `
+import importlib.util, json, sys, tempfile
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location("pd_pipe", ${JSON.stringify(path.join(DASH, 'pilot_dashboard.py'))})
+m = importlib.util.module_from_spec(spec); sys.modules["pd_pipe"] = m; spec.loader.exec_module(m)
+
+token = "0123456789abcdef" * 4
+tmp = Path(tempfile.mkdtemp())
+(tmp / "Projects").mkdir()
+(tmp / "token").write_text(token)
+(tmp / "config.json").write_text(json.dumps({"lang": "en", "scanDirs": ["~/Projects"], "servicePort": 4097}))
+paths = {"home": tmp, "hermesHome": tmp / ".hermes", "dataDir": tmp,
+         "configPath": tmp / "config.json", "tokenPath": tmp / "token",
+         "dashboardMetaPath": tmp / "dashboard.json"}
+
+seen = []
+def fake(base, path, tok, *, method="GET", body=None, timeout=4.0):
+    seen.append((path, method, body))
+    if path == "/api/architect/config":
+        if method == "PUT":
+            return {"ok": True, "runner": body.get("runner"), "hasAgyCli": True}
+        return {"ok": True, "runner": "antigravity", "hasAgyCli": True}
+    if path == "/api/pipeline/status":
+        return {"ok": True, "soul": {"applied": True, "backups": 1},
+                "hermes": {"present": ["quick-review", "annotation", "spec-architect"], "missing": []},
+                "antigravity": [{"id": "gemini-plugins", "available": True, "present": ["spec-architect"], "missing": []}]}
+    if path.startswith("/api/architect/jobs"):
+        return {"ok": True, "jobs": [{"id": "arch-1", "status": "spec_ready", "runner": "hermes",
+                                      "autoStart": True, "spec": "docs/SPEC-V5.md", "createdAt": 1}],
+                "pending": [{"path": "docs/SPEC-V5.md", "title": "V5", "pendingCount": 3}],
+                "specReady": [{"spec": "docs/SPEC-V5.md", "title": "V5", "batchCount": 6, "launched": False}]}
+    if path == "/api/pipeline/optimize":
+        return {"ok": True, "soul": {"mode": "replaced", "changed": True}}
+    raise AssertionError(path)
+
+data = m.build_pipeline(paths, board="hermes-pilot", request=fake)
+set_runner = m.pipeline_action(paths, {"action": "setRunner", "runner": "antigravity"}, request=fake)
+bad_runner = m.pipeline_action(paths, {"action": "setRunner", "runner": "gpt"}, request=fake)
+bad_action = m.pipeline_action(paths, {"action": "nope"}, request=fake)
+opt = m.pipeline_action(paths, {"action": "optimize"}, request=fake)
+
+def down(base, path, tok, *, method="GET", body=None, timeout=4.0):
+    raise m.BridgeUnavailable("bridge down")
+
+offline = m.build_pipeline(paths, request=down)
+print(json.dumps({
+  "runner": data["runner"], "hasAgy": data["hasAgyCli"],
+  "soul": data["pipeline"]["soul"]["applied"],
+  "skills": len(data["pipeline"]["hermes"]["present"]),
+  "jobs": len(data["jobs"]), "pending": data["pending"][0]["pendingCount"],
+  "ready": data["specReady"][0]["batchCount"],
+  "boardQuery": [p for p, meth, b in seen if p.startswith("/api/architect/jobs")],
+  "tokenLeak": token in json.dumps(data),
+  "setRunner": set_runner.get("ok"), "setRunnerMethod": [m2 for p, m2, b in seen if p == "/api/architect/config"],
+  "badRunner": bad_runner.get("code"), "badAction": bad_action.get("code"),
+  "optimizeOk": opt.get("ok"), "optimizeAction": opt.get("action"),
+  "offline": [offline["source"], offline["ok"], offline["runner"]],
+}))`
+  const out = runPython(script)
+  assert.equal(out.runner, 'antigravity')
+  assert.equal(out.hasAgy, true)
+  assert.equal(out.soul, true, 'SOUL.md の適用状態をそのまま返す')
+  assert.equal(out.skills, 3)
+  assert.equal(out.jobs, 1)
+  assert.equal(out.pending, 3)
+  assert.equal(out.ready, 6)
+  assert.ok(out.boardQuery[0].includes('board=hermes-pilot'), 'ボードを渡すと jobs の絞り込みに入る')
+  assert.equal(out.tokenLeak, false, '64 文字トークンは返さない')
+  assert.equal(out.setRunner, true)
+  assert.ok(out.setRunnerMethod.includes('PUT'), 'ランナー変更は PUT で送る')
+  assert.equal(out.badRunner, 'invalid_runner')
+  assert.equal(out.badAction, 'invalid_action')
+  assert.equal(out.optimizeOk, true)
+  assert.equal(out.optimizeAction, 'optimize')
+  assert.deepEqual(out.offline, ['offline', true, 'hermes'], 'ブリッジ停止でもカードは描ける（既定 hermes）')
+})

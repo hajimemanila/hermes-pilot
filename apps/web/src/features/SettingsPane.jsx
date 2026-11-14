@@ -10,6 +10,8 @@ import { foldAudit } from '../lib/auditFold.js'
 import { useI18n } from '../i18n/index.js'
 import { LANGS } from '../i18n/lang.js'
 import { useTheme } from '../lib/useTheme.js'
+import { PipelinePanel } from './PipelinePanel.jsx'
+import { BOARD_KEY } from '../lib/repoPicker.js'
 
 /**
  * 設定タブ。状態の参照・ログ末尾・監査ログ（キルスイッチの履歴）を置く。
@@ -385,6 +387,7 @@ const SECTIONS = [
   { id: 'sec-appearance', icon: '🎨', key: 'settings.secAppearance' },
   { id: 'sec-pairing', icon: '📱', key: 'settings.secPairing' },
   { id: 'sec-snippets', icon: '⚡', key: 'settings.secSnippets' },
+  { id: 'sec-pipeline', icon: '🏗️', key: 'settings.secPipeline' },
   { id: 'sec-repos', icon: '📁', key: 'settings.secRepos' },
   { id: 'sec-audit', icon: '🛡️', key: 'settings.secAudit' },
   { id: 'sec-status', icon: '🩺', key: 'settings.secStatus' },
@@ -688,6 +691,24 @@ export function SettingsPane({ overview, notify, refresh }) {
       {/* 3. スニペット（見出しは SnippetsSection 側が描く） */}
       <section id="sec-snippets" className="card settings-card">
         <SnippetsSection notify={notify} lang={lang} />
+      </section>
+
+      {/* 4. パイプライン＆Architect（SPEC V5 §3.2・§3.3 / D25・D26①）
+          Architect のランナー（Hermes Native / Opt-in agy）と 1 タップ環境最適化。 */}
+      <section id="sec-pipeline" className="card settings-card">
+        <CardHead icon="🏗️" title={t('settings.secPipeline')} />
+        <PipelinePanel
+          notify={notify}
+          board={
+            (() => {
+              try {
+                return localStorage.getItem(BOARD_KEY) ?? ''
+              } catch {
+                return ''
+              }
+            })()
+          }
+        />
       </section>
 
       {/* 4. リポジトリ管理 */}

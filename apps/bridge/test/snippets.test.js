@@ -83,6 +83,7 @@ test('既定セットは SPEC §3.2 の14個（Hot 6・trigger 2）で順序も�
       'annotate-shot',
       'approve',
       'spec-kanban',
+      'spec-seed',
       'retry',
       'summary',
       'git-diff',
@@ -95,7 +96,7 @@ test('既定セットは SPEC §3.2 の14個（Hot 6・trigger 2）で順序も�
       'kanban',
     ],
   )
-  assert.equal(SNIPPETS.length, 14)
+  assert.equal(SNIPPETS.length, 15)
   const hot = SNIPPETS.filter((s) => s.hot)
   assert.equal(hot.length, 6)
   assert.equal(hot.length <= HOT_LIMIT, true)

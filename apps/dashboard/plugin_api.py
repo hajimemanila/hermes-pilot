@@ -189,6 +189,27 @@ def put_snippets(
         return fail(500, "SNIPPETS_FAILED", str(exc))
 
 
+@router.get("/pipeline")
+def get_pipeline(board: Optional[str] = Query(None)) -> Any:
+    """Architect runner ＋ SOUL/skill 適用状態 ＋ 未起票 SPEC（SPEC V5 §3.2 / D25）。"""
+    try:
+        return logic.build_pipeline(board=board)
+    except Exception as exc:  # health: surface the reason instead of a 500 traceback
+        return fail(500, "PIPELINE_FAILED", str(exc))
+
+
+@router.post("/pipeline")
+def post_pipeline(payload: Optional[dict] = Body(default=None)) -> Any:
+    """``optimize``（SOUL.md ＋ スキル配置）または ``setRunner``（hermes / antigravity）。"""
+    try:
+        result = logic.pipeline_action(payload=payload)
+    except Exception as exc:
+        return fail(500, "PIPELINE_FAILED", str(exc))
+    if not result.get("ok"):
+        return JSONResponse(result, status_code=400)
+    return result
+
+
 @router.get("/logs")
 def get_logs(
     file_name: str = Query("gateway", alias="file", pattern="^(gateway|errors|pilot|audit)$"),

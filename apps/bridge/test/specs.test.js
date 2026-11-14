@@ -12,12 +12,15 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   BATCH_ID_RE,
+  BODY_MAX,
+  CONTRACT_HEADER,
   buildTaskBody,
   buildTaskTitle,
   createSpecs,
   findOpenBatchTask,
   listSpecs,
   makeRunId,
+  normalizeExecutionMode,
   parseCreatedTask,
   parseSpec,
   pruneRuns,
@@ -425,4 +428,163 @@ test('pruneRuns は 50 件上限で古い完了分から落とす（未報告は
     '元の順序を保つ',
   )
   assert.equal(makeRunId(1794800000000).startsWith('run_202611'), true)
+})
+
+// --- Execution Mode 解析 ＆ 行動契約の注入（SPEC-PILOT-V5 §3.2 / Batch V5-1） -------------
+
+const MODE_SPEC = `# SPEC: Mode demo (SPEC-MODE)
+
+### Batch M1: zero stop batch
+
+- **Execution Mode**: \`[Mode: Zero-Stop]\`
+- **目的**: 自律で完走する
+
+### Batch M2: review batch
+
+- **実行モード**: [Mode: Fast-Track Review]
+- **目的**: 分岐したら聞く
+
+### Batch M3: visual batch
+
+- **Execution Mode**: [Mode: Visual Gate]
+- **目的**: 見た目を検証する
+
+### Batch M4: legacy batch
+
+- **目的**: モード未宣言（過去 SPEC）
+
+### 3.1 not a batch
+
+- **Execution Mode**: [Mode: Zero-Stop]
+`
+
+test('parseSpec はバッチごとに Execution Mode を正規化して返す（未宣言は null）', () => {
+  const parsed = parseSpec(MODE_SPEC)
+  assert.deepEqual(
+    parsed.batches.map((b) => b.id),
+    ['M1', 'M2', 'M3', 'M4'],
+    '番号見出しをバッチと誤認している',
+  )
+  assert.deepEqual(
+    parsed.batches.map((b) => b.mode),
+    ['zero-stop', 'fast-track-review', 'visual-gate', null],
+  )
+})
+
+test('normalizeExecutionMode は表記ゆれを吸収し、未知は null', () => {
+  assert.equal(normalizeExecutionMode('Zero-Stop'), 'zero-stop')
+  assert.equal(normalizeExecutionMode('[Mode: Visual Gate]'), 'visual-gate')
+  assert.equal(normalizeExecutionMode('fast-track'), 'fast-track-review')
+  assert.equal(normalizeExecutionMode(''), null)
+  assert.equal(normalizeExecutionMode('Turbo'), null)
+})
+
+test('docs/SPEC-PILOT-V5.md の Batch V5-1 〜 V5-6 と各 Execution Mode を抽出できる', () => {
+  const root = path.resolve(import.meta.dirname, '../../..')
+  const file = path.join(root, 'docs', 'SPEC-PILOT-V5.md')
+  if (!fs.existsSync(file)) return // 仕様書が無い環境ではスキップ相当
+  const parsed = parseSpec(fs.readFileSync(file, 'utf8'))
+  const ids = parsed.batches.map((b) => b.id)
+  assert.deepEqual(ids, ['V5-1', 'V5-2', 'V5-3', 'V5-4', 'V5-5', 'V5-6'])
+  assert.deepEqual(
+    parsed.batches.map((b) => b.mode),
+    ['zero-stop', 'visual-gate', 'zero-stop', 'visual-gate', 'visual-gate', 'visual-gate'],
+  )
+  for (const b of parsed.batches) {
+    assert.ok(b.section.includes('受入条件'), `${b.id} の受入条件が抜けている`)
+  }
+})
+
+test('buildTaskBody は Mode 行と [Hermes Pilot Execution Contract] を注入する', () => {
+  const batch = parseSpec(MODE_SPEC).batches[2] // M3 = visual-gate
+  const body = buildTaskBody({
+    specRelPath: 'docs/SPEC-MODE.md',
+    repoPath: '/tmp/repo',
+    board: 'mobile',
+    batch,
+    chat: 'local-abc.def:1',
+  })
+  const lines = body.split('\n')
+  const batchAt = lines.findIndex((l) => l.startsWith('Batch: '))
+  assert.equal(lines[batchAt + 1], 'Chat: local-abc.def:1', 'Chat が Batch の直後に無い')
+  assert.equal(lines[batchAt + 2], 'Mode: visual-gate', 'Mode 行が Chat の直後に無い')
+  assert.ok(body.includes(CONTRACT_HEADER), '行動契約ブロックが無い')
+  assert.ok(body.includes('npm run deploy'), 'visual-gate の契約（deploy）が入っていない')
+  assert.ok(body.includes('390×844'), 'visual-gate の実画面検証が入っていない')
+  assert.ok(body.includes('受入条件'), '抜粋が消えている')
+  assert.equal(body.indexOf(CONTRACT_HEADER) > body.indexOf('受入条件'), true, '契約は本文の末尾に置く')
+})
+
+test('buildTaskBody の契約はモードごとに違う（zero-stop / fast-track-review）', () => {
+  const [m1, m2] = parseSpec(MODE_SPEC).batches
+  const zero = buildTaskBody({ specRelPath: 'docs/SPEC-MODE.md', repoPath: '/tmp/repo', board: 'b', batch: m1 })
+  const fast = buildTaskBody({ specRelPath: 'docs/SPEC-MODE.md', repoPath: '/tmp/repo', board: 'b', batch: m2 })
+  assert.ok(zero.includes('Do not ask confirmation questions'), 'zero-stop の契約が無い')
+  assert.ok(zero.includes('npm run verify'))
+  assert.ok(fast.includes('quick-review'), 'fast-track-review の契約が無い')
+  assert.equal(zero.includes('npm run deploy'), false, 'zero-stop に visual-gate の契約が混ざっている')
+})
+
+test('buildTaskBody は後方互換: モード未宣言なら Mode 行も契約も足さない', () => {
+  const batch = parseSpec(MODE_SPEC).batches[3]
+  const body = buildTaskBody({ specRelPath: 'docs/SPEC-MODE.md', repoPath: '/tmp/repo', board: 'b', batch })
+  assert.equal(body.includes('Mode: '), false)
+  assert.equal(body.includes(CONTRACT_HEADER), false)
+  assert.equal(body.length <= BODY_MAX, true)
+})
+
+test('buildTaskBody は抜粋を切り詰めても契約ブロックを落とさない（BODY_MAX 内）', () => {
+  const huge = {
+    id: 'H1',
+    title: 'huge batch',
+    objective: '大きなバッチ',
+    mode: 'zero-stop',
+    section: `${'x'.repeat(BODY_MAX * 2)}\n`,
+  }
+  const body = buildTaskBody({ specRelPath: 'docs/SPEC-BIG.md', repoPath: '/tmp/repo', board: 'b', batch: huge })
+  assert.equal(body.length <= BODY_MAX, true, `本文が上限を超えている: ${body.length}`)
+  assert.ok(body.includes(CONTRACT_HEADER), '上限で契約が切れている')
+  assert.ok(body.trimEnd().endsWith('still unverified.'), '契約の末尾が切れている')
+})
+
+test('listSpecs が返すバッチにも mode が載る（PWA のモードピル用）', () => {
+  const root = tempDir()
+  try {
+    writeFile(root, 'docs/SPEC-MODE.md', MODE_SPEC)
+    const list = listSpecs(root)
+    assert.equal(list.length, 1)
+    assert.deepEqual(
+      list[0].batches.map((b) => b.mode),
+      ['zero-stop', 'fast-track-review', 'visual-gate', null],
+    )
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('launchSpec は mode 付きバッチの本文へ契約を入れて起票する（dryRun も同じ本文）', async () => {
+  const root = tempDir()
+  try {
+    writeFile(root, 'docs/SPEC-MODE.md', MODE_SPEC)
+    const calls = []
+    const runner = async (args) => {
+      calls.push(args)
+      return { code: 0, stdout: JSON.stringify({ id: `t_${calls.length}`, status: 'ready' }), stderr: '' }
+    }
+    const specs = createSpecs({}, { runner, tasks: () => [], recordRun: () => {} })
+    const r = await specs.launchSpec({
+      repoPath: root,
+      board: 'mobile',
+      specRelPath: 'docs/SPEC-MODE.md',
+      batchIds: ['M1'],
+    })
+    assert.equal(r.ok, true, JSON.stringify(r))
+    assert.equal(calls.length, 1)
+    const bodyArg = calls[0][calls[0].indexOf('--body') + 1]
+    assert.ok(bodyArg.includes('Mode: zero-stop'))
+    assert.ok(bodyArg.includes(CONTRACT_HEADER))
+    assert.equal(calls[0][calls[0].indexOf('--board') + 1], 'mobile')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
 })

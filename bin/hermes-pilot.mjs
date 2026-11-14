@@ -41,7 +41,7 @@ export const DEFAULT_PORT = 4097
 export const DEFAULT_HOST = '127.0.0.1'
 
 /** 同梱スキル（`hermes-pilot init` で `~/.hermes/skills/` へ配置する）。 */
-export const BUNDLED_SKILLS = ['quick-review', 'annotation']
+export const BUNDLED_SKILLS = ['quick-review', 'annotation', 'spec-architect']
 
 /** 標準ダッシュボード（:9119）に出すタブのプラグイン名。 */
 export const DASHBOARD_PLUGIN = 'hermes-pilot'

@@ -6,6 +6,7 @@ import path from 'node:path'
 import {
   DEFAULT_PILOT_UNIT,
   PILOT_UNITS,
+  agyCliDirs,
   detectCapabilities,
   detectTailscale,
   getCapabilities,
@@ -58,15 +59,37 @@ test('detectCapabilities は SPEC §5.3 の 5 項目を返す（darwin）', () =
     platform: 'darwin',
     pathEnv: fakeBin(['hermes', 'tailscale']),
     appExists: () => false,
+    // `agy` は Opt-in の追加項目なので、実機の有無に左右されない HOME を渡す
+    home: fakeBin([]),
   })
   assert.deepEqual(caps, {
     os: 'darwin',
     serviceManager: 'launchd',
     hasTailscale: true,
     hasHermesCli: true,
+    hasAgyCli: false,
     pilotServiceUnit: 'ai.hermes.pilot',
   })
   assert.equal(PILOT_UNITS.darwin, caps.pilotServiceUnit)
+})
+
+test('detectCapabilities は agy CLI を PATH でも既知の置き場所でも見つける（Opt-in の前提）', () => {
+  // PATH にある場合
+  assert.equal(
+    detectCapabilities({ platform: 'darwin', pathEnv: fakeBin(['agy']), appExists: () => false, home: fakeBin([]) })
+      .hasAgyCli,
+    true,
+  )
+  // PATH に無くても ~/.local/bin にあれば拾う（実測: ~/.local/bin/agy）
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-home-'))
+  const localBin = path.join(home, '.local', 'bin')
+  fs.mkdirSync(localBin, { recursive: true })
+  fs.writeFileSync(path.join(localBin, 'agy'), '#!/bin/sh\n', { mode: 0o755 })
+  assert.equal(
+    detectCapabilities({ platform: 'linux', pathEnv: fakeBin([]), appExists: () => false, home }).hasAgyCli,
+    true,
+  )
+  assert.ok(agyCliDirs(home).includes(localBin))
 })
 
 test('detectCapabilities は linux で systemd のユニット名を返す', () => {

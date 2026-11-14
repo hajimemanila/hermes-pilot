@@ -46,6 +46,92 @@ const SECTION_END_RE = /^#{1,3}\s/
 /** 目的の行（`- **目的**: …` / `**Objective**: …`）。 */
 const OBJECTIVE_RE = /^[-*]?\s*\*\*\s*(?:目的|Objective)\s*\*\*\s*[:：]\s*(.+)$/i
 
+/**
+ * 実行モード宣言の行（`- **Execution Mode**: `[Mode: Zero-Stop]`` / `- **実行モード**: [Mode: …]`）。
+ * バックティック・角括弧・`Mode:` 前置・大小文字をすべて許容する。
+ */
+export const EXECUTION_MODE_RE =
+  /^[-*]?\s*\*\*\s*(?:Execution\s*Mode|実行モード)\s*\*\*\s*[:：]\s*[`\s]*\[?\s*(?:Mode\s*[:：]\s*)?(Zero-Stop|Fast-Track\s*Review|Visual\s*Gate)/im
+
+/** 正規化した実行モード（`batch.mode` に入る値）。 */
+export const EXECUTION_MODES = ['zero-stop', 'fast-track-review', 'visual-gate']
+
+/**
+ * 実行モード表記を正規化する（未知の値・未宣言は `null`）。
+ *
+ * @param {unknown} raw `Zero-Stop` / `[Mode: Visual Gate]` / `visual-gate` など
+ * @returns {'zero-stop'|'fast-track-review'|'visual-gate'|null} 正規化したモード
+ */
+export function normalizeExecutionMode(raw) {
+  const s = String(raw ?? '')
+    .toLowerCase()
+    // `[Mode: Visual Gate]` のような生の宣言もそのまま受けられるように前置を落とす
+    .replace(/mode\s*[:：]/g, ' ')
+    .replace(/[^a-z-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+  if (!s) return null
+  if (s === 'zero-stop' || s === 'zerostop' || s === 'zero') return 'zero-stop'
+  if (s === 'fast-track-review' || s === 'fast-track' || s === 'fasttrack-review') return 'fast-track-review'
+  if (s === 'visual-gate' || s === 'visualgate' || s === 'visual') return 'visual-gate'
+  return null
+}
+
+/**
+ * バッチ本文から実行モードを読む（未宣言は `null`＝後方互換）。
+ *
+ * @param {string[]|string} section バッチ本文の行（または本文）
+ * @returns {'zero-stop'|'fast-track-review'|'visual-gate'|null} モード
+ */
+export function extractExecutionMode(section) {
+  const text = Array.isArray(section) ? section.join('\n') : String(section ?? '')
+  const m = EXECUTION_MODE_RE.exec(text)
+  return m ? normalizeExecutionMode(m[1]) : null
+}
+
+/** 行動契約ブロックの見出し（本文中で一意）。 */
+export const CONTRACT_HEADER = '[Hermes Pilot Execution Contract]'
+
+/** モード別の行動契約（`buildTaskBody` が本文末尾へ注入する）。 */
+export const MODE_CONTRACTS = {
+  'zero-stop': [
+    '- Do not ask confirmation questions in chat.',
+    '- Repair autonomously until `npm run verify` (tests, build, checks) passes, then mark the task done.',
+    '- Only when a design contradiction is unresolvable, file a `quick-review` sheet and block on it.',
+  ],
+  'fast-track-review': [
+    '- If the change forces a choice between options, file a `quick-review` sheet (each question with `recommended: true`) before implementing, and wait for the 1-tap approval.',
+    '- Everything else proceeds without asking: implement, run `npm run verify`, then mark the task done.',
+  ],
+  'visual-gate': [
+    '- After implementing, run `npm run deploy` and verify the real screen at `390×844` and `820×1180`; capture the screenshots.',
+    '- If the rendered result differs from the intent, file an `annotation` review (screenshot + marks) and wait for it.',
+    '- `npm run verify` must pass before you mark the task done.',
+  ],
+}
+
+/**
+ * モード別の行動契約ブロック（`[Hermes Pilot Execution Contract]`）を組み立てる。
+ *
+ * @param {string} mode 正規化済みモード
+ * @returns {string} 本文末尾に足すブロック（未知モードは空文字）
+ */
+export function buildExecutionContract(mode) {
+  const key = normalizeExecutionMode(mode)
+  if (!key) return ''
+  const rules = MODE_CONTRACTS[key] ?? []
+  return [
+    '',
+    CONTRACT_HEADER,
+    '',
+    `Mode: ${key}`,
+    '',
+    'This task was filed by the Hermes Pilot Spec Launchpad. The contract below overrides any habit of asking first.',
+    ...rules,
+    '- Finish with a short report: what changed, the verification command and its exit code, and what is still unverified.',
+  ].join('\n')
+}
+
 /** タイトル行（`# …`）。 */
 const TITLE_RE = /^#\s+(.+?)\s*$/
 
@@ -85,6 +171,8 @@ export function parseSpec(text) {
       id: m[1],
       title: m[2].trim(),
       objective: extractObjective(body),
+      // 実行モード（未宣言の過去 SPEC は null＝後方互換）
+      mode: extractExecutionMode(body),
       // 末尾の区切り線（`---`）は本文に含めない
       section: trimTrailingRule(body.join('\n')),
     })
@@ -199,12 +287,14 @@ export function buildTaskTitle(batch) {
  */
 export function buildTaskBody({ specRelPath, repoPath, board, batch, chat }) {
   const chatId = sanitizeSpecChat(chat)
+  const mode = normalizeExecutionMode(batch?.mode)
   const head = [
     `Spec: ${specRelPath}`,
     `Target: ${repoPath}`,
     `Board: ${board}`,
     `Batch: ${batch?.id ?? ''} — ${batch?.title ?? ''}`,
     ...(chatId ? [`Chat: ${chatId}`] : []),
+    ...(mode ? [`Mode: ${mode}`] : []),
     '',
     '## 目的',
     '',
@@ -212,9 +302,13 @@ export function buildTaskBody({ specRelPath, repoPath, board, batch, chat }) {
     '',
     '## 抜粋（受入条件 / Verify を含む）',
     '',
-    batch?.section || '',
   ].join('\n')
-  return head.slice(0, BODY_MAX)
+  // 契約ブロックは**末尾に必ず残す**（抜粋だけを切り詰める）。6000 字上限で契約が消えると
+  // 自走の保証が壊れるため、順序は「見出し → 抜粋 → 契約」で固定する。
+  const contract = buildExecutionContract(mode)
+  const room = Math.max(0, BODY_MAX - head.length - contract.length)
+  const section = String(batch?.section ?? '').slice(0, room)
+  return `${head}${section}${contract}`.slice(0, BODY_MAX)
 }
 
 /**

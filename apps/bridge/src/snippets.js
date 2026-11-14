@@ -78,6 +78,19 @@ const BUILTIN = [
     },
   },
   {
+    id: 'spec-seed',
+    en: {
+      label: '🎙️ Spec Seed',
+      text:
+        'Start a spec interview from this one-line note: put the 2-3 open design decisions on a Quick Review sheet (each with recommended: true), wait for my 1-tap answer, then write docs/SPEC-<SLUG>.md with Execution Mode, 目的, 変更ファイル and 受入条件 per batch.',
+    },
+    ja: {
+      label: '🎙️ 仕様の種',
+      text:
+        'この一行メモから仕様策定インタビューを始めて。設計論点を2〜3問の Quick Review シート（各問 recommended: true）にして1タップ回答を待ち、回答後に docs/SPEC-<SLUG>.md をバッチごとの Execution Mode・目的・変更ファイル・受入条件つきで書いて。',
+    },
+  },
+  {
     id: 'retry',
     hot: true,
     en: {

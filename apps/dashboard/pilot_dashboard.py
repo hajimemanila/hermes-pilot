@@ -521,6 +521,7 @@ def local_capabilities(
     tailscale_app = home / "Applications" / "Tailscale.app" / "Contents" / "MacOS" / "Tailscale"
     has_tailscale = bool(which("tailscale")) or Path("/Applications/Tailscale.app/Contents/MacOS/Tailscale").exists() or tailscale_app.exists()
     has_hermes = bool(which("hermes")) or (home / ".hermes" / "hermes-agent" / ".hermes" / "bin" / "hermes").exists()
+    has_agy = bool(which("agy"))
     key = service_key()
     unit = SERVICE_UNITS[key] if key else None
     return {
@@ -528,6 +529,8 @@ def local_capabilities(
         "serviceManager": SERVICE_MANAGERS[key] if key else "none",
         "hasTailscale": has_tailscale,
         "hasHermesCli": has_hermes,
+        # Opt-in の Architect ランナー（実行ファイルの存在だけ。認証ファイルは見ない）
+        "hasAgyCli": has_agy,
         "pilotServiceUnit": unit,
     }
 
@@ -1046,6 +1049,142 @@ def repos_action(
     if note:
         out["notice"] = note
     return redact(out, token)
+
+
+# ------------------------------------------------------ pipeline & architect
+
+
+def build_pipeline(
+    paths: Optional[Mapping[str, Path]] = None,
+    *,
+    board: Optional[str] = None,
+    request: Optional[Callable[..., Any]] = None,
+) -> dict[str, Any]:
+    """``GET /pipeline`` — Architect runner, SOUL/skill status, unfiled specs.
+
+    Everything comes from the bridge; when it is down the payload still renders
+    (``source: "offline"``) so the card explains itself instead of going blank.
+    Only whitelisted keys leave this function, and ``redact`` runs last.
+    """
+    paths = paths or resolve_paths()
+    request = request or bridge_request
+    token = read_token(paths)
+    base = bridge_base(paths)
+    query = f"?board={urllib.parse.quote(str(board))}" if board else ""
+
+    payload: dict[str, Any] = {
+        "ok": True,
+        "source": "bridge",
+        "board": board or None,
+        "runner": "hermes",
+        "hasAgyCli": False,
+        "pipeline": None,
+        "jobs": [],
+        "pending": [],
+        "specReady": [],
+    }
+
+    try:
+        config = request(base, "/api/architect/config", token, method="GET")
+        if isinstance(config, Mapping) and config.get("ok"):
+            payload["runner"] = "antigravity" if config.get("runner") == "antigravity" else "hermes"
+            payload["hasAgyCli"] = bool(config.get("hasAgyCli"))
+    except BridgeUnavailable as exc:
+        payload["source"] = "offline"
+        payload["notice"] = str(exc)
+
+    try:
+        status = request(base, "/api/pipeline/status", token, method="GET")
+        if isinstance(status, Mapping) and status.get("ok"):
+            payload["pipeline"] = {
+                "soul": status.get("soul"),
+                "hermes": status.get("hermes"),
+                "antigravity": [
+                    {"id": t.get("id"), "available": bool(t.get("available")), "present": t.get("present") or [], "missing": t.get("missing") or []}
+                    for t in (status.get("antigravity") or [])
+                    if isinstance(t, Mapping)
+                ],
+            }
+    except BridgeUnavailable:
+        pass
+
+    try:
+        jobs = request(base, "/api/architect/jobs" + query, token, method="GET")
+        if isinstance(jobs, Mapping) and jobs.get("ok"):
+            payload["jobs"] = [
+                {
+                    "id": j.get("id"),
+                    "status": j.get("status"),
+                    "runner": j.get("runner"),
+                    "autoStart": bool(j.get("autoStart")),
+                    "spec": j.get("spec"),
+                    "createdAt": j.get("createdAt"),
+                }
+                for j in (jobs.get("jobs") or [])[:6]
+                if isinstance(j, Mapping)
+            ]
+            payload["jobCount"] = len(jobs.get("jobs") or [])
+            payload["pending"] = [
+                {"path": p.get("path"), "title": p.get("title"), "pendingCount": p.get("pendingCount")}
+                for p in (jobs.get("pending") or [])[:6]
+                if isinstance(p, Mapping)
+            ]
+            payload["specReady"] = [
+                {"spec": s.get("spec"), "title": s.get("title"), "batchCount": s.get("batchCount"), "launched": bool(s.get("launched"))}
+                for s in (jobs.get("specReady") or [])[:6]
+                if isinstance(s, Mapping)
+            ]
+    except BridgeUnavailable:
+        pass
+
+    return redact(payload, token)
+
+
+def pipeline_action(
+    paths: Optional[Mapping[str, Path]] = None,
+    payload: Any = None,
+    *,
+    request: Optional[Callable[..., Any]] = None,
+) -> dict[str, Any]:
+    """``POST /pipeline`` — ``{action: "optimize"} | {action: "setRunner", runner}``.
+
+    Both run **on the bridge**, so the audit trail records them. An unknown
+    runner, or ``antigravity`` on a machine without ``agy``, is rejected by the
+    bridge and passed back verbatim — the tab never invents success.
+    """
+    paths = paths or resolve_paths()
+    request = request or bridge_request
+    body: Mapping[str, Any] = payload if isinstance(payload, Mapping) else {}
+    action = str(body.get("action") or "").strip()
+    token = read_token(paths)
+    base = bridge_base(paths)
+
+    if action == "optimize":
+        try:
+            answer = request(base, "/api/pipeline/optimize", token, method="POST", body={})
+        except BridgeUnavailable as exc:
+            return {"ok": False, "code": "bridge_unreachable", "error": str(exc)}
+        out: dict[str, Any] = dict(answer) if isinstance(answer, Mapping) else {"ok": False}
+        out["action"] = "optimize"
+        return redact(out, token)
+
+    if action == "setRunner":
+        runner = str(body.get("runner") or "").strip()
+        if runner not in ("hermes", "antigravity"):
+            return {"ok": False, "code": "invalid_runner", "error": "runner must be hermes or antigravity"}
+        try:
+            answer = request(base, "/api/architect/config", token, method="PUT", body={"runner": runner})
+        except BridgeUnavailable as exc:
+            return {"ok": False, "code": "bridge_unreachable", "error": str(exc)}
+        out: dict[str, Any] = dict(answer) if isinstance(answer, Mapping) else {"ok": False}
+        out["action"] = "setRunner"
+        return redact(out, token)
+
+    return {
+        "ok": False,
+        "code": "invalid_action",
+        "error": "action must be one of optimize, setRunner",
+    }
 
 
 # ----------------------------------------------------------------- snippets

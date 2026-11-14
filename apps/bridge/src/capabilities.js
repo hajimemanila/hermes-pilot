@@ -21,6 +21,26 @@ export function hermesCliDirs(home = os.homedir()) {
 }
 
 /**
+ * `agy`（Antigravity の公式 CLI）が入りやすいディレクトリ。
+ *
+ * **境界（SPEC V5 §3.2 / D25）**: ここで見るのは *実行ファイルの存在* だけ。
+ * Antigravity の OAuth 認証ファイルやブラウザのプロファイルは
+ * 読まない・コピーしない・再利用しない。`agy` を選んだときも公式 CLI を子プロセスで
+ * 起動するだけで、トークンを直接扱わない。
+ * @param {string} [home] ホーム
+ * @returns {string[]} 候補ディレクトリ
+ */
+export function agyCliDirs(home = os.homedir()) {
+  return [
+    path.join(home, '.local', 'bin'),
+    path.join(home, '.antigravity', 'bin'),
+    path.join(home, 'Applications', 'Antigravity.app', 'Contents', 'MacOS'),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+  ]
+}
+
+/**
  * 実行環境の Capability（能力）検出。
  *
  * 公開プラグインとして「どこでも単体で動く」ために、個人環境の前提
@@ -123,17 +143,28 @@ export function serviceCommands(caps = {}) {
  * @param {string} [opts.pathEnv] PATH
  * @param {Function} [opts.appExists] アプリ存在確認
  * @param {string} [opts.home] ホーム（`hermes` CLI の候補ディレクトリ用）
- * @returns {{os: string, serviceManager: string, hasTailscale: boolean, hasHermesCli: boolean, pilotServiceUnit: string}} 検出結果
+ * @param {Function} [opts.hasBinaryFn] 実行ファイル存在確認の差し替え（テスト用）
+ * @returns {{os: string, serviceManager: string, hasTailscale: boolean, hasHermesCli: boolean, hasAgyCli: boolean, pilotServiceUnit: string}} 検出結果
  */
-export function detectCapabilities({ platform = process.platform, pathEnv = process.env.PATH ?? '', appExists, home } = {}) {
+export function detectCapabilities({
+  platform = process.platform,
+  pathEnv = process.env.PATH ?? '',
+  appExists,
+  home,
+  hasBinaryFn,
+} = {}) {
   const serviceManager = serviceManagerFor(platform)
-  const cliDirs = hermesCliDirs(home ?? os.homedir())
+  const homeDir = home ?? os.homedir()
+  const cliDirs = hermesCliDirs(homeDir)
+  const find = typeof hasBinaryFn === 'function' ? hasBinaryFn : hasBinary
   return {
     os: platform,
     serviceManager,
     hasTailscale: detectTailscale({ pathEnv, appExists }),
     // PATH に無くても既知の置き場所（~/.hermes/hermes-agent/.hermes/bin 等）を見る
-    hasHermesCli: hasBinary('hermes', pathEnv) || cliDirs.some((dir) => hasBinary('hermes', dir)),
+    hasHermesCli: find('hermes', pathEnv) || cliDirs.some((dir) => find('hermes', dir)),
+    // Opt-in の Antigravity ランナー（SPEC V5 §3.2 / D25）。存在確認だけ。
+    hasAgyCli: find('agy', pathEnv) || agyCliDirs(homeDir).some((dir) => find('agy', dir)),
     pilotServiceUnit: PILOT_UNITS[platform] ?? DEFAULT_PILOT_UNIT,
   }
 }
