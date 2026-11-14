@@ -25,7 +25,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
-import { listSpecs as scanSpecs, findOpenBatchTask } from './specs.js'
+import { listSpecs as scanSpecs } from './specs.js'
 import { appendChatReport } from './pipeline-watcher.js'
 
 /** `chat-reports.jsonl` の行種別（仕様書が完成した）。 */
@@ -185,18 +185,37 @@ export function findJobSpec(job, specs, { taken = new Set(), slackMs = SPEC_MTIM
 }
 
 /**
+ * タスク一覧から「起票済みのバッチ ID」を集める（**状態を問わない**）。
+ *
+ * 完了済み（`done`）を未起票と数えると、バナーが「起票して開始」を出して
+ * 同じバッチをもう一度起票してしまう（`specs.launchSpec` がスキップするのは
+ * **未完了**の重複だけ）。ここは「タスクが 1 つでもあるか」で数える。
+ *
+ * @param {Array<{title?: string}>} tasks ボードのタスク
+ * @returns {Set<string>} バッチ ID
+ */
+export function filedBatchIds(tasks) {
+  const out = new Set()
+  for (const task of Array.isArray(tasks) ? tasks : []) {
+    const m = /^\[([^\]]+)\]/.exec(String(task?.title ?? '').trim())
+    if (m && m[1].trim()) out.add(m[1].trim())
+  }
+  return out
+}
+
+/**
  * 未起票の SPEC を数える（A2B の 1 タップ一括起票カード用）。
  * @param {Array<object>} specs `specs.listSpecs` の結果
  * @param {Array<{id: string, title: string, status?: string}>} tasks ボードのタスク
  * @returns {Array<{path: string, title: string, batchCount: number, pendingCount: number, pending: string[], mtime: number}>} 未起票ありの SPEC
  */
 export function pendingSpecs(specs, tasks) {
-  const list = Array.isArray(tasks) ? tasks : []
+  const filed = filedBatchIds(tasks)
   const out = []
   for (const spec of Array.isArray(specs) ? specs : []) {
     const batches = (spec?.batches ?? []).filter((b) => b?.id)
     if (!batches.length) continue
-    const pending = batches.filter((b) => !findOpenBatchTask(list, b.id)).map((b) => b.id)
+    const pending = batches.filter((b) => !filed.has(String(b.id))).map((b) => b.id)
     if (!pending.length) continue
     out.push({
       path: String(spec.path),

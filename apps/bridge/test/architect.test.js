@@ -25,6 +25,7 @@ import {
   SPEC_READY_KIND,
   buildSeedPrompt,
   createArchitect,
+  filedBatchIds,
   findJobSpec,
   makeJobId,
   normalizeSeed,
@@ -387,6 +388,14 @@ test('findJobSpec / pendingSpecs は猶予と既存タスクを見る', () => {
   assert.equal(pending.length, 1)
   assert.equal(pending[0].path, 'docs/OLD.md')
   assert.deepEqual(pending[0].pending, ['A'])
+
+  // 完了済み（done）も「起票済み」に数える（二重起票を出さない）
+  assert.deepEqual([...filedBatchIds([{ title: '[A] done batch', status: 'done' }])], ['A'])
+  assert.deepEqual(
+    pendingSpecs(specs, [{ id: 't1', title: '[A] done batch', status: 'done' }]).map((p) => [p.path, p.pending]),
+    [['docs/NEW.md', ['B']]],
+    'done の A は起票済み、B だけが未起票',
+  )
 
   const free = pendingSpecs(specs, [])
   assert.deepEqual(
