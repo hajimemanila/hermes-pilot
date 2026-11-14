@@ -4,6 +4,7 @@ import { useInstallState, swState } from '../lib/useInstallState.js'
 import { diagnosePwa } from '../lib/pwaDiagnose.js'
 import { RefreshButton, Sheet, Spinner, fmtBytes, fmtDateTime, relTime } from '../components/Ui.jsx'
 import { haptic, isHapticEnabled, setHapticEnabled } from '../lib/haptic.js'
+import { foldAudit } from '../lib/auditFold.js'
 import { useI18n } from '../i18n/index.js'
 import { LANGS } from '../i18n/lang.js'
 import { useTheme } from '../lib/useTheme.js'
@@ -194,11 +195,17 @@ function SnippetsSection({ notify, lang }) {
 
   return (
     <>
-      <div className="list-head">
-        <span>{t('settings.snippets')}</span>
-        <button className="link" disabled={busy} onClick={resetDefaults}>
-          {t('settings.snippetReset')}
-        </button>
+      {/* 見出しはカード共通の枠（SPEC §3.4-2）。右端に「既定に戻す」 */}
+      <div className="settings-card-head">
+        <span className="settings-card-icon" aria-hidden="true">
+          ⚡
+        </span>
+        <span className="settings-card-title">{t('settings.snippets')}</span>
+        <span className="settings-card-action">
+          <button className="link" disabled={busy} onClick={resetDefaults}>
+            {t('settings.snippetReset')}
+          </button>
+        </span>
       </div>
 
       <div className="chips" role="group" aria-label={t('settings.snippets')} style={{ marginBottom: 10 }}>
@@ -365,6 +372,29 @@ function SnippetsSection({ notify, lang }) {
   )
 }
 
+/** 設定タブのショートカットナビ（SPEC-PILOT-V3 §3.4）。並び順がカードの並び順。 */
+const SECTIONS = [
+  { id: 'sec-appearance', icon: '🎨', key: 'settings.secAppearance' },
+  { id: 'sec-pairing', icon: '📱', key: 'settings.secPairing' },
+  { id: 'sec-snippets', icon: '⚡', key: 'settings.secSnippets' },
+  { id: 'sec-repos', icon: '📁', key: 'settings.secRepos' },
+  { id: 'sec-audit', icon: '🛡️', key: 'settings.secAudit' },
+  { id: 'sec-status', icon: '🩺', key: 'settings.secStatus' },
+]
+
+/** カード見出し（アイコン＋見出し＋右端の操作）。6 カードで共通の枠。 */
+function CardHead({ icon, title, action }) {
+  return (
+    <div className="settings-card-head">
+      <span className="settings-card-icon" aria-hidden="true">
+        {icon}
+      </span>
+      <span className="settings-card-title">{title}</span>
+      {action ? <span className="settings-card-action">{action}</span> : null}
+    </div>
+  )
+}
+
 export function SettingsPane({ overview, notify, refresh }) {
   const { lang, t, pref, setPref } = useI18n()
   const { pref: themePref, setPref: setThemePref } = useTheme()
@@ -372,6 +402,8 @@ export function SettingsPane({ overview, notify, refresh }) {
   const [diag, setDiag] = useState(null)
   const [diagBusy, setDiagBusy] = useState(false)
   const [audit, setAudit] = useState(null)
+  /** 監査ログ 9 件目以降の展開状態（SPEC §3.4）。 */
+  const [auditExpanded, setAuditExpanded] = useState(false)
   const [log, setLog] = useState(null)
   const [logName, setLogName] = useState('gateway')
   const [sessions, setSessions] = useState([])
@@ -473,10 +505,21 @@ export function SettingsPane({ overview, notify, refresh }) {
     }
   }
 
+  /** ショートカットチップ → 対象カードへスムーズスクロール（粘着バー分は scroll-margin で逃がす）。 */
+  const scrollToSection = useCallback((id) => {
+    haptic('tap')
+    const el = typeof document !== 'undefined' ? document.getElementById(id) : null
+    el?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+  }, [])
+
   const mem = overview?.system?.memory
   const disk = overview?.system?.disk
   const bridge = overview?.bridge
   const kanbanStats = overview?.kanban
+
+  // 監査ログは API が古い順で返すので、新しい順に直してから 8 件に折りたたむ（SPEC §3.4）
+  const auditNewestFirst = Array.isArray(audit) ? audit.slice().reverse() : []
+  const auditFold = foldAudit(auditNewestFirst, { expanded: auditExpanded })
 
   const sourceKind = launchSourceKind()
   const sourceLabel =
@@ -490,48 +533,278 @@ export function SettingsPane({ overview, notify, refresh }) {
 
   return (
     <div className="pane center-readable">
-      <div className="list-head">
-        <span>{t('settings.language')}</span>
-      </div>
-      <div className="chips" style={{ marginBottom: 10 }}>
-        {LANG_CHOICES.map((o) => (
-          <button
-            key={o.value}
-            type="button"
-            className={`chip${pref === o.value ? ' on' : ''}`}
-            aria-pressed={pref === o.value}
-            onClick={() => {
-              haptic('tap')
-              setPref(o.value)
-            }}
-          >
-            {t(o.key)}
+      {/* 粘着ショートカットナビ（SPEC §3.4-1）。タップで各カードへ移動する */}
+      <nav className="settings-nav" aria-label={t('settings.sections')}>
+        {SECTIONS.map((s) => (
+          <button key={s.id} type="button" className="settings-nav-chip" onClick={() => scrollToSection(s.id)}>
+            <span aria-hidden="true">{s.icon}</span>
+            <span>{t(s.key)}</span>
           </button>
         ))}
-      </div>
+      </nav>
 
-      {/* テーマ（SPEC §7.1）。Dark が既定、System は端末の明暗に追従する */}
-      <div className="list-head">
-        <span>{t('settings.theme')}</span>
-      </div>
-      <div className="chips" style={{ marginBottom: 10 }} role="group" aria-label={t('settings.theme')}>
-        {THEME_CHOICES.map((o) => (
+      {/* 1. 外観・端末 */}
+      <section id="sec-appearance" className="card settings-card">
+        <CardHead icon="🎨" title={t('settings.secAppearance')} />
+
+        <div className="list-head">
+          <span>{t('settings.language')}</span>
+        </div>
+        <div className="chips" style={{ marginBottom: 10 }}>
+          {LANG_CHOICES.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              className={`chip${pref === o.value ? ' on' : ''}`}
+              aria-pressed={pref === o.value}
+              onClick={() => {
+                haptic('tap')
+                setPref(o.value)
+              }}
+            >
+              {t(o.key)}
+            </button>
+          ))}
+        </div>
+
+        {/* テーマ（SPEC §7.1）。Dark が既定、System は端末の明暗に追従する */}
+        <div className="list-head">
+          <span>{t('settings.theme')}</span>
+        </div>
+        <div className="chips" style={{ marginBottom: 10 }} role="group" aria-label={t('settings.theme')}>
+          {THEME_CHOICES.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              className={`chip${themePref === o.value ? ' on' : ''}`}
+              aria-pressed={themePref === o.value}
+              onClick={() => {
+                haptic('tap')
+                setThemePref(o.value)
+              }}
+            >
+              {t(o.key)}
+            </button>
+          ))}
+        </div>
+
+        <div className="kv" style={{ alignItems: 'center' }}>
+          <span>{t('settings.haptics')}</span>
           <button
-            key={o.value}
             type="button"
-            className={`chip${themePref === o.value ? ' on' : ''}`}
-            aria-pressed={themePref === o.value}
+            role="switch"
+            aria-checked={hapticOn}
+            aria-label={t('settings.haptics')}
+            className={`hm-switch${hapticOn ? ' on' : ''}`}
             onClick={() => {
-              haptic('tap')
-              setThemePref(o.value)
+              const next = setHapticEnabled(!hapticOn)
+              setHapticOn(next)
+              if (next) haptic('tap')
             }}
           >
-            {t(o.key)}
+            <span className="hm-switch-knob" />
           </button>
-        ))}
-      </div>
+        </div>
+      </section>
 
-      <div className="card">
+      {/* 2. ペアリング */}
+      <section id="sec-pairing" className="card settings-card">
+        <CardHead icon="📱" title={t('settings.secPairing')} />
+        <div className="row-sub" style={{ marginTop: 8, lineHeight: 1.6 }}>
+          {t('settings.pairingHint')}
+        </div>
+        <button className="btn hm-btn-inner" style={{ marginTop: 10 }} disabled={pairBusy} onClick={openPairing}>
+          {pairBusy ? <Spinner size={14} /> : null}
+          <span>{pairBusy ? t('settings.pairingLoading') : t('settings.showPairingQr')}</span>
+        </button>
+      </section>
+
+      {/* 3. スニペット（見出しは SnippetsSection 側が描く） */}
+      <section id="sec-snippets" className="card settings-card">
+        <SnippetsSection notify={notify} lang={lang} />
+      </section>
+
+      {/* 4. リポジトリ管理 */}
+      <section id="sec-repos" className="card settings-card">
+        <CardHead
+          icon="📁"
+          title={t('settings.repos', { count: repoList.length })}
+          action={
+            <button
+              className="link"
+              disabled={repoBusy}
+              onClick={async () => {
+                haptic('tap')
+                await saveRepos({ path: '/api/repos/scan', done: t('settings.rescanned') })
+              }}
+            >
+              {t('settings.rescan')}
+            </button>
+          }
+        />
+        <div className="list">
+          {repoList.map((r) => (
+            <div key={r.id} className="row static">
+              <span className="row-main" style={{ minWidth: 0 }}>
+                <span className="row-title">
+                  {r.label}
+                  {r.source === 'custom' ? (
+                    <span className="pill" style={{ marginLeft: 8 }}>
+                      {t('settings.manual')}
+                    </span>
+                  ) : null}
+                </span>
+                <span className="row-sub" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {t('settings.repoLine', { path: r.path, source: r.source, count: r.boards?.length ?? 0 })}
+                </span>
+              </span>
+              <button
+                className="link"
+                disabled={repoBusy}
+                onClick={() =>
+                  saveRepos({
+                    method: 'DELETE',
+                    path: `/api/repos/${encodeURIComponent(r.id)}`,
+                    done: t('settings.hidden'),
+                  })
+                }
+              >
+                {t('settings.hide')}
+              </button>
+            </div>
+          ))}
+          {!repoList.length ? <div className="empty">{t('settings.reposEmpty')}</div> : null}
+        </div>
+
+        <div className="list-head">
+          <span>{t('settings.scanDirs')}</span>
+        </div>
+        <div className="list">
+          {scanDirs.map((d) => (
+            <div key={d} className="row static">
+              <span className="row-main" style={{ minWidth: 0 }}>
+                <span className="row-title mono">{d}</span>
+              </span>
+              <button
+                className="link"
+                disabled={repoBusy}
+                onClick={() =>
+                  saveRepos({ body: { scanDirs: scanDirs.filter((x) => x !== d) }, done: t('settings.removed') })
+                }
+              >
+                {t('settings.delete')}
+              </button>
+            </div>
+          ))}
+          {!scanDirs.length ? <div className="empty">{t('settings.scanDirsEmpty')}</div> : null}
+        </div>
+
+        <input
+          className="inp"
+          style={{ marginTop: 10 }}
+          placeholder={t('settings.scanDirPlaceholder')}
+          maxLength={200}
+          value={scanDraft}
+          onChange={(e) => setScanDraft(e.target.value)}
+        />
+        <button
+          className="btn"
+          disabled={repoBusy || !scanDraft.trim()}
+          style={{ marginTop: 8 }}
+          onClick={async () => {
+            const next = [...scanDirs, scanDraft.trim()]
+            if (await saveRepos({ body: { scanDirs: next }, done: t('settings.scanDirAdded') })) setScanDraft('')
+          }}
+        >
+          {t('settings.addScanDir')}
+        </button>
+        <input
+          className="inp"
+          placeholder={t('settings.repoPathPlaceholder')}
+          maxLength={300}
+          value={pathDraft}
+          onChange={(e) => setPathDraft(e.target.value)}
+          style={{ marginTop: 8 }}
+        />
+        <button
+          className="btn"
+          disabled={repoBusy || !pathDraft.trim()}
+          style={{ marginTop: 8 }}
+          onClick={async () => {
+            if (await saveRepos({ body: { path: pathDraft.trim() }, done: t('settings.repoAdded') })) setPathDraft('')
+          }}
+        >
+          {t('settings.addRepo')}
+        </button>
+      </section>
+
+      {/* 5. 監査＆ログ（監査ログは最新 8 件＋アコーディオン） */}
+      <section id="sec-audit" className="card settings-card">
+        <CardHead
+          icon="🛡️"
+          title={t('settings.secAudit')}
+          action={<RefreshButton variant="link" onRefresh={loadAudit} />}
+        />
+
+        <div className="list-head">
+          <span>{t('settings.logs')}</span>
+        </div>
+        <div className="row">
+          {['gateway', 'errors', 'agent'].map((n) => (
+            <button
+              key={n}
+              className="chip"
+              onClick={() => {
+                haptic('tap')
+                openLog(n)
+              }}
+              style={{ marginRight: 6 }}
+            >
+              {n}.log
+            </button>
+          ))}
+        </div>
+
+        <div className="list-head">
+          <span>{t('settings.audit')}</span>
+        </div>
+        <div className="list">
+          {auditFold.visible.map((a, i) => (
+            <div key={`${a.at ?? 'x'}-${a.kind ?? ''}-${i}`} className="row static">
+              <span className="row-main">
+                <span className="row-title">{a.kind}</span>
+                <span className="row-sub">
+                  {fmtDateTime(a.at)}
+                  {a.task ? ` ・ ${a.task}` : ''}
+                  {a.action ? ` ・ ${a.action}` : ''}
+                  {a.ok === false ? ` ・ ${t('settings.auditFailed')}` : ''}
+                </span>
+              </span>
+            </div>
+          ))}
+          {!auditFold.visible.length ? <div className="empty">{t('settings.auditEmpty')}</div> : null}
+        </div>
+        {auditFold.canExpand ? (
+          <button
+            type="button"
+            className="btn settings-audit-more"
+            aria-expanded={auditFold.expanded}
+            style={{ marginTop: 8 }}
+            onClick={() => {
+              haptic('tap')
+              setAuditExpanded((v) => !v)
+            }}
+          >
+            {auditFold.expanded
+              ? t('settings.auditCollapse')
+              : t('settings.auditShowMore', { count: auditFold.hiddenCount })}
+          </button>
+        ) : null}
+      </section>
+
+      {/* 6. システム状態・診断 */}
+      <section id="sec-status" className="card settings-card">
+        <CardHead icon="🩺" title={t('settings.secStatus')} />
         <div className="kv">
           <span>Hermes</span>
           <b>{overview?.hermes?.version ?? '—'}</b>
@@ -587,23 +860,6 @@ export function SettingsPane({ overview, notify, refresh }) {
         <div className="kv">
           <span>Service Worker</span>
           <b>{swState()}</b>
-        </div>
-        <div className="kv" style={{ alignItems: 'center' }}>
-          <span>{t('settings.haptics')}</span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={hapticOn}
-            aria-label={t('settings.haptics')}
-            className={`hm-switch${hapticOn ? ' on' : ''}`}
-            onClick={() => {
-              const next = setHapticEnabled(!hapticOn)
-              setHapticOn(next)
-              if (next) haptic('tap')
-            }}
-          >
-            <span className="hm-switch-knob" />
-          </button>
         </div>
         <button
           className="btn hm-btn-inner"
@@ -670,194 +926,30 @@ export function SettingsPane({ overview, notify, refresh }) {
           className="hm-btn-inner"
           onRefresh={async () => Boolean(await refresh?.())}
         />
-      </div>
 
-      <div className="card" style={{ marginTop: 10 }}>
-        <div className="row-title">{t('settings.pairing')}</div>
-        <div className="row-sub" style={{ marginTop: 4, lineHeight: 1.6 }}>
-          {t('settings.pairingHint')}
+        <div className="list-head">
+          <span>{t('settings.recentSessions')}</span>
         </div>
-        <button className="btn hm-btn-inner" style={{ marginTop: 10 }} disabled={pairBusy} onClick={openPairing}>
-          {pairBusy ? <Spinner size={14} /> : null}
-          <span>{pairBusy ? t('settings.pairingLoading') : t('settings.showPairingQr')}</span>
-        </button>
-      </div>
-
-      <div className="list-head">
-        <span>{t('settings.recentSessions')}</span>
-      </div>
-      <div className="list">
-        {sessions.map((s) => (
-          <div key={s.id} className="row static">
-            <span className={`dot ${s.active ? 'running' : 'done'}`} />
-            <span className="row-main">
-              <span className="row-title">{s.title ?? s.id}</span>
-              <span className="row-sub">
-                {s.source} ・ {s.messages} msg ・ {s.lastActivity ?? ''}
+        <div className="list">
+          {sessions.map((s) => (
+            <div key={s.id} className="row static">
+              <span className={`dot ${s.active ? 'running' : 'done'}`} />
+              <span className="row-main">
+                <span className="row-title">{s.title ?? s.id}</span>
+                <span className="row-sub">
+                  {s.source} ・ {s.messages} msg ・ {s.lastActivity ?? ''}
+                </span>
               </span>
-            </span>
-          </div>
-        ))}
-        {!sessions.length ? <div className="empty">{t('settings.none')}</div> : null}
-      </div>
+            </div>
+          ))}
+          {!sessions.length ? <div className="empty">{t('settings.none')}</div> : null}
+        </div>
 
-      <div className="list-head">
-        <span>{t('settings.repos', { count: repoList.length })}</span>
-        <button
-          className="link"
-          disabled={repoBusy}
-          onClick={async () => {
-            haptic('tap')
-            await saveRepos({ path: '/api/repos/scan', done: t('settings.rescanned') })
-          }}
-        >
-          {t('settings.rescan')}
-        </button>
-      </div>
-      <div className="list">
-        {repoList.map((r) => (
-          <div key={r.id} className="row static">
-            <span className="row-main" style={{ minWidth: 0 }}>
-              <span className="row-title">
-                {r.label}
-                {r.source === 'custom' ? (
-                  <span className="pill" style={{ marginLeft: 8 }}>
-                    {t('settings.manual')}
-                  </span>
-                ) : null}
-              </span>
-              <span className="row-sub" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {t('settings.repoLine', { path: r.path, source: r.source, count: r.boards?.length ?? 0 })}
-              </span>
-            </span>
-            <button
-              className="link"
-              disabled={repoBusy}
-              onClick={() =>
-                saveRepos({
-                  method: 'DELETE',
-                  path: `/api/repos/${encodeURIComponent(r.id)}`,
-                  done: t('settings.hidden'),
-                })
-              }
-            >
-              {t('settings.hide')}
-            </button>
-          </div>
-        ))}
-        {!repoList.length ? <div className="empty">{t('settings.reposEmpty')}</div> : null}
-      </div>
-
-      <div className="list-head">
-        <span>{t('settings.scanDirs')}</span>
-      </div>
-      <div className="list">
-        {scanDirs.map((d) => (
-          <div key={d} className="row static">
-            <span className="row-main" style={{ minWidth: 0 }}>
-              <span className="row-title mono">{d}</span>
-            </span>
-            <button
-              className="link"
-              disabled={repoBusy}
-              onClick={() =>
-                saveRepos({ body: { scanDirs: scanDirs.filter((x) => x !== d) }, done: t('settings.removed') })
-              }
-            >
-              {t('settings.delete')}
-            </button>
-          </div>
-        ))}
-        {!scanDirs.length ? <div className="empty">{t('settings.scanDirsEmpty')}</div> : null}
-      </div>
-
-      <div className="card" style={{ marginTop: 10 }}>
-        <input
-          className="inp"
-          placeholder={t('settings.scanDirPlaceholder')}
-          maxLength={200}
-          value={scanDraft}
-          onChange={(e) => setScanDraft(e.target.value)}
-        />
-        <button
-          className="btn"
-          disabled={repoBusy || !scanDraft.trim()}
-          style={{ marginTop: 8 }}
-          onClick={async () => {
-            const next = [...scanDirs, scanDraft.trim()]
-            if (await saveRepos({ body: { scanDirs: next }, done: t('settings.scanDirAdded') })) setScanDraft('')
-          }}
-        >
-          {t('settings.addScanDir')}
-        </button>
-        <input
-          className="inp"
-          placeholder={t('settings.repoPathPlaceholder')}
-          maxLength={300}
-          value={pathDraft}
-          onChange={(e) => setPathDraft(e.target.value)}
-          style={{ marginTop: 8 }}
-        />
-        <button
-          className="btn"
-          disabled={repoBusy || !pathDraft.trim()}
-          style={{ marginTop: 8 }}
-          onClick={async () => {
-            if (await saveRepos({ body: { path: pathDraft.trim() }, done: t('settings.repoAdded') })) setPathDraft('')
-          }}
-        >
-          {t('settings.addRepo')}
-        </button>
-      </div>
-
-      <div className="list-head">
-        <span>{t('settings.logs')}</span>
-      </div>
-      <div className="row">
-        {['gateway', 'errors', 'agent'].map((n) => (
-          <button
-            key={n}
-            className="chip"
-            onClick={() => {
-              haptic('tap')
-              openLog(n)
-            }}
-            style={{ marginRight: 6 }}
-          >
-            {n}.log
-          </button>
-        ))}
-      </div>
-
-      <div className="list-head">
-        <span>{t('settings.audit')}</span>
-        <RefreshButton variant="link" onRefresh={loadAudit} />
-      </div>
-      <div className="list">
-        {(audit ?? []).slice().reverse().map((a, i) => (
-          <div key={i} className="row static">
-            <span className="row-main">
-              <span className="row-title">{a.kind}</span>
-              <span className="row-sub">
-                {fmtDateTime(a.at)}
-                {a.task ? ` ・ ${a.task}` : ''}
-                {a.action ? ` ・ ${a.action}` : ''}
-                {a.ok === false ? ` ・ ${t('settings.auditFailed')}` : ''}
-              </span>
-            </span>
-          </div>
-        ))}
-        {!(audit ?? []).length ? <div className="empty">{t('settings.auditEmpty')}</div> : null}
-      </div>
-
-      <SnippetsSection notify={notify} lang={lang} />
-
-      <div className="card" style={{ marginTop: 16 }}>
-        <div className="row-sub" style={{ lineHeight: 1.7 }}>
+        <div className="row-sub" style={{ padding: '10px 0 0', lineHeight: 1.7 }}>
           {t('settings.about', { version: '0.1.0' })}{' '}
           <span className="mono">~/.hermes/plugin-data/hermes-pilot/token</span>
         </div>
-      </div>
+      </section>
 
       {log ? (
         <Sheet title={log.name} onClose={() => setLog(null)}>

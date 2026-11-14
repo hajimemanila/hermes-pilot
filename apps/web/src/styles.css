@@ -1243,6 +1243,110 @@ button.t-pill:active {
   word-break: normal;
 }
 
+/* アシスタント本文の Markdown（SPEC V3-3 / §3.3 ③）。
+   気泡は `white-space: pre-wrap`（素のテキスト用）なので、ブロックを並べる本文側で normal に戻す。
+   長い URL・コードは 390px 幅で気泡の外へ横溢れさせず、折り返す／枠内スクロールに閉じ込める。 */
+.md-body {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.md-body > *:first-child {
+  margin-top: 0;
+}
+
+.md-body > *:last-child {
+  margin-bottom: 0;
+}
+
+.md-p {
+  margin: 0 0 6px;
+}
+
+.md-h1,
+.md-h2,
+.md-h3 {
+  margin: 10px 0 4px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.md-h1 {
+  font-size: 16px;
+}
+
+.md-h2 {
+  font-size: 15px;
+}
+
+.md-h3 {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.md-list {
+  margin: 4px 0 6px;
+  padding-left: 20px;
+}
+
+ul.md-list {
+  list-style: disc;
+}
+
+ol.md-list {
+  list-style: decimal;
+}
+
+.md-list li {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+}
+
+.md-quote {
+  margin: 6px 0;
+  padding: 3px 10px;
+  border-left: 3px solid var(--accent-2);
+  border-radius: 0 8px 8px 0;
+  background: var(--overlay);
+  color: var(--muted);
+}
+
+.md-quote > *:last-child,
+.md-quote .md-p:last-child {
+  margin-bottom: 0;
+}
+
+.md-code {
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--scrim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.md-link {
+  color: var(--accent-2);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+/* 危険スキームは `<a>` にせず平文（何が書かれていたか隠さない） */
+.md-link-bare {
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.md-body .code-block {
+  max-width: 100%;
+}
+
 /* Review 判断待ち・自律ワーカー稼働中のライブカード */
 .chat-live-card {
   flex-shrink: 0;
@@ -1316,6 +1420,31 @@ button.t-pill:active {
 }
 
 .chat-jump-bottom.active {
+  border-color: var(--accent);
+  color: var(--accent-2);
+}
+
+/* 上端の「↑ 過去の履歴を読み込む」（`before=<oldestId>` のページネーション） */
+.chat-older {
+  align-self: center;
+  flex: none;
+  margin: 2px auto 6px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px dashed var(--line-strong);
+  background: var(--glass-strong);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chat-older:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.chat-older:active:not(:disabled) {
   border-color: var(--accent);
   color: var(--accent-2);
 }
@@ -1915,6 +2044,116 @@ button.t-pill:active {
   border: 1px solid var(--line);
   border-radius: 14px;
   padding: 10px 12px;
+}
+
+/* ---------- 設定: セクションナビ ＆ 6 カード（SPEC-PILOT-V3 §3.4） ---------- */
+
+/*
+ * 粘着ナビ。`.pane` の padding（10px 12px）を負のマージンで打ち消して
+ * 画面端まで貼り、スクロールしても常に上に残す（チップは横スクロール）。
+ */
+.settings-nav {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin: -10px -12px 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--glass-strong);
+  backdrop-filter: blur(10px);
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.settings-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.settings-nav-chip {
+  flex: none;
+  height: 30px;
+  padding: 0 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.settings-nav-chip:active {
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+/* 粘着ナビの下に見出しが隠れないよう逃がす（実測: ナビ下端 + 余白 10px） */
+.settings-card {
+  scroll-margin-top: 68px;
+  overflow: hidden;
+}
+
+.settings-card + .settings-card {
+  margin-top: 12px;
+}
+
+/* カード見出し（アイコン＋見出し＋右端の操作）。6 カード共通 */
+.settings-card-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-card-icon {
+  flex: none;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.settings-card-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-card-action {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* カード内の入れ子カード（スニペット編集/追加フォーム）は一段沈める */
+.settings-card .card {
+  background: var(--bg);
+}
+
+/* カード内の最初の小見出しは詰める */
+.settings-card .settings-card-head + .list-head {
+  padding-top: 8px;
+}
+
+/* 監査ログのアコーディオンは控えめな副ボタン（主ボタンと区別する） */
+.settings-audit-more {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--accent-2);
+  font-size: 12px;
 }
 
 .btn {
