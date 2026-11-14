@@ -566,8 +566,9 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
   const disk = overview?.system?.disk
   const running = tasks.filter((task) => task.status === 'running').length
   const paused = overview?.paused ?? { engaged: false }
-  // >=820px は 2 ペイン（詳細をシートではなく右ペインに出す。SPEC §7.2）
-  const split = useSplitLayout()
+  // >=680px は 2 ペイン（詳細をシートではなく右ペインに出す。SPEC-i18n-resp §2 B3）
+  // 境界は lib/layout.js の 1 箇所だけ（CSS の @media と一致させる）
+  const { split } = useSplitLayout()
 
   /*
    * Spec Launchpad（SPEC §5.4）。ボード上に同じ `[<ID>]` のタスクがあるバッチは

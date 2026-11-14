@@ -3282,12 +3282,17 @@ ol.md-list {
 }
 
 /* ------------------------------------------------------------------
- * タブレット 2 ペイン分割（SPEC §7.2 / >= 820px）
+ * タブレット 2 ペイン分割（SPEC §7.2 / SPEC-i18n-resp §2 B3）
  *
- * 820px 未満は従来どおり 1 ペイン（詳細はシートの全画面被せ）。
- * 820px 以上では左を一覧（固定幅・独立スクロール）、右を詳細（flex:1・
- * 独立スクロール）にする。どちらを出すかは JS 側の `lib/useSplitLayout.js`
- * が同じ 820px で判定する（閾値を 2 箇所に置くので必ず一致させる）。
+ * 680px 未満は従来どおり 1 ペイン（詳細はシートの全画面被せ）。
+ * 680–819px は狭い 2 ペイン（左 280px）、820px 以上が現行の 2 ペイン（380/360）。
+ * 2 ペインでは左を一覧（固定幅・独立スクロール）、右を詳細（flex:1・独立スクロール）にする。
+ * どちらを出すかは JS 側の `lib/useSplitLayout.js` が判定する。境界の数値の正本は
+ * `lib/layout.js`（680 / 820）で、CSS とずれたら web/test/layoutBreakpoints.test.js が落ちる。
+ *
+ * 左右の safe-area はここでは足さない: `.app` が既に左右の padding を持っているので、
+ * `.split-master` / `.split-detail` で足すと 2 倍の余白になる（横向きで一覧が痩せる）。
+ * 上下（`--safe-b`）だけは各ペインのスクロール末尾に要るので個別に持つ。
  * ------------------------------------------------------------------ */
 .split-layout.review {
   --split-master-w: 380px;
@@ -3295,6 +3300,146 @@ ol.md-list {
 
 .split-layout.tasks {
   --split-master-w: 360px;
+}
+
+/*
+ * 狭い 2 ペイン（680–819px）。744/768（iPad mini 縦）では 820px に届かず、
+ * 右半分が空いたまま 1 ペインだった（SPEC-i18n-resp §2 B3）。
+ *
+ * 上限を `max-width: 819.98px` で切るのは、このブロックの `--split-master-w: 280px`
+ * が 820 以上の 380/360 を上書きしないため。820 以上のブロックは現行のまま。
+ * 境界の数値の正本は `lib/layout.js`（`SPLIT_MIN` / `SPLIT_WIDE_MIN`）。
+ */
+@media (min-width: 680px) and (max-width: 819.98px) {
+  .split-layout.review,
+  .split-layout.tasks {
+    --split-master-w: 280px;
+  }
+
+  .pane.split-layout {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .split-master {
+    flex: 0 0 var(--split-master-w, 280px);
+    width: var(--split-master-w, 280px);
+    min-width: 0;
+    height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    padding: 8px 8px calc(10px + var(--safe-b));
+    border-right: 1px solid var(--line);
+    background: var(--bg);
+  }
+
+  .split-detail {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    padding: 0 12px calc(12px + var(--safe-b));
+    background: var(--bg-elev);
+  }
+
+  .split-detail-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 0 -12px 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-elev);
+  }
+
+  .split-detail-title {
+    min-width: 0;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .split-detail-body {
+    padding-bottom: 8px;
+  }
+
+  .split-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 100%;
+    min-height: 180px;
+    padding: 16px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 12.5px;
+    line-height: 1.6;
+  }
+
+  .split-placeholder b {
+    color: var(--text);
+    font-size: 13.5px;
+    font-weight: 600;
+  }
+
+  /* 一覧行は幅が足りないので 2 行まで折り返す（390px の 1 ペインは 1 行のまま） */
+  .split-master .ak-row {
+    padding: 8px 8px;
+  }
+
+  .split-master .ak-row-title {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    white-space: normal;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
+  }
+
+  .split-master .ak-row-sub {
+    gap: 6px;
+    font-size: 10.5px;
+  }
+
+  .split-master .ak-head {
+    padding-top: 4px;
+  }
+
+  /* 狭い左では状態ストリップを 3 列に畳む（数字は落とさない） */
+  .split-master .strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  /* 注釈エディタは 1 ペインでは全画面固定。2 ペインでは右ペインに収める */
+  .split-detail .ak-anno {
+    position: static;
+    inset: auto;
+    z-index: auto;
+    height: 100%;
+    padding: 0;
+  }
+
+  .split-detail .ak-anno-canvas-wrap {
+    min-height: 0;
+  }
 }
 
 @media (min-width: 820px) {

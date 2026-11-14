@@ -1037,8 +1037,9 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
   }
 
   const hasItems = state.items.length > 0
-  // >=820px は 2 ペイン（詳細をシートではなく右ペインに出す。SPEC §7.2）
-  const split = useSplitLayout()
+  // >=680px は 2 ペイン（詳細をシートではなく右ペインに出す。SPEC-i18n-resp §2 B3）
+  // 境界は lib/layout.js の 1 箇所だけ（CSS の @media と一致させる）
+  const { split } = useSplitLayout()
   const isAnnoOpen = Boolean(open && open.review?.mode === 'annotation' && isWaiting(open))
   const openTitle = open ? (open.review?.title || open.title) + '' : ''
 

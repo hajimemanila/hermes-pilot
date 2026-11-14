@@ -1,58 +1,88 @@
 /**
- * タブレット（`>= 820px`）の Master-Detail 2 ペイン分割の判定（SPEC §7.2）。
+ * 2 ペイン分割の判定（SPEC §7.2 / SPEC-i18n-resp §2 B3）。
  *
- * CSS 側は `@media (min-width: 820px)` でレイアウトを切り替えるが、
- * 「右ペインに出す詳細をシート（全画面被せ）で描くか、常設ペインに描くか」は
- * JS 側で決める必要があるため、同じ閾値をここに置いて両者を一致させる。
+ * 閾値は `lib/layout.js` にだけ置く（CSS と JS で二重管理しない）。
+ * - `split`: 680px 以上 = 一覧＋詳細の狭い 2 ペイン
+ * - `wide`:  820px 以上 = 現行の 2 ペイン（左 380/360）
+ *
+ * CSS 側（`styles.css` の `@media (min-width: 680px)` / `(min-width: 820px)`）と
+ * ずれると「右ペインは出るが中身はシート」等の半端な状態になるため、
+ * 定数一致は `web/test/layoutBreakpoints.test.js` が機械で確認する。
  */
 
 import { useEffect, useState } from 'react'
+import { SPLIT_QUERY, WIDE_QUERY } from './layout.js'
 
-/** CSS の `@media (min-width: 820px)` と同じ文字列。 */
-export const SPLIT_QUERY = '(min-width: 820px)'
-/** 左ペインの幅（CSS 側の `.split-master` と揃える）。 */
-export const SPLIT_MASTER_WIDTH = 360
+/** 互換のための再エクスポート（`SPLIT_QUERY` は 680px 以上のクエリ）。 */
+export { SPLIT_QUERY, WIDE_QUERY }
 
 /**
- * いま 2 ペインで描くべきか（React 外から読む）。
- * `matchMedia` が無い環境（テスト・SSR 相当）は false（1 ペイン）。
- * @returns {boolean} 2 ペインなら true
+ * クエリが今一致するか。`matchMedia` が無い環境（テスト・SSR 相当）は false。
+ * @param {string} q `@media` 用のクエリ文字列
+ * @returns {boolean}
  */
-export function isSplitLayout() {
+function matches(q) {
   try {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
-    return Boolean(window.matchMedia(SPLIT_QUERY).matches)
+    return Boolean(window.matchMedia(q).matches)
   } catch {
     return false
   }
 }
 
 /**
+ * いま狭い 2 ペイン以上で描くべきか（React 外から読む）。
+ * @returns {boolean} 680px 以上なら true
+ */
+export function isSplitLayout() {
+  return matches(SPLIT_QUERY)
+}
+
+/**
+ * いま現行の 2 ペイン以上で描くべきか（React 外から読む）。
+ * @returns {boolean} 820px 以上なら true
+ */
+export function isWideLayout() {
+  return matches(WIDE_QUERY)
+}
+
+/**
  * 画面幅の変化に追従する 2 ペイン判定。
- * @returns {boolean} 2 ペインなら true
+ * @returns {{ split: boolean, wide: boolean }} split = 680px 以上、wide = 820px 以上
  */
 export function useSplitLayout() {
-  const [split, setSplit] = useState(isSplitLayout)
+  const [state, setState] = useState(() => ({ split: isSplitLayout(), wide: isWideLayout() }))
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined
-    let mql
-    try {
-      mql = window.matchMedia(SPLIT_QUERY)
-    } catch {
-      return undefined
-    }
-    const onChange = (e) => setSplit(Boolean(e.matches))
-    setSplit(Boolean(mql.matches))
-    if (typeof mql.addEventListener === 'function') mql.addEventListener('change', onChange)
-    else if (typeof mql.addListener === 'function') mql.addListener(onChange)
-    return () => {
+    const lists = []
+    for (const q of [SPLIT_QUERY, WIDE_QUERY]) {
       try {
-        if (typeof mql.removeEventListener === 'function') mql.removeEventListener('change', onChange)
-        else if (typeof mql.removeListener === 'function') mql.removeListener(onChange)
+        lists.push(window.matchMedia(q))
       } catch {
-        /* 解除失敗は無視 */
+        /* 未対応のクエリは無視 */
+      }
+    }
+    const sync = () =>
+      setState((prev) => {
+        const next = { split: matches(SPLIT_QUERY), wide: matches(WIDE_QUERY) }
+        return prev.split === next.split && prev.wide === next.wide ? prev : next
+      })
+    const onChange = () => sync()
+    sync()
+    for (const mql of lists) {
+      if (typeof mql.addEventListener === 'function') mql.addEventListener('change', onChange)
+      else if (typeof mql.addListener === 'function') mql.addListener(onChange)
+    }
+    return () => {
+      for (const mql of lists) {
+        try {
+          if (typeof mql.removeEventListener === 'function') mql.removeEventListener('change', onChange)
+          else if (typeof mql.removeListener === 'function') mql.removeListener(onChange)
+        } catch {
+          /* 解除失敗は無視 */
+        }
       }
     }
   }, [])
-  return split
+  return state
 }

@@ -10,7 +10,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-import { SPLIT_QUERY, isSplitLayout } from '../src/lib/useSplitLayout.js'
+import { SPLIT_QUERY, WIDE_QUERY, isSplitLayout } from '../src/lib/useSplitLayout.js'
 
 const CSS_PATH = path.resolve(import.meta.dirname, '../src/styles.css')
 const css = fs.readFileSync(CSS_PATH, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
@@ -52,8 +52,12 @@ test('CSS: 左ペインの幅は Review 380px / Tasks 360px（SPEC §7.2）', ()
   assert.match(css, /\.split-layout\.tasks\s*\{\s*--split-master-w:\s*360px/)
 })
 
-test('JS と CSS の閾値が一致する（820px）', () => {
-  assert.equal(SPLIT_QUERY, '(min-width: 820px)')
+test('JS と CSS の閾値が一致する（split 680px / wide 820px）', () => {
+  // 境界の正本は lib/layout.js。ここは「CSS にも同じ 2 本がある」ことだけ見る
+  // （680 が増えたぶんの網羅は layoutBreakpoints.test.js が持つ）
+  assert.equal(SPLIT_QUERY, '(min-width: 680px)')
+  assert.equal(WIDE_QUERY, '(min-width: 820px)')
+  assert.ok(css.includes('@media (min-width: 680px)'), 'CSS 側に 680px の境界が無い')
   assert.ok(css.includes('@media (min-width: 820px)'), 'CSS 側の閾値が 820px でない')
 })
 
