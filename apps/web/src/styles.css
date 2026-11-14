@@ -448,6 +448,11 @@ button.t-pill:active {
   border-color: var(--accent);
 }
 
+/* 全バッチ完了のカードは成功色に寄せる（🚀 の起票待ちと一目で区別する。Q3=A） */
+.spec-bar.is-done {
+  border-color: var(--good);
+}
+
 .spec-bar-main {
   display: flex;
   flex-direction: column;
@@ -500,7 +505,10 @@ button.t-pill:active {
 }
 
 
-/* ---------- チップ ---------- */
+/* ---------- チップ（固定少数のトグル専用） ----------
+   Q1=B / Q2=A: 横スクロールのチップ列は「増えないトグル」（フィルタ・言語・テーマ・
+   スニペット種別）と、例外扱いのスニペットバー（.chips-scroll）にだけ使う。
+   増えうる一覧（仕様・ボード・撮影候補）は必ず .pick-list（縦）にする — 見切れを作らないため。 */
 .chips {
   display: flex;
   gap: 6px;
@@ -512,45 +520,7 @@ button.t-pill:active {
   display: none;
 }
 
-/* ボード選択: チップ列の左に固定の▾ を置く（帯の高さは増やさない）
-   旧 .chips は 30px + padding-bottom 8px = 38px。wrapper も 38px に揃える。 */
-.chip-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 38px;
-  padding-bottom: 8px;
-  box-sizing: border-box;
-}
-
-.chip-row .chips {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding-bottom: 0;
-}
-
-.chip-more {
-  flex: none;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  display: grid;
-  place-items: center;
-  appearance: none;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--text);
-}
-
-.chip-more svg {
-  transform: rotate(90deg); /* chevron を下向きに */
-}
-
-.chip-more:active {
-  background: var(--surface-2);
-  border-color: var(--line-strong);
-}
+/* ボード切替の帯（.chip-row / .chip-more）は廃止した。増えうる一覧は .pick-list（縦）に統一（Q2=A）。 */
 
 /* シート内の選択中ボード */
 .list-item.on {
@@ -649,6 +619,103 @@ button.t-pill:active {
 .list-item .link {
   flex: none;
   padding: 6px 8px;
+}
+
+/* ---------- 縦リスト（.pick-list） ----------
+   「増えうる一覧」の統一形（Q1=B / Q2=A）。横スクロールは使わず、常に縦に積む。
+   1 行 = タイトル（.pick-title）＋補足（.pick-sub）＋右端の .pick-meta。
+   タイトル・補足は 1 行省略にして、長い名前でも横に溢れない（scrollWidth == clientWidth）。 */
+.pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.pick-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.pick-item:active {
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+}
+
+.pick-item.on {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
+.pick-item .pick-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pick-title {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pick-sub {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pick-meta {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.pick-item.on .pick-meta {
+  color: var(--accent);
+}
+
+/* ボード切替の常設 1 行（帯の代わり。下のタスク一覧と間隔を空ける） */
+.pick-item.board-now {
+  margin-bottom: 10px;
+}
+
+/* 履歴の「完了」バッジ（Q3=A） */
+.pick-badge {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--good);
+  color: var(--good);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .row {

@@ -20,6 +20,9 @@ export function CaptureSheet({ board, boards, defaultBoard, onClose, onCreated, 
   const [assignee, setAssignee] = useState('')
   const [busy, setBusy] = useState(false)
   const [listening, setListening] = useState(false)
+  // 起票先ボードの一覧は縦リスト（Q1=B / Q2=A）。19 ボードあっても入力欄を押し出さないよう、
+  // 既定は「いま選んでいるボード」1 行だけにし、タップで下に開く。
+  const [pickOpen, setPickOpen] = useState(false)
   const keyRef = useRef(`${Date.now()}-${Math.random().toString(36).slice(2, 10)}`)
   const recRef = useRef(null)
   const titleRef = useRef(null)
@@ -121,18 +124,47 @@ export function CaptureSheet({ board, boards, defaultBoard, onClose, onCreated, 
 
   return (
     <Sheet title={t('capture.title')} onClose={onClose}>
-      <div className="chips" style={{ marginBottom: 8 }}>
-        {(boards ?? []).map((b) => (
-          <button
-            key={b.slug}
-            className={`chip${targetBoard === b.slug ? ' on' : ''}`}
-            onClick={() => setTargetBoard(b.slug)}
-          >
-            <span>{b.icon}</span>
-            {b.name}
-          </button>
-        ))}
-      </div>
+      {/* 起票先ボードは増えうる一覧なので縦リスト（Q1=B / Q2=A）。
+          既定は選択中の 1 行だけ表示し、タップで同じシート内に全件を縦に開く。 */}
+      <button
+        className="pick-item board-now"
+        onClick={() => {
+          haptic('tap')
+          setPickOpen((v) => !v)
+        }}
+        aria-expanded={pickOpen}
+        aria-label={t('capture.boardAria')}
+      >
+        <span aria-hidden="true">{(boards ?? []).find((b) => b.slug === targetBoard)?.icon ?? '🗂'}</span>
+        <span className="pick-main">
+          <span className="pick-title">
+            {(boards ?? []).find((b) => b.slug === targetBoard)?.name ?? t('capture.board')}
+          </span>
+          <span className="pick-sub">{t('capture.boardPick')}</span>
+        </span>
+        <span className="pick-meta">{pickOpen ? '▴' : '▾'}</span>
+      </button>
+
+      {pickOpen ? (
+        <div className="pick-list" style={{ marginBottom: 8 }}>
+          {(boards ?? []).map((b) => (
+            <button
+              key={b.slug}
+              className={`pick-item${targetBoard === b.slug ? ' on' : ''}`}
+              onClick={() => {
+                setTargetBoard(b.slug)
+                setPickOpen(false)
+              }}
+            >
+              <span aria-hidden="true">{b.icon}</span>
+              <span className="pick-main">
+                <span className="pick-title">{b.name}</span>
+              </span>
+              <span className="pick-meta">{targetBoard === b.slug ? '✓' : ''}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
         <input

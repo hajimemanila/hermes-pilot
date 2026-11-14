@@ -10,6 +10,7 @@ import { pendingCount } from '../lib/reviewView.js'
 import { fmtCost } from '../lib/format.js'
 import { followUpPromptFor, readActiveChatId, reportSummaryLine, toEpochMs } from '../lib/chatReports.js'
 import { renderMarkdown } from '../lib/markdown.js'
+import { batchIdOf, specProgress } from '../lib/specProgress.js'
 import { useI18n } from '../i18n/index.js'
 import { useSplitLayout } from '../lib/useSplitLayout.js'
 
@@ -68,6 +69,8 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
   const [specPath, setSpecPath] = useState(null)
   const [specSel, setSpecSel] = useState([])
   const [specBusy, setSpecBusy] = useState(false)
+  // 全バッチ完了後に開く履歴（Q3=A）。起票シートとは別のシートにする
+  const [specHistoryOpen, setSpecHistoryOpen] = useState(false)
   // ウィジェットからのディープリンク（?open=inbox&task=…）を1回だけ反映
   const [inboxFocus, setInboxFocus] = useState(null)
 
@@ -474,11 +477,27 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
    */
   const specList = specsInfo?.specs ?? []
   const currentSpec = specList.find((s) => s.path === specPath) ?? specList[0] ?? null
-  const batchIdOf = (title) => /^\[([^\]]+)\]/.exec(String(title ?? ''))?.[1] ?? null
-  const filedBatchIds = new Set(tasks.map((x) => batchIdOf(x.title)).filter(Boolean))
+  /*
+   * 起票・完了の判定は lib/specProgress.js に集約（単体テストで固定）。
+   * allDone のときだけカードを「✅ 全バッチ完了」にし、タップ先を履歴へ切り替える（Q3=A）。
+   */
+  const specProg = specProgress(currentSpec?.batches ?? [], tasks)
+  const filedBatchIds = new Set(specProg.byId.keys())
   const openBatchIds = new Set(
     tasks.filter((x) => x.status !== 'done' && x.status !== 'archived').map((x) => batchIdOf(x.title)).filter(Boolean),
   )
+  const specAllDone = specProg.allDone
+  /** ボード 1 行の補足（実行中・停止・保管・最終更新）。 */
+  const boardMeta = (b) =>
+    [
+      b?.counts?.running ? t('tasks.boardRunning', { n: b.counts.running }) : null,
+      b?.counts?.blocked ? t('tasks.boardBlocked', { n: b.counts.blocked }) : null,
+      b?.archived ? t('tasks.boardArchived') : null,
+      b?.lastActivityAt ? relTime(b.lastActivityAt * 1000) : null,
+    ]
+      .filter(Boolean)
+      .join(' · ')
+  const currentBoard = boards.find((b) => b.slug === board) ?? null
   const defaultSelection = () =>
     (currentSpec?.batches ?? []).filter((b) => !filedBatchIds.has(b.id)).map((b) => b.id)
 
@@ -488,6 +507,13 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
     haptic('tap')
     setSpecSel(defaultSelection())
     setSpecSheetOpen(true)
+  }
+
+  /** 全バッチ完了後の履歴シートを開く（Q3=A）。 */
+  const openSpecHistory = () => {
+    if (!currentSpec) return
+    haptic('tap')
+    setSpecHistoryOpen(true)
   }
 
   /** 選んだバッチを 1 タップで一括起票し、そのまま自走に乗せる。 */
@@ -693,12 +719,17 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
         </button>
       ) : null}
 
-      {/* Spec Launchpad（SPEC §5.4）: ボードのリポジトリに SPEC があれば常設のバー */}
+      {/* Spec Launchpad（SPEC §5.4）: ボードのリポジトリに SPEC があれば常設のバー。
+          全バッチ完了後は「✅ 全バッチ完了」カードになり、タップで履歴（縦リスト）を開く（Q3=A） */}
       {currentSpec ? (
-        <button className="spec-bar" onClick={openSpecSheet} aria-label={t('tasks.specBarAria', { name: currentSpec.title })}>
+        <button
+          className={`spec-bar${specAllDone ? ' is-done' : ''}`}
+          onClick={specAllDone ? openSpecHistory : openSpecSheet}
+          aria-label={t(specAllDone ? 'tasks.specHistoryAria' : 'tasks.specBarAria', { name: currentSpec.title })}
+        >
           <span className="spec-bar-main">
             <span className="spec-bar-title">
-              🚀 {t('tasks.specLaunchpad')}
+              {specAllDone ? `✅ ${t('tasks.specAllDone')}` : `🚀 ${t('tasks.specLaunchpad')}`}
             </span>
             <span className="spec-bar-name">{currentSpec.title}</span>
           </span>
@@ -768,65 +799,47 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
         </button>
       </div>
 
-      <div className="chip-row">
-        <button
-          className="chip-more"
-          onClick={() => setBoardSheetOpen(true)}
-          aria-label={t('tasks.boardOpenAria')}
-          title={t('tasks.boardList')}
-        >
-          <Icon name="chevron" size={16} />
-        </button>
-        <div className="chips">
-          {boards.map((b) => (
-            <button
-              key={b.slug}
-              className={`chip${board === b.slug ? ' on' : ''}`}
-              onClick={() => setBoard(b.slug)}
-            >
-              <span>{b.icon}</span>
-              {b.name}
-            </button>
-          ))}
-        </div>
-      </div>
+      {/*
+        ボード切替（Q1=B / Q2=A）: 増えうる一覧は縦リストに統一し、横スクロールは使わない。
+        常設は「いま選んでいるボード」1 行（.pick-item.on）。全件はこの行をタップして
+        縦リストのシートで選ぶ（▾ の意味は変えない）。
+      */}
+      <button
+        className="pick-item board-now"
+        onClick={() => setBoardSheetOpen(true)}
+        aria-label={t('tasks.boardOpenAria')}
+        title={t('tasks.boardList')}
+      >
+        <span className="pick-main">
+          <span className="pick-title">
+            <span aria-hidden="true">{currentBoard?.icon ?? '🗂'}</span> {currentBoard?.name ?? board ?? t('tasks.board')}
+          </span>
+          <span className="pick-sub">{boardMeta(currentBoard)}</span>
+        </span>
+        <span className="pick-meta">
+          {t('tasks.boardCount', { n: boards.length })}
+          <Icon name="chevron" size={14} />
+        </span>
+      </button>
 
       {boardSheetOpen && (
         <Sheet title={t('tasks.board')} onClose={() => setBoardSheetOpen(false)}>
-          <div className="list">
+          <div className="pick-list">
             {boards.map((b) => (
               <button
                 key={b.slug}
-                className={`list-item${board === b.slug ? ' on' : ''}`}
+                className={`pick-item${board === b.slug ? ' on' : ''}`}
                 onClick={() => {
                   setBoard(b.slug)
                   setBoardSheetOpen(false)
                 }}
               >
-                <span style={{ flex: '0 0 auto' }}>{b.icon}</span>
-                <span
-                  style={{
-                    flex: '1 1 auto',
-                    minWidth: 0,
-                    fontWeight: 600,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {b.name}
+                <span aria-hidden="true">{b.icon}</span>
+                <span className="pick-main">
+                  <span className="pick-title">{b.name}</span>
+                  <span className="pick-sub">{boardMeta(b)}</span>
                 </span>
-                <span style={{ flex: '0 0 auto', color: 'var(--muted)', fontSize: 11, whiteSpace: 'nowrap' }}>
-                  {[
-                    b.counts?.running ? t('tasks.boardRunning', { n: b.counts.running }) : null,
-                    b.counts?.blocked ? t('tasks.boardBlocked', { n: b.counts.blocked }) : null,
-                    b.archived ? t('tasks.boardArchived') : null,
-                    b.lastActivityAt ? relTime(b.lastActivityAt * 1000) : null,
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')}
-                </span>
-                {board === b.slug ? <span style={{ color: 'var(--accent)', flex: '0 0 auto' }}>✓</span> : null}
+                <span className="pick-meta">{board === b.slug ? '✓' : ''}</span>
               </button>
             ))}
           </div>
@@ -836,19 +849,35 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
       {specSheetOpen && currentSpec ? (
         <Sheet title={t('tasks.specSheetTitle')} onClose={() => !specBusy && setSpecSheetOpen(false)}>
           {specList.length > 1 ? (
-            <div className="chips" style={{ marginBottom: 8 }}>
-              {specList.map((s) => (
-                <button
-                  key={s.path}
-                  className={`chip${s.path === currentSpec.path ? ' on' : ''}`}
-                  onClick={() => {
-                    setSpecPath(s.path)
-                    setSpecSel(s.batches.filter((b) => !filedBatchIds.has(b.id)).map((b) => b.id))
-                  }}
-                >
-                  {s.title}
-                </button>
-              ))}
+            /* 仕様の選択は増えうる一覧なので縦リスト（Q1=B / Q2=A）。行＝タイトル＋バッチ数＋更新日時 */
+            <div className="pick-list" style={{ marginBottom: 8 }}>
+              {specList.map((s) => {
+                const sel = s.path === currentSpec.path
+                return (
+                  <button
+                    key={s.path}
+                    className={`pick-item${sel ? ' on' : ''}`}
+                    onClick={() => {
+                      haptic('tap')
+                      setSpecPath(s.path)
+                      setSpecSel(s.batches.filter((b) => !filedBatchIds.has(b.id)).map((b) => b.id))
+                    }}
+                  >
+                    <span className="pick-main">
+                      <span className="pick-title">{s.title}</span>
+                      <span className="pick-sub">
+                        {[
+                          t('tasks.specBatchCount', { n: s.batches.length }),
+                          s.mtime ? t('tasks.specUpdated', { when: relTime(s.mtime) }) : null,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </span>
+                    </span>
+                    <span className="pick-meta">{sel ? '✓' : ''}</span>
+                  </button>
+                )
+              })}
             </div>
           ) : null}
           <div className="row-sub mono" style={{ padding: '0 2px 8px' }}>
@@ -894,6 +923,57 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
           </button>
           <div className="row-sub" style={{ padding: '8px 4px', lineHeight: 1.6 }}>
             {t('tasks.specNote')}
+          </div>
+        </Sheet>
+      ) : null}
+
+      {/* 全バッチ完了後の履歴（Q3=A）。行＝バッチ＋完了バッジ＋完了時刻。増えうる一覧なので縦リスト */}
+      {specHistoryOpen && currentSpec ? (
+        <Sheet title={t('tasks.specHistoryTitle')} onClose={() => setSpecHistoryOpen(false)}>
+          <div className="row-sub mono" style={{ padding: '0 2px 8px' }}>
+            {currentSpec.path}
+          </div>
+          <div className="pick-list">
+            {currentSpec.batches.map((b) => {
+              const task = specProg.byId.get(b.id) ?? null
+              const done = task && (task.status === 'done' || task.status === 'archived')
+              return (
+                <div key={b.id} className="pick-item">
+                  <span className={`dot ${task?.status ?? 'todo'}`} />
+                  <span className="pick-main">
+                    <span className="pick-title">
+                      [{b.id}] {b.title}
+                    </span>
+                    <span className="pick-sub">
+                      {[
+                        task
+                          ? STATUS_KEY[task.status]
+                            ? t(STATUS_KEY[task.status])
+                            : task.status
+                          : t('tasks.specNotFiled'),
+                        task?.completedAt ? relTime(task.completedAt) : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </span>
+                  </span>
+                  {done ? <span className="pick-badge">{t('tasks.specDoneBadge')}</span> : null}
+                </div>
+              )
+            })}
+          </div>
+          <button
+            className="btn"
+            style={{ marginTop: 12, width: '100%' }}
+            onClick={() => {
+              setSpecHistoryOpen(false)
+              openSpecSheet()
+            }}
+          >
+            {t('tasks.specOpenLaunch')}
+          </button>
+          <div className="row-sub" style={{ padding: '8px 4px', lineHeight: 1.6 }}>
+            {t('tasks.specHistoryNote')}
           </div>
         </Sheet>
       ) : null}
