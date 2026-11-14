@@ -1,6 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { toolDetail, toolFullDetail, mergeProgress, shortenPath, foldTranscriptMessages } from '../src/lib/toolProgress.js'
+import {
+  toolDetail,
+  toolFullDetail,
+  mergeProgress,
+  shortenPath,
+  foldTranscriptMessages,
+  cleanToolResultPreview,
+} from '../src/lib/toolProgress.js'
 
 test('toolDetail は引数から短い説明を作る', () => {
   assert.equal(toolDetail('terminal', { command: 'npm test' }), 'npm test')
@@ -60,4 +67,64 @@ test('foldTranscriptMessages は tool 行を assistant ブロックへ畳む', (
   assert.equal(blocks[1].tools.length, 2)
   assert.equal(blocks[1].tools[0].name, 'read_file')
   assert.equal(trailingTools.length, 0)
+})
+
+test('cleanToolResultPreview は JSON 結果から生括弧を出さず先頭行を取り出す', () => {
+  assert.equal(cleanToolResultPreview('{"output":"foo\\nbar","exit_code":0}'), 'foo')
+  assert.equal(cleanToolResultPreview('{"error":"boom"}'), 'boom')
+  assert.equal(cleanToolResultPreview('{"stdout":"line1\\nline2"}'), 'line1')
+  assert.equal(cleanToolResultPreview('{"result":{"ok":true,"message":"saved"}}'), 'saved')
+  assert.equal(cleanToolResultPreview('{"content":[{"type":"text","text":"MCP result"}]}'), 'MCP result')
+  // 途中で切れた JSON も文字列値を拾う
+  assert.equal(cleanToolResultPreview('{"output": "partial line'), 'partial line')
+  // 既知キーが無い JSON は `key: value` の短い列にする（括弧は見せない）
+  const unknown = cleanToolResultPreview('{"exit_code":0,"ok":true}')
+  assert.doesNotMatch(unknown, /[{}"]/)
+  assert.match(unknown, /exit_code: 0/)
+  // 平文・空文字はそのまま
+  assert.equal(cleanToolResultPreview('  hello world  '), 'hello world')
+  assert.equal(cleanToolResultPreview(''), '')
+  assert.equal(cleanToolResultPreview(null), '')
+  // maxLen で切り詰め
+  assert.match(cleanToolResultPreview('{"output":"' + 'x'.repeat(80) + '"}', 20), /^x{19}…$/)
+})
+
+test('foldTranscriptMessages は toolArgs を優先してライブ表示と揃える', () => {
+  const { blocks } = foldTranscriptMessages([
+    {
+      id: 1,
+      role: 'tool',
+      toolName: 'terminal',
+      text: '{"output":"ok","exit_code":0}',
+      toolArgs: { command: 'npm run verify' },
+      at: 1000,
+    },
+    { id: 2, role: 'assistant', text: 'done', at: 1100 },
+  ])
+  const row = blocks[0].tools[0]
+  assert.equal(row.name, 'terminal')
+  assert.equal(row.detail, 'npm run verify')
+  assert.equal(row.full, 'npm run verify\n→ ok')
+  assert.doesNotMatch(row.detail, /[{}]/)
+})
+
+test('foldTranscriptMessages は引数が無いとき JSON 結果の整形見出しへ落ちる', () => {
+  const { blocks } = foldTranscriptMessages([
+    { id: 1, role: 'tool', toolName: 'terminal', text: '{"output":"all green","exit_code":0}', at: 1000 },
+    { id: 2, role: 'assistant', text: 'ok', at: 1100 },
+  ])
+  const row = blocks[0].tools[0]
+  assert.equal(row.detail, 'all green')
+  assert.doesNotMatch(row.detail, /[{}]/)
+})
+
+test('foldTranscriptMessages はパスを末尾 2 セグメントに縮める（引数あり）', () => {
+  const p = '/Users/alice/projects/hermes-pilot/apps/web/src/features/ChatPane.jsx'
+  const { blocks } = foldTranscriptMessages([
+    { id: 1, role: 'tool', toolName: 'read_file', text: '"done"', toolArgs: { path: p }, at: 1000 },
+    { id: 2, role: 'assistant', text: 'ok', at: 1100 },
+  ])
+  const row = blocks[0].tools[0]
+  assert.equal(row.detail, '…/features/ChatPane.jsx')
+  assert.match(row.full, /^\/Users\/alice\/projects\/hermes-pilot\/apps\/web\/src\/features\/ChatPane\.jsx/)
 })

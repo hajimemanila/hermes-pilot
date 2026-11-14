@@ -921,7 +921,7 @@ async function handleApi(req, res, url) {
     const profileName = url.searchParams.get('profile')
     const profiles = profileName ? await listProfiles() : []
     const r = transcript.read(decodeURIComponent(b), {
-      limit: Number(url.searchParams.get('limit') ?? 80),
+      limit: Number(url.searchParams.get('limit') ?? 200),
       before: Number(url.searchParams.get('before') ?? 0),
       includeTools: url.searchParams.get('tools') === '1',
       dbPath: profileName ? stateDbFor(profiles, profileName) : undefined,

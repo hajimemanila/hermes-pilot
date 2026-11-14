@@ -209,6 +209,11 @@ export function ChatPane({
   const listRef = useRef(null)
   // 過去履歴を先頭に足したときのスクロール基準（layout effect で使い捨てる）
   const prependAnchorRef = useRef(null)
+  // 配列添字ではなく「ブロック実体ごとに一意で安定した key」を作るための記録。
+  // mid が無い（ライブ生成中・resume 直後）ブロックは `at` が同値になることがあり、
+  // 素朴な `at-<at>` だと key 衝突で React が古い DOM を残す（実測: state 43 件 / DOM 45 件）。
+  const blockKeysRef = useRef(new WeakMap())
+  const blockKeySeqRef = useRef(0)
   const taRef = useRef(null)
   const stickRef = useRef(true)
   const progressRef = useRef([])
@@ -1601,8 +1606,14 @@ export function ChatPane({
           }
           const b = item.block
           const i = item.index
-          // 配列添字だと履歴を先頭に足したとき開閉状態（expandedTools）がズレる
-          const blockKey = b.mid != null && b.mid !== '' ? `mid-${b.mid}` : `at-${b.at || i}`
+          // 配列添字だと履歴を先頭に足したとき開閉状態（expandedTools）がズレる。
+          // mid が無いブロックは実体ごとに採番した key を使い、衝突（= 幽霊 DOM）を防ぐ。
+          let blockKey = b.mid != null && b.mid !== '' ? `mid-${b.mid}` : blockKeysRef.current.get(b)
+          if (!blockKey) {
+            blockKeySeqRef.current += 1
+            blockKey = `at-${b.at || i}-${blockKeySeqRef.current}`
+            blockKeysRef.current.set(b, blockKey)
+          }
           return b.role === 'user' ? (
             <div
               key={blockKey}

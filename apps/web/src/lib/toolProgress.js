@@ -30,6 +30,94 @@ export function shortenPath(raw, maxLen = 44) {
   return `${s.slice(0, maxLen - 1)}…`
 }
 
+/**
+ * ツール結果の生テキストから、表示に使える1行を取り出す。
+ *
+ * ツール返却値は `{"output": "...", "exit_code": 0}` のような JSON 断片であることが多く、
+ * そのまま出すと生の括弧とキーが会話に漏れる。パースできたら中身の先頭有意味行だけを返す。
+ * 途中で切れた JSON は正規表現で文字列値を拾う。
+ *
+ * @param {string} text ツール結果本文
+ * @param {number} [maxLen] 0 なら切り詰めない
+ * @returns {string} 整形済みの1行
+ */
+export function cleanToolResultPreview(text, maxLen = 0) {
+  const raw = String(text ?? '').trim()
+  if (!raw) return ''
+  let value = raw
+  if (raw.startsWith('{') || raw.startsWith('[')) {
+    const parsed = tryParseJson(raw)
+    if (parsed !== undefined) {
+      const flattened = flattenResult(parsed)
+      if (flattened) value = flattened
+    } else {
+      // 壊れた/途中で切れた JSON: 代表キーの文字列値を拾う（閉じクオートが無くても拾う）
+      const keys = 'error|output|stdout|stderr|result|content|message|status|text'
+      const m =
+        raw.match(new RegExp(`"(?:${keys})"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`)) ||
+        raw.match(new RegExp(`"(?:${keys})"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`))
+      if (m) value = unescapeJson(m[1])
+    }
+  }
+  const line = firstMeaningfulLine(value)
+  if (!line) return ''
+  return maxLen > 0 && line.length > maxLen ? `${line.slice(0, maxLen - 1)}…` : line
+}
+
+const PREVIEW_KEYS = ['error', 'output', 'stdout', 'stderr', 'result', 'content', 'message', 'status', 'text']
+
+function tryParseJson(raw) {
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return undefined
+  }
+}
+
+function unescapeJson(s) {
+  try {
+    return JSON.parse(`"${s}"`)
+  } catch {
+    return s
+  }
+}
+
+/** 入れ子の JSON から、人が読みたい値を優先順に取り出す（キー名は出さない）。 */
+function flattenResult(value, depth = 0) {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (Array.isArray(value)) {
+    const parts = value.map((v) => flattenResult(v, depth + 1)).filter(Boolean)
+    return parts.join('\n')
+  }
+  if (!value || typeof value !== 'object') return ''
+  for (const k of PREVIEW_KEYS) {
+    if (k in value) {
+      const got = flattenResult(value[k], depth + 1)
+      if (got) return got
+    }
+  }
+  if (depth >= 2) return ''
+  // 既知キーが無い JSON は `key: value` の短い列にする（生の括弧は見せない）
+  return Object.entries(value)
+    .slice(0, 4)
+    .map(([k, v]) => {
+      const got = flattenResult(v, depth + 1)
+      return got ? `${k}: ${got}` : ''
+    })
+    .filter(Boolean)
+    .join(' · ')
+}
+
+/** 空行を飛ばして最初の意味のある行を返す。 */
+function firstMeaningfulLine(text) {
+  for (const line of String(text ?? '').split('\n')) {
+    const v = line.replace(/\s+/g, ' ').trim()
+    if (v) return v
+  }
+  return ''
+}
+
 function extractRawArg(name, args) {
   const a = args && typeof args === 'object' ? args : {}
   const pick = (v) => (typeof v === 'string' ? v : '')
@@ -135,12 +223,19 @@ export function foldTranscriptMessages(messages, toEpochMsFn = (x) => Number(x) 
     const m = messages[i]
     if (!m) continue
     if (m.role === 'tool') {
-      const raw = String(m.text ?? '').replace(/\s+/g, ' ').trim()
+      const name = String(m.toolName || 'tool')
+      // 履歴でもライブ実行時と同じ「実行コマンド・ファイルパス」を出す。
+      // 引数が無い（旧スキーマ・結合漏れ）ときだけ結果本文の整形見出しへ落とす。
+      const argDetail = m.toolArgs ? toolDetail(name, m.toolArgs) : ''
+      const argFull = m.toolArgs ? toolFullDetail(name, m.toolArgs) : ''
+      const resultPreview = shortenPath(cleanToolResultPreview(m.text), MAX_DETAIL)
+      const rawText = String(m.text ?? '')
+      const resultLine = cleanToolResultPreview(m.text, 300)
       pendingTools.push({
         id: String(m.id ?? i),
-        name: String(m.toolName || 'tool'),
-        detail: shortenPath(raw, 56),
-        full: String(m.text ?? '').slice(0, 300),
+        name,
+        detail: argDetail || resultPreview,
+        full: argFull && resultLine ? `${argFull}\n→ ${resultLine}` : argFull || resultLine || rawText.slice(0, 300),
         done: true,
         at: toEpochMsFn(m.at ?? m.timestamp ?? m.created_at),
       })
