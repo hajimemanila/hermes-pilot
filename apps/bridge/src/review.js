@@ -1236,12 +1236,22 @@ export function createReview(cfg, opts = {}) {
           sessionId = taskChats[taskId] || sanitizeChatId(parseReviewLine(bodyOf(taskId)?.body)?.chat) || ''
         }
         if (!sessionId) continue
+        // パイプライン統合レポート（`kind: 'pipeline'`）の追加フィールドは**透過的に**保持する。
+        // 既存のレビュー 1 行レポート（at/session_id/task_id/label/text だけ）は今まで通り。
         out.push({
           at,
           sessionId,
           taskId,
           label: j.label ?? null,
           text: String(j.text ?? ''),
+          kind: j.kind ? String(j.kind) : null,
+          status: j.status ? String(j.status) : null,
+          board: j.board ? String(j.board) : null,
+          spec: j.spec ? String(j.spec) : null,
+          repoPath: j.repo_path ? String(j.repo_path) : null,
+          markdown: typeof j.markdown === 'string' ? j.markdown : '',
+          followUpPrompt: typeof j.follow_up_prompt === 'string' ? j.follow_up_prompt : '',
+          counts: j.counts && typeof j.counts === 'object' && !Array.isArray(j.counts) ? j.counts : null,
         })
       } catch {
         // 書きかけ・壊れた行は捨てる（補助情報）

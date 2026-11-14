@@ -10,6 +10,7 @@ import { createHermesClient } from './hermes.js'
 import { createKanban } from './kanban.js'
 import { createReview, injectReviewBridge } from './review.js'
 import { createReviewWatcher } from './review-watcher.js'
+import { createPipelineWatcher, readPipelineReports } from './pipeline-watcher.js'
 import { createOps } from './ops.js'
 import {
   CUSTOM_MAX,
@@ -100,6 +101,8 @@ const review = createReview(cfg, { targets: () => repos.targets() })
 const reviewWatcher = createReviewWatcher(cfg, { review })
 const ops = createOps(cfg, hermes, auth, { kanban })
 const gitinfo = createGitInfo(cfg)
+// パイプライン完走レポート（D20 / D21）。Spec ラン／ボードウェーブの収束を監視する。
+const pipelineWatcher = createPipelineWatcher(cfg, { gitinfo })
 const discord = createDiscord(cfg)
 const search = createSearch(cfg)
 const transcript = createTranscript(cfg)
@@ -576,6 +579,16 @@ async function handleApi(req, res, url) {
         specs: specs.listSpecs(target.path),
       })
     }
+    // GET /api/specs/reports?board=<slug>&limit=<n>  … 直近のパイプライン完走レポート（D20 / D21）
+    if (b === 'reports' && req.method === 'GET') {
+      const board = String(url.searchParams.get('board') ?? '').trim()
+      const limit = Number(url.searchParams.get('limit')) || 20
+      return sendJson(res, 200, {
+        ok: true,
+        board: board || null,
+        reports: readPipelineReports(cfg.reviewDir, { board, limit }),
+      })
+    }
     if (b === 'launch' && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
         return sendError(res, 429, 'RATE_LIMITED')
@@ -590,6 +603,8 @@ async function handleApi(req, res, url) {
         specRelPath: body?.specRelPath,
         batchIds: body?.batchIds,
         assignee: String(body?.assignee ?? 'mobile').trim() || 'mobile',
+        // 起票元チャット（`Chat:` 行 ＋ ラン記録の originSessionId）。書式外は specs 側で捨てる。
+        chat: body?.chat,
         dryRun: Boolean(body?.dryRun),
       })
       auth.audit({
@@ -1457,6 +1472,12 @@ server.listen(cfg.port, cfg.host, async () => {
     reviewWatcher.start()
   } catch (err) {
     console.warn(`[bridge] reviewWatcher を起動できません: ${err?.message}`)
+  }
+  // パイプライン完走レポート（D20 / D21）。初回はベースライン確立のみ。
+  try {
+    pipelineWatcher.start()
+  } catch (err) {
+    console.warn(`[bridge] pipelineWatcher を起動できません: ${err?.message}`)
   }
   try {
     await hermes.ensureToken()

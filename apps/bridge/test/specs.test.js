@@ -17,9 +17,14 @@ import {
   createSpecs,
   findOpenBatchTask,
   listSpecs,
+  makeRunId,
   parseCreatedTask,
   parseSpec,
+  pruneRuns,
+  readRuns,
   resolveSpecPath,
+  runsPathFor,
+  sanitizeSpecChat,
 } from '../src/specs.js'
 
 const SPEC = `# SPEC: Demo (SPEC-DEMO)
@@ -300,4 +305,124 @@ test('kanban create が失敗したバッチは failed に入り、成功分は 
     ['P2'],
   )
   assert.match(r.error, /boom/)
+})
+
+// --- V4-2: 起票元チャットの記録（`Chat:` 行）とラン記録（`pipeline-runs.json`） ----------
+
+test('buildTaskBody は `Batch:` の次行に `Chat:` を入れ、不正な ID は書かない', () => {
+  const batch = parseSpec(SPEC).batches[0]
+  const body = buildTaskBody({
+    specRelPath: 'docs/SPEC-A.md',
+    repoPath: '/tmp/repo',
+    board: 'mobile',
+    batch,
+    chat: 'local-abc.def:1',
+  })
+  const lines = body.split('\n')
+  const batchAt = lines.findIndex((l) => l.startsWith('Batch: '))
+  assert.equal(lines[batchAt + 1], 'Chat: local-abc.def:1', 'Batch の直後に置く')
+
+  const noChat = buildTaskBody({ specRelPath: 'docs/SPEC-A.md', repoPath: '/tmp/repo', board: 'mobile', batch })
+  assert.equal(noChat.includes('Chat:'), false, '未指定なら行を作らない')
+
+  assert.equal(sanitizeSpecChat('ok_id-1.2:x').length > 0, true)
+  assert.equal(sanitizeSpecChat('bad id with space'), '', '空白は弾く')
+  assert.equal(sanitizeSpecChat('line\nbreak'), '', '改行は弾く')
+  assert.equal(sanitizeSpecChat(''), '')
+})
+
+test('launchSpec は chat を本文に載せ、ランを記録する（DI 可能）', async () => {
+  const root = tempDir()
+  writeFile(root, 'docs/SPEC-A.md', SPEC)
+  const calls = []
+  const runner = async (args) => {
+    calls.push(args)
+    return { code: 0, stdout: JSON.stringify({ id: `t_${calls.length}`, status: 'ready' }), stderr: '' }
+  }
+  const recorded = []
+  const specs = createSpecs({}, { runner, tasks: () => [], recordRun: (r) => recorded.push(r), now: () => 1794800000000 })
+
+  const r = await specs.launchSpec({
+    repoPath: root,
+    board: 'mobile',
+    specRelPath: 'docs/SPEC-A.md',
+    batchIds: ['P1', 'P2'],
+    chat: 'ses_chat_1',
+  })
+  assert.equal(r.ok, true)
+  const bodyAt = calls[0].indexOf('--body') + 1
+  assert.ok(calls[0][bodyAt].includes('Chat: ses_chat_1'), '--body に Chat: 行が入る')
+
+  assert.equal(recorded.length, 1, '1 ランだけ記録する')
+  const run = recorded[0]
+  assert.match(run.id, /^run_\d{8}T\d{6}_[a-z0-9]{4}$/)
+  assert.equal(run.board, 'mobile')
+  assert.equal(run.repoPath, root)
+  assert.equal(run.specRelPath, 'docs/SPEC-A.md')
+  assert.equal(run.title, 'SPEC: Demo (SPEC-DEMO)')
+  assert.deepEqual(run.batchIds, ['P1', 'P2'])
+  assert.deepEqual(run.taskIds, ['t_1', 't_2'], '起票したタスク ID を残す')
+  assert.equal(run.originSessionId, 'ses_chat_1')
+  assert.equal(run.reportedAt, null)
+  assert.equal(run.createdAt, 1794800000000)
+  assert.equal(r.runId, run.id)
+})
+
+test('launchSpec はドライランではランを記録しない', async () => {
+  const root = tempDir()
+  writeFile(root, 'docs/SPEC-A.md', SPEC)
+  const recorded = []
+  const specs = createSpecs({}, { runner: async () => ({ code: 0, stdout: '{}', stderr: '' }), tasks: () => [], recordRun: (r) => recorded.push(r) })
+  const r = await specs.launchSpec({ repoPath: root, board: 'mobile', specRelPath: 'docs/SPEC-A.md', dryRun: true })
+  assert.equal(r.created.length, 2)
+  assert.equal(recorded.length, 0)
+  assert.equal(r.runId, null)
+})
+
+test('既定の recordRun は review/pipeline-runs.json に書く（既存 skip 分も紐づける）', async () => {
+  const root = tempDir()
+  writeFile(root, 'docs/SPEC-A.md', SPEC)
+  const reviewDir = path.join(root, 'plugin-data', 'hermes-pilot', 'review')
+  const boardState = [{ id: 't_old', title: '[P1] First batch', status: 'blocked' }]
+  const runner = async (args) => {
+    const title = args[4]
+    const id = `t_${title.replace(/[^A-Za-z0-9]/g, '')}`
+    boardState.push({ id, title, status: 'ready' })
+    return { code: 0, stdout: JSON.stringify({ id, status: 'ready' }), stderr: '' }
+  }
+  const specs = createSpecs({ reviewDir }, { runner, tasks: () => boardState })
+  const r = await specs.launchSpec({
+    repoPath: root,
+    board: 'mobile',
+    specRelPath: 'docs/SPEC-A.md',
+    batchIds: ['P1', 'P2'],
+    chat: 'ses_x',
+  })
+  assert.equal(r.ok, true)
+  const runs = readRuns(path.join(reviewDir, 'pipeline-runs.json'))
+  assert.equal(runs.length, 1)
+  assert.equal(runsPathFor({ reviewDir }), path.join(reviewDir, 'pipeline-runs.json'))
+  assert.deepEqual(
+    runs[0].taskIds.sort(),
+    ['t_old', ...r.created.map((c) => c.taskId)].sort(),
+    '既存の紐づけ（skip）も taskIds に入れる',
+  )
+  assert.equal(fs.existsSync(path.join(reviewDir, 'pipeline-runs.json.tmp')), false, 'アトミック書込')
+})
+
+test('pruneRuns は 50 件上限で古い完了分から落とす（未報告は残す）', () => {
+  const runs = []
+  for (let i = 0; i < 60; i += 1) {
+    runs.push({ id: `run_${i}`, createdAt: i, reportedAt: i < 40 ? 'reported' : null })
+  }
+  const kept = pruneRuns(runs, 50)
+  assert.equal(kept.length, 50)
+  assert.equal(kept.some((r) => r.id === 'run_0'), false, '最も古い完了分が落ちる')
+  assert.equal(kept.some((r) => r.id === 'run_59'), true, '未報告は残る')
+  assert.deepEqual(
+    kept.map((r) => r.id),
+    runs.filter((r) => kept.includes(r)).map((r) => r.id),
+    '元の順序を保つ',
+  )
+  assert.equal(makeRunId(1794800000000).startsWith('run_202611'), true)
 })

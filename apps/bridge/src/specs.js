@@ -28,6 +28,15 @@ export const CLOSED_STATUSES = new Set(['done', 'archived'])
 /** タスク本文の上限（カンバン側の実用上限に合わせる）。 */
 export const BODY_MAX = 6000
 
+/**
+ * 起票元チャット ID の書式（`Chat:` 行に載せる値）。
+ * セッション ID・`local-…`・`__latest__` を通しつつ、改行や空白は弾く（本文を壊さない）。
+ */
+export const SPEC_CHAT_RE = /^[A-Za-z0-9_.:-]{1,128}$/
+
+/** `pipeline-runs.json` に保持するランの上限（古い完了分から剪定する）。 */
+export const RUNS_MAX = 50
+
 /** `### Batch <ID>: <Title>` / `### <ID>: <Title>`。 */
 const BATCH_HEADING_RE = /^###\s+(?:Batch\s+)?([A-Za-z][A-Za-z0-9._-]{0,15})\s*[:：]\s*(.+?)\s*$/
 
@@ -185,15 +194,17 @@ export function buildTaskTitle(batch) {
 /**
  * 起票するタスクの本文（spec パス・target・抜粋・受入条件）。
  *
- * @param {{specRelPath: string, repoPath: string, board: string, batch: {id: string, title: string, objective: string, section: string}}} input 入力
+ * @param {{specRelPath: string, repoPath: string, board: string, batch: {id: string, title: string, objective: string, section: string}, chat?: string}} input 入力
  * @returns {string} 本文
  */
-export function buildTaskBody({ specRelPath, repoPath, board, batch }) {
+export function buildTaskBody({ specRelPath, repoPath, board, batch, chat }) {
+  const chatId = sanitizeSpecChat(chat)
   const head = [
     `Spec: ${specRelPath}`,
     `Target: ${repoPath}`,
     `Board: ${board}`,
     `Batch: ${batch?.id ?? ''} — ${batch?.title ?? ''}`,
+    ...(chatId ? [`Chat: ${chatId}`] : []),
     '',
     '## 目的',
     '',
@@ -246,6 +257,124 @@ export function resolveSpecPath(repoPath, relPath) {
 }
 
 /**
+ * 起票元チャット ID をサニタイズする（書式に合わなければ空＝`Chat:` 行を書かない）。
+ *
+ * @param {unknown} raw 入力（セッション ID 等）
+ * @returns {string} 安全な ID（無効なら空文字）
+ */
+export function sanitizeSpecChat(raw) {
+  const s = String(raw ?? '').trim()
+  return SPEC_CHAT_RE.test(s) ? s : ''
+}
+
+/**
+ * `pipeline-runs.json` のパス（レビューディレクトリ配下。`review-watcher` と同じ解決規則）。
+ *
+ * @param {object} cfg ブリッジ設定（`reviewDir` / `pluginDataDir` / `kanbanRoot`）
+ * @returns {string} 絶対パス
+ */
+export function runsPathFor(cfg = {}) {
+  const root =
+    cfg.reviewDir ??
+    path.join(
+      cfg.pluginDataDir ?? path.join(cfg.kanbanRoot ?? '.', '..', 'plugin-data', 'hermes-pilot'),
+      'review',
+    )
+  return path.join(root, 'pipeline-runs.json')
+}
+
+/**
+ * ラン記録を読む（壊れていても空。補助情報なので落とさない）。
+ *
+ * @param {string} file パス
+ * @returns {Array<object>} ラン（新しい順は保証しない）
+ */
+export function readRuns(file) {
+  let raw = ''
+  try {
+    raw = fs.readFileSync(file, 'utf8')
+  } catch {
+    return []
+  }
+  try {
+    const j = JSON.parse(raw)
+    const list = Array.isArray(j) ? j : j?.runs
+    if (!Array.isArray(list)) return []
+    return list.filter((r) => r && typeof r === 'object' && String(r.id ?? '').trim())
+  } catch {
+    return []
+  }
+}
+
+/**
+ * 上限まで剪定する（**古い完了分から**落とす。未報告ランは最後まで残す）。
+ *
+ * @param {Array<object>} runs ラン
+ * @param {number} [max] 上限（既定 50）
+ * @returns {Array<object>} 剪定後（元の順序を保つ）
+ */
+export function pruneRuns(runs, max = RUNS_MAX) {
+  const list = Array.isArray(runs) ? runs.slice() : []
+  let over = list.length - Math.max(0, Number(max) || 0)
+  if (over <= 0) return list
+  const byAge = list.slice().sort((a, b) => Number(a?.createdAt ?? 0) - Number(b?.createdAt ?? 0))
+  const drop = new Set()
+  for (const r of byAge) {
+    if (over <= 0) break
+    if (!r?.reportedAt) continue
+    drop.add(r)
+    over -= 1
+  }
+  for (const r of byAge) {
+    if (over <= 0) break
+    if (drop.has(r)) continue
+    drop.add(r)
+    over -= 1
+  }
+  return list.filter((r) => !drop.has(r))
+}
+
+/**
+ * ラン記録を `.tmp` → `renameSync` でアトミックに書く。
+ *
+ * @param {string} file パス
+ * @param {Array<object>} runs ラン
+ * @returns {void}
+ */
+export function writeRuns(file, runs) {
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const tmp = `${file}.tmp`
+  fs.writeFileSync(tmp, JSON.stringify({ version: 1, runs: pruneRuns(runs) }, null, 2), 'utf8')
+  fs.renameSync(tmp, file)
+}
+
+/**
+ * ランを 1 件追記する（同じ ID は置き換え）。
+ *
+ * @param {object} cfg ブリッジ設定
+ * @param {object} run ラン
+ * @returns {Array<object>} 書いた内容
+ */
+export function appendRun(cfg, run) {
+  const file = runsPathFor(cfg)
+  const runs = readRuns(file)
+  const next = [...runs.filter((r) => r.id !== run.id), run]
+  writeRuns(file, next)
+  return pruneRuns(next)
+}
+
+/**
+ * ランの ID（`run_<UTC 秒>_<乱数 4>`）。同じ秒に 2 回落としても衝突しない。
+ * @param {number} [ms] epoch ms
+ * @returns {string} ID
+ */
+export function makeRunId(ms = Date.now()) {
+  const stamp = new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\..+$/, '')
+  const tail = Math.random().toString(36).slice(2, 6).padEnd(4, '0')
+  return `run_${stamp}_${tail}`
+}
+
+/**
  * 起票の実行（既定は `hermes kanban create`、テストでは差し替え）。
  *
  * @param {object} cfg 設定（`hermesBin`）
@@ -295,6 +424,8 @@ export function parseCreatedTask(stdout) {
  *   runner?: Function,
  *   tasks?: (board: string) => Array<object>,
  *   listSpecs?: Function,
+ *   recordRun?: (run: object) => void,
+ *   now?: () => number,
  * }} [deps] 差し替え（テスト用）
  * @returns {{listSpecs: Function, launchSpec: Function, resolveSpecPath: Function}} 操作
  */
@@ -303,6 +434,12 @@ export function createSpecs(cfg = {}, deps = {}) {
   // 既存タスクの読み取り（サーバでは kanban.tasks を渡す。テストでは [] か一時 DB）
   const readTasks = deps.tasks ?? (() => [])
   const scan = deps.listSpecs ?? (() => [])
+  const now = typeof deps.now === 'function' ? deps.now : () => Date.now()
+  // ラン記録（既定は `review/pipeline-runs.json`。テストでは差し替え）。
+  // 出力先が分からない cfg（テストの `{}` など）では何もしない（リポジトリを汚さない）。
+  const canRecord = Boolean(cfg.reviewDir || cfg.pluginDataDir || cfg.kanbanRoot)
+  const recordRun =
+    deps.recordRun ?? (canRecord ? (r) => appendRun(cfg, r) : () => {})
 
   /**
    * バッチをカンバンへ一括起票する。
@@ -354,6 +491,8 @@ export function createSpecs(cfg = {}, deps = {}) {
 
     const assignee = String(input.assignee ?? '').trim()
     const dryRun = Boolean(input.dryRun)
+    // 起票元チャット（`Chat:` 行＋ラン記録の originSessionId）。書式外は黙って捨てる。
+    const chat = sanitizeSpecChat(input.chat)
 
     let existing = []
     try {
@@ -372,7 +511,7 @@ export function createSpecs(cfg = {}, deps = {}) {
         continue
       }
       const title = buildTaskTitle(batch)
-      const body = buildTaskBody({ specRelPath, repoPath, board, batch })
+      const body = buildTaskBody({ specRelPath, repoPath, board, batch, chat })
       if (dryRun) {
         created.push({ id: batch.id, title, taskId: null, dryRun: true })
         continue
@@ -399,6 +538,30 @@ export function createSpecs(cfg = {}, deps = {}) {
     }
 
     const ok = failed.length === 0
+
+    // ラン記録（1 件以上起票 or 既存へ紐づけできたときだけ）。記録失敗で起票を失敗させない。
+    let runRecord = null
+    if (!dryRun && (created.length > 0 || skipped.length > 0)) {
+      const taskIds = [...created.map((c) => c.taskId), ...skipped.map((s) => s.taskId)].filter(Boolean)
+      runRecord = {
+        id: makeRunId(now()),
+        board,
+        repoPath,
+        specRelPath,
+        title: parsed.title || specRelPath,
+        batchIds: batches.map((b) => b.id),
+        taskIds: [...new Set(taskIds)],
+        originSessionId: chat || null,
+        createdAt: now(),
+        reportedAt: null,
+      }
+      try {
+        recordRun(runRecord)
+      } catch {
+        runRecord = null
+      }
+    }
+
     return {
       ok,
       spec: specRelPath,
@@ -406,6 +569,7 @@ export function createSpecs(cfg = {}, deps = {}) {
       created,
       skipped,
       failed,
+      runId: runRecord?.id ?? null,
       ...(ok ? {} : { error: failed.map((f) => `${f.id}: ${f.error}`).join(' / ') }),
     }
   }

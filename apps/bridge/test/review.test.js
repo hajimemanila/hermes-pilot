@@ -975,3 +975,48 @@ test('answer: .json シート（mode=standard）でも設問 JSON を壊さず .
   assert.equal(data.data.questions.length, 2)
   assert.equal(data.answer.answers[1].choice, 'B')
 })
+
+test('chatReports はパイプライン統合レポートの追加フィールドを透過的に返す（V4-2 / D20）', () => {
+  const { root } = tempBoard()
+  const dir = path.join(root, 'plugin-data', 'hermes-pilot', 'review')
+  fs.mkdirSync(dir, { recursive: true })
+  const rows = [
+    // 既存のレビュー 1 行レポート（追加フィールドは既定値のまま）
+    { at: '2026-11-15T00:00:00.000Z', session_id: 'chat-a', task_id: 't_1', label: 'x-01', text: '完了' },
+    {
+      at: '2026-11-15T00:30:00.000Z',
+      kind: 'pipeline',
+      status: 'done',
+      session_id: 'chat-a',
+      task_id: 'pipeline:mobile:run_1',
+      label: 'SPEC: V4',
+      board: 'mobile',
+      spec: 'docs/SPEC-PILOT-V4.md',
+      repo_path: '/tmp/repo',
+      text: '🎉 SPEC: V4 (4/4 done)',
+      markdown: '### 🎉 Pipeline Completed: SPEC: V4 (4/4 done)',
+      follow_up_prompt: '次の一手を相談したいです',
+      counts: { done: 4, blocked: 0, failed: 0, total: 4 },
+    },
+  ]
+  fs.writeFileSync(
+    path.join(dir, 'chat-reports.jsonl'),
+    rows.map((r) => JSON.stringify(r)).join('\n') + '\n',
+  )
+  const api = createReview({ kanbanRoot: path.join(root, 'kanban') })
+  const mine = api.chatReport('chat-a', { limit: 5 })
+  assert.equal(mine.length, 2)
+  const plain = mine[0]
+  assert.equal(plain.kind, null, '既存行は kind なしのまま（後方互換）')
+  assert.equal(plain.markdown, '')
+  assert.equal(plain.counts, null)
+  const pipe = mine[1]
+  assert.equal(pipe.kind, 'pipeline')
+  assert.equal(pipe.status, 'done')
+  assert.equal(pipe.board, 'mobile')
+  assert.equal(pipe.spec, 'docs/SPEC-PILOT-V4.md')
+  assert.equal(pipe.repoPath, '/tmp/repo')
+  assert.match(pipe.markdown, /Pipeline Completed/)
+  assert.equal(pipe.followUpPrompt, '次の一手を相談したいです')
+  assert.deepEqual(pipe.counts, { done: 4, blocked: 0, failed: 0, total: 4 })
+})
