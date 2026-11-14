@@ -131,6 +131,15 @@
       logAudit: "Audit",
       logEmpty: "No entries yet.",
       logMissing: "This log file does not exist yet.",
+      langLabel: "Language",
+      langHint: "Auto follows the browser. EN / 日本語 is saved to config.json.",
+      langAuto: "Auto",
+      navLabel: "Jump to a section",
+      auditList: "List",
+      auditRaw: "Raw",
+      auditShowMore: "▼ Show {n} more",
+      auditCollapse: "▲ Collapse",
+      auditEmpty: "No audit entries yet.",
       err: {
         not_a_directory: "Not an existing directory",
         home_directory: "Pick the folders under your home directory",
@@ -237,6 +246,15 @@
       logAudit: "監査",
       logEmpty: "まだ出力がありません。",
       logMissing: "このログファイルはまだありません。",
+      langLabel: "言語",
+      langHint: "「自動」はブラウザの言語に従います。EN / 日本語 は config.json に保存されます。",
+      langAuto: "自動",
+      navLabel: "セクションへ移動",
+      auditList: "一覧",
+      auditRaw: "生ログ",
+      auditShowMore: "▼ 他 {n} 件を表示",
+      auditCollapse: "▲ 折りたたむ",
+      auditEmpty: "監査ログはまだありません。",
       err: {
         not_a_directory: "実在するディレクトリではありません",
         home_directory: "ホーム直下ではなく、その下のフォルダを指定してください",
@@ -261,6 +279,103 @@
       if (tag.indexOf("en") === 0) return "en";
     }
     return "en";
+  }
+
+  // ------------------------------------------------------- language preference
+
+  /** Where the browser remembers an explicit EN/日本語 choice (SPEC V3 §3.5). */
+  var LANG_KEY = "hp.dashboard.lang";
+
+  function readStoredLang() {
+    try {
+      var raw = window.localStorage.getItem(LANG_KEY);
+      return raw === "en" || raw === "ja" ? raw : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /** `null` forgets the choice, so the tab falls back to config + browser. */
+  function writeStoredLang(value) {
+    try {
+      if (value === "en" || value === "ja") window.localStorage.setItem(LANG_KEY, value);
+      else window.localStorage.removeItem(LANG_KEY);
+    } catch (e) {
+      /* private mode / disabled storage: the tab still works, it just forgets */
+    }
+  }
+
+  /**
+   * Which language to render, in priority order (SPEC V3 §3.5).
+   *
+   * 1. an explicit choice in this browser (`hp.dashboard.lang`)
+   * 2. `config.json`'s `lang` — but only when it says `ja`, because `en` is also
+   *    the fresh-install default and would otherwise hide a Japanese browser
+   * 3. the browser language, English fallback (SPEC D5) — also what `auto` means
+   */
+  function pickLang(stored, configLang, browserLang) {
+    if (stored === "en" || stored === "ja") return stored;
+    if (configLang === "ja") return "ja";
+    return browserLang === "ja" ? "ja" : "en";
+  }
+
+  function saveLang(next) {
+    if (next !== "en" && next !== "ja" && next !== "auto") return Promise.resolve(null);
+    // Silent by design: the tab must never show an error because config.json
+    // could not be written — the local choice already took effect.
+    return request("/config", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ lang: next })
+    }).catch(function () {
+      return null;
+    });
+  }
+
+  // ------------------------------------------------------------ audit parsing
+
+  /** How many audit entries stay visible before the accordion (SPEC V3 §3.5). */
+  var AUDIT_VISIBLE = 8;
+
+  /** One audit line → `{at, kind, ok, detail}`; junk lines still render. */
+  function parseAuditEntry(line) {
+    var text = String(line == null ? "" : line);
+    var parsed = null;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      parsed = null;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { at: "", kind: "", ok: null, detail: text };
+    }
+    var detail = [];
+    Object.keys(parsed).forEach(function (key) {
+      if (key === "at" || key === "kind" || key === "ok") return;
+      var value = parsed[key];
+      if (value === null || value === undefined || value === "") return;
+      detail.push(key + "=" + (typeof value === "object" ? JSON.stringify(value) : String(value)));
+    });
+    return {
+      at: typeof parsed.at === "string" ? parsed.at : "",
+      kind: typeof parsed.kind === "string" ? parsed.kind : "",
+      ok: typeof parsed.ok === "boolean" ? parsed.ok : null,
+      detail: detail.join(" · ")
+    };
+  }
+
+  /** `2026-11-14T02:08:31.123Z` → `11-14 02:08:31`; anything else passes through. */
+  function shortTime(value) {
+    var text = String(value || "");
+    if (text.length >= 19 && text.charAt(10) === "T") return text.slice(5, 19).replace("T", " ");
+    return text;
+  }
+
+  /** Newest first: the tail of the file is what the reader wants first. */
+  function parseAuditLines(lines) {
+    var out = [];
+    for (var i = (lines || []).length - 1; i >= 0; i--) out.push(parseAuditEntry(lines[i]));
+    return out;
   }
 
   // ------------------------------------------------------------------ helpers
@@ -303,7 +418,7 @@
   function Card(props) {
     return h(
       "section",
-      { className: "hp-card" },
+      { className: "hp-card", id: props.id || undefined },
       h(
         "header",
         { className: "hp-card-head" },
@@ -311,6 +426,89 @@
         props.hint ? h("p", { className: "hp-hint" }, props.hint) : null
       ),
       props.children
+    );
+  }
+
+  /** The section ids the jump chips scroll to (SPEC V3 §3.5). */
+  var SECTIONS = [
+    { id: "hp-sec-pairing", key: "pairingTitle" },
+    { id: "hp-sec-repos", key: "reposTitle" },
+    { id: "hp-sec-settings", key: "settingsTitle" },
+    { id: "hp-sec-snippets", key: "snippetsTitle" },
+    { id: "hp-sec-logs", key: "logsTitle" },
+    { id: "hp-sec-service", key: "serviceTitle" },
+    { id: "hp-sec-links", key: "linksTitle" }
+  ];
+
+  /** Scroll a card to the top of the viewport; no-ops if it has not rendered. */
+  function jumpTo(id) {
+    var el = typeof document !== "undefined" ? document.getElementById(id) : null;
+    if (!el || !el.scrollIntoView) return;
+    var reduced =
+      typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduced) {
+      el.scrollIntoView({ block: "start" });
+      return;
+    }
+    var before = window.scrollY;
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+    // A hidden tab (or a browser that drops the animation) never moves; land
+    // instantly instead of leaving the reader where they tapped.
+    setTimeout(function () {
+      if (Math.abs(window.scrollY - before) < 2) el.scrollIntoView({ block: "start" });
+    }, 350);
+  }
+
+  /** Wrapping chip row: one tap per card instead of scrolling a long page. */
+  function SectionNav(props) {
+    var t = props.t;
+    return h(
+      "nav",
+      { className: "hp-nav", "aria-label": t.navLabel },
+      SECTIONS.map(function (section) {
+        return h(
+          "button",
+          {
+            key: section.id,
+            type: "button",
+            className: "hp-nav-chip",
+            "data-target": section.id,
+            onClick: function () {
+              jumpTo(section.id);
+            }
+          },
+          t[section.key]
+        );
+      })
+    );
+  }
+
+  /** EN / 日本語 segmented switch, mirrored by the Settings card's select. */
+  function LangSwitch(props) {
+    var t = props.t;
+    var options = [
+      { value: "en", label: "EN" },
+      { value: "ja", label: "日本語" }
+    ];
+    return h(
+      "div",
+      { className: "hp-lang", role: "group", "aria-label": t.langLabel },
+      options.map(function (option) {
+        return h(
+          "button",
+          {
+            key: "lang-" + option.value,
+            type: "button",
+            className: "hp-lang-btn" + (props.lang === option.value ? " hp-lang-active" : ""),
+            "aria-pressed": props.lang === option.value,
+            lang: option.value,
+            onClick: function () {
+              props.onChange(option.value);
+            }
+          },
+          option.label
+        );
+      })
     );
   }
 
@@ -417,7 +615,7 @@
 
     return h(
       Card,
-      { title: t.pairingTitle, hint: t.pairingLead },
+      { id: "hp-sec-pairing", title: t.pairingTitle, hint: t.pairingLead },
       err
         ? h("p", { className: "hp-error" }, t.pairingMissing + " (" + err + ")")
         : data
@@ -503,7 +701,6 @@
         .then(function (res) {
           var cfg = (res.body && res.body.config) || {};
           setForm({
-            lang: cfg.lang || "en",
             scanDirs: Array.isArray(cfg.scanDirs) ? cfg.scanDirs.join("\n") : "",
             tlsPort: cfg.tlsPort == null ? "" : String(cfg.tlsPort),
             tailscaleDns: cfg.tailscaleDns || "",
@@ -549,13 +746,50 @@
       );
     }
 
-    if (!form) return h(Card, { title: t.settingsTitle }, h("p", { className: "hp-hint" }, t.loading));
+    /**
+     * `auto` / `en` / `ja` — the same choice the header's segmented switch makes,
+     * so the select is driven by App's state instead of a second copy here.
+     */
+    function langField() {
+      var value = props.langChoice || "auto";
+      var errCode = errors.lang;
+      return h(
+        "label",
+        { className: "hp-field" + (errCode ? " hp-field-bad" : "") },
+        h("span", { className: "hp-field-label" }, t.langLabel),
+        h(
+          "select",
+          {
+            className: "hp-field-select",
+            value: value,
+            onChange: function (e) {
+              // Immediate (SPEC V3 §3.5): labels and the snippet default language
+              // switch on change; App also PUTs the choice to config.json.
+              if (props.onLangChange) props.onLangChange(e.target.value);
+            }
+          },
+          [
+            { value: "auto", label: t.langAuto },
+            { value: "en", label: "EN" },
+            { value: "ja", label: "日本語" }
+          ].map(function (option) {
+            return h("option", { key: "lang-" + option.value, value: option.value }, option.label);
+          })
+        ),
+        h("span", { className: "hp-field-hint" }, t.langHint),
+        errCode ? h("span", { className: "hp-field-error" }, t.err[errCode] || errCode) : null
+      );
+    }
+
+    if (!form) return h(Card, { id: "hp-sec-settings", title: t.settingsTitle }, h("p", { className: "hp-hint" }, t.loading));
 
     function save() {
       setBusy(true);
       setNote(null);
       var payload = {
-        lang: form.lang,
+        // `auto` is a legal config.json value (LANGUAGES): it means "follow the
+        // browser", so the choice survives on this machine and on others.
+        lang: props.langChoice || "auto",
         scanDirs: form.scanDirs,
         tlsPort: form.tlsPort === "" ? null : form.tlsPort,
         tailscaleDns: form.tailscaleDns,
@@ -586,10 +820,11 @@
 
     return h(
       Card,
-      { title: t.settingsTitle, hint: t.settingsLead },
+      { id: "hp-sec-settings", title: t.settingsTitle, hint: t.settingsLead },
       h(
         "div",
         { className: "hp-form" },
+        langField(),
         field("scanDirs", t.scanDirs, t.scanDirsHint, "area", true),
         field("servicePort", t.servicePort, null, "text"),
         field("tlsPort", t.tlsPort, t.tlsPortHint, "text"),
@@ -655,7 +890,7 @@
 
     return h(
       Card,
-      { title: t.serviceTitle, hint: t.serviceLead },
+      { id: "hp-sec-service", title: t.serviceTitle, hint: t.serviceLead },
       h(
         "div",
         { className: "hp-actions" },
@@ -695,7 +930,7 @@
     ];
     return h(
       Card,
-      { title: t.linksTitle },
+      { id: "hp-sec-links", title: t.linksTitle },
       h(
         "ul",
         { className: "hp-links" },
@@ -809,7 +1044,7 @@
 
     return h(
       Card,
-      { title: t.reposTitle, hint: t.reposLead },
+      { id: "hp-sec-repos", title: t.reposTitle, hint: t.reposLead },
       err ? h("p", { className: "hp-error" }, err) : null,
       fromFile ? h("p", { className: "hp-hint" }, t.repoFromFile) : null,
       h(
@@ -1020,6 +1255,16 @@
       };
     }, []);
 
+    // The header's EN / 日本語 switch owns the snippet default language
+    // (SPEC V3 §3.5). The local EN/JA tabs remain, but the tab re-syncs when the
+    // header changes so both always agree on the default.
+    useEffect(
+      function () {
+        setLang(props.lang === "ja" ? "ja" : "en");
+      },
+      [props.lang]
+    );
+
     function save(body, done) {
       setBusy("save");
       setNote(null);
@@ -1098,7 +1343,7 @@
 
     return h(
       Card,
-      { title: t.snippetsTitle, hint: t.snippetsLead },
+      { id: "hp-sec-snippets", title: t.snippetsTitle, hint: t.snippetsLead },
       err ? h("p", { className: "hp-error" }, err) : null,
       h(
         "div",
@@ -1305,6 +1550,13 @@
     var errState = useState(null);
     var err = errState[0];
     var setErr = errState[1];
+    // Audit card: newest 8 rows, the rest behind one accordion (SPEC V3 §3.5).
+    var expandedState = useState(false);
+    var expanded = expandedState[0];
+    var setExpanded = expandedState[1];
+    var rawState = useState(false);
+    var rawView = rawState[0];
+    var setRawView = rawState[1];
 
     var load = useCallback(
       function () {
@@ -1334,13 +1586,28 @@
       [load]
     );
 
+    // Switching files starts collapsed again, so the card never grows silently.
+    useEffect(
+      function () {
+        setExpanded(false);
+        setRawView(false);
+      },
+      [name, lines]
+    );
+
     var labels = { gateway: t.logGateway, errors: t.logErrors, pilot: t.logPilot, audit: t.logAudit };
     var body = (data && data.lines) || [];
     var text = body.length ? body.join("\n") : data && data.missing ? t.logMissing : t.logEmpty;
+    var isAudit = name === "audit";
+    // Older backends only send `lines`; parse them here so both shapes render.
+    var auditEntries = isAudit ? (Array.isArray(data && data.entries) ? data.entries : parseAuditLines(body)) : [];
+    var auditHead = auditEntries.slice(0, AUDIT_VISIBLE);
+    var auditRest = auditEntries.slice(AUDIT_VISIBLE);
+    var auditShown = expanded ? auditEntries : auditHead;
 
     return h(
       Card,
-      { title: t.logsTitle, hint: t.logsLead },
+      { id: "hp-sec-logs", title: t.logsTitle, hint: t.logsLead },
       err ? h("p", { className: "hp-error" }, err) : null,
       h(
         "div",
@@ -1379,14 +1646,89 @@
         )
       ),
       h("p", { className: "hp-hint hp-log-meta" }, (data && data.path) || "", data ? " · " + body.length : ""),
-      h("pre", { className: "hp-log" }, text)
+      isAudit
+        ? h(
+            "div",
+            { className: "hp-audit-toggle" },
+            h(
+              "button",
+              {
+                type: "button",
+                className: "hp-tab" + (rawView ? "" : " hp-tab-active"),
+                "aria-pressed": !rawView,
+                onClick: function () {
+                  setRawView(false);
+                }
+              },
+              t.auditList
+            ),
+            h(
+              "button",
+              {
+                type: "button",
+                className: "hp-tab" + (rawView ? " hp-tab-active" : ""),
+                "aria-pressed": rawView,
+                onClick: function () {
+                  setRawView(true);
+                }
+              },
+              t.auditRaw
+            )
+          )
+        : null,
+      isAudit && !rawView
+        ? auditShown.length
+          ? h(
+              "ul",
+              { className: "hp-audit" },
+              auditShown.map(function (entry, i) {
+                var tone = entry.ok === false ? " hp-audit-bad" : entry.ok === true ? " hp-audit-ok" : "";
+                return h(
+                  "li",
+                  { key: "audit-" + i, className: "hp-audit-row" + tone },
+                  h(
+                    "div",
+                    { className: "hp-audit-head" },
+                    h("span", { className: "hp-audit-kind" }, entry.kind || "—"),
+                    h("span", { className: "hp-audit-at" }, shortTime(entry.at))
+                  ),
+                  entry.detail ? h("p", { className: "hp-audit-detail" }, entry.detail) : null
+                );
+              })
+            )
+          : h("p", { className: "hp-hint" }, data && data.missing ? t.logMissing : t.auditEmpty)
+        : h("pre", { className: "hp-log" }, text),
+      isAudit && !rawView && auditRest.length
+        ? h(
+            "button",
+            {
+              type: "button",
+              className: "hp-btn hp-btn-sm hp-audit-more",
+              "aria-expanded": expanded,
+              onClick: function () {
+                setExpanded(!expanded);
+              }
+            },
+            expanded ? t.auditCollapse : t.auditShowMore.replace("{n}", String(auditRest.length))
+          )
+        : null
     );
   }
 
   // ------------------------------------------------------------------ root
 
   function App() {
-    var lang = detectLang();
+    // uiLang: an explicit choice in this browser wins; otherwise config.json's ja,
+    // otherwise the browser language (SPEC V3 §3.5 / D5).
+    var storedLang = readStoredLang();
+    var langState = useState(storedLang || detectLang());
+    var lang = langState[0];
+    var setLang = langState[1];
+    // What the Settings select shows: the explicit choice, or `auto`.
+    var choiceState = useState(storedLang || "auto");
+    var langChoice = choiceState[0];
+    var setLangChoice = choiceState[1];
+    var hasLocalPref = useRef(Boolean(storedLang));
     var t = STRINGS[lang] || STRINGS.en;
     var statusState = useState(null);
     var status = statusState[0];
@@ -1404,6 +1746,48 @@
         return n + 1;
       });
     }
+
+    /**
+     * `en` / `ja` apply at once and persist to config.json; `auto` forgets the
+     * local choice and falls back to config + browser (that is what the Settings
+     * select's third option means, and it is never written to config.json).
+     */
+    var changeLang = useCallback(function (next) {
+      if (next === "auto") {
+        writeStoredLang(null);
+        hasLocalPref.current = false;
+        setLangChoice("auto");
+        setLang(detectLang());
+        saveLang("auto");
+        return;
+      }
+      if (next !== "en" && next !== "ja") return;
+      writeStoredLang(next);
+      hasLocalPref.current = true;
+      setLangChoice(next);
+      setLang(next);
+      saveLang(next);
+    }, []);
+
+    // Follow config.json on first load, unless this browser already chose.
+    useEffect(function () {
+      request("/config")
+        .then(function (res) {
+          if (!(res.status === 200 && res.body && res.body.ok)) return;
+          if (hasLocalPref.current) return;
+          var cfg = res.body.config || {};
+          // `ja` in config.json is a deliberate choice elsewhere, so mirror it in
+          // the select; `en` is also the init default and stays `auto`.
+          setLangChoice(cfg.lang === "ja" ? "ja" : "auto");
+          var next = pickLang(null, cfg.lang, detectLang());
+          setLang(function (prev) {
+            return next === prev ? prev : next;
+          });
+        })
+        .catch(function () {
+          /* the status card already reports an unreachable backend */
+        });
+    }, []);
 
     var load = useCallback(function () {
       return request("/status")
@@ -1432,16 +1816,22 @@
         { className: "hp-header" },
         h("div", { className: "hp-heading" }, h("h1", null, t.title), h("p", null, t.lead)),
         h(
-          "button",
-          { type: "button", className: "hp-btn", onClick: load },
-          t.refresh
+          "div",
+          { className: "hp-head-actions" },
+          h(LangSwitch, { t: t, lang: lang, onChange: changeLang }),
+          h(
+            "button",
+            { type: "button", className: "hp-btn", onClick: load },
+            t.refresh
+          )
         )
       ),
       err ? h("p", { className: "hp-error" }, t.failed + ": " + err) : null,
       h(StatusBar, { t: t, status: status }),
+      h(SectionNav, { t: t }),
       h(PairingSection, { t: t }),
       h(RepositoriesSection, { t: t, tick: tick, onChanged: load }),
-      h(SettingsSection, { t: t, onSaved: bump }),
+      h(SettingsSection, { t: t, onSaved: bump, onLangChange: changeLang, langChoice: langChoice }),
       h(SnippetsSection, { t: t, lang: lang, onChanged: load }),
       h(LogsSection, { t: t }),
       h(ServiceSection, { t: t, onChanged: load }),

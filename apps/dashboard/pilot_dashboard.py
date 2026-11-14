@@ -31,7 +31,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Iterable, Mapping, Optional
 
 #: Bridge default port (SPEC §8.1).
 DEFAULT_PORT = 4097
@@ -1245,6 +1245,48 @@ def read_tail_text(file_path: Path | str, max_bytes: int = LOG_READ_BYTES) -> st
     return raw[newline + 1 :] if newline >= 0 else raw
 
 
+#: Keys the audit card renders as its own row instead of `key=value` detail.
+AUDIT_ROW_KEYS = ("at", "kind", "ok")
+
+
+def audit_entries(lines: Iterable[str]) -> list[dict[str, Any]]:
+    """``audit.jsonl`` tail → newest-first rows the dashboard draws as a list.
+
+    The JSON is parsed here rather than in the browser so a partially written
+    line still renders (as ``detail``) and every field goes through the same
+    :func:`redact` pass as the raw text — ``build_logs`` redacts the whole
+    payload, ``entries`` included (SPEC V3 §3.5).
+    """
+    out: list[dict[str, Any]] = []
+    for line in reversed(list(lines or [])):
+        try:
+            parsed = json.loads(line)
+        except (TypeError, ValueError):
+            parsed = None
+        if not isinstance(parsed, dict):
+            out.append({"at": "", "kind": "", "ok": None, "detail": str(line)})
+            continue
+        detail: list[str] = []
+        for key, value in parsed.items():
+            if key in AUDIT_ROW_KEYS or value is None or value == "":
+                continue
+            if isinstance(value, (dict, list)):
+                value = json.dumps(value, ensure_ascii=False)
+            detail.append(f"{key}={value}")
+        at = parsed.get("at")
+        kind = parsed.get("kind")
+        ok = parsed.get("ok")
+        out.append(
+            {
+                "at": at if isinstance(at, str) else "",
+                "kind": kind if isinstance(kind, str) else "",
+                "ok": ok if isinstance(ok, bool) else None,
+                "detail": " · ".join(detail),
+            }
+        )
+    return out
+
+
 def build_logs(
     paths: Optional[Mapping[str, Path]] = None,
     name: str = "gateway",
@@ -1283,4 +1325,8 @@ def build_logs(
         "missing": missing,
         "path": shorten_path(str(path), Path(paths["home"])),
     }
+    if name == "audit":
+        # Structured rows for the dashboard's accordion list: parsed here so the
+        # browser never has to guess, and redacted by the same pass below.
+        payload["entries"] = audit_entries(tail)
     return redact(payload, read_token(paths))

@@ -510,3 +510,96 @@ print(json.dumps({
   assert.equal(out.tokenInBlob, false, 'どのレスポンスにも 64 文字トークンが入らない')
 })
 
+test('index.js / style.css: ヘッダの EN/日本語 切替・セクションジャンプ・監査 8 件アコーディオン', () => {
+  const js = read('index.js')
+
+  // 言語: localStorage の明示選択 → config.json の ja → ブラウザ言語（SPEC V3 §3.5 / D5）
+  assert.match(js, /var LANG_KEY = "hp\.dashboard\.lang"/)
+  assert.match(js, /window\.localStorage\.setItem\(LANG_KEY, value\)/)
+  assert.match(js, /function pickLang\(stored, configLang, browserLang\)/)
+  assert.ok(js.includes('h(LangSwitch, { t: t, lang: lang, onChange: changeLang })'), 'ヘッダに切替があること')
+  assert.ok(js.includes('onLangChange: changeLang'), '設定フォームの選択も即時反映すること')
+  // 即時反映＋永続化は lang 単体の PUT（他フィールドはサーバ側のマージで残る）
+  assert.match(js, /body: JSON\.stringify\(\{ lang: next \}\)/)
+  assert.match(js, /lang: props\.langChoice \|\| "auto",/)
+  assert.match(js, /langChoice: langChoice/)
+  assert.ok(js.includes('{ value: "auto", label: t.langAuto }'), '設定フォームは auto / en / ja の 3 択')
+  // スニペットの既定言語はヘッダの切替に追従する
+  assert.match(js, /setLang\(props\.lang === "ja" \? "ja" : "en"\)/)
+
+  // セクションショートカット: 7 枚のカード id とナビ項目が 1:1 で並ぶ
+  for (const id of ['pairing', 'repos', 'settings', 'snippets', 'logs', 'service', 'links']) {
+    const target = `hp-sec-${id}`
+    const refs = js.match(new RegExp(`id: "${target}"`, 'g')) ?? []
+    assert.ok(refs.length >= 2, `${target}: カード id とナビ項目の両方が要る（実測 ${refs.length}）`)
+  }
+  assert.match(js, /el\.scrollIntoView\(\{ behavior: "smooth", block: "start" \}\)/)
+  assert.match(js, /prefers-reduced-motion: reduce/, 'アニメを抑制する設定では即ジャンプ')
+
+  // 監査ログ: 最新 8 件 → 9 件目以降をアコーディオン
+  assert.match(js, /var AUDIT_VISIBLE = 8/)
+  assert.match(js, /auditEntries\.slice\(0, AUDIT_VISIBLE\)/)
+  assert.match(js, /var auditShown = expanded \? auditEntries : auditHead/)
+  assert.match(js, /t\.auditShowMore\.replace\("\{n\}", String\(auditRest\.length\)\)/)
+
+  const css = read('style.css')
+  for (const cls of ['.hp-lang', '.hp-lang-active', '.hp-nav', '.hp-nav-chip', '.hp-audit', '.hp-audit-row', '.hp-field-select']) {
+    assert.ok(css.includes(cls), `${cls} のスタイルがあること`)
+  }
+})
+
+test('pilot_dashboard.py: audit は新しい順の構造化 entries を返し、内部で redact する', () => {
+  const token = '0123456789abcdef'.repeat(4)
+  const script = `
+import importlib.util, json, sys, tempfile
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location("pd_probe5", ${JSON.stringify(path.join(DASH, 'pilot_dashboard.py'))})
+m = importlib.util.module_from_spec(spec); sys.modules["pd_probe5"] = m; spec.loader.exec_module(m)
+
+tmp = Path(tempfile.mkdtemp())
+(tmp / "logs").mkdir()
+token = "0123456789abcdef" * 4
+(tmp / "token").write_text(token)
+rows = [
+    {"at": "2026-11-14T01:00:00.000Z", "kind": "auth.pairing", "target": "lan"},
+    {"at": "2026-11-14T02:00:00.000Z", "kind": "repos.save", "ok": False, "path": "~/Projects/x"},
+    {"at": "2026-11-14T03:00:00.000Z", "kind": "kanban.comment", "board": "mobile", "chars": 12,
+     "url": "http://127.0.0.1:4097/?t=" + token},
+]
+raw = "\\n".join(json.dumps(r) for r in rows)
+raw += "\\n" + '{"at": "2026-11-14T04:00:00.000Z", "kind": "half'
+(tmp / "audit.jsonl").write_text(raw + "\\n")
+paths = {"home": tmp, "hermesHome": tmp / ".hermes", "dataDir": tmp,
+         "configPath": tmp / "config.json", "tokenPath": tmp / "token",
+         "dashboardMetaPath": tmp / "dashboard.json",
+         "auditPath": tmp / "audit.jsonl", "logDir": tmp / "logs"}
+
+out = m.build_logs(paths, name="audit", lines=10)
+plain = m.build_logs(paths, name="gateway", lines=10)
+auto = m.validate_config({"lang": "auto", "scanDirs": ["~/Projects"], "servicePort": 4097},
+                         home=tmp, is_dir=lambda p: True)
+print(json.dumps({
+  "entries": out["entries"],
+  "shown": out["shown"],
+  "blob": json.dumps(out),
+  "plainHasEntries": "entries" in plain,
+  "autoLang": auto["value"].get("lang"),
+}))
+`
+  const out = runPython(script)
+  assert.equal(out.shown, 4)
+  assert.equal(out.entries.length, 4, '壊れた行も 1 行として残す')
+  assert.equal(out.entries[0].at, '', '解析できない行は at 空で detail に生文字列')
+  assert.match(out.entries[0].detail, /half/)
+  assert.equal(out.entries[1].at, '2026-11-14T03:00:00.000Z', '新しい順（末尾が先頭）')
+  assert.equal(out.entries[1].kind, 'kanban.comment')
+  assert.match(out.entries[1].detail, /board=mobile/)
+  assert.match(out.entries[1].detail, /<redacted>/, '構造化フィールドでもトークンを伏せる')
+  assert.equal(out.entries[2].ok, false)
+  assert.equal(out.entries[3].kind, 'auth.pairing')
+  assert.ok(!out.blob.includes(token), '64 文字トークンは entries にも残さない')
+  assert.equal(out.plainHasEntries, false, 'audit 以外は lines だけを返す')
+  assert.equal(out.autoLang, 'auto', 'config.json の lang は en|ja|auto（auto = ブラウザ追従）')
+})
+
