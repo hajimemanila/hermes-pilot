@@ -1020,3 +1020,39 @@ test('chatReports はパイプライン統合レポートの追加フィール�
   assert.equal(pipe.followUpPrompt, '次の一手を相談したいです')
   assert.deepEqual(pipe.counts, { done: 4, blocked: 0, failed: 0, total: 4 })
 })
+
+test('answer: 担当の無いタスクは回答後に assign してワーカーが起動できるようにする', async () => {
+  const { root, workdir } = tempBoard()
+  const dbPath = path.join(root, 'kanban', 'boards', 'mobile', 'kanban.db')
+  const db = new DatabaseSync(dbPath)
+  db.prepare('INSERT INTO tasks (id,title,body,status,assignee,created_at) VALUES (?,?,?,?,?,?)').run(
+    't_noassign',
+    '未割当のレビュー',
+    '本文\n[review] label=cockpit-04 round=1 mode=standard sheet=sheets/cockpit-03-1.html\n',
+    'blocked',
+    null,
+    Math.floor(Date.now() / 1000),
+  )
+  db.close()
+  const calls = []
+  const api = createReview(
+    { kanbanRoot: path.join(root, 'kanban') },
+    {
+      assignee: 'mobile',
+      runKanban: async (args) => {
+        calls.push(args)
+        if (args[0] === 'unblock') {
+          const d = new DatabaseSync(dbPath)
+          d.prepare("UPDATE tasks SET status='ready' WHERE id='t_noassign'").run()
+          d.close()
+        }
+        return { code: 0, out: 'ok' }
+      },
+    },
+  )
+  const r = await api.answer('t_noassign', { answers: [{ id: 'q1', choice: 'A' }], by: 'hajime' })
+  assert.equal(r.ok, true)
+  assert.equal(r.assigned, 'mobile')
+  const assign = calls.find((c) => c[0] === 'assign')
+  assert.deepEqual(assign, ['assign', 't_noassign', 'mobile'], 'assign が呼ばれていない')
+})

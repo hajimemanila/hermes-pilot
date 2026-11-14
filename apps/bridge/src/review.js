@@ -429,7 +429,8 @@ export function createReview(cfg, opts = {}) {
       return null
     }
     try {
-      return db.prepare('SELECT body, status, title FROM tasks WHERE id = ?').get(id) || null
+      // assignee も取る（回答後に担当を付けるかの判定に使う・§3.1）
+      return db.prepare('SELECT body, status, title, assignee FROM tasks WHERE id = ?').get(id) || null
     } catch {
       return null
     } finally {
@@ -630,6 +631,14 @@ export function createReview(cfg, opts = {}) {
     return { ok: true, data, answer: answer || null, taskId: id, status: b.status }
   }
 
+  /**
+   * 回答後にタスクへ付ける担当プロファイル。
+   * 未指定なら `HP_REVIEW_ASSIGNEE` → `opts.assignee` → `'mobile'`。
+   * @returns {string} プロファイル名
+   */
+  const reviewAssignee = () =>
+    String(process.env.HP_REVIEW_ASSIGNEE ?? opts.assignee ?? '').trim() || 'mobile'
+
   /** テストから差し替えられるように注入可能にしておく。 */
   const runKanban = opts.runKanban || function runKanbanReal(args) {
     return new Promise((resolve) => {
@@ -735,9 +744,25 @@ export function createReview(cfg, opts = {}) {
       moved = await runKanban(['unblock', id, '--reason', 'レビュー回答を受領'])
       if (moved.code === 0) status = 'ready'
     }
+    /*
+     * 回答を受けたタスクに担当が無いと、ready になっても**誰も走らない**
+     * （「回答済みだが自律ワーカー起動待ち」で止まる・実測）。未割当ならここで付ける。
+     */
+    let assigned = null
+    if (status === 'ready' && !String(b.assignee ?? '').trim()) {
+      const who = String(reviewAssignee() ?? '').trim()
+      if (who) {
+        const r = await runKanban(['assign', id, who])
+        if (r.code === 0) {
+          assigned = who
+          moved = { code: 0, out: `${moved.out}\n${r.out}`.trim() }
+        }
+      }
+    }
     return {
       ok: comment.code === 0 && moved.code === 0,
       duplicate: false,
+      assigned,
       sha256: hash,
       files: { answer: path.relative(workdir(), answerFile), text: path.relative(workdir(), textFile) },
       status,
