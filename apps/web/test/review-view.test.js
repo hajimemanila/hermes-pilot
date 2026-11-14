@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { setLang } from '../src/i18n/lang.js'
-import { answerRows, capturedLabel, DONE_LIMIT, doneHint, extractRecommendedAnswers, groupItems, isAnswered, isRecommendedOption, isWaiting, navBadgeState, nextWaiting, pendingCount, repoLabel, runningCount, thumbCaption, unseenNotices, waitingCount } from '../src/lib/reviewView.js'
+import { answerRows, appBadgeCount, capturedLabel, DONE_LIMIT, doneHint, extractRecommendedAnswers, groupItems, isAnswered, isRecommendedOption, isWaiting, navBadgeState, nextWaiting, pendingCount, repoLabel, runningCount, thumbCaption, unseenNotices, waitingCount } from '../src/lib/reviewView.js'
 
 /** レビュー待ち（blocked + label）。 */
 const waitingItem = (id) => ({ id, status: 'blocked', review: { label: 'review-view-01', round: 1 } })
@@ -247,4 +247,23 @@ test('isRecommendedOption は recommended フラグとラベルの両方を見�
   assert.equal(isRecommendedOption({ id: 'A', label: 'no recommendation' }), false, '「no recommend…」は推奨ではない')
   assert.equal(isRecommendedOption({ id: 'A', label: '非推奨' }), false, '「非推奨」は推奨ではない')
   assert.equal(isRecommendedOption(null), false)
+})
+
+test('appBadgeCount は 判断待ち＋承認待ち の合計（0 なら 0 = clearAppBadge）', () => {
+  assert.equal(appBadgeCount({ reviewWaiting: 2, inboxPending: 3 }), 5, '人が対応すべき合計を出す')
+  assert.equal(appBadgeCount({ reviewWaiting: 0, inboxPending: 1 }), 1)
+  assert.equal(appBadgeCount({ reviewWaiting: 4, inboxPending: 0 }), 4)
+  assert.equal(appBadgeCount({ reviewWaiting: 0, inboxPending: 0 }), 0, '0 のときは数字を出さない（clear）')
+})
+
+test('appBadgeCount は実行中タスク数を混ぜない（旧仕様の回帰防止）', () => {
+  assert.equal(appBadgeCount({ reviewWaiting: 0, inboxPending: 0, runningTasks: 7 }), 0)
+  assert.equal(appBadgeCount({ reviewWaiting: 1, inboxPending: 0, runningTasks: 9 }), 1)
+})
+
+test('appBadgeCount は壊れた入力で NaN を出さない', () => {
+  assert.equal(appBadgeCount(), 0)
+  assert.equal(appBadgeCount({ reviewWaiting: null, inboxPending: undefined }), 0)
+  assert.equal(appBadgeCount({ reviewWaiting: '3', inboxPending: 'x' }), 3, '数値文字列は読む')
+  assert.equal(appBadgeCount({ reviewWaiting: -5, inboxPending: 2 }), 2)
 })

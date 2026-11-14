@@ -142,6 +142,25 @@ export function navBadgeState({ waiting = 0, unseen = 0, running = 0 } = {}) {
   return null
 }
 
+/**
+ * OS アプリアイコンバッジに出す数（SPEC-PILOT-V3 §3.2 / D17①）。
+ *
+ * 基準は「人間の対応・判断待ちの合計」= レビュー判断待ち（`reviewWaiting`）
+ * ＋ 承認待ち（`inboxPending`）。以前は実行中タスク数（`runningTasks`）を出していたため、
+ * 自分が答えるべきものがあるのにバッジが 0 のままだった（逆に裏で動いているだけで数字が残った）。
+ * 0 のときは呼び出し側が `clearAppBadge()` する（0 の丸を出さない）。
+ *
+ * @param {{reviewWaiting?: number, inboxPending?: number}} s 件数
+ * @returns {number} バッジに出す数（0 以上・整数）
+ */
+export function appBadgeCount({ reviewWaiting = 0, inboxPending = 0 } = {}) {
+  const clamp = (v) => {
+    const n = Number(v)
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
+  }
+  return clamp(reviewWaiting) + clamp(inboxPending)
+}
+
 /** 完了タブの見出し（件数を偽らない: 直近 N 件、とだけ言う）。 */
 export function doneHint(doneTotal) {
   const n = Number(doneTotal) || 0

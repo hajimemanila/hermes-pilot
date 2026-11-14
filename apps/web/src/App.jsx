@@ -2,7 +2,7 @@ import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 
 import { readDeepLink } from './lib/deeplink.js'
 
 import { api } from './api.js'
-import { navBadgeState, pendingCount, runningCount, unseenNotices, waitingCount } from './lib/reviewView.js'
+import { appBadgeCount, navBadgeState, pendingCount, runningCount, unseenNotices, waitingCount } from './lib/reviewView.js'
 import { cachePercent, gwState, latestToolName, reviewJumpTarget, runningTotal } from './lib/telemetry.js'
 import { SEEN_MAP_KEY, SEEN_NAV_KEY, newerThan, otherUnreadReports, readActiveChatId, readSeenMap } from './lib/chatReports.js'
 import { TasksPane } from './features/TasksPane.jsx'
@@ -178,6 +178,69 @@ export function App() {
     }
   }, [])
 
+  /*
+   * バッジ即時同期エンジン（SPEC-PILOT-V3 §3.2 / D17②）。
+   *
+   * バッジの元になる 6 本（/api/overview, /api/review, /api/review/feed, /api/inbox,
+   * /api/review/chat-reports, /api/live）は、それぞれ独立した 15 秒ポーリングを持っている。
+   * スリープ復帰・タブ切替ではその「最大 15 秒」がそのまま体感の遅れになるので
+   * （実測: 復帰直後は古い数字が残った）、復帰の合図で全員を**並列に**叩き直す。
+   * 連打は 1,500 ms のスロットルで抑える（`force` のときだけ素通し）。
+   */
+  const WAKE_THROTTLE_MS = 1500
+  const syncersRef = useRef([])
+  const lastWakeAtRef = useRef(0)
+  /** 同期関数を登録する（戻り値を呼ぶと解除）。 */
+  const registerSyncer = useCallback((fn) => {
+    syncersRef.current.push(fn)
+    return () => {
+      syncersRef.current = syncersRef.current.filter((f) => f !== fn)
+    }
+  }, [])
+  const syncAllBadges = useCallback(
+    ({ force = false } = {}) => {
+      const now = Date.now()
+      if (!force && now - lastWakeAtRef.current < WAKE_THROTTLE_MS) return
+      lastWakeAtRef.current = now
+      for (const fn of syncersRef.current) {
+        try {
+          Promise.resolve(fn()).catch(() => {})
+        } catch {
+          /* 1 本が落ちても他は叩く */
+        }
+      }
+      // 画面側（チャットの会話一覧・タスクの板）も同じ合図で最新化する
+      try {
+        window.dispatchEvent(new CustomEvent('hm:wake-sync'))
+      } catch {
+        /* noop */
+      }
+    },
+    [WAKE_THROTTLE_MS],
+  )
+
+  // 復帰の合図: 表示に戻った / フォーカスした / オンラインに戻った
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === 'visible') syncAllBadges()
+    }
+    const onFocus = () => syncAllBadges()
+    const onOnline = () => syncAllBadges({ force: true })
+    document.addEventListener('visibilitychange', onVis)
+    window.addEventListener('focus', onFocus)
+    window.addEventListener('online', onOnline)
+    return () => {
+      document.removeEventListener('visibilitychange', onVis)
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('online', onOnline)
+    }
+  }, [syncAllBadges])
+
+  // 下部タブの切替: 出てきた画面の数字を待たせない
+  useEffect(() => {
+    syncAllBadges({ force: true })
+  }, [tab, syncAllBadges])
+
   // チャットタブへ移ったら既読（開いている＝見ている）。タブを離れている間に届いた分だけ点になる。
   useEffect(() => {
     if (tab === 'chat') markChatSeen()
@@ -249,6 +312,7 @@ export function App() {
       }
     }
     sync()
+    const offSync = registerSyncer(sync)
     const id = setInterval(() => {
       if (document.visibilityState === 'visible') sync()
     }, 15000)
@@ -257,11 +321,12 @@ export function App() {
     return () => {
       alive = false
       clearInterval(id)
+      offSync()
       window.removeEventListener('hm:refresh-reports', onManual)
     }
     // notify はこの useEffect より後で定義される（同一レンダー内で TDZ になるため deps に入れない）。
     // 値は useCallback([]) で固定なので、依存に入れなくても stale にはならない。
-  }, [markChatSeen])
+  }, [markChatSeen, registerSyncer])
 
   useEffect(() => {
     try {
@@ -361,25 +426,30 @@ export function App() {
       if (!alive) return
       if (document.visibilityState === 'visible') refresh()
     }, 5000)
-    const onVis = () => document.visibilityState === 'visible' && refresh()
-    document.addEventListener('visibilitychange', onVis)
+    // 復帰時の取り直しは `syncAllBadges` がまとめて行う（リスナーを二重に張らない）
+    const offSync = registerSyncer(refresh)
     return () => {
       alive = false
       clearInterval(id)
-      document.removeEventListener('visibilitychange', onVis)
+      offSync()
     }
-  }, [refresh])
+  }, [refresh, registerSyncer])
 
-  // 実行中タスク数をアプリバッジに出す（対応端末のみ）
+  /*
+   * OS アプリアイコンバッジ（SPEC-PILOT-V3 §3.2 / D17①）。
+   * 出すのは「人が対応すべき合計」= レビュー判断待ち ＋ 承認待ち。実行中タスク数は出さない
+   * （裏で動いているだけで数字が残り、逆に答えるべきものがあっても 0 のままだった）。
+   * 0 のときは `clearAppBadge()` — 0 の丸は「何かある」と誤読させる。
+   */
+  const badgeCount = appBadgeCount({ reviewWaiting, inboxPending })
   useEffect(() => {
-    const running = overview?.runningTasks ?? 0
     try {
-      if (running > 0) navigator.setAppBadge?.(running)
+      if (badgeCount > 0) navigator.setAppBadge?.(badgeCount)
       else navigator.clearAppBadge?.()
     } catch {
-      /* 未対応 */
+      /* 未対応端末 */
     }
-  }, [overview?.runningTasks])
+  }, [badgeCount])
 
   // レビュー待ちの件数と進行中件数をナビのバッジに出す。ReviewPane が一覧を取り直したら
   // `hm:review-items` で同じ items を流してくるので、15 秒待たずに同期する。
@@ -408,12 +478,14 @@ export function App() {
       if (document.visibilityState === 'visible' && tabRef.current !== 'review') sync()
     }, 15000)
     window.addEventListener('hm:review-items', onItems)
+    const offSync = registerSyncer(sync)
     return () => {
       alive = false
       clearInterval(id)
+      offSync()
       window.removeEventListener('hm:review-items', onItems)
     }
-  }, [])
+  }, [registerSyncer])
 
   // レビューの進行中件数と作業フィードの未読。判断待ちの件数（上の effect）と同じ 15 秒で回す。
   useEffect(() => {
@@ -446,13 +518,15 @@ export function App() {
     }, 15000)
     window.addEventListener('hm:review-items', onItems)
     window.addEventListener('hm:review-seen', onSeen)
+    const offSync = registerSyncer(sync)
     return () => {
       alive = false
       clearInterval(id)
+      offSync()
       window.removeEventListener('hm:review-items', onItems)
       window.removeEventListener('hm:review-seen', onSeen)
     }
-  }, [])
+  }, [registerSyncer])
 
   // 承認待ちの件数をタスクタブのバッジに出す。TasksPane が一覧を取り直したら
   // `hm:inbox-items` で同じ items を流してくるので、15 秒待たずに同期する。
@@ -472,12 +546,14 @@ export function App() {
       if (document.visibilityState === 'visible' && tabRef.current !== 'tasks') sync()
     }, 15000)
     window.addEventListener('hm:inbox-items', onItems)
+    const offSync = registerSyncer(sync)
     return () => {
       alive = false
       clearInterval(id)
+      offSync()
       window.removeEventListener('hm:inbox-items', onItems)
     }
-  }, [])
+  }, [registerSyncer])
 
   // 稼働中のライブターン数をタスクタブの進行中ドットに出す。
   // TasksPane の /api/live ポーリングとも `hm:live-turns` で同期する。
@@ -503,12 +579,14 @@ export function App() {
       if (document.visibilityState === 'visible' && tabRef.current !== 'tasks') sync()
     }, 15000)
     window.addEventListener('hm:live-turns', onTurns)
+    const offSync = registerSyncer(sync)
     return () => {
       alive = false
       clearInterval(id)
+      offSync()
       window.removeEventListener('hm:live-turns', onTurns)
     }
-  }, [])
+  }, [registerSyncer])
 
   /*
    * 計器盤の 💎（キャッシュ燃費）。SPEC §5.5 — `/api/usage` の集計を 60 秒キャッシュで読む。

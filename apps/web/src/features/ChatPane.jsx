@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useChatSocket } from '../lib/useChatSocket.js'
 import { DEFAULT_PROFILE, STORED_PROFILE_KEY, applyDefaultProfile } from '../lib/profile.js'
 import {
@@ -16,6 +16,7 @@ import {
 import { pickResumeTarget, recentSessions } from '../lib/chatResume.js'
 import { orderProfiles } from '../lib/profileOrder.js'
 import { foldTranscriptMessages, mergeProgress, shortenPath } from '../lib/toolProgress.js'
+import { renderMarkdown } from '../lib/markdown.js'
 import { isWaiting } from '../lib/reviewView.js'
 import { api } from '../api.js'
 import { composerHeight } from '../lib/composerSize.js'
@@ -31,6 +32,16 @@ import {
   toEpochMs,
   unreadSessions,
 } from '../lib/chatReports.js'
+import {
+  SESSION_SEEN_KEY,
+  bootstrapSessionSeen,
+  drawerUnreadCount as countDrawerUnread,
+  markSessionSeen,
+  readSessionSeen,
+  serializeSessionSeen,
+  sessionRowBadges,
+  unreadRepliesLabel,
+} from '../lib/sessionUnread.js'
 import { Icon, Loader, RefreshButton, Sheet, fmtBytes, fmtDateTime, relTime } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
 import { useI18n } from '../i18n/index.js'
@@ -59,46 +70,15 @@ function commitProgressToBlocks(prev, toolRows) {
 }
 
 /**
- * メッセージ本文の ```code``` フェンスをモバイル用スクロール枠＋コピーボタン付きで描画する。
- * @param {string} raw 本文
- * @param {(code:string)=>void} onCopy コピー処理
+ * アシスタント本文（Markdown）を描画する。
+ * パースは本文とハンドラが変わったときだけ走らせる（思考中カードの再描画で毎回パースしない）。
  */
-function renderFormattedText(raw, onCopy) {
-  const s = String(raw ?? '')
-  if (!s.includes('```')) return s
-  const parts = []
-  const re = /```([a-zA-Z0-9_-]*)\n?([\s\S]*?)```/g
-  let last = 0
-  let m
-  let idx = 0
-  while ((m = re.exec(s)) !== null) {
-    if (m.index > last) parts.push(s.slice(last, m.index))
-    const lang = m[1] || 'code'
-    const code = m[2].replace(/\n$/, '')
-    parts.push(
-      <div className="code-block" key={`c-${idx++}`}>
-        <div className="code-head">
-          <span>{lang}</span>
-          <button
-            type="button"
-            className="code-copy"
-            onClick={(e) => {
-              e.stopPropagation()
-              onCopy(code)
-            }}
-          >
-            {t('chat.copy')}
-          </button>
-        </div>
-        <pre>
-          <code>{code}</code>
-        </pre>
-      </div>,
-    )
-    last = m.index + m[0].length
-  }
-  if (last < s.length) parts.push(s.slice(last))
-  return parts.length ? parts : s
+function MarkdownBody({ text, onCopyCode, copyLabel }) {
+  const node = useMemo(
+    () => renderMarkdown(text, { onCopyCode, copyLabel }),
+    [text, onCopyCode, copyLabel],
+  )
+  return node
 }
 
 /** ツール行の一覧（タップで省略前の全文を展開）。 */
@@ -166,6 +146,8 @@ export function ChatPane({
   const [storedSid, setStoredSid] = useState(null)
   const [title, setTitle] = useState('')
   const [blocks, setBlocks] = useState([])
+  // 履歴ページネーション（`before=<oldestId>` で遡る）の状態
+  const [transcriptMeta, setTranscriptMeta] = useState(null)
   const [text, setText] = useState('')
   const [streaming, setStreaming] = useState(false)
   // ターンの経過時間（長いターンで「動いている」ことが分かるように）
@@ -204,6 +186,11 @@ export function ChatPane({
   const [attached, setAttached] = useState([])
   const [attachSheet, setAttachSheet] = useState(false)
   const [attachBusy, setAttachBusy] = useState(false)
+  /*
+   * 会話ごとの「見た」記録（`{ [sessionId]: { count, at } }`・SPEC-PILOT-V3 §3.1 / D16②）。
+   * 完了報告の既読（`seenMap`）とは別物で、こちらは**返信の新着**（message_count の増分）を見る。
+   */
+  const [sessionSeen, setSessionSeen] = useState({})
   const imgInputRef = useRef(null)
   const camInputRef = useRef(null)
   const fileInputRef = useRef(null)
@@ -220,9 +207,13 @@ export function ChatPane({
   const reposRef = useRef([])
   const sessionsRef = useRef([])
   const listRef = useRef(null)
+  // 過去履歴を先頭に足したときのスクロール基準（layout effect で使い捨てる）
+  const prependAnchorRef = useRef(null)
   const taRef = useRef(null)
   const stickRef = useRef(true)
   const progressRef = useRef([])
+  /** `markSessionRead` を `onEvent` から使うための参照（定義順の都合）。 */
+  const markReadRef = useRef(null)
   progressRef.current = progress
   const notifiedOffline = useRef(false)
   const objectUrlsRef = useRef(new Set())
@@ -318,12 +309,21 @@ export function ChatPane({
   /** state.db のツール実行履歴を会話ブロックへ復元する（再接続・切替後も足跡を残す）。 */
   const hydrateTranscriptTools = useCallback(async (sessionId, prof = 'default') => {
     if (!sessionId) return
+    const profileParam = prof && prof !== 'default' ? prof : null
     try {
-      const q = new URLSearchParams({ limit: '100', tools: '1' })
-      if (prof && prof !== 'default') q.set('profile', prof)
+      const q = new URLSearchParams({ limit: '300', tools: '1' })
+      if (profileParam) q.set('profile', profileParam)
       const d = await api(`/api/sessions/${encodeURIComponent(sessionId)}/transcript?${q}`)
       if (!d?.ok || !Array.isArray(d.messages)) return
       if (storedRef.current !== sessionId && sidRef.current !== sessionId) return
+      // 遡れる余地（古い側にまだメッセージがあるか）を覚えておく
+      setTranscriptMeta({
+        sessionId,
+        profile: profileParam,
+        hasMore: Boolean(d.hasMore),
+        oldestId: d.oldestId ?? null,
+        loadingMore: false,
+      })
       const { blocks: folded } = foldTranscriptMessages(d.messages, toEpochMs)
       if (!folded.length) return
       setBlocks((prev) => {
@@ -336,6 +336,73 @@ export function ChatPane({
       /* ツール履歴復元は補助情報 */
     }
   }, [])
+
+  /**
+   * 上端の「↑ 過去の履歴を読み込む」から、`before=<oldestId>` で古い側を1ページ足す。
+   *
+   * 先頭に挿入するとブラウザは同じ scrollTop を保つため、見ていた位置が下へずれる。
+   * 追加後の scrollHeight 差分だけ scrollTop を足して「読んでいた行」を動かさない。
+   */
+  const loadOlderTranscript = useCallback(async () => {
+    const meta = transcriptMeta
+    if (!meta?.sessionId || !meta.hasMore || !meta.oldestId || meta.loadingMore) return
+    // 「いま画面の先頭に見えている発言」を基準に、先頭追加後も同じ位置に置く
+    const sc = listRef.current
+    const anchorEl = sc?.querySelector('[data-mid]')
+    prependAnchorRef.current = anchorEl
+      ? { mid: anchorEl.getAttribute('data-mid'), top: anchorEl.getBoundingClientRect().top }
+      : null
+    // 追加分で末尾へ飛ばされないように先に追従を止める
+    stickRef.current = false
+    setTranscriptMeta((m) => (m ? { ...m, loadingMore: true } : m))
+    try {
+      const q = new URLSearchParams({ limit: '250', before: String(meta.oldestId), tools: '1' })
+      if (meta.profile && meta.profile !== 'default') q.set('profile', meta.profile)
+      const d = await api(`/api/sessions/${encodeURIComponent(meta.sessionId)}/transcript?${q}`)
+      if (!d?.ok) {
+        notify(d?.reason ?? t('chat.cannotOpen'))
+        prependAnchorRef.current = null
+        setTranscriptMeta((m) => (m ? { ...m, loadingMore: false } : m))
+        return
+      }
+      const { blocks: older } = foldTranscriptMessages(d.messages ?? [], toEpochMs)
+      setBlocks((prev) => {
+        const seen = new Set(prev.filter((b) => b.mid != null).map((b) => `m${b.mid}`))
+        const add = older.filter((b) => b.mid == null || !seen.has(`m${b.mid}`))
+        return add.length ? [...add, ...prev] : prev
+      })
+      setTranscriptMeta({
+        sessionId: meta.sessionId,
+        profile: meta.profile ?? null,
+        hasMore: Boolean(d.hasMore),
+        oldestId: d.oldestId ?? null,
+        loadingMore: false,
+      })
+    } catch (e) {
+      notify(e?.message || t('chat.cannotOpen'))
+      prependAnchorRef.current = null
+      setTranscriptMeta((m) => (m ? { ...m, loadingMore: false } : m))
+    }
+  }, [transcriptMeta, notify])
+
+  /**
+   * 先頭に履歴を足した直後、基準にした発言が同じ画面位置に来るよう scrollTop を補正する。
+   *
+   * `requestAnimationFrame` では React のコミット前に走ることがあり補正が空振りした（実測）。
+   * コミット後＝layout effect で測り直す。ブラウザの scroll anchoring が既に補正していれば
+   * 差分は 0 なので二重にずらさない。
+   */
+  useLayoutEffect(() => {
+    const anchor = prependAnchorRef.current
+    if (!anchor) return
+    prependAnchorRef.current = null
+    const sc = listRef.current
+    if (!sc) return
+    const el = sc.querySelector(`[data-mid="${anchor.mid}"]`)
+    if (!el) return
+    const delta = el.getBoundingClientRect().top - anchor.top
+    if (delta) sc.scrollTop = Math.max(0, sc.scrollTop + delta)
+  }, [blocks])
 
   /** サーバのセッションに繋ぎ直す（履歴も置き換える）。`prof` は他プロファイルの時だけ渡す。 */
   const resumeInto = useCallback(
@@ -353,6 +420,8 @@ export function ChatPane({
         const resolvedSid = res.resumed ?? target
         setStoredSid(resolvedSid)
         setProfile(prof || 'default')
+        // 開いた＝見た（返信新着のピルを消す・D16②）
+        markReadRef.current?.(resolvedSid, sessionsRef.current.find((s) => String(s.id) === String(resolvedSid))?.message_count)
         const cwd = res.info?.cwd ?? res.cwd ?? ''
         if (cwd) {
           ensureRepos().then((list) => {
@@ -456,6 +525,22 @@ export function ChatPane({
         }
         return next
       })
+      /*
+       * 表示中の会話で 1 ターン終わったら「見た」を更新する（SPEC-PILOT-V3 §3.1 / D16②）。
+       * 一覧を取り直してから現在の `message_count` で記録する — 数を推測すると、
+       * 自分の送信で増えた分まで新着に見えてしまう。
+       */
+      {
+        const target = storedRef.current ?? sidRef.current
+        if (target) {
+          loadSessions(sockRef.current?.rpc)
+            .then((list) => {
+              const hit = (Array.isArray(list) ? list : []).find((x) => String(x.id) === String(target))
+              if (hit) markReadRef.current?.(hit.id, hit.message_count)
+            })
+            .catch(() => {})
+        }
+      }
       return
     }
     if (type === 'session.title') {
@@ -560,14 +645,21 @@ export function ChatPane({
   }, [storedSid, storedProfile])
 
   /*
-   * 新しいレビュー完了報告が届いたら、末尾を見ていれば自動で最下部へ寄せる
-   * （報告の行は会話の最後に足されるので、下に居ないと増えたことに気づけない。実測）。
-   * 依存は配列そのものではなく**最後の報告のキー** — 15 秒ごとの取得で配列が作り直される
-   * たびにスクロールすると、上へ遡って読んでいる最中に勝手に飛ぶ。
+   * 実際に画面へ出している会話の ID（SPEC-PILOT-V3 §3.1 / D16①）。
+   *
+   * `readonly`（カンバン作業ログ等の閲覧専用）を開いている間は、**親チャットではなく
+   * 閲覧中の会話**が「いま見ている会話」になる。以前はドロワーのハイライトが
+   * `storedSid`（＝起票元の親チャット）だけを見ていたため、親が選択中に見えていた。
+   */
+  const activeDrawerSid = readonly?.sessionId || sid || storedSid || null
+  /*
+   * 完了報告（`reports`）とレビュー誘導バナー（`linkedReview`）の紐づけ先。
+   * `readonly` 閲覧中は親チャット `storedSid` を混ぜない — 混ぜると親の完了報告や
+   * 「あなたの番」バナーが閲覧中の作業ログに重なって出る（D16①の後半）。
    */
   const currentIds = useMemo(
-    () => [storedSid, sid, readonly?.sessionId].filter(Boolean).map(String),
-    [storedSid, sid, readonly?.sessionId],
+    () => (readonly?.sessionId ? [String(readonly.sessionId)] : [storedSid, sid].filter(Boolean).map(String)),
+    [readonly?.sessionId, storedSid, sid],
   )
   const activeLiveTurn = useMemo(
     () => liveTurns.find((t) => t?.sessionId && currentIds.includes(String(t.sessionId))) ?? null,
@@ -676,8 +768,10 @@ export function ChatPane({
   useEffect(() => {
     try {
       setSeenMap(readSeenMap(localStorage.getItem(SEEN_MAP_KEY)))
+      setSessionSeen(readSessionSeen(localStorage.getItem(SESSION_SEEN_KEY)))
     } catch {
       setSeenMap({})
+      setSessionSeen({})
     }
   }, [])
 
@@ -695,11 +789,88 @@ export function ChatPane({
     })
   }, [])
 
+  /**
+   * その会話を「見た」にする（返信新着のピルを消す・SPEC-PILOT-V3 §3.1 / D16②）。
+   * `messageCount` が読めないときは前の記録を保つ（数を捏造すると新着が消えなくなる）。
+   */
+  const markSessionRead = useCallback((sessionId, messageCount) => {
+    if (!sessionId) return
+    setSessionSeen((prev) => {
+      const next = markSessionSeen(prev, sessionId, messageCount, Date.now())
+      try {
+        localStorage.setItem(SESSION_SEEN_KEY, serializeSessionSeen(next))
+      } catch {
+        /* 保存できなくても表示は続ける */
+      }
+      return next
+    })
+  }, [])
+  markReadRef.current = markSessionRead
+
+  // 初回の一覧読み込みで、初見の会話をベースライン登録する
+  // （しないと起動直後に全会話が返信新着として一斉に点く）。
+  useEffect(() => {
+    if (!sessions.length) return
+    setSessionSeen((prev) => {
+      const next = bootstrapSessionSeen(prev, sessions, Date.now())
+      try {
+        localStorage.setItem(SESSION_SEEN_KEY, serializeSessionSeen(next))
+      } catch {
+        /* noop */
+      }
+      return next
+    })
+  }, [sessions])
+
+  // 復帰（スリープ・タブ切替）の合図で会話一覧を取り直す（App のバッジ同期と同時）。
+  useEffect(() => {
+    const onWake = () => {
+      const rpcNow = sockRef.current?.rpc
+      if (rpcNow) loadSessions(rpcNow)
+    }
+    window.addEventListener('hm:wake-sync', onWake)
+    return () => window.removeEventListener('hm:wake-sync', onWake)
+  }, [loadSessions])
+
   const unreadIds = useMemo(() => unreadSessions(chatReports, seenMap), [chatReports, seenMap])
   const otherUnreads = useMemo(
     () => otherUnreadReports(chatReports, seenMap, currentIds),
     [chatReports, seenMap, currentIds],
   )
+
+  /** 会話ごとの未読完了報告の**件数**（ドロワーの行に数字のピルを出す・D16②）。 */
+  const unreadReportMap = useMemo(() => {
+    const map = {}
+    for (const r of Array.isArray(chatReports) ? chatReports : []) {
+      const sid = String(r?.sessionId ?? '')
+      const at = Number(r?.at)
+      if (!sid || !Number.isFinite(at)) continue
+      if (at <= (Number(seenMap[sid]) || 0)) continue
+      map[sid] = (map[sid] || 0) + 1
+    }
+    return map
+  }, [chatReports, seenMap])
+
+  /** ドロワーの行に出すバッジ（未読完了・返信新着・実行中・表示中）を 1 回で組む。 */
+  const sessionBadges = useMemo(() => {
+    const live = new Set(
+      (Array.isArray(liveTurns) ? liveTurns : []).map((t) => String(t?.sessionId ?? '')).filter(Boolean),
+    )
+    const out = {}
+    for (const s of Array.isArray(sessions) ? sessions : []) {
+      out[`${s.profile ?? 'default'}:${s.id}`] = sessionRowBadges({
+        session: s,
+        unreadReportMap,
+        seenMap: sessionSeen,
+        activeDrawerSid,
+        liveSessionIds: live,
+      })
+    }
+    return out
+  }, [sessions, unreadReportMap, sessionSeen, activeDrawerSid, liveTurns])
+
+  /** `≡` に出す未読会話数（完了報告の未読＋別会話の返信新着のユニーク数）。 */
+  const drawerUnread = useMemo(() => countDrawerUnread(Object.values(sessionBadges)), [sessionBadges])
 
   useEffect(() => {
     try {
@@ -991,6 +1162,7 @@ export function ChatPane({
       setStoredSid(null)
       setTitle('')
       setBlocks([])
+      setTranscriptMeta(null)
       setUsage(null)
       setReadonly(null)
       setProfile(next)
@@ -1015,7 +1187,7 @@ export function ChatPane({
     async (sessionId, focusId, title, profile = null) => {
       setLoadingChat(true)
       try {
-        const q = new URLSearchParams({ limit: '100', tools: '1' })
+        const q = new URLSearchParams({ limit: '300', tools: '1' })
         // 他プロファイルの会話は state.db が別なので profile を渡す（読み取り専用で開く）
         if (profile && profile !== 'default') q.set('profile', profile)
         const d = await api(`/api/sessions/${encodeURIComponent(sessionId)}/transcript?${q}`)
@@ -1030,8 +1202,18 @@ export function ChatPane({
           title: d.title ?? title ?? '',
           profile: profile && profile !== 'default' ? profile : null,
         })
+        // 読み取り専用でも開いた＝見た（D16②）。ここで親チャット `storedSid` は触らない
+        // （リロード時は最後の通常会話へ戻る既存挙動を保つための境界）。
+        markReadRef.current?.(sessionId, sessionsRef.current.find((s) => String(s.id) === String(sessionId))?.message_count)
         const { blocks: folded } = foldTranscriptMessages(d.messages ?? [], toEpochMs)
         setBlocks(folded)
+        setTranscriptMeta({
+          sessionId,
+          profile: profile && profile !== 'default' ? profile : null,
+          hasMore: Boolean(d.hasMore),
+          oldestId: d.oldestId ?? null,
+          loadingMore: false,
+        })
         if (d.title || title) setTitle(d.title || title)
         if (focusId) {
           requestAnimationFrame(() => scrollToHit(focusId))
@@ -1051,6 +1233,7 @@ export function ChatPane({
     async (storedTarget, focusId = null, prof = 'default') => {
       setDrawer(false)
       setBlocks([])
+      setTranscriptMeta(null)
       setUsage(null)
       setReadonly(null)
       setProfile(prof || 'default')
@@ -1239,10 +1422,15 @@ export function ChatPane({
             haptic('tap')
             setDrawer(true)
           }}
-          aria-label={otherUnreads.length ? t('chat.sessionsAria', { n: otherUnreads.length }) : t('chat.sessions')}
+          aria-label={drawerUnread ? t('chat.sessionsAria', { n: drawerUnread }) : t('chat.sessions')}
         >
           <Icon name="grid" size={18} />
-          {otherUnreads.length ? <span className="nav-dot done" aria-hidden="true" /> : null}
+          {drawerUnread ? (
+            <span className="drawer-btn-badge" aria-hidden="true">
+              {drawerUnread}
+            </span>
+          ) : null}
+          {!drawerUnread && otherUnreads.length ? <span className="nav-dot done" aria-hidden="true" /> : null}
         </button>
         <span className="chat-title">{title || t('chat.title')}</span>
         <span
@@ -1375,6 +1563,19 @@ export function ChatPane({
             ) : null}
           </div>
         ) : null}
+        {transcriptMeta?.hasMore && transcriptMeta?.oldestId ? (
+          <button
+            type="button"
+            className="chat-older"
+            disabled={transcriptMeta.loadingMore}
+            onClick={() => {
+              haptic('tap')
+              loadOlderTranscript()
+            }}
+          >
+            {transcriptMeta.loadingMore ? t('chat.loadingOlder') : t('chat.loadOlder')}
+          </button>
+        ) : null}
         {timeline.map((item) => {
           if (item.kind === 'report') {
             const r = item.report
@@ -1400,9 +1601,11 @@ export function ChatPane({
           }
           const b = item.block
           const i = item.index
+          // 配列添字だと履歴を先頭に足したとき開閉状態（expandedTools）がズレる
+          const blockKey = b.mid != null && b.mid !== '' ? `mid-${b.mid}` : `at-${b.at || i}`
           return b.role === 'user' ? (
             <div
-              key={i}
+              key={blockKey}
               data-mid={b.mid}
               className={`msg user${readonly?.focusId && b.mid === readonly.focusId ? ' hit' : ''}`}
             >
@@ -1433,7 +1636,7 @@ export function ChatPane({
             </div>
           ) : b.role === 'assistant' ? (
             <div
-              key={i}
+              key={blockKey}
               data-mid={b.mid}
               className={`msg bot${readonly?.focusId && b.mid === readonly.focusId ? ' hit' : ''}`}
             >
@@ -1443,17 +1646,23 @@ export function ChatPane({
                     <summary>{t('chat.toolsRan', { count: b.tools.length })}</summary>
                     <ToolRows
                       rows={b.tools}
-                      prefix={`msg-${i}`}
+                      prefix={blockKey}
                       expandedMap={expandedTools}
                       onToggle={toggleToolExpand}
                     />
                   </details>
                 ) : null}
-                {b.text ? renderFormattedText(b.text, copyCode) : b.open ? <span className="dots">…</span> : ''}
+                {b.text ? (
+                  <MarkdownBody text={b.text} onCopyCode={copyCode} copyLabel={t('chat.copy')} />
+                ) : b.open ? (
+                  <span className="dots">…</span>
+                ) : (
+                  ''
+                )}
               </div>
             </div>
           ) : (
-            <div key={i} className="msg notice">
+            <div key={blockKey} className="msg notice">
               {b.text}
             </div>
           )
@@ -2018,17 +2227,41 @@ export function ChatPane({
           </button>
           {sessions.map((s) => {
             const foreign = s.profile && s.profile !== DEFAULT_PROFILE
-            // その会話に未読のレビュー完了報告があるか（行の点。q2=A）
-            const unread = unreadIds.includes(String(s.id))
+            const key = `${s.profile ?? 'default'}:${s.id}`
+            // 行のバッジは純関数（`lib/sessionUnread.js`）で決める。表示中・実行中・
+            // 未読の完了報告（件数）・返信の新着（NEW / +N）を 1 行に出す（D16②）。
+            const badge = sessionBadges[key] ?? {
+              isActive: false,
+              isRunning: false,
+              unreadReports: 0,
+              unreadReplies: 0,
+            }
+            const isRo = String(readonly?.sessionId ?? '') === String(s.id)
+            const replyLabel = unreadRepliesLabel(badge.unreadReplies)
             return (
               <button
-                key={`${s.profile ?? 'default'}:${s.id}`}
-                className={`row${s.id === storedSid ? ' on' : ''}`}
-                title={unread ? t('chat.unreadReportTitle') : undefined}
+                key={key}
+                className={`row${badge.isActive ? ' on' : ''}`}
+                title={
+                  badge.unreadReports
+                    ? t('chat.unreadReportTitle')
+                    : replyLabel
+                      ? t('chat.newReplyTitle')
+                      : isRo
+                        ? t('chat.readonly')
+                        : undefined
+                }
                 onClick={() => openSessionSafe(s.id, null, s.profile ?? 'default')}
               >
                 <span className="row-main">
-                  <span className="row-title">{s.title || s.id}</span>
+                  <span className="row-title">
+                    {s.title || s.id}
+                    {isRo ? (
+                      <span className="row-ro" title={t('chat.readonly')}>
+                        {t('chat.readonlyShort')}
+                      </span>
+                    ) : null}
+                  </span>
                   <span className="row-sub">
                     {foreign ? (
                       <span className="prof-chip on">{s.profile}</span>
@@ -2037,7 +2270,27 @@ export function ChatPane({
                     {s.is_active ? t('chat.runningSuffix') : ''}
                   </span>
                 </span>
-                {unread ? <span className="row-dot done" aria-label={t('chat.reportAria')} /> : null}
+                {badge.isRunning ? (
+                  <span
+                    className="row-dot running"
+                    title={t('chat.runningTitle')}
+                    aria-label={t('chat.runningTitle')}
+                  />
+                ) : null}
+                {badge.unreadReports ? (
+                  <span
+                    className="row-badge done"
+                    title={t('chat.unreadReportTitle')}
+                    aria-label={t('chat.reportAria')}
+                  >
+                    {badge.unreadReports}
+                  </span>
+                ) : null}
+                {replyLabel ? (
+                  <span className="row-badge new" title={t('chat.newReplyTitle')}>
+                    {replyLabel}
+                  </span>
+                ) : null}
                 <Icon name="chevron" size={16} />
               </button>
             )
