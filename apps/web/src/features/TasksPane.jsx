@@ -876,13 +876,6 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
         </button>
       ) : null}
 
-      {/* 全バッチ完了時の 1 タップ導線（🏆 完了レシート・SPEC-PILOT-V5 §3.3 ③ / D26③） */}
-      {currentSpec && specAllDone ? (
-        <button type="button" className="spec-receipt-btn" onClick={() => openReceipt()} aria-label={t('receipt.open')}>
-          {t('receipt.open')}
-        </button>
-      ) : null}
-
       {/*
         直近のパイプライン完走サマリ（SPEC-PILOT-V4 §3.3 ③ / D20③）。
         Spec Launchpad の直下に控えめに出し、展開すると統合 Markdown の全文が読める。
@@ -1071,14 +1064,28 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
               )
             })}
           </div>
-          <button
-            className="btn primary"
-            style={{ marginTop: 12, width: '100%' }}
-            disabled={specBusy || !specSel.length}
-            onClick={launchBatches}
-          >
-            {specBusy ? t('tasks.specLaunching') : t('tasks.specLaunchBtn', { n: specSel.length })}
-          </button>
+          {/* 起票するものがあるときは起票、全部完了しているときは履歴へ（ボタンは行き先を名乗る） */}
+          {specAllDone ? (
+            <button
+              className="btn"
+              style={{ marginTop: 12, width: '100%' }}
+              onClick={() => {
+                setSpecSheetOpen(false)
+                openSpecHistory()
+              }}
+            >
+              {t('tasks.specHistoryTitle')}
+            </button>
+          ) : (
+            <button
+              className="btn primary"
+              style={{ marginTop: 12, width: '100%' }}
+              disabled={specBusy || !specSel.length}
+              onClick={launchBatches}
+            >
+              {specBusy ? t('tasks.specLaunching') : t('tasks.specLaunchBtn', { n: specSel.length })}
+            </button>
+          )}
           <div className="row-sub" style={{ padding: '8px 4px', lineHeight: 1.6 }}>
             {t('tasks.specNote')}
           </div>
@@ -1088,6 +1095,37 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
       {/* 全バッチ完了後の履歴（Q3=A）。行＝バッチ＋完了バッジ＋完了時刻。増えうる一覧なので縦リスト */}
       {specHistoryOpen && currentSpec ? (
         <Sheet title={t('tasks.specHistoryTitle')} onClose={() => setSpecHistoryOpen(false)}>
+          {/* 仕様の切り替えは縦リスト（1 行 1 仕様）。履歴でも同じ操作系にする（Q1=B） */}
+          {specList.length > 1 ? (
+            <div className="pick-list" style={{ marginBottom: 8 }}>
+              {specList.map((sp) => {
+                const sel = sp.path === currentSpec.path
+                return (
+                  <button
+                    key={sp.path}
+                    className={`pick-item${sel ? ' on' : ''}`}
+                    onClick={() => {
+                      haptic('tap')
+                      setSpecPath(sp.path)
+                    }}
+                  >
+                    <span className="pick-main">
+                      <span className="pick-title">{sp.title}</span>
+                      <span className="pick-sub">
+                        {[
+                          t('tasks.specBatchCount', { n: sp.batches.length }),
+                          sp.mtime ? t('tasks.specUpdated', { when: relTime(sp.mtime) }) : null,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </span>
+                    </span>
+                    <span className="pick-meta">{sel ? '✓' : ''}</span>
+                  </button>
+                )
+              })}
+            </div>
+          ) : null}
           <div className="row-sub mono" style={{ padding: '0 2px 8px' }}>
             {currentSpec.path}
           </div>
@@ -1121,16 +1159,19 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
               )
             })}
           </div>
-          <button
-            className="btn"
-            style={{ marginTop: 12, width: '100%' }}
-            onClick={() => {
-              setSpecHistoryOpen(false)
-              openSpecSheet()
-            }}
-          >
-            {t('tasks.specOpenLaunch')}
-          </button>
+          {/* 全バッチ完了後は起票するものが無いので導線を出さない（意味の無いボタンを残さない） */}
+          {specAllDone ? null : (
+            <button
+              className="btn"
+              style={{ marginTop: 12, width: '100%' }}
+              onClick={() => {
+                setSpecHistoryOpen(false)
+                openSpecSheet()
+              }}
+            >
+              {t('tasks.specOpenLaunch')}
+            </button>
+          )}
           <div className="row-sub" style={{ padding: '8px 4px', lineHeight: 1.6 }}>
             {t('tasks.specHistoryNote')}
           </div>

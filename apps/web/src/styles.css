@@ -432,19 +432,22 @@ button.t-pill:active {
 }
 
 /* ---------- Spec Launchpad（SPEC §5.4） ---------- */
+/* Spec Launchpad のカードは完了報告カードと同じ見た目にする（同じ列に並ぶので揃える） */
 .spec-bar {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
   margin-bottom: 10px;
-  padding: 8px 10px;
+  padding: 9px 12px;
   border-radius: 12px;
-  border: 1px solid var(--rec-bg);
-  background: var(--rec-bg);
-  color: var(--rec-fg);
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+  color: var(--text);
   font: inherit;
   text-align: left;
+  cursor: pointer;
 }
 
 .spec-bar:active {
@@ -453,7 +456,7 @@ button.t-pill:active {
 
 /* 全バッチ完了のカードは成功色に寄せる（🚀 の起票待ちと一目で区別する。Q3=A） */
 .spec-bar.is-done {
-  border-color: var(--good);
+  border-left-color: var(--good);
 }
 
 .spec-bar-main {
