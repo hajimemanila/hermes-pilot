@@ -71,6 +71,34 @@ Every one of them is reachable from the phone and from the standard dashboard.
   curl -s -H "x-client: mobile" "http://127.0.0.1:4097/api/snippets/term?lang=ja" # terminal
   ```
 
+### Interactive demo (no backend needed)
+
+`npm run build:demo` produces a static site in `apps/web/dist-demo` that needs **no bridge, no gateway and no
+database** — put it on GitHub Pages (or any static host) and anyone can walk the pipeline.
+
+```bash
+npm run build:demo          # VITE_DEMO_MODE=1, base ./, outDir apps/web/dist-demo
+npx serve apps/web/dist-demo   # or: python3 -m http.server -d apps/web/dist-demo 4321
+```
+
+- **On a phone** it is the normal PWA, opened straight in the browser (no device frame).
+- **On a desktop browser (≥ 900 px)** the app is shown inside a device simulator: `Phone 390×844`,
+  `Tablet 820×1180` (the two-pane layout) or `Full window`, plus instant `Dopamine ⇄ Serotonin`,
+  sound, `Dark ⇄ Light`, `EN ⇄ JA` and *Restart tour*. The frame is a real `<iframe>`, so media queries,
+  `position: fixed` sheets, toasts and the bottom nav behave exactly as on the device.
+- **A 4-step guided tour** (top banner with a jump button on every step): ① approve the Architect's
+  decision sheet with *Accept All Recommended* → ② file the generated spec's batches and watch them run →
+  ③ stamp a redline or accept the Before ↔ After visual gate → ④ open the completion summary and the
+  **completion receipt** (1200×630 PNG / share text).
+
+All data is in memory (`apps/web/src/demo/mockApi.js`); the screenshots used by the visual gate are
+generated as inline SVG data URLs, so the demo has no network dependency at all.
+
+**Production is untouched**: `main.jsx` reads `import.meta.env.VITE_DEMO_MODE`, so a normal `npm run build`
+strips the demo branch and its dynamic imports — `apps/web/dist` contains no mock code, no tour CSS and no
+screenshots (only the `demo.*` UI strings that live in the shared dictionaries). `apps/web/dist-demo` is
+git-ignored and excluded from `npm pack`.
+
 ## Requirements
 
 - Node.js **≥ 22.19**
@@ -185,8 +213,9 @@ review/        sheets/, shots/, library/, feed.jsonl, chat-reports.jsonl, task-c
 ```bash
 npm install                 # postinstall fixes node-pty permissions
 npm run dev                 # Vite on :4098, proxies /api and /ws to :4097
-npm test                    # unit tests (402)
+npm test                    # unit tests (616)
 npm run verify              # tests + PWA 34-point check + production build
+npm run build:demo          # static interactive demo -> apps/web/dist-demo (no backend)
 npm run deploy              # atomic, verified swap of apps/web/dist
 npm run migrate:pilot       # the same migration as `init`, on demand
 node bin/hermes-pilot.mjs --help
@@ -199,7 +228,9 @@ bin/hermes-pilot.mjs     CLI: init / start / qr / service / migrate
 apps/bridge/src/         bridge (server.js, auth.js, review.js, qr.js, capabilities.js, ...)
 apps/bridge/test/        bridge unit tests (qr.test.js compares against qrencode fixtures)
 apps/web/src/            React PWA (i18n/, features/, lib/pairing.js, lib/theme.js)
+apps/web/src/demo/       interactive demo only (mockApi.js, DemoStage.jsx, demo.css) — never in dist/
 apps/web/dist/           production build served by the bridge
+apps/web/dist-demo/      static demo build (`npm run build:demo`, git-ignored)
 skills/                  bundled quick-review / annotation skills
 docs/                    SPEC-PUBLIC-PLUGIN.md (the spec), OPERATIONS.md, PLAN.md, EVIDENCE.md
 ```

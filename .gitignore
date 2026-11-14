@@ -4,6 +4,8 @@ dist/
 *.log
 apps/web/dist.prev/
 apps/web/dist.next/
+# デモビルド（`npm run build:demo`）は成果物なので追跡しない
+apps/web/dist-demo/
 __pycache__/
 *.pyc
 

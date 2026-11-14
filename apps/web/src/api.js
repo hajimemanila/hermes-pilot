@@ -3,6 +3,16 @@ import { getLang, translate } from './i18n/lang.js'
 
 export const BASE = ''
 
+/*
+ * デモビルド（`npm run build:demo`）の差し込み口。
+ *
+ * `main.jsx` がデモのときだけ `globalThis` に実装を置く。ここから `demo/` を **import しない**ので、
+ * 通常ビルドのバンドルにはモックのコードも文字列も 1 バイトも入らない（実測: `dist/` を grep）。
+ */
+const demoFetchImpl = () => globalThis.__hmDemoFetch ?? null
+const demoSocketImpl = () => globalThis.__hmDemoSocket ?? null
+
+
 /**
  * エラーコードを現在の言語の表示文にする（辞書に無ければそのまま）。
  * @param {string} code コード
@@ -23,6 +33,9 @@ function localizedMessage(code, fallback) {
  * @returns {Promise<any>} 応答
  */
 export async function api(path, { method = 'GET', body } = {}) {
+  // デモビルドでは全リクエストをインメモリのモックが返す（バックエンド不要・SPEC-PILOT-V5 §3.4 ②）
+  const demo = demoFetchImpl()
+  if (demo) return demo(path, { method, body })
   let res
   try {
     res = await fetch(`${BASE}${path}`, {
@@ -72,6 +85,9 @@ export async function api(path, { method = 'GET', body } = {}) {
  * @returns {WebSocket} ソケット
  */
 export function openSocket(path) {
+  // デモビルドでは擬似ソケット（JSON-RPC をインメモリで返す）
+  const demo = demoSocketImpl()
+  if (demo) return demo(path)
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
   return new WebSocket(`${proto}://${location.host}${path}`)
 }

@@ -67,6 +67,34 @@ English README: [`README.md`](README.md)
   curl -s -H "x-client: mobile" "http://127.0.0.1:4097/api/snippets/term?lang=ja" # 端末
   ```
 
+### 触って試せるデモ（バックエンド不要）
+
+`npm run build:demo` で `apps/web/dist-demo` に**ブリッジもゲートウェイも DB も要らない**静的サイトを
+生成します。GitHub Pages などの静的ホスティングに置けば、誰でもパイプラインを体験できます。
+
+```bash
+npm run build:demo             # VITE_DEMO_MODE=1 / base ./ / outDir apps/web/dist-demo
+npx serve apps/web/dist-demo   # もしくは python3 -m http.server -d apps/web/dist-demo 4321
+```
+
+- **スマホ**では普通の PWA として全画面で開きます（筐体なし）。
+- **PC ブラウザ（900px 以上）**ではデバイス筐体つきで表示し、`Phone 390×844` / `Tablet 820×1180`
+  （2 ペイン）/ `Full window` を即時切替。`Dopamine ⇄ Serotonin`・音・`Dark ⇄ Light`・`EN ⇄ JA`・
+  「ツアーを最初から」も同じバーから切り替わります。筐体の中身は本物の `<iframe>` なので、
+  メディアクエリ・`position: fixed` のシート・トースト・下部ナビが実機と同じように振る舞います。
+- **4 ステップのガイド**（上部バー。各ステップにジャンプボタン）: ① 仕様の判断シートを
+  「⚡ 推奨を一括承認」→ ② 生成された仕様書のバッチを一括起票して自走を眺める →
+  ③ 赤入れスタンプ or Before ↔ After の視覚検収 → ④ 実行サマリと**完了レシート**
+  （1200×630 PNG / シェア文）を開く。
+
+データはすべてメモリ上（`apps/web/src/demo/mockApi.js`）で、視覚検収に使う画像も inline SVG の
+data URL として組み立てるため、デモは外部ネットワークに一切依存しません。
+
+**本番は汚しません**: `main.jsx` が `import.meta.env.VITE_DEMO_MODE` を見るので、通常の
+`npm run build` ではデモ分岐ごと（動的 import を含めて）消えます。`apps/web/dist` にモックのコード・
+ツアー用 CSS・スクショは入りません（共有辞書の `demo.*` 文言だけは辞書に残ります）。
+`apps/web/dist-demo` は git 管理外で、`npm pack` にも含まれません。
+
 ## 必要なもの
 
 - Node.js **22.19 以上**
@@ -180,8 +208,9 @@ review/        sheets/, shots/, library/, feed.jsonl, chat-reports.jsonl, task-c
 ```bash
 npm install                 # postinstall が node-pty の権限を直す
 npm run dev                 # Vite :4098（/api・/ws は 4097 へプロキシ）
-npm test                    # 単体テスト（402 件）
+npm test                    # 単体テスト（616 件）
 npm run verify              # test + check:pwa（34 項目）+ 本番ビルド
+npm run build:demo          # バックエンド不要の静的デモ → apps/web/dist-demo
 npm run deploy              # 検証付きで dist を原子的に切替（無停止）
 npm run migrate:pilot       # init と同じ移行を単体で実行
 node bin/hermes-pilot.mjs --help
@@ -194,7 +223,9 @@ bin/hermes-pilot.mjs     CLI: init / start / qr / service / migrate
 apps/bridge/src/         ブリッジ（server.js, auth.js, review.js, qr.js, capabilities.js, ...）
 apps/bridge/test/        ブリッジの単体テスト（qr.test.js は qrencode の参照行列と比較）
 apps/web/src/            React PWA（i18n/, features/, lib/pairing.js, lib/theme.js）
+apps/web/src/demo/       デモ専用（mockApi.js, DemoStage.jsx, demo.css）— dist には入りません
 apps/web/dist/           ブリッジが配信する本番ビルド
+apps/web/dist-demo/      静的デモビルド（`npm run build:demo`・git 管理外）
 skills/                  同梱スキル quick-review / annotation
 docs/                    SPEC-PUBLIC-PLUGIN.md（仕様）, OPERATIONS.md, PLAN.md, EVIDENCE.md
 ```

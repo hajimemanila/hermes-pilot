@@ -1,0 +1,298 @@
+/*
+ * Interactive Demo Mode（SPEC-PILOT-V5 §3.4 / D27）専用のスタイル。
+ *
+ * `DemoStage.jsx` が import する。デモビルド（`npm run build:demo`）でしか読み込まれないので、
+ * 通常ビルドの CSS には 1 行も入らない（`styles.css` を汚さない）。
+ */
+
+.demo-shell {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(80% 60% at 20% 0%, rgba(45, 212, 191, 0.14) 0%, transparent 60%),
+    radial-gradient(70% 60% at 100% 100%, rgba(168, 85, 247, 0.16) 0%, transparent 55%),
+    #05070c;
+  color: #e8f4f6;
+}
+
+.demo-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  min-height: 52px;
+  border-bottom: 1px solid rgba(120, 190, 205, 0.16);
+  background: rgba(8, 16, 22, 0.72);
+  backdrop-filter: blur(10px);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.demo-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.demo-bar-brand {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #e8f4f6;
+  white-space: nowrap;
+}
+
+.demo-bar-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.demo-bar-group:last-child {
+  margin-left: auto;
+}
+
+.demo-chip {
+  appearance: none;
+  border: 1px solid rgba(120, 190, 205, 0.22);
+  background: rgba(255, 255, 255, 0.04);
+  color: #cfe6ec;
+  font-size: 12px;
+  line-height: 1;
+  padding: 7px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.demo-chip:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.demo-chip.on {
+  background: rgba(45, 212, 191, 0.18);
+  border-color: rgba(45, 212, 191, 0.55);
+  color: #d8fffa;
+}
+
+.demo-chip.vibe.dopamine {
+  border-color: rgba(251, 191, 36, 0.5);
+  color: #ffe9b0;
+}
+
+.demo-chip.vibe.serotonin {
+  border-color: rgba(148, 163, 184, 0.45);
+  color: #dbe6ee;
+}
+
+.demo-chip.restart {
+  border-color: rgba(248, 113, 113, 0.4);
+  color: #ffd9d9;
+}
+
+.demo-canvas {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  overflow: hidden;
+}
+
+/*
+ * 筐体。`contain: layout paint` が肝で、
+ * アプリ内の `position: fixed`（Sheet・トースト）をこの箱の内側に閉じ込める。
+ */
+.demo-device {
+  position: relative;
+  border-radius: 42px;
+  background: linear-gradient(160deg, #1b2330 0%, #0a0e15 55%, #05070c 100%);
+  box-shadow:
+    0 0 0 10px #0b0f16,
+    0 0 0 12px #232c3a,
+    0 24px 60px rgba(0, 0, 0, 0.6),
+    0 0 90px rgba(45, 212, 191, 0.08);
+}
+
+.demo-device[data-kind='tablet'] {
+  border-radius: 30px;
+  box-shadow:
+    0 0 0 12px #0b0f16,
+    0 0 0 14px #232c3a,
+    0 24px 60px rgba(0, 0, 0, 0.6),
+    0 0 90px rgba(45, 212, 191, 0.08);
+}
+
+.demo-device-screen {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--bg);
+}
+
+/* 中身は iframe（独立したビューポートなので、media query も fixed もそのまま正しく効く） */
+.demo-frame {
+  display: block;
+  border: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+}
+
+.demo-device[data-kind='tablet'] .demo-device-screen {
+  border-radius: 10px;
+}
+
+/* Full Window: 筐体を外し、アプリをウィンドウいっぱいに（状態は iframe なので維持される） */
+.demo-canvas.is-full {
+  padding: 0;
+}
+
+.demo-device.is-full {
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.demo-device-screen.is-full {
+  border-radius: 0;
+}
+
+/* 筐体内では `.app` は残りの高さいっぱい（バナー分を引く） */
+.demo-device-screen > .app,
+.demo-mobile > .app {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  max-height: none;
+}
+
+/* スマホ実機（< 900px）: 筐体を出さず、そのまま全画面の PWA */
+.demo-mobile {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.demo-mobile > .demo-banner {
+  flex: none;
+}
+
+/* --- 4 ステップガイドバー --- */
+.demo-banner {
+  flex: none;
+  padding: 8px 12px 9px;
+  background: linear-gradient(180deg, rgba(45, 212, 191, 0.16) 0%, rgba(45, 212, 191, 0.04) 100%);
+  border-bottom: 1px solid rgba(45, 212, 191, 0.28);
+  color: var(--text);
+}
+
+.demo-banner-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.demo-banner-step {
+  flex: none;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(45, 212, 191, 0.22);
+  color: #d8fffa;
+}
+
+.demo-banner-title {
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.demo-dots {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+
+.demo-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.demo-dot.past {
+  background: rgba(45, 212, 191, 0.55);
+}
+
+.demo-dot.on {
+  background: #2dd4bf;
+  box-shadow: 0 0 8px rgba(45, 212, 191, 0.8);
+}
+
+.demo-banner-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
+.demo-banner-hint > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.demo-banner-restart {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  background: transparent;
+  color: #ffd9d9;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.demo-banner-go {
+  flex: 0 0 auto;
+  width: auto;
+  max-width: 46%;
+  font-size: 11.5px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(45, 212, 191, 0.5);
+  background: rgba(45, 212, 191, 0.16);
+  color: #d8fffa;
+  cursor: pointer;
+}
+
+.demo-banner-go:hover {
+  background: rgba(45, 212, 191, 0.26);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .demo-chip,
+  .demo-banner-go {
+    transition: none;
+  }
+}
