@@ -348,7 +348,8 @@ button.stat:active {
   flex-wrap: wrap;
   align-items: center;
   gap: 4px 6px;
-  padding: 5px 12px;
+  /* ピルは 25px の見た目のまま、当たり判定（44px）が切られない高さを確保する */
+  padding: 10px 12px;
   border-bottom: 1px solid var(--line);
   background: var(--glass);
   overflow: hidden;
@@ -374,6 +375,15 @@ button.stat:active {
   font-weight: 700;
   line-height: 1.5;
   white-space: nowrap;
+  /* ピル自身を overflow: hidden にすると、当たり判定を広げる ::before まで
+     自分で切ってしまう（実測: 44px に広げても 25px しか当たらなかった）。
+     切るのは中のテキスト側（下の `.t-pill > span` / `.t-tool`）に任せる。 */
+  overflow: visible;
+}
+
+/* 長いラベルは中のスパンで省略する（ピル自体は切らない） */
+.t-pill > span {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -574,7 +584,8 @@ button.t-pill:active {
   display: flex;
   gap: 6px;
   overflow-x: auto;
-  padding-bottom: 8px;
+  /* チップは 30px の見た目のまま、当たり判定（44px）が切られない高さを確保する */
+  padding: 7px 0;
   scrollbar-width: none;
 }
 .chips::-webkit-scrollbar {
@@ -615,7 +626,9 @@ button.t-pill:active {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 2px 6px;
+  /* 中の `.link` が 44px の当たり判定を持つので、行の高さはその分だけ詰める
+     （以前の見た目のリズムを保つ） */
+  padding: 2px 2px 0;
   font-size: 11.5px;
   letter-spacing: 0.04em;
   color: var(--muted);
@@ -628,6 +641,13 @@ button.t-pill:active {
   color: var(--accent-2);
   font-size: 12px;
   padding: 4px;
+  /* 枠を持たないテキストリンクなので、箱を 44px にしても見た目は変わらない
+     （タップ対象は 44px 必要: WCAG 2.5.5。疑似要素で外側へ広げると、隣の行を食う） */
+  min-height: 44px;
+  min-width: 44px;
+  justify-content: center;
+  display: inline-flex;
+  align-items: center;
 }
 
 .list {
@@ -828,6 +848,13 @@ button.t-pill:active {
   margin-top: 3px;
 }
 
+/* チェックボックスの行（`<label class="row-sub">` で行ごと包んでいる唯一の用途）。
+   実効のタップ対象はこの label なので、行の高さを 44px にする（WCAG 2.5.5）。
+   素の `<div class="row-sub">` の注記行には効かせない。 */
+label.row-sub {
+  min-height: 44px;
+}
+
 .dot {
   flex: none;
   width: 7px;
@@ -991,21 +1018,39 @@ button.t-pill:active {
   padding: 10px 12px 20px;
 }
 
+/* 実際の当たり判定は 44x44（WCAG 2.5.5）。見た目の面は 32x32 のまま ::before で塗る。
+   ヘッダーに並ぶアイコンボタンは間隔が 4px しかないので、箱そのものを 44px にしないと
+   当たり判定どうしが重なって隣のボタンを押してしまう（実測: 疑似要素で外側へ広げると
+   隣のボタンが当たった）。 */
 .icon-btn {
   position: relative;
   border: none;
-  background: var(--surface);
+  background: none;
   color: var(--muted);
-  width: 32px;
-  height: 32px;
+  width: 44px;
+  height: 44px;
   border-radius: 10px;
   display: grid;
   place-items: center;
 }
 
+/* 面を塗る ::before は絶対配置なので、そのままだとアイコンより上に描かれる。
+   アイコン側を positioned にして上に載せる（`.nav-dot` は自分で absolute を持つ）。 */
+.icon-btn > *:not(.nav-dot) {
+  position: relative;
+}
+
+.icon-btn::before {
+  content: '';
+  position: absolute;
+  inset: 6px;
+  border-radius: 10px;
+  background: var(--surface);
+}
+
 .icon-btn .nav-dot {
-  top: 3px;
-  right: 3px;
+  top: 9px;
+  right: 9px;
 }
 
 /* ---------- 詳細 ---------- */
@@ -1623,7 +1668,7 @@ ol.md-list {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 8px 0 8px;
+  padding: 0 8px;
   background: var(--glass);
 }
 
@@ -1635,7 +1680,8 @@ ol.md-list {
   overflow-x: auto;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
-  padding-bottom: 1px;
+  /* チップは 30px の見た目のまま、当たり判定（44px）が切られない高さを確保する */
+  padding: 7px 0;
   mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent);
 }
 
@@ -1768,10 +1814,35 @@ ol.md-list {
 
 .snippet-chip.add {
   flex: none;
-  width: 30px;
+  /* 当たり判定は 44x44、見た目の丸は 30px のまま ::before で塗る（WCAG 2.5.5）。
+     30px の箱のまま疑似要素を外へ広げると、隣のチップの当たり判定と 1px 重なる */
+  width: 44px;
+  height: 44px;
   padding: 0;
+  border: none;
+  background: none;
   border-radius: 50%;
   color: var(--muted);
+  display: grid;
+  place-items: center;
+}
+
+/* 面を塗る ::before は絶対配置なので、そのままだと「＋」より上に描かれる。
+   文字側を positioned にして上に載せる。 */
+.snippet-chip-add-glyph {
+  position: relative;
+}
+
+.snippet-chip.add::before {
+  content: '';
+  position: absolute;
+  inset: 7px;
+  width: auto;
+  height: auto;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  transform: none;
 }
 
 /* ---------- 添付レール ---------- */
@@ -1900,6 +1971,8 @@ ol.md-list {
   color: var(--text);
   font: inherit;
   font-size: 14px;
+  /* 入力欄もタップ対象（WCAG 2.5.5）。実測 39px だったので 44px を下回らせない */
+  min-height: 44px;
 }
 
 .inp:focus {
@@ -1922,8 +1995,10 @@ ol.md-list {
 .composer textarea {
   flex: 1;
   /* 1行 = 行間19.6 + 余白18 + 枠2 = 39.6。38px だと常に 1.6px 溢れて
-     全高のスクロールバー（グレーの縦棒）が出る（実測: clientHeight 36 / scrollHeight 38） */
-  min-height: 40px;
+     全高のスクロールバー（グレーの縦棒）が出る（実測: clientHeight 36 / scrollHeight 38）
+     44px はタップ対象の最小（WCAG 2.5.5）。textarea は疑似要素で当たり判定を
+     広げられない（置換要素）ので、箱そのものを 44px にする。 */
+  min-height: 44px;
   max-height: 120px;
   resize: none;
   padding: 9px 11px;
@@ -2660,7 +2735,7 @@ ol.md-list {
  */
 .split-master .ak-head { flex-wrap: wrap; }
 .split-master .ak-head > div { flex: 1 1 auto; min-width: 96px; }
-.ak-tabs { padding: 2px 0 4px; }
+.ak-tabs { padding: 7px 0; }
 .ak-readonly { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
 .ak-head .btn { width: auto; flex: 0 0 auto; padding: 6px 14px; }
 .ak-title { font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: .02em; }
@@ -3225,6 +3300,12 @@ ol.md-list {
   padding: 4px 9px;
   border-radius: 8px;
   cursor: pointer;
+  /* タップ対象 44px（WCAG 2.5.5）。帯の中の小さなボタンなので、箱を広げる */
+  min-height: 44px;
+  min-width: 44px;
+  justify-content: center;
+  display: inline-flex;
+  align-items: center;
 }
 
 .chat-report-btn.primary {
@@ -4474,4 +4555,46 @@ html[data-vibe='serotonin'] .spec-receipt-btn {
   .sheet-body {
     padding: 8px 12px 12px;
   }
+}
+
+/* ---------- タップ対象 44px（SPEC-i18n-resp §2 B5 / WCAG 2.5.5） ----------
+   ピル・チップ・スイッチは現行デザインの高さ（25–40px）を保ちたいので、見た目は
+   そのままに、透明な ::before を中央へ 44x44 置いて**当たり判定だけ**広げる。
+   絶対配置なので行の高さ・要素の位置は 1px も変わらない（padding で広げると
+   枠付きのピルがそのぶん太る）。背景・枠を持たないので描画も変わらない。
+
+   ただし**外側へ広げると隣の要素を食う**場合は、箱そのものを 44px にしている:
+   - `.icon-btn`  … ヘッダーに 4px 間隔で並ぶ。44px の箱＋32px の面を ::before で塗る
+   - `.link` / `.chat-report-btn` … 行の中のテキスト。箱を 44px にしても見た目は同じ
+   - `.composer textarea` / `.inp` … 置換要素なので疑似要素が使えない（min-height: 44px）
+
+   監査（scripts/audit-responsive.mjs）は getBoundingClientRect() では疑似要素を
+   見られないため、この ::before の computed width/height を当たり判定として読み、
+   さらに広げた端を elementFromPoint で叩いて本当に当たるか確かめる。
+   よって**幅・高さは固定値で書く**（auto だと測れない）。対象を増やすときは
+   下のセレクタ一覧に足すだけでよい。 */
+.t-pill,
+.chip,
+.settings-nav-chip,
+.snippet-chip,
+.btn,
+.hm-switch,
+.composer .plus {
+  position: relative;
+}
+
+.t-pill::before,
+.chip::before,
+.settings-nav-chip::before,
+.snippet-chip::before,
+.btn::before,
+.hm-switch::before,
+.composer .plus::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
 }

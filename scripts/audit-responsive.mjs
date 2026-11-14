@@ -9,8 +9,9 @@
  * 測るもの（<viewport> <lang> <tab> <kind> <detail> の 1 行 1 違反）:
  *  - `h-overflow`  `documentElement.scrollWidth > clientWidth`（ページの横溢れ）→ 常に違反
  *  - `clip`        `scrollWidth > clientWidth + 1` の可視要素（文字切れ）→ baseline 外だけ違反
- *  - `tap`         タップ対象（`button` / `a[href]` / `input` / `[role=button]` …）が 44px 未満
- *                 → baseline 外だけ違反
+ *  - `tap`         タップ対象（`button` / `a[href]` / `input` / `[role=button]` …）の
+ *                 **実効の当たり判定**が 44px 未満 → baseline 外だけ違反
+ *                 （見た目の箱に加えて、透明な `::before` / `::after` で広げた当たり判定も数える）
  *  - `console`     その組み合わせを見ている間の `console.error` / `console.warn` → 常に違反
  *  - `pageerror`   捕捉されなかった例外 → 常に違反
  *
@@ -334,11 +335,24 @@ async function measureInPage() {
   const visible = (el) => {
     if (el.offsetParent === null && getComputedStyle(el).position !== 'fixed') return false
     const r = el.getBoundingClientRect()
-    return r.width > 0 && r.height > 0
+    if (!(r.width > 0 && r.height > 0)) return false
+    // タブを切り替えても React はペインをマウントしたまま `.pane-host.is-hidden`
+    // （visibility: hidden）に退避させる。見えない・タップできない要素は数えない。
+    return getComputedStyle(el).visibility === 'visible'
   }
 
   // 文字切れ: 「テキストだけを持つ葉」の箱より中身（文字）が広い要素。
   // 子要素を持つ箱（アイコンのバッジ等）は中身が意図的に重なるので対象外。
+  //
+  // **文字の実寸（Range の矩形）で測る**: `scrollWidth` は当たり判定を広げる透明な
+  // 疑似要素（`::before`）でも膨らむので、それを「文字切れ」と誤検出してしまう。
+  const textWidth = (el) => {
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    let widest = 0
+    for (const r of range.getClientRects()) if (r.width > widest) widest = r.width
+    return widest
+  }
   const clipSeen = new Map()
   for (const el of document.querySelectorAll('body *')) {
     if (clipSeen.size >= 12) break
@@ -348,14 +362,101 @@ async function measureInPage() {
     const cs = getComputedStyle(el)
     if (cs.overflowX === 'auto' || cs.overflowX === 'scroll') continue
     if (cs.textOverflow === 'ellipsis') continue
-    if (el.scrollWidth > el.clientWidth + 1) {
+    // インライン要素は clientWidth を持たない（0）ので箱の比較ができない（元の scrollWidth 判定も同じ）
+    if (cs.display === 'inline') continue
+    if (textWidth(el) > el.clientWidth + 1) {
       const key = clsKey(el)
       if (clipSeen.has(key)) continue
       clipSeen.set(key, el)
     }
   }
 
-  // タップ対象: 幅・高さのどちらかが 44px 未満なら違反（WCAG 2.5.5 の目安）
+  // タップ対象: 実効の当たり判定が 44px 未満なら違反（WCAG 2.5.5 の目安）。
+  //
+  // 見た目の箱は小さいまま、透明な `::before` で当たり判定だけ 44px に広げている要素がある
+  // （styles.css の「タップ対象 44px」節）。getBoundingClientRect() は疑似要素を含まないので、
+  // 疑似要素の computed width/height も読んで**大きいほう**を当たり判定とする。
+  // `content: none`（規則なし）と `pointer-events: none`（当たらない）は数えない。
+  // 幅・高さが `auto` の疑似要素は実寸が取れないため無視する（固定値で書く決まり）。
+  //
+  // **広げた分が本当に当たるかを確かめる**: 疑似要素は中央に置く決まりなので、広げた端の
+  // 中点を `elementFromPoint` で叩き、自分（か子孫）が返らなければ広げていないものとして扱う
+  // （`overflow-x: auto` の親に縦を切られている場合など、computed 上は 44px でも実際は
+  // 30px しか当たらない）。次の 3 つは叩かずに computed の寸法を使う:
+  //  - 要素自身が `overflow: hidden`（自分の箱で疑似要素を切っている）
+  //  - スクロールで一部しか見えていない（箱が祖先のクリップ領域からはみ出している）
+  //  - 画面外（叩けない）
+  // 固定された下部ナビに覆われているだけの点は「スクロールすれば当たる」ので通す。
+  const hitBox = (el, r) => {
+    let width = r.width
+    let height = r.height
+    for (const pseudo of ['::before', '::after']) {
+      const cs = getComputedStyle(el, pseudo)
+      if (!cs) continue
+      const content = cs.content
+      if (!content || content === 'none' || content === 'normal') continue
+      if (cs.display === 'none' || cs.pointerEvents === 'none') continue
+      const pw = Number.parseFloat(cs.width)
+      const ph = Number.parseFloat(cs.height)
+      if (Number.isFinite(pw) && pw > width) width = pw
+      if (Number.isFinite(ph) && ph > height) height = ph
+    }
+    if (width === r.width && height === r.height) return { width, height }
+
+    const own = getComputedStyle(el)
+    if (own.overflowX !== 'visible') width = r.width
+    if (own.overflowY !== 'visible') height = r.height
+
+    // 祖先のクリップ領域（スクロール領域）を積む
+    let clipL = -Infinity
+    let clipT = -Infinity
+    let clipR = Infinity
+    let clipB = Infinity
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      const cs = getComputedStyle(p)
+      if (cs.overflowX === 'visible' && cs.overflowY === 'visible') continue
+      const pr = p.getBoundingClientRect()
+      if (cs.overflowX !== 'visible') {
+        clipL = Math.max(clipL, pr.left + p.clientLeft)
+        clipR = Math.min(clipR, pr.left + p.clientLeft + p.clientWidth)
+      }
+      if (cs.overflowY !== 'visible') {
+        clipT = Math.max(clipT, pr.top + p.clientTop)
+        clipB = Math.min(clipB, pr.top + p.clientTop + p.clientHeight)
+      }
+    }
+    const boxVisible = r.left >= clipL - 0.5 && r.right <= clipR + 0.5 && r.top >= clipT - 0.5 && r.bottom <= clipB + 0.5
+    if (!boxVisible) return { width, height }
+
+    const cx = r.left + r.width / 2
+    const cy = r.top + r.height / 2
+    const onScreen = (x, y) => x >= 0 && y >= 0 && x <= window.innerWidth - 1 && y <= window.innerHeight - 1
+    // 固定された下部ナビ等に覆われているだけなら、スクロールすれば当たるので違反にしない。
+    // 隣のボタンが食っている（同じスクロール面の兄弟）場合は本当に押せないので違反にする。
+    const underFixed = (node) => {
+      for (let p = node; p; p = p.parentElement) {
+        const pos = getComputedStyle(p).position
+        if (pos === 'fixed' || pos === 'sticky') return true
+      }
+      return false
+    }
+    const taps = (x, y) => {
+      const hit = document.elementFromPoint(x, y)
+      if (!hit) return true
+      if (hit === el || el.contains(hit)) return true
+      return underFixed(hit)
+    }
+    const [left, right, top, bottom] = [
+      [cx - width / 2 + 1, cy],
+      [cx + width / 2 - 1, cy],
+      [cx, cy - height / 2 + 1],
+      [cx, cy + height / 2 - 1],
+    ]
+    if (onScreen(left[0], left[1]) && onScreen(right[0], right[1]) && !(taps(...left) && taps(...right))) width = r.width
+    if (onScreen(top[0], top[1]) && onScreen(bottom[0], bottom[1]) && !(taps(...top) && taps(...bottom))) height = r.height
+    return { width, height }
+  }
+
   const tapSeen = new Map()
   for (const el of document.querySelectorAll(
     'button, a[href], input:not([type=hidden]), select, textarea, summary, [role=button], [role=tab], [role=switch]',
@@ -365,30 +466,37 @@ async function measureInPage() {
     if (el.disabled) continue
     // xterm が文字入力を受けるための不可視の textarea（見た目のタップ対象ではない）
     if (el.classList.contains('xterm-helper-textarea')) continue
-    const r = el.getBoundingClientRect()
-    if (r.width >= 44 && r.height >= 44) continue
-    const key = clsKey(el)
+    // チェックボックス・ラジオは <label> で行ごと包んで当たり判定にしている。
+    // 実効のタップ対象は label なので、label の当たり判定で測る。
+    const isToggle = el.tagName === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio')
+    const target = (isToggle && el.closest('label')) || el
+    const hit = hitBox(target, target.getBoundingClientRect())
+    if (hit.width >= 44 && hit.height >= 44) continue
+    const key = clsKey(target)
     if (tapSeen.has(key)) continue
-    tapSeen.set(key, el)
+    tapSeen.set(key, target)
   }
 
   // 読み込み直後の過渡状態（フェードイン途中・データ到着前）で一瞬だけ崩れる要素を
   // 違反にしないため、250ms 後にもう一度測って**まだ崩れているものだけ**残す。
   await new Promise((resolve) => setTimeout(resolve, 250))
 
-  out.clip = [...clipSeen].filter(([, el]) => el.isConnected && el.scrollWidth > el.clientWidth + 1).map(([key, el]) => ({
+  out.clip = [...clipSeen].filter(([, el]) => el.isConnected && textWidth(el) > el.clientWidth + 1).map(([key, el]) => ({
     key,
-    detail: `${describe(el)} scrollWidth=${el.scrollWidth} clientWidth=${el.clientWidth}`,
+    detail: `${describe(el)} textWidth=${Math.round(textWidth(el))} clientWidth=${el.clientWidth}`,
   }))
   out.tap = [...tapSeen]
     .filter(([, el]) => {
       if (!el.isConnected) return false
-      const r = el.getBoundingClientRect()
-      return r.width < 44 || r.height < 44
+      const hit = hitBox(el, el.getBoundingClientRect())
+      return hit.width < 44 || hit.height < 44
     })
     .map(([key, el]) => {
       const r = el.getBoundingClientRect()
-      return { key, detail: `${describe(el)} ${Math.round(r.width)}x${Math.round(r.height)}` }
+      const hit = hitBox(el, r)
+      const box = `${Math.round(r.width)}x${Math.round(r.height)}`
+      const target = `${Math.round(hit.width)}x${Math.round(hit.height)}`
+      return { key, detail: `${describe(el)} ${box}${target === box ? '' : ` (hit ${target})`}` }
     })
   return out
 }

@@ -80,6 +80,16 @@
   - `npm run audit:responsive` を追加。
 - 新規 `apps/web/test/i18nLeak.test.js`（静的）: `apps/bridge/src/*.js` と `apps/web/src/**` を走査し、`message:`/`error:`/`new Error(` の**日本語リテラルを 0 件**にする（allowlist は `review.js` の `runKanban` 引数と生成文のみ、行番号ではなくパターンで許可）。コメント内は対象外（除去してから判定）。
 - `package.json`: `verify` に `audit:responsive` を追加（Chrome 無し環境は skip で緑）。
+- **44px タップ対象の解消（t_c1ba8a8e・実装済み）**: 初日に受理した 23 パターンは全廃し、baseline を空にした
+  （`audit-responsive.baseline.json` は `tap: []` / `clip: []`）。進め方は 2 通り:
+  - 見た目を変えずに当たり判定だけ広げる（`t-pill` / `chip` / `snippet-chip` / `settings-nav-chip` / `btn` / `hm-switch` / `＋`）:
+    透明な `::before` を中央へ 44x44 置く。ピル自身が `overflow: hidden` だと自分で切ってしまうので、
+    省略は中のスパンに任せる（`.t-pill > span`）。行が浅い場合は帯側の padding で 44px を通す
+    （`.telemetry` / `.chips` / `.chips-scroll` / `.ak-tabs`）。
+  - 外へ広げると隣を食うもの（`.icon-btn` / `.link` / `.chat-report-btn` / `.snippet-chip.add`）:
+    箱そのものを 44px にし、見た目は `::before` で塗る（`.icon-btn` は 32px の面を `inset: 6px`）。
+  - 監査は「疑似要素の computed 寸法」に加えて `elementFromPoint` で広げた端を叩き、
+    `overflow` の親に切られていないかまで測る（切られていれば違反）。
 
 ---
 

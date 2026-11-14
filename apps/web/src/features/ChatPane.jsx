@@ -2405,7 +2405,7 @@ export function ChatPane({
             ))}
           </div>
           <button className="snippet-chip add" onClick={() => setSnippetSheet(true)} aria-label={t('chat.snippetListAria')}>
-            ＋
+            <span className="snippet-chip-add-glyph">＋</span>
           </button>
         </div>
       ) : null}
