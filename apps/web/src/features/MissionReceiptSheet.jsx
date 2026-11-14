@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { Loader, Sheet, relTime } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
@@ -85,7 +85,7 @@ export function MissionReceiptSheet({ board = null, spec = null, hours = 24, onC
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [vibe, setVibe] = useState(currentVibe)
-  const canvasRef = useRef(null)
+  const [previewUrl, setPreviewUrl] = useState(null)
 
   // Vibe の切替（V5-2 の設定トグル）にその場で追随する
   useEffect(() => {
@@ -121,14 +121,22 @@ export function MissionReceiptSheet({ board = null, spec = null, hours = 24, onC
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [board, spec, hours])
 
-  // プレビュー（1200×630 を CSS で縮小表示。PNG と同じ描画関数）
+  // プレビューは「保存される PNG そのもの」を <img> で出す（WYSIWYG・Canvas の再描画差異なし）
   useEffect(() => {
-    if (!data || !canvasRef.current) return
-    const ctx = canvasRef.current.getContext('2d')
-    if (!ctx) return
-    ctx.setTransform(1, 0, 0, 1, 0, 0)
-    ctx.clearRect(0, 0, RECEIPT_W, RECEIPT_H)
-    drawReceipt(ctx, data, { lang, vibe })
+    if (!data) return undefined
+    let alive = true
+    let url = null
+    renderReceiptBlob(data, { lang, vibe })
+      .then((blob) => {
+        if (!alive || !blob) return
+        url = URL.createObjectURL(blob)
+        setPreviewUrl(url)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+      if (url) URL.revokeObjectURL(url)
+    }
   }, [data, lang, vibe])
 
   const kpis = data ? receiptKpis(data, lang) : []
@@ -228,13 +236,17 @@ export function MissionReceiptSheet({ board = null, spec = null, hours = 24, onC
               </span>
             </div>
 
-            <canvas
-              ref={canvasRef}
-              className="receipt-preview"
-              width={RECEIPT_W}
-              height={RECEIPT_H}
-              aria-label={t('receipt.title')}
-            />
+            {previewUrl ? (
+              <img
+                className="receipt-preview"
+                src={previewUrl}
+                width={RECEIPT_W}
+                height={RECEIPT_H}
+                alt={t('receipt.title')}
+              />
+            ) : (
+              <div className="receipt-preview receipt-preview-empty" aria-hidden="true" />
+            )}
 
             <div className="receipt-kpis">
               {kpis.map((k) => (
@@ -259,7 +271,7 @@ export function MissionReceiptSheet({ board = null, spec = null, hours = 24, onC
             {missing.length ? (
               <div className="receipt-note warn">{t('receipt.partial', { sources: missing.join(', ') })}</div>
             ) : null}
-            <div className="receipt-note">{t('receipt.savedNote', { rate: `$${data?.kpi?.savedBasis ?? 0.2}` })}</div>
+            <div className="receipt-note">{t('receipt.savedNote', { pct: Math.round((data?.kpi?.savedRatio ?? 0.9) * 100) })}</div>
           </>
         )}
       </div>

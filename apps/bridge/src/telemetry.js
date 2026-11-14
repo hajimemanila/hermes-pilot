@@ -28,11 +28,11 @@ export const DEFAULT_HOURS = 24
 export const TYPED_CHARS_PER_ACTION = 40
 
 /**
- * キャッシュヒット 1M トークンあたりの節約見込額（USD）。
- * DeepSeek 系の入力単価（cache miss 側）と cache read の差は概ね $0.25/M。
- * 単価はモデル・時期で動くので **$0.20/M の保守的固定値** にする（過剰主張をしない）。
+ * キャッシュヒットによる割引率（概算）。cache read は入力単価の約 1/10（≒90% 引き）で、
+ * その割引は **既に `cost` に反映済み**。よって節約見込額は実コストから逆算する
+ * （トークン数×単価で積むと、state.db の単価仮定と二重計上になって実コストを大きく超える）。
  */
-export const SAVED_USD_PER_MTOK = 0.2
+export const CACHE_SAVINGS_RATIO = 0.9
 
 /** 1 タップと数える audit 種別（既定 1 回、`choiceCount` があればその数）。 */
 const TAP_KINDS = new Set(['review.answer', 'review.approve', 'review.annotation', 'kanban.close', 'kanban.unblock'])
@@ -75,17 +75,21 @@ export function cacheHitRate(totals) {
 /**
  * キャッシュ分の節約見込額（USD・概算）。
  *
- * @param {{cacheRead?: number}|null} totals 合計
- * @param {{usdPerMTok?: number}} [opts] 単価（テスト・将来の設定用）
- * @returns {number|null} USD（キャッシュ読みが無ければ null）
+ * `cost` に反映済みのキャッシュ割引を、キャッシュヒット率から保守的に逆算する:
+ * `cost × cacheHitRate × ratio`。実コストを超えないので「盛った数字」にならない。
+ *
+ * @param {{cost?: number, input?: number, cacheRead?: number}|null} totals 合計
+ * @param {{ratio?: number}} [opts] 割引率（テスト・将来の設定用）
+ * @returns {number|null} USD（算出不能なら null）
  */
 export function estimateSavedUsd(totals, opts = {}) {
   if (!totals) return null
-  const cacheRead = Math.max(0, Number(totals.cacheRead) || 0)
-  if (!cacheRead) return null
-  const perMTok = Number.isFinite(Number(opts.usdPerMTok)) ? Number(opts.usdPerMTok) : SAVED_USD_PER_MTOK
-  // 4 桁で丸める（24h で数千トークン程度の小口でも 0 に潰さない）
-  return Math.round(((cacheRead / 1_000_000) * perMTok + Number.EPSILON) * 10000) / 10000
+  const cost = Math.max(0, Number(totals.cost) || 0)
+  const rate = cacheHitRate(totals)
+  if (!cost || rate === null || rate <= 0) return null
+  const ratio = Number.isFinite(Number(opts.ratio)) ? Math.min(1, Math.max(0, Number(opts.ratio))) : CACHE_SAVINGS_RATIO
+  // 4 桁で丸める（小口でも 0 に潰さない）
+  return Math.round((cost * rate * ratio + Number.EPSILON) * 10000) / 10000
 }
 
 /**
@@ -192,23 +196,36 @@ export function sameSpec(a, b) {
 /**
  * タスク群から status 件数と所要時間（分）を出す。
  *
+ * 所要時間は **集計窓の内側** に丸める: 窓内に完了したタスクの「最短開始 〜 最遅完了」で、
+ * 開始が窓より前なら窓の開始に切り上げる。古いタスク 1 件で「33,000 分」のような
+ * 意味のない数字が出るのを防ぐ。
+ *
  * @param {Array<{status?: string, createdAt?: number|null, startedAt?: number|null, completedAt?: number|null}>} tasks タスク
- * @returns {{batchesDone: number, batchesTotal: number, durationMin: number|null}} 集計
+ * @param {{since?: number}} [opts] 集計窓の開始（epoch ms）
+ * @returns {{batchesDone: number, batchesTotal: number, durationMin: number|null, durationCapped: boolean}} 集計
  */
-export function summarizeTasks(tasks) {
+export function summarizeTasks(tasks, opts = {}) {
   const list = Array.isArray(tasks) ? tasks : []
+  const since = Number(opts.since) || 0
   const done = list.filter((t) => String(t?.status ?? '') === 'done').length
-  const finished = list.filter((t) => ['done', 'archived'].includes(String(t?.status ?? '')))
+  const finished = list.filter((t) => {
+    if (String(t?.status ?? '') !== 'done') return false
+    const e = Number(t?.completedAt) || 0
+    return e > 0 && (since <= 0 || e >= since)
+  })
   let start = null
   let end = null
-  for (const t of finished.length ? finished : list) {
+  let capped = false
+  for (const t of finished) {
     const s = Number(t?.startedAt ?? t?.createdAt ?? 0) || 0
-    const e = Number(t?.completedAt ?? 0) || 0
-    if (s > 0 && (start === null || s < start)) start = s
+    const e = Number(t?.completedAt) || 0
+    const bounded = since > 0 ? Math.max(s, since) : s
+    if (since > 0 && s > 0 && s < since) capped = true
+    if (bounded > 0 && (start === null || bounded < start)) start = bounded
     if (e > 0 && (end === null || e > end)) end = e
   }
-  const durationMin = start && end && end >= start ? Math.round((end - start) / 60000) : null
-  return { batchesDone: done, batchesTotal: list.length, durationMin }
+  const durationMin = start && end && end >= start ? Math.max(1, Math.round((end - start) / 60000)) : null
+  return { batchesDone: done, batchesTotal: list.length, durationMin, durationCapped: capped }
 }
 
 /**
@@ -239,7 +256,7 @@ export function buildReceipt(input = {}) {
     redlines: Math.max(0, Number(input.ops?.redlines) || 0),
     typedChars: Math.max(0, Number(input.ops?.typedChars) || 0),
   }
-  const taskSummary = summarizeTasks(input.tasks ?? [])
+  const taskSummary = summarizeTasks(input.tasks ?? [], { since: generatedAt - hours * 3600 * 1000 })
   const reportCounts = input.report?.counts && typeof input.report.counts === 'object' ? input.report.counts : null
   const tests = extractTestCounts([
     input.report?.markdown ?? '',
@@ -260,7 +277,7 @@ export function buildReceipt(input = {}) {
       cacheHitRate: rate,
       cachePct: rate === null ? null : Math.round(rate * 100),
       savedUsd,
-      savedBasis: SAVED_USD_PER_MTOK,
+      savedRatio: CACHE_SAVINGS_RATIO,
       cacheReadTokens: totals ? Number(totals.cacheRead) || 0 : null,
       inputTokens: totals ? Number(totals.input) || 0 : null,
       outputTokens: totals ? Number(totals.output) || 0 : null,
@@ -275,6 +292,7 @@ export function buildReceipt(input = {}) {
         ? Number(reportCounts.total) || taskSummary.batchesTotal
         : taskSummary.batchesTotal || null,
       durationMin: taskSummary.durationMin,
+      durationCapped: taskSummary.durationCapped,
       tests: tests.tests,
       pwaChecks: tests.pwaChecks,
     },

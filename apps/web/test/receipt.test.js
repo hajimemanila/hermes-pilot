@@ -29,7 +29,7 @@ const receipt = {
     cacheHitRate: 0.994,
     cachePct: 99,
     savedUsd: 3.25,
-    savedBasis: 0.2,
+    savedRatio: 0.9,
     inputTokens: 12000,
     outputTokens: 8000,
     cacheReadTokens: 16000000,
@@ -109,8 +109,8 @@ test('receiptKpis は辞書のラベルだけを使い、価格/キャッシュ/
     assert.equal(by.saved.value, '~$3.25')
     assert.equal(by.zeroTyping.value, '100%')
     assert.equal(by.tests.value, '402')
-    assert.equal(by.duration.value, lang === 'ja' ? '62 分' : '62 min')
-    assert.match(by.saved.note, /\$0\.2/, '節約額には概算の根拠を添える')
+    assert.equal(by.duration.value, lang === 'ja' ? '1 時間 2 分' : '1h 2m', '60 分以上は時間＋分で出す')
+    assert.match(by.saved.note, /90%/, '節約額には概算の根拠（割引率）を添える')
   }
 })
 

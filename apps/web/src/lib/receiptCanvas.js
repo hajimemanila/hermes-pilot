@@ -60,9 +60,16 @@ export function kpiValue(key, receipt, lang) {
     case 'tests':
       return k.tests === null || k.tests === undefined ? na : fmtNumber(k.tests, { maximumFractionDigits: 0 })
     case 'duration':
-      return k.durationMin === null || k.durationMin === undefined
-        ? na
-        : tr(lang, 'receipt.value.min', { min: fmtNumber(k.durationMin, { maximumFractionDigits: 0 }) })
+      if (k.durationMin === null || k.durationMin === undefined) return na
+      // 窓の開始で切り上げた（＝窓より前に始まった作業を含む）ときは「24h 以上」と出す
+      if (k.durationCapped) return tr(lang, 'receipt.value.over', { h: fmtNumber(receipt?.windowHours ?? 24, { maximumFractionDigits: 0 }) })
+      if (Number(k.durationMin) >= 60) {
+        return tr(lang, 'receipt.value.hours', {
+          h: fmtNumber(Math.floor(Number(k.durationMin) / 60), { maximumFractionDigits: 0 }),
+          m: fmtNumber(Math.round(Number(k.durationMin) % 60), { maximumFractionDigits: 0 }),
+        })
+      }
+      return tr(lang, 'receipt.value.min', { min: fmtNumber(k.durationMin, { maximumFractionDigits: 0 }) })
     default:
       return na
   }
@@ -84,13 +91,18 @@ export function receiptKpis(receipt, lang) {
     key,
     label: tr(lang, `receipt.kpi.${key}`),
     value: kpiValue(key, receipt, lang),
-    // 節約額とゼロタイピング度合いだけは「概算・換算」であることを添える
+    // 節約額とゼロタイピング度合いだけは「概算・換算」であることを添える。
+    // 欠損（—）のタイルは理由を出す（空欄を「壊れている」と読ませない）。
     note:
       key === 'saved' && k.savedUsd !== null && k.savedUsd !== undefined
-        ? tr(lang, 'receipt.kpi.savedNote', { rate: fmtCost(k.savedBasis ?? 0.2) })
+        ? tr(lang, 'receipt.kpi.savedNote', { pct: Math.round((k.savedRatio ?? 0.9) * 100) })
         : key === 'zeroTyping' && k.zeroTypingScore !== null && k.zeroTypingScore !== undefined
           ? tr(lang, 'receipt.kpi.zeroTypingNote')
-          : '',
+          : key === 'duration' && (k.durationMin === null || k.durationMin === undefined)
+            ? tr(lang, 'receipt.kpi.durationNote', { hours: receipt?.windowHours ?? 24 })
+            : key === 'tests' && (k.tests === null || k.tests === undefined)
+              ? tr(lang, 'receipt.kpi.testsNote')
+              : '',
   }))
 }
 

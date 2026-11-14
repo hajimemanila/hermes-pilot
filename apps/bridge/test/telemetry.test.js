@@ -26,12 +26,14 @@ test('cacheHitRate は cacheRead / (input + cacheRead)、0 割りは null', () =
   assert.equal(cacheHitRate({ input: 500 }), 0, '入力だけなら 0%（null と区別する）')
 })
 
-test('estimateSavedUsd は保守的単価で丸め、キャッシュ読みが無ければ null', () => {
-  assert.equal(estimateSavedUsd({ cacheRead: 1_000_000 }), 0.2)
-  assert.equal(estimateSavedUsd({ cacheRead: 2_500_000 }), 0.5)
-  assert.equal(estimateSavedUsd({ cacheRead: 0 }), null)
+test('estimateSavedUsd は実コスト×キャッシュ率×割引率で保守的に見積もる', () => {
+  // cost 1 × cache 率 0.9 × 割引 0.9 = 0.81（実コストは超えない）
+  assert.equal(estimateSavedUsd({ cost: 1, input: 100, cacheRead: 900 }), 0.81)
+  assert.equal(estimateSavedUsd({ cost: 1, input: 100, cacheRead: 900 }, { ratio: 0.5 }), 0.45)
+  assert.equal(estimateSavedUsd({ cost: 2, input: 0, cacheRead: 1000 }), 1.8)
+  assert.equal(estimateSavedUsd({ cost: 1, input: 1000, cacheRead: 0 }), null, 'キャッシュ無しは節約 0 ではなく null')
+  assert.equal(estimateSavedUsd({ cost: 0, input: 1, cacheRead: 9 }), null)
   assert.equal(estimateSavedUsd(null), null)
-  assert.equal(estimateSavedUsd({ cacheRead: 1_000_000 }, { usdPerMTok: 1 }), 1)
 })
 
 test('zeroTypingScore は入力 40 文字をタップ 1 回と換算する', () => {
@@ -83,7 +85,7 @@ test('sameSpec は相対/絶対パスを同一視し、空の要求は全一致'
   assert.equal(sameSpec(null, 'docs/X.md'), false)
 })
 
-test('summarizeTasks は done 件数と所要時間（分）を出す', () => {
+test('summarizeTasks は done 件数と所要時間（分）を窓内に丸めて出す', () => {
   const t0 = Date.parse('2026-11-15T00:00:00Z')
   const s = summarizeTasks([
     { status: 'done', startedAt: t0, completedAt: t0 + 30 * 60000 },
@@ -93,7 +95,20 @@ test('summarizeTasks は done 件数と所要時間（分）を出す', () => {
   assert.equal(s.batchesDone, 2)
   assert.equal(s.batchesTotal, 3)
   assert.equal(s.durationMin, 90, '最短開始〜最遅完了')
-  assert.deepEqual(summarizeTasks(null), { batchesDone: 0, batchesTotal: 0, durationMin: null })
+  assert.deepEqual(summarizeTasks(null), { batchesDone: 0, batchesTotal: 0, durationMin: null, durationCapped: false })
+
+  // 窓より前に始まったタスクは窓の開始へ切り上げる（33,000 分のような数字を出さない）
+  const bounded = summarizeTasks(
+    [
+      { status: 'done', startedAt: t0 - 3 * 86400000, completedAt: t0 + 60 * 60000 },
+      { status: 'archived', startedAt: t0 - 5 * 86400000, completedAt: t0 - 4 * 86400000 },
+    ],
+    { since: t0 },
+  )
+  assert.equal(bounded.durationMin, 60, '窓内の完了分だけを見る')
+  assert.equal(bounded.durationCapped, true, '窓より前に始まった作業を含む＝24h 以上と出す')
+  assert.equal(s.durationCapped, false)
+  assert.equal(bounded.batchesDone, 1, 'done のみ数える（archived は含めない）')
 })
 
 test('extractTestCounts は result / Markdown からテスト件数を拾う', () => {
@@ -122,7 +137,7 @@ test('buildReceipt は KPI を組み立て、空データでも優雅に 0/null 
   assert.equal(r.ok, true)
   assert.equal(r.kpi.costUsd, 1.08)
   assert.equal(r.kpi.cachePct, 90)
-  assert.equal(r.kpi.savedUsd, 0.0018, '9000 トークン × $0.20/M（保守的概算）')
+  assert.equal(r.kpi.savedUsd, 0.8748, 'cost 1.08 × cache 率 0.9 × 割引 0.9（実コストを超えない概算）')
   assert.equal(r.kpi.zeroTypingScore, 100)
   assert.equal(r.kpi.batchesDone, 5, 'レポート counts を優先する')
   assert.equal(r.kpi.batchesTotal, 5)
