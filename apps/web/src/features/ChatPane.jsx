@@ -252,7 +252,7 @@ export function ChatPane({
   const [reportOpen, setReportOpen] = useState({})
   // 完了レシート（SPEC-PILOT-V5 §3.3 ③ / D26③）。統合レポートカードから開く。
   const [receiptCtx, setReceiptCtx] = useState(null)
-  // 🎙️ Spec Seed（SPEC-PILOT-V5 §3.3 ① / D26①）。音声/一行メモから仕様策定を始める。
+  // 📝 Spec Seed（SPEC-PILOT-V5 §3.3 ① / D26①）。一行メモから仕様策定を始める。
   const [seedOpen, setSeedOpen] = useState(false)
   // 仕様書の準備完了（A2B クイック起票カード・§3.2 D23）。
   const [specJobs, setSpecJobs] = useState(null)
@@ -2386,7 +2386,12 @@ export function ChatPane({
         repo={repo?.id ?? null}
         chat={sid ?? activeDrawerSid ?? null}
         onRetried={() => loadSpecJobs()}
-        onDismiss={(jobId) => setSpecJobClosed((prev) => [...prev, jobId])}
+        onDismiss={async (jobId) => {
+          // バーがサーバー側へ破棄を永続化したあとに呼ばれる。ローカルでも閉じ、
+          // 取得し直して「破棄済みが一覧から消えた」ことを実データで確認する（SPEC V7 §3.3 ③）
+          setSpecJobClosed((prev) => [...prev, jobId])
+          await loadSpecJobs()
+        }}
         notify={notify}
       />
 

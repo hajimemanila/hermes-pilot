@@ -181,7 +181,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
   const [specMd, setSpecMd] = useState(null)
   // Launchpad のバッチ 1 行ごとの「仕様・Verify ▾」展開（チェックボックス選択とは独立）
   const [specBatchOpen, setSpecBatchOpen] = useState([])
-  // 🎙️ Spec Seed と A2B クイック起票カード（SPEC-PILOT-V5 §3.2・§3.3 ① / D23・D26①）
+  // 📝 Spec Seed と A2B クイック起票カード（SPEC-PILOT-V5 §3.2・§3.3 ① / D23・D26①）
   const [seedOpen, setSeedOpen] = useState(false)
   const [architectJobs, setArchitectJobs] = useState(null)
   const [architectFiling, setArchitectFiling] = useState(false)
@@ -1010,7 +1010,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
         onPreview={(b) => openSpecMd({ path: b.path, title: b.title })}
       />
 
-      {/* 🎙️ Spec Seed（SPEC V5 §3.3 ① D26①）: 仕様ランチャーの隣から 1 タップで種を撒く */}
+      {/* 📝 Spec Seed（SPEC V5 §3.3 ① D26①）: 仕様ランチャーの隣から 1 タップで種を撒く */}
       <div className="seed-entry">
         <button
           type="button"
@@ -1021,7 +1021,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
           }}
           aria-label={t('seed.openAria')}
         >
-          🎙️ {t('seed.title')}
+          📝 {t('seed.title')}
         </button>
       </div>
 

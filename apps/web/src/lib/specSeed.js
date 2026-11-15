@@ -1,9 +1,13 @@
 /**
- * `🎙️ Spec Seed` の純粋ロジック（SPEC V5 §3.3 ① / D26①）。
+ * `Spec Seed` の純粋ロジック（SPEC V5 §3.3 ① / D26①・SPEC V7 §3.3 / D33・D35）。
  *
  * 画面（`features/SpecSeedSheet.jsx`）から切り離しておき、DOM 無しで単体テストする。
  * 文言は i18n 辞書（`seed.*`）が持ち、ここには英語の ASCII ロジックだけを置く
  * （`noHardcodedJapanese.test.js` は `src/` を丸ごと走査するため）。
+ *
+ * 音声は OS キーボードの標準入力に一本化したので、Web Speech API のヘルパーは持たない
+ * （非 Secure Context の Tailscale HTTP や Android Chrome の `continuous` 非互換で
+ * 必ず失敗していた。SPEC V7 §1.3）。
  */
 
 /** 種の最大文字数（ブリッジの `SEED_MAX` と一致させる）。 */
@@ -13,22 +17,44 @@ export const SEED_MAX = 4000
 export const TEMPLATE_IDS = ['feature', 'ux', 'bug']
 
 /**
- * Web Speech API の言語コード（UI 言語に追従）。
- * @param {string} lang `'ja'|'en'`
- * @returns {string} BCP-47
+ * 実行方針（SPEC-PILOT-V7 §3.3 ② / D35）。
+ *
+ * どちらでも Round 1 の Quick Review インタビューは実施し、生成する SPEC の
+ * 各バッチに付す既定 `Execution Mode` だけを切り替える。
  */
-export function speechLocale(lang) {
-  return lang === 'ja' ? 'ja-JP' : 'en-US'
+export const EXECUTION_POLICIES = Object.freeze(['zero-stop', 'visual-gate'])
+
+/** 既定の実行方針（止まらず自律完走）。 */
+export const DEFAULT_EXECUTION_POLICY = 'zero-stop'
+
+/**
+ * 実行方針を正規化する（未知値・未指定は既定へ落とす）。
+ * @param {unknown} value 入力
+ * @returns {'zero-stop'|'visual-gate'} 正規化した方針
+ */
+export function normalizeExecutionPolicy(value) {
+  const v = String(value ?? '').trim().toLowerCase()
+  return EXECUTION_POLICIES.includes(v) ? v : DEFAULT_EXECUTION_POLICY
 }
 
 /**
- * 音声認識のコンストラクタ（未対応ブラウザでは null）。
- * @param {any} win `window`
- * @returns {Function|null} コンストラクタ
+ * 実行方針 → ピルのラベル i18n キー。
+ * @param {unknown} policy 方針
+ * @returns {string} キー
  */
-export function recognitionCtor(win) {
-  if (!win) return null
-  return win.SpeechRecognition || win.webkitSpeechRecognition || null
+export function executionPolicyKey(policy) {
+  return normalizeExecutionPolicy(policy) === 'visual-gate' ? 'seed.policyVisualGate' : 'seed.policyZeroStop'
+}
+
+/**
+ * 実行方針 → 説明文の i18n キー。
+ * @param {unknown} policy 方針
+ * @returns {string} キー
+ */
+export function executionPolicyHintKey(policy) {
+  return normalizeExecutionPolicy(policy) === 'visual-gate'
+    ? 'seed.policyVisualGateHint'
+    : 'seed.policyZeroStopHint'
 }
 
 /**
@@ -42,29 +68,24 @@ export function canSubmit(text) {
 }
 
 /**
- * 認識中の暫定文を確定文へ足す（二重スペースを作らない）。
- * @param {string} base 確定済み
- * @param {string} interim 暫定
- * @returns {string} 合成結果
- */
-export function mergeTranscript(base, interim) {
-  const left = String(base ?? '').trim()
-  const right = String(interim ?? '').trim()
-  if (!right) return left
-  if (!left) return right
-  // 日本語は空白を挟まない（読み上げの区切りで不自然な隙間を作らない）
-  return /[\u3000-\u9fff\uff00-\uffef]$/.test(left) ? `${left}${right}` : `${left} ${right}`
-}
-
-/**
  * `POST /api/architect/seed` の本文。
- * @param {{seedText: string, autoStart?: boolean, runner?: string, board?: string, repo?: string|null, chat?: string|null, lang?: string}} input 入力
+ * @param {{seedText: string, autoStart?: boolean, executionPolicy?: string, runner?: string, board?: string, repo?: string|null, chat?: string|null, lang?: string}} input 入力
  * @returns {object} 本文
  */
-export function buildSeedPayload({ seedText, autoStart = false, runner = 'hermes', board, repo = null, chat = null, lang = 'ja' }) {
+export function buildSeedPayload({
+  seedText,
+  autoStart = false,
+  executionPolicy = DEFAULT_EXECUTION_POLICY,
+  runner = 'hermes',
+  board,
+  repo = null,
+  chat = null,
+  lang = 'ja',
+}) {
   const body = {
     seedText: String(seedText ?? '').trim().slice(0, SEED_MAX),
     autoStart: Boolean(autoStart),
+    executionPolicy: normalizeExecutionPolicy(executionPolicy),
     runner: runner === 'antigravity' ? 'antigravity' : 'hermes',
     lang: lang === 'en' ? 'en' : 'ja',
   }
@@ -101,6 +122,53 @@ export function jobStatusKey(status) {
 /** 進行バー（`ArchitectJobBar`）に出す状態（SPEC V6 §3.3 ①）。 */
 export const JOB_ACTIVE_STATUSES = Object.freeze(['running', 'awaiting_review', 'awaiting_spec', 'failed'])
 
+/**
+ * キュー状態 → 表示チップの i18n キー（SPEC V7 §3.3 ③ / D33）。
+ *
+ * Bridge は親 `[ARCH]` タスクの status から `queueState` を返す（`ready` = `queued`、
+ * `running`/`claimed` = `running`）。判定できないときは `null` を返し、UI は
+ * 従来どおり状態文だけを出す。
+ *
+ * @param {object|null} job ジョブ
+ * @returns {string|null} キー
+ */
+export function jobQueueKey(job) {
+  const q = String(job?.queueState ?? '')
+  if (q === 'queued') return 'seed.queueQueued'
+  if (q === 'running') return 'seed.queueRunning'
+  return null
+}
+
+/**
+ * 待機中（キュー待ち）か。経過時間の文言を「待機」に切り替えるのに使う。
+ * @param {object|null} job ジョブ
+ * @returns {boolean} 待機中なら true
+ */
+export function isQueuedJob(job) {
+  return String(job?.queueState ?? '') === 'queued'
+}
+
+/**
+ * 進行バーのタイトル i18n キー（待機中は「キュー待ち」を明示する）。
+ * @param {object|null} job ジョブ
+ * @returns {string} キー
+ */
+export function jobTitleKey(job) {
+  if (isQueuedJob(job)) return 'seed.statusQueued'
+  return jobStatusKey(job?.status)
+}
+
+/**
+ * ジョブ破棄のエンドポイント（`POST`。SPEC V7 §3.3 ③）。
+ *
+ * サーバー側に永続化するので、リロードしても進行バーに戻ってこない。
+ * @param {string} jobId ジョブ ID
+ * @returns {string} パス
+ */
+export function dismissJobPath(jobId) {
+  return `/api/architect/jobs/${encodeURIComponent(String(jobId ?? ''))}/dismiss`
+}
+
 /** 進行中（自律で進む）ジョブのポーリング間隔。 */
 export const JOB_POLL_ACTIVE_MS = 4000
 
@@ -112,7 +180,8 @@ export const JOB_POLL_IDLE_MS = 20000
  *
  * `spec_ready` / `launched` は既存の `SpecReadyBanner` が引き継ぐので出さない
  * （二重カードにしない）。新しいジョブを優先し、同時刻なら `failed` を先に見せる
- * （止まっているものを黙って隠さない）。`×` で閉じたジョブは再表示しない。
+ * （止まっているものを黙って隠さない）。`×` で閉じたジョブ・サーバー側で破棄済み
+ * （`dismissed`）のジョブは再表示しない。
  *
  * @param {Array<object>} jobs `/api/architect/jobs` の `jobs`
  * @param {string[]} [dismissedIds] 閉じたジョブの ID
@@ -120,7 +189,7 @@ export const JOB_POLL_IDLE_MS = 20000
  */
 export function pickActiveArchitectJob(jobs, dismissedIds = []) {
   const list = (Array.isArray(jobs) ? jobs : []).filter(
-    (job) => job && JOB_ACTIVE_STATUSES.includes(String(job.status)),
+    (job) => job && JOB_ACTIVE_STATUSES.includes(String(job.status)) && !job.dismissed,
   )
   const dismissed = new Set((Array.isArray(dismissedIds) ? dismissedIds : []).map((id) => String(id)))
   const candidates = list.filter((job) => !dismissed.has(String(job.id)))
@@ -133,16 +202,19 @@ export function pickActiveArchitectJob(jobs, dismissedIds = []) {
 }
 
 /**
- * ジョブの状態に応じたポーリング間隔（SPEC V6 §3.3 ③）。
+ * ジョブの状態に応じたポーリング間隔（SPEC V6 §3.3 ③・SPEC V7 §3.3 ③）。
  *
  * 自律で進む `running` / `awaiting_spec` だけ 4 秒。`awaiting_review` / `failed` は
  * 人の操作待ちなので 20 秒のまま（不要な問い合わせを増やさない）。
+ * キュー待ち（`queueState === 'queued'`）はディスパッチャ（既定 60 秒間隔）が拾う
+ * まで進まないので、遅い側に落とさず 4 秒で「実行中へ変わった瞬間」を拾う。
  *
  * @param {object|null} job ジョブ
  * @returns {number} ミリ秒
  */
 export function jobPollMs(job) {
   const status = String(job?.status ?? '')
+  if (isQueuedJob(job)) return JOB_POLL_ACTIVE_MS
   return status === 'running' || status === 'awaiting_spec' ? JOB_POLL_ACTIVE_MS : JOB_POLL_IDLE_MS
 }
 

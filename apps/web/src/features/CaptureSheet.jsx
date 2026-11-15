@@ -1,17 +1,18 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
 import { Sheet, Spinner } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
 import { useI18n } from '../i18n/index.js'
 
 /**
- * クイック起票。1行（または音声）でカンバンにタスクを作る。
+ * クイック起票。1行でカンバンにタスクを作る。
  *
- * 音声は Android Chrome の webkitSpeechRecognition。使えなければボタンを出さない。
+ * 音声は **OS キーボードの標準音声入力**を使う（自前の Web Speech API マイクは
+ * 非 Secure Context・`continuous` 非互換で失敗するため削除。SPEC V7 §1.3 / D33）。
  * 二重送信は idempotencyKey（このシートを開いたときの乱数）でサーバ側が吸収する。
  */
 export function CaptureSheet({ board, boards, defaultBoard, onClose, onCreated, notify }) {
-  const { t, locale } = useI18n()
+  const { t } = useI18n()
   const [targetBoard, setTargetBoard] = useState(board ?? defaultBoard ?? null)
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
@@ -19,71 +20,17 @@ export function CaptureSheet({ board, boards, defaultBoard, onClose, onCreated, 
   const [priority, setPriority] = useState(0)
   const [assignee, setAssignee] = useState('')
   const [busy, setBusy] = useState(false)
-  const [listening, setListening] = useState(false)
   // 起票先ボードの一覧は縦リスト（Q1=B / Q2=A）。19 ボードあっても入力欄を押し出さないよう、
   // 既定は「いま選んでいるボード」1 行だけにし、タップで下に開く。
   const [pickOpen, setPickOpen] = useState(false)
   const keyRef = useRef(`${Date.now()}-${Math.random().toString(36).slice(2, 10)}`)
-  const recRef = useRef(null)
   const titleRef = useRef(null)
-  const baseRef = useRef('')
 
-  const speechSupported =
-    typeof window !== 'undefined' && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition)
-
+  // 開いたらすぐ打てる（音声はキーボードのマイクを 1 タップ）。
   useEffect(() => {
     const focusTimer = setTimeout(() => titleRef.current?.focus(), 150)
-    return () => {
-      clearTimeout(focusTimer)
-      try {
-        recRef.current?.abort?.()
-      } catch {
-        /* noop */
-      }
-    }
+    return () => clearTimeout(focusTimer)
   }, [])
-
-  const toggleMic = useCallback(() => {
-    if (listening) {
-      try {
-        recRef.current?.stop?.()
-      } catch {
-        /* noop */
-      }
-      setListening(false)
-      return
-    }
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SR) {
-      notify?.(t('capture.noSpeech'))
-      return
-    }
-    try {
-      const rec = new SR()
-      rec.lang = locale
-      rec.interimResults = true
-      rec.continuous = false
-      baseRef.current = title.trim() ? `${title.trim()} ` : ''
-      rec.onresult = (e) => {
-        let text = ''
-        for (let i = 0; i < e.results.length; i += 1) text += e.results[i][0].transcript
-        setTitle(`${baseRef.current}${text}`.slice(0, 200))
-      }
-      rec.onerror = (e) => {
-        setListening(false)
-        if (e?.error !== 'aborted' && e?.error !== 'no-speech') {
-          notify?.(t('capture.speechStopped', { error: e?.error ?? 'error' }))
-        }
-      }
-      rec.onend = () => setListening(false)
-      recRef.current = rec
-      rec.start()
-      setListening(true)
-    } catch (e) {
-      setListening(false)
-      notify?.(e.message)
-    }
-  }, [listening, title, notify, t, locale])
 
   const submit = async () => {
     const clean = title.trim()
@@ -183,17 +130,10 @@ export function CaptureSheet({ board, boards, defaultBoard, onClose, onCreated, 
           enterKeyHint="done"
           autoCapitalize="sentences"
         />
-        {speechSupported ? (
-          <button
-            className={`mic${listening ? ' on' : ''}`}
-            onClick={toggleMic}
-            aria-label={listening ? t('capture.micStop') : t('capture.micStart')}
-            title={listening ? t('capture.stop') : t('capture.micStart')}
-          >
-            <span aria-hidden="true">{listening ? '■' : '🎤'}</span>
-          </button>
-        ) : null}
       </div>
+
+      {/* 音声は OS キーボードのマイクに一本化（自前の Web Speech API は削除した） */}
+      <p className="capture-hint">{t('capture.voiceHint')}</p>
 
       <button className="link" style={{ marginTop: 6 }} onClick={() => setMore((v) => !v)}>
         {more ? t('capture.moreClose') : t('capture.moreOpen')}

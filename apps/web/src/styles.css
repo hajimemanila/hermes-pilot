@@ -1792,24 +1792,12 @@ ol.md-list {
   outline-offset: 2px;
 }
 
-/* クイック起票のマイク */
-.mic {
-  flex: none;
-  width: 42px;
-  height: 42px;
-  border-radius: 50%;
-  border: 1px solid var(--line-strong);
-  background: var(--surface);
-  color: var(--text);
-  font-size: 16px;
-  display: grid;
-  place-items: center;
-}
-
-.mic.on {
-  border-color: var(--bad);
-  background: var(--danger-bg);
-  color: var(--danger-fg);
+/* クイック起票の OS 標準音声入力ヒント（自前の Web Speech API マイクは廃止。SPEC V7 §1.3） */
+.capture-hint {
+  margin: 6px 0 0;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--muted);
 }
 
 .snippet-chip.add {
@@ -4390,6 +4378,73 @@ html[data-vibe='serotonin'] .spec-receipt-btn {
   color: var(--muted);
 }
 
+/* 入力欄の下の行（音声ヒント＋文字数）に置くヒントは横に伸ばす */
+.seed-hint-inline {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 実行方針のセグメント（Zero-stop 既定 / Visual-gate。SPEC V7 §3.3 ② / D35）
+   タップ領域は 44px 以上（`npm run audit:responsive` が実測する） */
+.seed-policy-head {
+  margin: 2px 0 6px;
+}
+
+.seed-seg {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 6px;
+  min-width: 0;
+}
+
+.seed-seg-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.seed-seg-btn.on {
+  border-color: var(--accent);
+  background: var(--accent-soft, var(--surface-2));
+  color: var(--accent-2, var(--accent));
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.seed-seg-name {
+  max-width: 100%;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.seed-seg-tag {
+  font-size: 9.5px;
+  line-height: 1.2;
+  color: var(--muted);
+}
+
+.seed-seg-btn.on .seed-seg-tag {
+  color: inherit;
+}
+
+.seed-policy-hint {
+  margin: 0 0 10px;
+}
+
 .seed-templates {
   flex-wrap: wrap;
   overflow: visible;
@@ -4633,6 +4688,37 @@ html[data-vibe='serotonin'] .spec-receipt-btn {
   border-color: var(--danger-line, var(--line));
   border-left-color: var(--bad);
   background: var(--danger-bg);
+}
+
+/* キュー待ち（親タスクが ready＝まだ実行されていない）。SPEC V7 §3.3 ③ */
+.job-bar.queued {
+  border-left-color: var(--warn);
+}
+
+.job-bar-wait {
+  flex: none;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.job-bar-state {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.job-bar-state.queued {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.job-bar-state.running {
+  border-color: var(--accent);
+  color: var(--accent-2, var(--accent));
 }
 
 .job-bar-row {

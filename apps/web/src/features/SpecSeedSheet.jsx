@@ -4,23 +4,27 @@ import { useI18n } from '../i18n/index.js'
 import { api } from '../api.js'
 import { celebrate } from '../lib/vibe.js'
 import {
+  DEFAULT_EXECUTION_POLICY,
+  EXECUTION_POLICIES,
   SEED_MAX,
   TEMPLATE_IDS,
   buildSeedPayload,
   canSubmit,
-  mergeTranscript,
-  recognitionCtor,
-  speechLocale,
+  executionPolicyHintKey,
+  executionPolicyKey,
 } from '../lib/specSeed.js'
 
 /**
- * `🎙️ Spec Seed` シート（SPEC V5 §3.3 ① / D26①）。
+ * `Spec Seed` シート（SPEC V5 §3.3 ① / D26①・SPEC V7 §3.3 / D33・D35）。
  *
- * ゼロタイピングで仕様策定を始める入口。「一行メモ」か「音声」だけで
+ * ゼロタイピングで仕様策定を始める入口。「一行メモ」だけで
  * `POST /api/architect/seed` に種を渡し、Architect（既定 Hermes Native・Opt-in で agy）が
  * 1タップ設計インタビュー → 仕様書まで進める。
  *
- * - 音声は Web Speech API（未対応ブラウザでは入力欄にフォーカスするだけ）
+ * - 音声は **OS キーボードの標準音声入力**を使う（Web Speech API の自前マイクは
+ *   非 Secure Context・`continuous` 非互換で必ず失敗したため削除。SPEC V7 §1.3）
+ * - 展開時にテキストエリアへ自動フォーカス（キーボードのマイクを 1 タップで呼べる）
+ * - 実行方針（`Zero-stop` 既定 / `Visual-gate`）を選び `executionPolicy` として送る
  * - テンプレートチップで「喋る手間」も省ける
  * - **「承認後に自動でバッチを起票」**（既定 OFF）を ON にすると、仕様書ができた瞬間に
  *   確認タップなしで起票・自走開始まで繋がる（D23 のハイブリッド A2B）
@@ -34,15 +38,19 @@ export function SpecSeedSheet({ board = '', repo = null, chat = null, onClose, o
   const { t, lang } = useI18n()
   const [text, setText] = useState('')
   const [autoStart, setAutoStart] = useState(false)
+  const [executionPolicy, setExecutionPolicy] = useState(DEFAULT_EXECUTION_POLICY)
   const [runner, setRunner] = useState('hermes')
   const [agyAvailable, setAgyAvailable] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [listening, setListening] = useState(false)
   const [error, setError] = useState(null)
   const inputRef = useRef(null)
-  const recRef = useRef(null)
-  const finalRef = useRef('')
-  const supported = typeof window !== 'undefined' && Boolean(recognitionCtor(window))
+
+  // 開いたらすぐ打てる（音声はキーボードのマイクを 1 タップ）。
+  // シートのアニメーション中に focus すると取りこぼすことがあるので少し待つ。
+  useEffect(() => {
+    const timer = setTimeout(() => inputRef.current?.focus(), 150)
+    return () => clearTimeout(timer)
+  }, [])
 
   // 実行ランナー（既定 Hermes Native。agy がある環境だけ Opt-in を選べる）
   useEffect(() => {
@@ -61,76 +69,6 @@ export function SpecSeedSheet({ board = '', repo = null, chat = null, onClose, o
     }
   }, [])
 
-  /** 音声認識を止める（シートを閉じるときも必ず呼ぶ）。 */
-  const stopListening = useCallback(() => {
-    const rec = recRef.current
-    recRef.current = null
-    setListening(false)
-    if (!rec) return
-    try {
-      rec.stop()
-    } catch {
-      /* すでに止まっている */
-    }
-  }, [])
-
-  useEffect(() => () => stopListening(), [stopListening])
-
-  /** 1 タップで連続認識（UI 言語に追従）。 */
-  const toggleDictation = useCallback(() => {
-    if (listening) {
-      stopListening()
-      return
-    }
-    const Ctor = recognitionCtor(window)
-    if (!Ctor) {
-      inputRef.current?.focus()
-      return
-    }
-    let rec
-    try {
-      rec = new Ctor()
-    } catch {
-      // 権限や非対応でコンストラクタが落ちる構成もある → 入力欄へ逃がす
-      setError(t('seed.unsupported'))
-      inputRef.current?.focus()
-      return
-    }
-    rec.lang = speechLocale(lang)
-    rec.continuous = true
-    rec.interimResults = true
-    finalRef.current = text
-    rec.onresult = (event) => {
-      let interim = ''
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        const res = event.results[i]
-        if (res.isFinal) finalRef.current = mergeTranscript(finalRef.current, res[0].transcript)
-        else interim = `${interim}${res[0].transcript}`
-      }
-      setText(mergeTranscript(finalRef.current, interim).slice(0, SEED_MAX))
-    }
-    rec.onerror = (event) => {
-      const code = String(event?.error ?? '')
-      // 無音・中断は黙って止める（エラー UI を出さない）
-      if (code && code !== 'no-speech' && code !== 'aborted') setError(t('seed.unsupported'))
-      stopListening()
-    }
-    rec.onend = () => {
-      if (recRef.current === rec) {
-        recRef.current = null
-        setListening(false)
-      }
-    }
-    try {
-      rec.start()
-      recRef.current = rec
-      setListening(true)
-      setError(null)
-    } catch {
-      setError(t('seed.unsupported'))
-    }
-  }, [lang, listening, stopListening, t, text])
-
   /** テンプレートチップ: 前置きを置いてフォーカス（喋る手間より速い）。 */
   const applyTemplate = useCallback((id) => {
     const prefix = t(`seed.tpl.${id}Text`)
@@ -147,11 +85,10 @@ export function SpecSeedSheet({ board = '', repo = null, chat = null, onClose, o
     if (busy || !canSubmit(text)) return
     setBusy(true)
     setError(null)
-    stopListening()
     try {
       const res = await api('/api/architect/seed', {
         method: 'POST',
-        body: buildSeedPayload({ seedText: text, autoStart, runner, board, repo, chat, lang }),
+        body: buildSeedPayload({ seedText: text, autoStart, executionPolicy, runner, board, repo, chat, lang }),
       })
       // Vibe 連動の演出＋触覚（Dopamine 時のみ音が鳴る）。未初期化でも落ちない。
       try {
@@ -166,12 +103,12 @@ export function SpecSeedSheet({ board = '', repo = null, chat = null, onClose, o
       setError(e?.message ?? t('seed.failed'))
       setBusy(false)
     }
-  }, [autoStart, board, busy, chat, lang, notify, onClose, onSeeded, repo, runner, stopListening, t, text])
+  }, [autoStart, board, busy, chat, executionPolicy, lang, notify, onClose, onSeeded, repo, runner, t, text])
 
   const runnerLabel = runner === 'antigravity' ? t('seed.runnerAgy') : t('seed.runnerHermes')
 
   return (
-    <Sheet title={`🎙️ ${t('seed.title')}`} onClose={() => !busy && onClose?.()}>
+    <Sheet title={`📝 ${t('seed.title')}`} onClose={() => !busy && onClose?.()}>
       <p className="seed-lead">{t('seed.lead')}</p>
 
       <div className="seed-row">
@@ -188,22 +125,16 @@ export function SpecSeedSheet({ board = '', repo = null, chat = null, onClose, o
         onChange={(e) => setText(e.target.value)}
         rows={4}
         aria-label={t('seed.placeholder')}
+        enterKeyHint="done"
       />
 
+      {/* 音声は OS キーボードのマイクに一本化（自前の Web Speech API は削除した） */}
       <div className="seed-actions">
-        <button
-          type="button"
-          className={`chip${listening ? ' on' : ''}`}
-          onClick={toggleDictation}
-          aria-pressed={listening}
-        >
-          {listening ? `⏹ ${t('seed.listening')}` : `🎙️ ${t('seed.dictate')}`}
-        </button>
+        <span className="seed-hint seed-hint-inline">{t('seed.voiceHint')}</span>
         <span className="seed-count">
           {text.length}/{SEED_MAX}
         </span>
       </div>
-      {!supported ? <p className="seed-hint">{t('seed.unsupported')}</p> : null}
 
       <div className="chips seed-templates">
         {TEMPLATE_IDS.map((id) => (
@@ -212,6 +143,29 @@ export function SpecSeedSheet({ board = '', repo = null, chat = null, onClose, o
           </button>
         ))}
       </div>
+
+      {/* 実行方針（D35）。どちらでも Quick Review インタビューは実施し、
+          生成する SPEC 各バッチの既定 Execution Mode だけを切り替える */}
+      <div className="seed-row seed-policy-head">
+        <span className="seed-label">{t('seed.policy')}</span>
+      </div>
+      <div className="seed-seg" role="group" aria-label={t('seed.policyAria')}>
+        {EXECUTION_POLICIES.map((id) => (
+          <button
+            key={id}
+            type="button"
+            className={`seed-seg-btn${executionPolicy === id ? ' on' : ''}`}
+            aria-pressed={executionPolicy === id}
+            onClick={() => setExecutionPolicy(id)}
+          >
+            <span className="seed-seg-name">{t(executionPolicyKey(id))}</span>
+            {id === DEFAULT_EXECUTION_POLICY ? (
+              <span className="seed-seg-tag">{t('seed.policyDefault')}</span>
+            ) : null}
+          </button>
+        ))}
+      </div>
+      <p className="seed-hint seed-policy-hint">{t(executionPolicyHintKey(executionPolicy))}</p>
 
       <label className="seed-toggle">
         <input
@@ -248,7 +202,7 @@ export function SpecSeedSheet({ board = '', repo = null, chat = null, onClose, o
         disabled={busy || !canSubmit(text)}
         onClick={submit}
       >
-        {busy ? t('seed.submitting') : `🎙️ ${t('seed.submit')}`}
+        {busy ? t('seed.submitting') : `✨ ${t('seed.submit')}`}
       </button>
     </Sheet>
   )

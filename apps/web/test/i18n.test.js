@@ -75,6 +75,10 @@ test('訳文は空でなく、英語と日本語が同一ではない（訳し�
     'demo.vibe.serotonin',
     'demo.theme.dark',
     'demo.theme.light',
+    // 実行方針の固有名詞（SPEC V7 D35。`Zero-stop` / `Visual-gate` は
+    // 生成する SPEC の `Execution Mode` 表記と一致させるため両言語で同じ）
+    'seed.policyZeroStop',
+    'seed.policyVisualGate',
   ])
   const untranslated = Object.keys(en).filter((k) => !sameAllowed.has(k) && en[k] === ja[k])
   assert.deepEqual(untranslated, [], `未翻訳の疑い: ${untranslated.join(', ')}`)

@@ -1,38 +1,34 @@
 /**
- * `🎙️ Spec Seed` の純粋ロジック検証（SPEC V5 §3.3 ① / D26①）。
+ * `Spec Seed` の純粋ロジック検証（SPEC V5 §3.3 ① / D26①・SPEC V7 §3.3 / D33・D35）。
  *
- * 画面を描かずに、送信可否・音声言語・送信本文・A2B バナー選択を固定する。
+ * 画面を描かずに、送信可否・実行方針・送信本文・ジョブ破棄の経路・A2B バナー選択を固定する。
+ * Web Speech API のヘルパー（`recognitionCtor` / `speechLocale` / `mergeTranscript`）は
+ * 音声を OS 標準へ一本化したため削除した（SPEC V7 §1.3）。
  */
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  DEFAULT_EXECUTION_POLICY,
+  EXECUTION_POLICIES,
   SEED_MAX,
   TEMPLATE_IDS,
   buildSeedPayload,
   canSubmit,
+  dismissJobPath,
   elapsedParts,
+  executionPolicyHintKey,
+  executionPolicyKey,
+  isQueuedJob,
   jobPollMs,
+  jobQueueKey,
   jobRunnerKey,
   jobStatusKey,
-  mergeTranscript,
+  jobTitleKey,
+  normalizeExecutionPolicy,
   pickActiveArchitectJob,
   pickSpecBanner,
-  recognitionCtor,
-  speechLocale,
 } from '../src/lib/specSeed.js'
-
-test('音声認識は UI 言語に追従し、未対応ブラウザでは null', () => {
-  assert.equal(speechLocale('ja'), 'ja-JP')
-  assert.equal(speechLocale('en'), 'en-US')
-  assert.equal(speechLocale(undefined), 'en-US')
-
-  const Fake = function FakeSpeech() {}
-  assert.equal(recognitionCtor({ SpeechRecognition: Fake }), Fake)
-  assert.equal(recognitionCtor({ webkitSpeechRecognition: Fake }), Fake)
-  assert.equal(recognitionCtor({}), null)
-  assert.equal(recognitionCtor(null), null)
-})
 
 test('送信可否は空文字と上限超えを弾く', () => {
   assert.equal(canSubmit('  '), false)
@@ -41,17 +37,33 @@ test('送信可否は空文字と上限超えを弾く', () => {
   assert.equal(canSubmit('x'.repeat(SEED_MAX + 1)), false)
 })
 
-test('暫定文の合成は日本語で空白を挟まない', () => {
-  assert.equal(mergeTranscript('', 'こんにちは'), 'こんにちは')
-  assert.equal(mergeTranscript('通知を', 'まとめたい'), '通知をまとめたい')
-  assert.equal(mergeTranscript('add a', 'badge'), 'add a badge')
-  assert.equal(mergeTranscript('add a', ''), 'add a')
+test('実行方針は zero-stop 既定で、未知の値は既定へ落とす', () => {
+  assert.deepEqual([...EXECUTION_POLICIES], ['zero-stop', 'visual-gate'])
+  assert.equal(DEFAULT_EXECUTION_POLICY, 'zero-stop')
+  assert.equal(normalizeExecutionPolicy(undefined), 'zero-stop')
+  assert.equal(normalizeExecutionPolicy(''), 'zero-stop')
+  assert.equal(normalizeExecutionPolicy('VISUAL-GATE'), 'visual-gate')
+  assert.equal(normalizeExecutionPolicy(' visual-gate '), 'visual-gate')
+  assert.equal(normalizeExecutionPolicy('zero-stop'), 'zero-stop')
+  // 仕様に無い値（過去の別名・タイポ）は既定へ寄せる
+  assert.equal(normalizeExecutionPolicy('fast'), 'zero-stop')
+  assert.equal(normalizeExecutionPolicy(null), 'zero-stop')
 })
 
-test('buildSeedPayload は runner/lang を正規化し、任意項目だけ載せる', () => {
+test('実行方針のラベル・説明は i18n キーへ写像される', () => {
+  assert.equal(executionPolicyKey('zero-stop'), 'seed.policyZeroStop')
+  assert.equal(executionPolicyKey('visual-gate'), 'seed.policyVisualGate')
+  assert.equal(executionPolicyKey('???'), 'seed.policyZeroStop')
+  assert.equal(executionPolicyHintKey('zero-stop'), 'seed.policyZeroStopHint')
+  assert.equal(executionPolicyHintKey('visual-gate'), 'seed.policyVisualGateHint')
+  assert.equal(executionPolicyHintKey('???'), 'seed.policyZeroStopHint')
+})
+
+test('buildSeedPayload は runner/lang/executionPolicy を正規化し、任意項目だけ載せる', () => {
   assert.deepEqual(buildSeedPayload({ seedText: '  a  ', board: 'demo' }), {
     seedText: 'a',
     autoStart: false,
+    executionPolicy: 'zero-stop',
     runner: 'hermes',
     lang: 'ja',
     board: 'demo',
@@ -59,6 +71,7 @@ test('buildSeedPayload は runner/lang を正規化し、任意項目だけ載�
   const full = buildSeedPayload({
     seedText: 'x',
     autoStart: true,
+    executionPolicy: 'visual-gate',
     runner: 'antigravity',
     board: 'demo',
     repo: 'hermes-pilot',
@@ -66,12 +79,15 @@ test('buildSeedPayload は runner/lang を正規化し、任意項目だけ載�
     lang: 'en',
   })
   assert.equal(full.autoStart, true)
+  assert.equal(full.executionPolicy, 'visual-gate')
   assert.equal(full.runner, 'antigravity')
   assert.equal(full.repo, 'hermes-pilot')
   assert.equal(full.chat, '20261113_221400_f9da52')
   assert.equal(full.lang, 'en')
   // 未知の runner は既定へ落とす（存在しないランナーを送らない）
   assert.equal(buildSeedPayload({ seedText: 'x', runner: 'gpt' }).runner, 'hermes')
+  // 未知の方針も既定へ落とす（Bridge 側 normalizeExecutionPolicy と同じ既定）
+  assert.equal(buildSeedPayload({ seedText: 'x', executionPolicy: 'bogus' }).executionPolicy, 'zero-stop')
   // 上限で切る
   assert.equal(buildSeedPayload({ seedText: 'y'.repeat(SEED_MAX + 50) }).seedText.length, SEED_MAX)
 })
@@ -88,6 +104,31 @@ test('ジョブ状態は i18n キーへ写像される', () => {
   assert.equal(jobStatusKey('launched'), 'seed.statusLaunched')
   assert.equal(jobStatusKey('failed'), 'seed.statusFailed')
   assert.equal(jobStatusKey('???'), 'seed.statusUnknown')
+})
+
+test('キュー待ち（ready）と実行中（running）は別の表示になる', () => {
+  // Bridge の queueState をそのまま写す（判定できないときは null）
+  assert.equal(jobQueueKey({ status: 'running', queueState: 'queued' }), 'seed.queueQueued')
+  assert.equal(jobQueueKey({ status: 'awaiting_spec', queueState: 'running' }), 'seed.queueRunning')
+  assert.equal(jobQueueKey({ status: 'running', queueState: null }), null)
+  assert.equal(jobQueueKey({ status: 'running' }), null)
+  assert.equal(jobQueueKey(null), null)
+
+  assert.equal(isQueuedJob({ queueState: 'queued' }), true)
+  assert.equal(isQueuedJob({ queueState: 'running' }), false)
+  assert.equal(isQueuedJob(null), false)
+
+  // タイトルは待機中だけ「キュー待ち」へ差し替える（それ以外は従来の状態文）
+  assert.equal(jobTitleKey({ status: 'running', queueState: 'queued' }), 'seed.statusQueued')
+  assert.equal(jobTitleKey({ status: 'awaiting_spec', queueState: 'running' }), 'seed.statusAwaiting')
+  assert.equal(jobTitleKey({ status: 'awaiting_spec' }), 'seed.statusAwaiting')
+})
+
+test('ジョブ破棄は /api/architect/jobs/:id/dismiss を叩く', () => {
+  assert.equal(dismissJobPath('arch-1'), '/api/architect/jobs/arch-1/dismiss')
+  // ID は URL エンコードする（パスを壊す文字を素通ししない）
+  assert.equal(dismissJobPath('a/b c'), '/api/architect/jobs/a%2Fb%20c/dismiss')
+  assert.equal(dismissJobPath(undefined), '/api/architect/jobs//dismiss')
 })
 
 test('進行バーに出すジョブは進行中と失敗だけを新しい順に 1 件選ぶ', () => {
@@ -116,6 +157,20 @@ test('進行バーに出すジョブは進行中と失敗だけを新しい順�
   assert.equal(pickActiveArchitectJob(jobs, ['run', 'rev']).id, 'old')
   assert.equal(pickActiveArchitectJob(jobs, ['run', 'rev', 'old']), null)
 
+  // サーバー側で破棄済み（dismissed）のジョブは、ローカル状態が消えても出さない
+  // （リロード後に再出現しないことを、取得結果だけでも担保する）
+  assert.equal(
+    pickActiveArchitectJob([{ id: 'x', status: 'running', createdAt: 900, dismissed: true }]),
+    null,
+  )
+  assert.equal(
+    pickActiveArchitectJob([
+      { id: 'x', status: 'running', createdAt: 900, dismissed: true },
+      { id: 'y', status: 'running', createdAt: 800 },
+    ]).id,
+    'y',
+  )
+
   // 同時刻なら failed を先に見せる（止まっているものを隠さない）
   assert.equal(
     pickActiveArchitectJob([
@@ -126,12 +181,15 @@ test('進行バーに出すジョブは進行中と失敗だけを新しい順�
   )
 })
 
-test('ポーリングは自律進行の 4 秒／人待ちの 20 秒', () => {
+test('ポーリングは自律進行の 4 秒／人待ちの 20 秒（キュー待ちは 4 秒）', () => {
   assert.equal(jobPollMs({ status: 'running' }), 4000)
   assert.equal(jobPollMs({ status: 'awaiting_spec' }), 4000)
   assert.equal(jobPollMs({ status: 'awaiting_review' }), 20000)
   assert.equal(jobPollMs({ status: 'failed' }), 20000)
   assert.equal(jobPollMs(null), 20000)
+  // キュー待ちはディスパッチャ待ち。実行中へ変わった瞬間を拾うため短い側に置く
+  assert.equal(jobPollMs({ status: 'running', queueState: 'queued' }), 4000)
+  assert.equal(jobPollMs({ status: 'awaiting_spec', queueState: 'queued' }), 4000)
 })
 
 test('ランナー表示は agy からの自動フォールバックを隠さない', () => {
