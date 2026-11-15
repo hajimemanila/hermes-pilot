@@ -42,7 +42,7 @@
     "bridge": "node apps/bridge/src/server.js",
     "dev": "vite --config apps/web/vite.config.js",
     "build": "vite build --config apps/web/vite.config.js",
-    "build:demo": "VITE_DEMO_MODE=1 vite build --config apps/web/vite.config.js --outDir dist-demo --base ./",
+    "build:demo": "VITE_DEMO_MODE=1 vite build --config apps/web/vite.config.js --outDir dist-demo --base ./ && node scripts/build-demo-embed.mjs",
     "test": "node --test apps/bridge/test/*.test.js apps/web/test/*.test.js",
     "postinstall": "node scripts/postinstall.mjs",
     "start": "node apps/bridge/src/server.js",

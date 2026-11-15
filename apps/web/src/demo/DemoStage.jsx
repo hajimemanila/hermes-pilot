@@ -16,7 +16,7 @@ import { useI18n } from '../i18n/index.js'
 import { getResolvedTheme, setThemePref } from '../lib/theme.js'
 import { haptic } from '../lib/haptic.js'
 import './demo.css'
-import { MSG_READY, MSG_SET } from './frame.js'
+import { MSG_READY, MSG_SET, frameUrl, installSafeStorage, isEmbeddedSession } from './frame.js'
 import { STAGE_MIN_WIDTH as MIN_WIDTH, VIEWS as STAGE_VIEWS, fitScale } from './stage.js'
 
 /** 筐体の実寸（CSS px）。 */
@@ -53,19 +53,16 @@ export function initialVibe() {
   return 'dopamine'
 }
 
-/** 子フレームの URL（相対なので GitHub Pages の下層パスでも動く）。 */
-export function frameUrl(href = globalThis.location?.href ?? '') {
-  try {
-    const url = new URL('./', href)
-    url.searchParams.set('demo-frame', '1')
-    return url.href
-  } catch {
-    return './?demo-frame=1'
-  }
-}
+/**
+ * 子フレームの URL。埋め込み（`google-sites-embed.html` / `srcdoc`）では iframe を張らないので
+ * `null` が返る（実装は `frame.js`。JSX を含まないのでテストから直接検証できる）。
+ */
+export { frameUrl }
 
 export function DemoStage({ children }) {
   const { t, lang, setPref } = useI18n()
+  // 単一ファイル埋め込み（D32）: iframe を張れないので、この文書をそのまま全画面で使う
+  const [embedded] = useState(() => isEmbeddedSession())
   const [viewport, setViewport] = useState('phone')
   const [narrow, setNarrow] = useState(() => (globalThis.innerWidth || 0) < MIN_WIDTH)
   const [vibe, setVibeState] = useState(() => initialVibe())
@@ -168,19 +165,25 @@ export function DemoStage({ children }) {
     haptic('action')
     setReady(false)
     const frame = frameRef.current
-    if (frame) {
-      frame.src = frameUrl()
+    if (frame && !embedded) {
+      frame.src = frameUrl(globalThis.location?.href ?? '', false)
       return
     }
     globalThis.location?.reload?.()
-  }, [])
+  }, [embedded])
 
   const size = VIEWS[viewport] ?? (box.width ? box : { width: 1024, height: 768 })
   const isFull = viewport === 'full'
-  const url = useMemo(() => frameUrl(), [])
+  const url = useMemo(() => frameUrl(globalThis.location?.href ?? '', embedded), [embedded])
 
-  // スマホ実機（狭い画面）: 筐体を出さず、`children`（バナー＋アプリ）をそのまま全画面に置く
-  if (narrow) {
+  // 埋め込み（srcdoc / sandbox）では保存領域の参照だけで落ちるので、先に安全な実装へ差し替える
+  useEffect(() => {
+    if (embedded) installSafeStorage()
+  }, [embedded])
+
+  // スマホ実機（狭い画面）と単一ファイル埋め込み: 筐体を出さず、`children`（バナー＋アプリ）を
+  // そのまま全画面に置く（埋め込みでは相対 iframe URL が解決できず 404 する・D32）
+  if (narrow || embedded) {
     return <div className="demo-mobile">{children}</div>
   }
 

@@ -17,8 +17,16 @@
  */
 
 export const DEMO_SPEC_PATH = 'docs/SPEC-DEMO-V1.md'
+/** V6: 2・3 件目の SPEC（複数 SPEC のアコーディオンと MD プレビューを体験するため）。 */
+export const DEMO_SPEC_V5_PATH = 'docs/SPEC-PILOT-V5.md'
+export const DEMO_SPEC_V4_PATH = 'docs/SPEC-PILOT-V4.md'
 export const DEMO_BOARD = 'mobile'
 export const DEMO_SESSION = 'demo-a2b-01'
+/** デモのリポジトリ（`/api/specs*` と `/api/repos` が返す値）。 */
+export const DEMO_REPO = 'hermes-pilot-demo'
+export const DEMO_REPO_PATH = '/demo/hermes-pilot'
+/** V6: デモの Architect ランナー（進行バーの表示を試せるよう agy がある体で返す）。 */
+export const DEMO_HAS_AGY = true
 /** バッチの状態遷移（`ready -> running -> done`）の間隔。 */
 export const DEMO_TICK_MS = 800
 export const STEPS = 4
@@ -135,29 +143,187 @@ export function initialReviewItems(now = Date.now()) {
   ]
 }
 
-/** Step 2 の一括起票で作られるバッチ（仕様書の 3 バッチと 1:1）。 */
+/**
+ * Step 2 の一括起票で作られるバッチ（本編 SPEC の 3 バッチと 1:1）。
+ *
+ * V6（D29 / D30 / D32）: **複数 SPEC を返す**。1 件目がツアーの本編、2・3 件目は
+ * 「SPEC セレクタのアコーディオン」「MD プレビュー」「バッチ詳細」を試すための追加分
+ * （実物の V5 / V4 仕様書のダイジェスト）。
+ * 並びは「本編が先頭」（`specPath` の既定値になるため。本物の `specs.listSpecs` は mtime 順）。
+ * 先頭 SPEC だけが `[DEMO-n]` バッチを持つ（起票→進行→レシートのツアーはこの 3 件で回す）。
+ */
 export function demoSpects(now = Date.now()) {
   return {
     ok: true,
-    repo: 'hermes-pilot-demo',
+    repo: DEMO_REPO,
     label: 'hermes-pilot (demo)',
-    path: '/demo/hermes-pilot',
+    path: DEMO_REPO_PATH,
     board: DEMO_BOARD,
-    specs: [
-      {
-        path: DEMO_SPEC_PATH,
-        title: 'SPEC: Demo — A2B pipeline in four steps',
-        mtime: now - 3 * MIN,
-        valid: true,
-        batches: [
-          { id: 'DEMO-1', title: 'Spec interview and one-tap approval', objective: 'Approve the design decisions', section: '' },
-          { id: 'DEMO-2', title: 'Visual gate — redline stamp and before/after', objective: 'Accept the visual fix', section: '' },
-          { id: 'DEMO-3', title: 'Summary and completion receipt', objective: 'Publish the receipt', section: '' },
-        ],
-      },
-    ],
+    specs: currentSpecs(now),
   }
 }
+
+/**
+ * デモの SPEC 一覧（固定分 ＋ Seed で生まれた分）。
+ *
+ * @param {number} [now] 時刻
+ * @returns {Array<object>} SPEC（`path` / `title` / `mtime` / `batches`）
+ */
+export function currentSpecs(now = Date.now()) {
+  const seeded = Array.isArray(state?.seededSpecs) ? state.seededSpecs : []
+  return [...demoSpecList(now), ...seeded]
+}
+
+/**
+ * 固定のデモ SPEC（3 件）。バッチは `mode` と `section`（仕様抜粋 Markdown）を持つ
+ * （V6-4 の「詳細 ▾」「受入条件・仕様抜粋」がデモでも読める形）。
+ *
+ * @param {number} [now] 時刻
+ * @returns {Array<object>} SPEC
+ */
+export function demoSpecList(now = Date.now()) {
+  return [
+    {
+      path: DEMO_SPEC_PATH,
+      title: 'SPEC: Demo — A2B pipeline in four steps',
+      mtime: now - 3 * MIN,
+      valid: true,
+      batches: [
+        {
+          id: 'DEMO-1',
+          title: 'Spec interview and one-tap approval',
+          objective: 'Approve the design decisions with one tap.',
+          mode: 'Zero-Stop',
+          section: '- Interview sheet with 3 questions\n- Accept All Recommended\n- Verify: `npm test`',
+        },
+        {
+          id: 'DEMO-2',
+          title: 'Visual gate — redline stamp and before/after',
+          objective: 'Accept the visual fix after the redline.',
+          mode: 'Visual Gate',
+          section: '- 390x844 screenshot before / after\n- Mark the red area\n- Verify: `npm run verify`',
+        },
+        {
+          id: 'DEMO-3',
+          title: 'Summary and completion receipt',
+          objective: 'Publish the receipt.',
+          mode: 'Zero-Stop',
+          section: '- Pipeline summary markdown\n- 1200x630 receipt card\n- Verify: `npm run verify`',
+        },
+      ],
+    },
+    {
+      path: DEMO_SPEC_V5_PATH,
+      title: 'SPEC: Pilot V5 — interactive demo and A2B',
+      mtime: now - 60 * MIN,
+      valid: true,
+      batches: [
+        {
+          id: 'V5-1',
+          title: 'Demo shell with a device frame',
+          objective: 'Show the PWA inside a phone frame on a PC.',
+          mode: 'Visual Gate',
+          section: '- 390x844 and 820x1180 frames\n- Vibe / sound / theme switch',
+        },
+        {
+          id: 'V5-2',
+          title: 'Spec seed sheet',
+          objective: 'Turn a spoken idea into a SPEC.',
+          mode: 'Zero-Stop',
+          section: '- POST /api/architect/seed\n- Poll /api/architect/jobs',
+        },
+        {
+          id: 'V5-3',
+          title: 'Completion receipt',
+          objective: 'One card that proves the pipeline ran.',
+          mode: 'Zero-Stop',
+          section: '- kpi block\n- 1200x630 PNG',
+        },
+      ],
+    },
+    {
+      path: DEMO_SPEC_V4_PATH,
+      title: 'SPEC: Pilot V4 — pipeline watcher',
+      mtime: now - 120 * MIN,
+      valid: true,
+      batches: [
+        {
+          id: 'V4-1',
+          title: 'Pipeline report watcher',
+          objective: 'Post one report per finished pipeline.',
+          mode: 'Zero-Stop',
+          section: '- chat-reports.jsonl\n- unread dot per session',
+        },
+        {
+          id: 'V4-2',
+          title: 'Quick launch bar',
+          objective: 'File every pending batch in one tap.',
+          mode: 'Zero-Stop',
+          section: '- filed batch detection\n- idempotent launch',
+        },
+      ],
+    },
+  ]
+}
+
+/**
+ * `GET /api/specs/content?board=&repo=&path=` のデモ応答（V6 §3.4 / D30）。
+ *
+ * 形は本物（`specs.readSpecContent`）に合わせる:
+ * `{ok, path, title, mtime, batchCount, truncated, markdown}`。
+ * 本文はその場で組み立てる（外部ファイルを読まない = 静的ホスティングで 404 を出さない）。
+ *
+ * @param {string} specPath `docs/SPEC-*.md`
+ * @param {number} [now] 時刻
+ * @returns {object} 応答
+ */
+export function demoSpecContent(specPath, now = Date.now()) {
+  const wanted = String(specPath ?? '').trim()
+  const spec = currentSpecs(now).find((s) => s.path === wanted) || null
+  if (!spec) {
+    return { ok: false, code: 'NOT_FOUND', error: 'spec not found', path: wanted, demo: true }
+  }
+  const lines = [
+    `# ${spec.title}`,
+    '',
+    '> Demo fixture: this markdown is generated in the browser, no file is read.',
+    '',
+    '## 1. Goal',
+    '',
+    'Run the A2B tour on a static host (URL embed or single-file embed) with zero backend.',
+    '',
+    '## 2. Decisions',
+    '',
+    '| # | Topic | Decision |',
+    '| --- | --- | --- |',
+    '| D1 | Where the demo state lives | one in-memory object (`createDemoState`) |',
+    '| D2 | Images | SVG string -> data URL (no external file) |',
+    '| D3 | Embedding | static site plus a single self-contained HTML |',
+    '',
+    '## 3. Batches',
+    '',
+  ]
+  for (const b of spec.batches) {
+    lines.push(`### Batch ${b.id}: ${b.title}`, '')
+    lines.push(`- Mode: ${b.mode}`, `- Objective: ${b.objective}`, '')
+    if (b.section) {
+      for (const row of String(b.section).split('\n')) lines.push(row)
+      lines.push('')
+    }
+  }
+  lines.push('## 4. Verify', '', '- `npm run build:demo`', '- `npm run verify`', '')
+  return {
+    ok: true,
+    path: spec.path,
+    title: spec.title,
+    mtime: spec.mtime,
+    batchCount: spec.batches.length,
+    truncated: false,
+    markdown: lines.join('\n'),
+    demo: true,
+  }
+}
+
 
 /** ツアー状態。`createDemoState()` を呼び直すと最初から。 */
 export function createDemoState(now = Date.now()) {
@@ -184,7 +350,57 @@ export function createDemoState(now = Date.now()) {
     receipt: null,
     chatReports: [],
     notified: {},
+    architect: createArchitectState(now),
+    /** Seed で生まれた SPEC（`demoSpecs` / `/api/specs/content` に出る）。 */
+    seededSpecs: [],
   }
+}
+
+/**
+ * V6（D28 / D32）: Architect の進行状態。
+ *
+ * 初期値に「インタビューシートが Review に届いた」ジョブを 1 件置く。デモを開いた直後に
+ * `ArchitectJobBar`（進行バー）と待ち受けカードをそのまま体験できる。
+ *
+ * @param {number} now 時刻
+ * @returns {{runner: string, seq: number, jobs: Array<object>}} 状態
+ */
+export function createArchitectState(now = Date.now()) {
+  return {
+    runner: 'hermes',
+    seq: 1,
+    jobs: [
+      {
+        id: 'j_demo_0',
+        board: DEMO_BOARD,
+        status: 'awaiting_review',
+        runner: 'antigravity',
+        requestedRunner: 'antigravity',
+        runnerLabel: 'Antigravity (agy)',
+        fallbackFrom: null,
+        fallbackReason: null,
+        autoStart: false,
+        seed: 'Add a spec markdown preview to the demo shell.',
+        lang: 'en',
+        chat: DEMO_SESSION,
+        createdAt: now - 6 * MIN,
+        startedAt: now - 6 * MIN,
+        finishedAt: null,
+        spec: null,
+        completedSpec: null,
+        launched: null,
+        error: null,
+        taskId: null,
+        reviewTaskId: 't_demo_review',
+        reviewTitle: '[DEMO-1] Interactive demo — three design decisions',
+      },
+    ],
+  }
+}
+
+/** ランナーの表示名（`architect.js` の `runnerLabel` と同じ文字列）。 */
+export function demoRunnerLabel(runner) {
+  return runner === 'antigravity' ? 'Antigravity (agy)' : 'Hermes Native'
 }
 
 let generation = 0
@@ -434,12 +650,23 @@ export function demoRoute(path) {
   }
   if (p === '/api/boards') return { name: 'boards', params }
   if (parts[1] === 'boards' && parts[2] && parts[3] === 'tasks') {
-    return { name: 'board.tasks', id: decodeURIComponent(parts[2]), params }
+    const boardSlug = decodeURIComponent(parts[2])
+    const taskId = parts[4] ? decodeURIComponent(parts[4]) : ''
+    if (!taskId) return { name: 'board.tasks', id: boardSlug, params }
+    if (parts[5] === 'diff') return { name: 'board.taskDiff', id: boardSlug, taskId, params }
+    if (parts[5] === 'abort') return { name: 'board.taskAbort', id: boardSlug, taskId, params }
+    return { name: 'board.task', id: boardSlug, taskId, params }
   }
   if (p === '/api/inbox') return { name: 'inbox', params }
   if (p === '/api/specs') return { name: 'specs', params }
+  // V6 §3.4: 仕様書の本文（MD プレビュー）
+  if (p === '/api/specs/content') return { name: 'specs.content', params }
   if (p === '/api/specs/launch') return { name: 'specs.launch', params }
   if (p === '/api/specs/reports') return { name: 'specs.reports', params }
+  // V6 §3.2: Architect（仕様の種 → SPEC）と進行バーの材料
+  if (p === '/api/architect/config') return { name: 'architect.config', params }
+  if (p === '/api/architect/jobs') return { name: 'architect.jobs', params }
+  if (p === '/api/architect/seed') return { name: 'architect.seed', params }
   if (p === '/api/live') return { name: 'live', params }
   if (p === '/api/usage') return { name: 'usage', params }
   if (p === '/api/audit') return { name: 'audit', params }
@@ -591,6 +818,299 @@ export function setDemoTick(ms) {
   state.tickMs = Math.max(0, Number(ms) || 0)
 }
 
+/* ------------------------------------------------------------------ *
+ * V6: タスク詳細・差分（履歴シートの「🔍 タスク詳細・差分を見る」）
+ * ------------------------------------------------------------------ */
+
+/** タスクごとの擬似コミット（形は `gitinfo.forTask` に合わせる）。 */
+const DEMO_COMMITS = {
+  t_demo_done: {
+    head: 'd3m0a1b',
+    branch: 'main',
+    subject: 'feat(demo): static demo shell builds with npm run build:demo',
+    files: [
+      { path: 'apps/web/src/demo/mockApi.js', add: 42, del: 6 },
+      { path: 'apps/web/src/demo/DemoStage.jsx', add: 18, del: 2 },
+    ],
+  },
+  't_demo_demo-1': {
+    head: 'd3m0c11',
+    branch: 'main',
+    subject: 'feat(demo): approve the design decisions in one tap',
+    files: [
+      { path: 'apps/web/src/features/ReviewPane.jsx', add: 31, del: 4 },
+      { path: 'apps/web/src/i18n/ja.json', add: 6, del: 0 },
+    ],
+  },
+  't_demo_demo-2': {
+    head: 'd3m0c22',
+    branch: 'main',
+    subject: 'feat(demo): lift the toast above the bottom navigation',
+    files: [
+      { path: 'apps/web/src/styles.css', add: 22, del: 9 },
+      { path: 'apps/web/src/components/Toast.jsx', add: 11, del: 3 },
+    ],
+  },
+  't_demo_demo-3': {
+    head: 'd3m0c33',
+    branch: 'main',
+    subject: 'feat(demo): publish the completion receipt',
+    files: [{ path: 'apps/web/src/components/MissionReceiptSheet.jsx', add: 27, del: 5 }],
+  },
+}
+
+/**
+ * タスク詳細のデモ応答（形は `kanban.task` に合わせる）。
+ * @param {object} task 一覧の行
+ * @returns {object} 詳細
+ */
+export function demoTaskDetail(task) {
+  const commit = DEMO_COMMITS[task.id] || null
+  const startedAt = task.createdAt ? task.createdAt + 5_000 : null
+  const endedAt = task.status === 'done' ? task.updatedAt ?? Date.now() : null
+  return {
+    id: task.id,
+    board: task.board ?? DEMO_BOARD,
+    title: task.title,
+    body: `Demo task: ${task.title}`,
+    status: task.status,
+    assignee: task.assignee ?? 'mobile',
+    priority: Number(task.priority ?? 0),
+    workspace: DEMO_REPO_PATH,
+    branch: commit?.branch ?? 'main',
+    workerPid: null,
+    startedAt,
+    completedAt: task.status === 'done' ? (task.updatedAt ?? Date.now()) : null,
+    result: task.result ?? null,
+    events: [
+      { kind: 'created', at: task.createdAt ?? Date.now(), payload: { status: 'ready' } },
+      { kind: 'claimed', at: startedAt ?? Date.now(), payload: { run_id: 1 } },
+      {
+        kind: task.status === 'done' ? 'completed' : 'heartbeat',
+        at: endedAt ?? Date.now(),
+        payload: task.status === 'done' ? { outcome: 'done' } : {},
+      },
+    ],
+    runs: [{ id: 1, status: task.status === 'done' ? 'done' : 'running', startedAt, endedAt }],
+    comments: [{ author: 'mobile', body: 'demo comment', at: task.createdAt ?? Date.now() }],
+    git: commit
+      ? { head: commit.head, branch: commit.branch, subject: commit.subject, dirty: false }
+      : { head: null, branch: 'main', subject: '', dirty: false },
+    demo: true,
+  }
+}
+
+/**
+ * 差分サマリのデモ応答（形は `gitinfo.diffSummary` に合わせる）。
+ * @param {object} task 一覧の行
+ * @returns {object} サマリ
+ */
+export function demoDiffSummary(task) {
+  const commit = DEMO_COMMITS[task.id] || null
+  if (!commit) return { ok: false, reason: 'this demo task has no git record', demo: true }
+  const files = commit.files.map((f) => ({ path: f.path, add: f.add, del: f.del, binary: false }))
+  const total = files.reduce((a, f) => ({ add: a.add + f.add, del: a.del + f.del }), { add: 0, del: 0 })
+  return {
+    ok: true,
+    repo: DEMO_REPO_PATH,
+    head: commit.head,
+    subject: commit.subject,
+    dirty: false,
+    files,
+    total,
+    truncated: false,
+    changedFilesFallback: [],
+    demo: true,
+  }
+}
+
+/**
+ * 1 ファイルのパッチのデモ応答（形は `gitinfo.filePatch` に合わせる）。
+ * @param {object} task 一覧の行
+ * @param {string} file パス
+ * @returns {object} パッチ
+ */
+export function demoFilePatch(task, file) {
+  const summary = demoDiffSummary(task)
+  if (!summary.ok) return summary
+  const hit = summary.files.find((f) => f.path === file)
+  if (!hit) return { ok: false, reason: 'file is not part of that commit', demo: true }
+  const text = [
+    `diff --git a/${file} b/${file}`,
+    '--- a/' + file,
+    '+++ b/' + file,
+    `@@ -1,3 +1,${Math.min(9, hit.add + 3)} @@`,
+    '-  demo: before',
+    '+  demo: after',
+    '+  demo: kept the layout tokens',
+    '',
+  ].join('\n')
+  return { ok: true, path: file, text, lines: 6, truncated: false, demo: true }
+}
+
+/* ------------------------------------------------------------------ *
+ * V6: Architect（Seed → 仕様書 → Review → 起票）の進行
+ * ------------------------------------------------------------------ */
+
+/** 公開用のジョブ（形は `architect.publicJob` + V6 の追加フィールド）。 */
+export function demoPublicJob(job) {
+  return { ...job, runnerLabel: demoRunnerLabel(job.runner) }
+}
+
+/**
+ * Seed を受けてジョブを 1 件作る（`POST /api/architect/seed` のデモ実装）。
+ *
+ * 本物は 202 で即返り、背後で SPEC を書く。デモも同じで、`tickMs` ごとに
+ * `running -> awaiting_spec -> spec_ready`（`autoStart` なら `launched`）と進める。
+ *
+ * @param {object} input 種（`seedText` / `runner` / `autoStart` / `lang` / `chat`）
+ * @returns {object} 作ったジョブ
+ */
+export function startDemoArchitectJob(input = {}) {
+  const now = Date.now()
+  const runner = input.runner === 'antigravity' || input.runner === 'hermes' ? input.runner : state.architect.runner
+  const seq = ++state.architect.seq
+  const job = {
+    id: `j_demo_${seq}`,
+    board: DEMO_BOARD,
+    status: 'running',
+    runner,
+    requestedRunner: runner,
+    runnerLabel: demoRunnerLabel(runner),
+    fallbackFrom: null,
+    fallbackReason: null,
+    autoStart: Boolean(input.autoStart),
+    seed: String(input.seedText ?? '').slice(0, 400),
+    lang: input.lang === 'en' ? 'en' : 'ja',
+    chat: input.chat ? String(input.chat).slice(0, 128) : DEMO_SESSION,
+    createdAt: now,
+    startedAt: now,
+    finishedAt: null,
+    spec: null,
+    completedSpec: null,
+    launched: null,
+    error: null,
+    taskId: `t_demo_arch_${seq}`,
+    reviewTaskId: null,
+    reviewTitle: null,
+  }
+  state.architect.jobs.unshift(job)
+  if (state.architect.jobs.length > 8) state.architect.jobs.length = 8
+  publish('architect')
+  setTimeout(() => advanceArchitectJob(job.id, state.gen), state.tickMs)
+  return job
+}
+
+/** ジョブを 1 段進める（`running -> awaiting_spec -> spec_ready/launched`）。 */
+function advanceArchitectJob(id, gen) {
+  if (gen !== state.gen) return
+  const job = state.architect.jobs.find((j) => j.id === id)
+  if (!job) return
+  if (job.status === 'running') {
+    job.status = 'awaiting_spec'
+    publish('architect')
+    setTimeout(() => advanceArchitectJob(id, gen), state.tickMs)
+    return
+  }
+  if (job.status !== 'awaiting_spec') return
+  // Seed から生まれた SPEC（V6 §3.3 の「SPEC 検知 → バナー」をデモでも起きるようにする）
+  const key = Number(String(job.id).replace(/[^0-9]/g, '')) || 1
+  const spec = {
+    path: `docs/SPEC-DEMO-SEED-${key}.md`,
+    title: `SPEC: Demo seed — ${String(job.seed || 'seeded idea').slice(0, 48)}`,
+    mtime: Date.now(),
+    valid: true,
+    batches: [
+      {
+        id: `SEED${key}-1`,
+        title: 'Interview questions',
+        objective: 'Ask only what the machine cannot decide.',
+        mode: 'Zero-Stop',
+        section: '- 3 questions\n- each option shows both pictures',
+      },
+      {
+        id: `SEED${key}-2`,
+        title: 'Implementation and verify',
+        objective: 'Ship the change with a receipt.',
+        mode: 'Zero-Stop',
+        section: '- `npm run verify`\n- completion report',
+      },
+    ],
+  }
+  if (!state.seededSpecs.some((s) => s.path === spec.path)) state.seededSpecs.push(spec)
+  job.spec = spec.path
+  job.completedSpec = {
+    path: spec.path,
+    title: spec.title,
+    batchCount: spec.batches.length,
+    batches: spec.batches.map((b) => ({ id: b.id, title: b.title, mode: b.mode ?? null })),
+  }
+  job.finishedAt = Date.now()
+  job.status = job.autoStart ? 'launched' : 'spec_ready'
+  if (job.autoStart) {
+    job.launched = { ok: true, created: [], skipped: [], failed: [], reason: 'demo' }
+  }
+  publish('architect')
+}
+
+/** 起票済みバッチ ID（`[DEMO-1] ...` の先頭から取る。`architect.filedBatchIds` と同じ規則）。 */
+function filedBatchIds(tasks) {
+  const out = new Set()
+  for (const task of Array.isArray(tasks) ? tasks : []) {
+    const m = /^\[([^\]]+)\]/.exec(String(task?.title ?? '').trim())
+    if (m && m[1].trim()) out.add(m[1].trim())
+  }
+  return out
+}
+
+/** `GET /api/architect/jobs` のデモ応答。 */
+export function demoArchitectJobs(board = DEMO_BOARD) {
+  const slug = String(board ?? '').trim() || DEMO_BOARD
+  const jobs = state.architect.jobs.filter((j) => !slug || j.board === slug).map(demoPublicJob)
+  const specReady = jobs
+    .filter((j) => j.completedSpec && (j.status === 'spec_ready' || j.status === 'launched'))
+    .map((j) => ({
+      jobId: j.id,
+      board: j.board,
+      repoPath: DEMO_REPO_PATH,
+      spec: j.completedSpec.path,
+      title: j.completedSpec.title,
+      batchCount: j.completedSpec.batchCount,
+      batches: j.completedSpec.batches,
+      autoStart: j.autoStart,
+      launched: j.status === 'launched',
+      launchedCount: j.launched?.created?.length ?? 0,
+    }))
+  const filed = filedBatchIds(state.tasks)
+  const pending = []
+  for (const spec of currentSpecs(state.now)) {
+    const ids = spec.batches.map((b) => b.id).filter((id) => !filed.has(id))
+    if (!ids.length) continue
+    pending.push({
+      path: spec.path,
+      title: spec.title,
+      batchCount: spec.batches.length,
+      pendingCount: ids.length,
+      pending: ids,
+      mtime: spec.mtime,
+      board: slug,
+      repoPath: DEMO_REPO_PATH,
+    })
+  }
+  pending.sort((a, b) => b.mtime - a.mtime || a.path.localeCompare(b.path))
+  return {
+    ok: true,
+    board: slug,
+    runner: state.architect.runner,
+    capabilities: { hasAgyCli: DEMO_HAS_AGY },
+    jobs,
+    specReady,
+    pending,
+    demo: true,
+  }
+}
+
+
 /**
  * `fetch` の代わり。パスは本物の API と同じ。
  *
@@ -661,19 +1181,63 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
       }
     case 'board.tasks':
       return { board: route.id, tasks: state.tasks.map((x) => ({ ...x })) }
+    // V6 §3.5: 履歴の詳細・差分（`🔍 タスク詳細・差分を見る`）
+    case 'board.task': {
+      const task = state.tasks.find((t) => t.id === route.taskId)
+      if (!task) return { ok: false, code: 'TASK_NOT_FOUND', error: 'task not found', id: route.taskId, demo: true }
+      return demoTaskDetail(task)
+    }
+    case 'board.taskDiff': {
+      const task = state.tasks.find((t) => t.id === route.taskId)
+      if (!task) return { ok: false, reason: 'task not found', demo: true }
+      const file = route.params.get('file')
+      if (!file) return demoDiffSummary(task)
+      return demoFilePatch(task, String(file))
+    }
+    case 'board.taskAbort': {
+      const task = state.tasks.find((t) => t.id === route.taskId)
+      if (task) {
+        task.status = 'ready'
+        task.updatedAt = Date.now()
+        publish('tasks')
+      }
+      return { ok: true, reclaimed: 1, blocked: 0, demo: true }
+    }
     case 'inbox':
       return { items: [] }
     case 'specs':
       return demoSpects(state.now)
+    // V6 §3.4: 仕様書の本文（MD プレビュー）
+    case 'specs.content':
+      return demoSpecContent(route.params.get('path'), state.now)
+    // V6 §3.1/§3.2: Architect のランナー設定とジョブ（進行バーの材料）
+    case 'architect.config': {
+      if (method === 'PUT' || method === 'POST') {
+        const next = payload?.runner === 'antigravity' ? 'antigravity' : 'hermes'
+        state.architect.runner = next
+        publish('architect')
+      }
+      return { ok: true, runner: state.architect.runner, hasAgyCli: DEMO_HAS_AGY, demo: true }
+    }
+    case 'architect.jobs':
+      return demoArchitectJobs(route.params.get('board'))
+    case 'architect.seed': {
+      const job = startDemoArchitectJob(payload)
+      // 本物は 202（ジョブは動き出したが SPEC はまだ無い）
+      return { ok: true, jobId: job.id, status: job.status, runner: job.runner, demo: true }
+    }
     case 'specs.launch': {
       const ids = Array.isArray(payload?.batchIds) ? payload.batchIds : []
       const created = []
       for (const id of ids) {
         if (state.tasks.some((t) => t.title.startsWith(`[${id}]`))) continue
+        const batch = currentSpecs(state.now)
+          .flatMap((s) => s.batches)
+          .find((b) => b.id === id)
         const task = {
           id: `t_demo_${String(id).toLowerCase()}`,
           board: DEMO_BOARD,
-          title: `[${id}] Demo batch — ${id === 'DEMO-1' ? 'spec approval' : id === 'DEMO-2' ? 'visual gate' : 'completion receipt'}`,
+          title: `[${id}] ${batch?.title ?? `Demo batch — ${id}`}`,
           status: 'ready',
           assignee: 'mobile',
           createdAt: Date.now(),

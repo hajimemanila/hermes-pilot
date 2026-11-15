@@ -16,11 +16,15 @@ import path from 'node:path'
 
 import {
   DEMO_SPEC_PATH,
+  DEMO_SPEC_V4_PATH,
+  DEMO_SPEC_V5_PATH,
   createDemoState,
   demoFetch,
   demoImageFor,
   demoRoute,
   demoSocket,
+  demoSpecContent,
+  demoSpects,
   emptyProgress,
 
   initialReviewItems,
@@ -31,6 +35,14 @@ import {
   snapshot,
   stepIndex,
 } from '../src/demo/mockApi.js'
+import {
+  createMemoryStorage,
+  frameUrl,
+  installSafeStorage,
+  isEmbeddedSession,
+  safeStorage,
+} from '../src/demo/frame.js'
+import { EMBED_BOOTSTRAP, inlineAssets, verifyEmbedHtml } from '../../../scripts/build-demo-embed.mjs'
 import { fitScale } from '../src/demo/stage.js'
 
 const here = import.meta.dirname
@@ -94,13 +106,24 @@ test('Step 1: 設問 3 問すべてに推奨があり、回答でステップ 2 
   assert.equal(after.items.find((x) => x.id === 't_demo_review').status, 'done')
 })
 
-test('Step 2: 仕様書は 3 バッチで、起票すると 3 タスクが増える', async () => {
+test('Step 2: 仕様書は 3 件（本編 3 バッチ + V5/V4 のダイジェスト）で、起票すると 3 タスクが増える', async () => {
   resetDemoState()
   setDemoTick(1)
   const specs = await demoFetch('/api/specs?board=mobile')
-  assert.equal(specs.specs.length, 1)
+  assert.equal(specs.specs.length, 3, 'V6: 複数 SPEC を返す（アコーディオンと MD プレビュー用）')
   assert.equal(specs.specs[0].path, DEMO_SPEC_PATH)
   assert.equal(specs.specs[0].batches.length, 3)
+  assert.equal(specs.specs[1].path, DEMO_SPEC_V5_PATH)
+  assert.ok(specs.specs[1].batches.length >= 2)
+  assert.equal(specs.specs[2].path, DEMO_SPEC_V4_PATH)
+  assert.ok(specs.specs[2].batches.length >= 2)
+  for (const spec of specs.specs) {
+    assert.ok(spec.title, `${spec.path} にタイトル`)
+    for (const b of spec.batches) {
+      assert.ok(b.id && b.title, `${spec.path} のバッチに id と title`)
+      assert.ok(b.mode, `${b.id} に Mode（ModePill 用）`)
+    }
+  }
 
   await demoFetch('/api/review/t_demo_review/answer', { method: 'POST', body: { answers: [] } })
   const launch = await demoFetch('/api/specs/launch', {
@@ -218,4 +241,206 @@ test('demo snippets: 定型チップ帯とツールチップが埋まる形で�
   assert.equal(en.lang, 'en')
   assert.match(en.snippets[0].label, /Quick Review/)
   assert.notEqual(en.snippets[0].label, ja.snippets[0].label, '言語で切り替わっていない')
+})
+
+/* ------------------------------------------------------------------ *
+ * V6（D28〜D32）: 追加ルート・複数 SPEC・Google Sites 埋め込み
+ * ------------------------------------------------------------------ */
+
+test('demoRoute は V6 の新規ルートを分類する', () => {
+  assert.equal(demoRoute('/api/specs/content?board=mobile&path=docs/SPEC-DEMO-V1.md').name, 'specs.content')
+  assert.equal(demoRoute('/api/architect/config').name, 'architect.config')
+  assert.equal(demoRoute('/api/architect/jobs?board=mobile').name, 'architect.jobs')
+  assert.equal(demoRoute('/api/architect/seed').name, 'architect.seed')
+
+  const detail = demoRoute('/api/boards/mobile/tasks/t_demo_done')
+  assert.equal(detail.name, 'board.task')
+  assert.equal(detail.id, 'mobile')
+  assert.equal(detail.taskId, 't_demo_done')
+
+  const diff = demoRoute('/api/boards/mobile/tasks/t_demo_done/diff?file=a.js')
+  assert.equal(diff.name, 'board.taskDiff')
+  assert.equal(diff.taskId, 't_demo_done')
+  assert.equal(diff.params.get('file'), 'a.js')
+
+  // 一覧（`/tasks`）は従来通り
+  assert.equal(demoRoute('/api/boards/mobile/tasks?limit=60').name, 'board.tasks')
+})
+
+test('仕様書の本文（MD プレビュー）: 3 件とも本文とバッチ見出しが取れる', async () => {
+  resetDemoState()
+  for (const spec of demoSpects().specs) {
+    const d = await demoFetch(
+      `/api/specs/content?board=mobile&repo=hermes-pilot-demo&path=${encodeURIComponent(spec.path)}`,
+    )
+    assert.equal(d.ok, true, `${spec.path} の本文`)
+    assert.equal(d.path, spec.path)
+    assert.equal(d.batchCount, spec.batches.length)
+    assert.equal(d.truncated, false)
+    assert.match(d.markdown, /^# SPEC: /, '見出しで始まる')
+    assert.ok(d.mtime > 0)
+    for (const b of spec.batches) {
+      assert.match(d.markdown, new RegExp(`### Batch ${b.id}:`), `${b.id} の見出しが本文にある`)
+    }
+  }
+  const missing = demoSpecContent('docs/NOPE.md')
+  assert.equal(missing.ok, false)
+  assert.equal(missing.code, 'NOT_FOUND')
+})
+
+test('Architect: 設定の読み書き・ジョブ一覧・Seed の進行がデモで動く', async () => {
+  resetDemoState()
+  setDemoTick(1)
+
+  const conf = await demoFetch('/api/architect/config')
+  assert.equal(conf.ok, true)
+  assert.equal(conf.runner, 'hermes')
+  assert.equal(conf.hasAgyCli, true, 'デモは agy がある体（ランナー切替を試せる）')
+  const put = await demoFetch('/api/architect/config', { method: 'PUT', body: { runner: 'antigravity' } })
+  assert.equal(put.ok, true)
+  assert.equal(put.runner, 'antigravity')
+
+  const jobs = await demoFetch('/api/architect/jobs?board=mobile')
+  assert.equal(jobs.ok, true)
+  assert.equal(jobs.runner, 'antigravity')
+  const waiting = jobs.jobs.find((j) => j.status === 'awaiting_review')
+  assert.ok(waiting, '初期状態に Review 待ちのジョブがある（ArchitectJobBar 用）')
+  assert.equal(waiting.reviewTaskId, 't_demo_review')
+  assert.ok(waiting.reviewTitle)
+  assert.ok(waiting.runnerLabel)
+  assert.ok(Array.isArray(jobs.pending) && jobs.pending.length >= 1, '未起票 SPEC を持つ')
+
+  const seed = await demoFetch('/api/architect/seed', {
+    method: 'POST',
+    body: { board: 'mobile', seedText: 'Add a markdown preview', runner: 'hermes', autoStart: false, lang: 'ja' },
+  })
+  assert.equal(seed.ok, true)
+  assert.ok(seed.jobId)
+  assert.equal(seed.status, 'running')
+  assert.equal(seed.runner, 'hermes')
+
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  const after = await demoFetch('/api/architect/jobs?board=mobile')
+  const job = after.jobs.find((j) => j.id === seed.jobId)
+  assert.ok(job, 'Seed したジョブが一覧に出る')
+  assert.equal(job.status, 'spec_ready')
+  assert.match(job.completedSpec.path, /^docs\/SPEC-DEMO-SEED-\d\.md$/, 'V6: 仕上げると SPEC が返る')
+  assert.equal(job.completedSpec.batchCount, 2)
+  assert.equal(job.seed, 'Add a markdown preview')
+  assert.ok(after.specReady.some((row) => row.spec === job.completedSpec.path))
+  // 生まれた SPEC は一覧（アコーディオン・MD プレビュー・一括起票）にも出る
+  const specs = await demoFetch('/api/specs?board=mobile')
+  assert.ok(specs.specs.some((s) => s.path === job.completedSpec.path))
+  const content = await demoFetch(`/api/specs/content?path=${encodeURIComponent(job.completedSpec.path)}`)
+  assert.equal(content.ok, true)
+  assert.match(content.markdown, /Add a markdown preview/, '種の内容がタイトルに入る')
+})
+
+test('タスク詳細と差分: 履歴の詳細カードと差分アコーディオンが埋まる', async () => {
+  resetDemoState()
+  const detail = await demoFetch('/api/boards/mobile/tasks/t_demo_done')
+  assert.equal(detail.id, 't_demo_done')
+  assert.equal(detail.status, 'done')
+  assert.ok(detail.body)
+  assert.equal(detail.git.head, 'd3m0a1b')
+  assert.ok(detail.git.subject)
+  assert.ok(detail.events.length >= 2)
+  assert.ok(Array.isArray(detail.runs))
+  assert.ok(Array.isArray(detail.comments))
+
+  const diff = await demoFetch('/api/boards/mobile/tasks/t_demo_done/diff')
+  assert.equal(diff.ok, true)
+  assert.ok(diff.files.length >= 1)
+  assert.equal(
+    diff.total.add,
+    diff.files.reduce((a, f) => a + f.add, 0),
+  )
+  const file = diff.files[0].path
+  const patch = await demoFetch(`/api/boards/mobile/tasks/t_demo_done/diff?file=${encodeURIComponent(file)}`)
+  assert.equal(patch.ok, true)
+  assert.equal(patch.path, file)
+  assert.match(patch.text, /^diff --git/)
+
+  const outside = await demoFetch('/api/boards/mobile/tasks/t_demo_done/diff?file=nope.js')
+  assert.equal(outside.ok, false, 'そのコミットに無いファイルは ok:false（本物は 404）')
+
+  const unknown = await demoFetch('/api/boards/mobile/tasks/t_nope')
+  assert.equal(unknown.ok, false)
+  assert.equal(unknown.code, 'TASK_NOT_FOUND')
+})
+
+test('埋め込み判定: srcdoc / sandbox では iframe を張らない', () => {
+  assert.equal(isEmbeddedSession({ __HM_DEMO_EMBED__: true }), true)
+  assert.equal(isEmbeddedSession({ location: { href: 'about:srcdoc', protocol: 'about:' } }), true)
+  assert.equal(isEmbeddedSession({ location: { href: 'blob:https://x/1', protocol: 'blob:' } }), true)
+  assert.equal(isEmbeddedSession({ location: { href: 'https://example.com/demo/', protocol: 'https:' } }), false)
+  assert.equal(isEmbeddedSession(null), false)
+
+  assert.equal(frameUrl('https://example.com/demo/', true), null, '埋め込みでは相対 URL を作らない')
+  assert.ok(String(frameUrl('https://example.com/demo/', false)).endsWith('?demo-frame=1'))
+})
+
+test('保存領域: 例外を投げる localStorage をメモリ実装に差し替える', () => {
+  const throwing = {
+    get localStorage() {
+      throw new Error('SecurityError')
+    },
+    get sessionStorage() {
+      throw new Error('SecurityError')
+    },
+  }
+  assert.equal(installSafeStorage(throwing), true)
+  throwing.localStorage.setItem('k', 'v')
+  assert.equal(throwing.localStorage.getItem('k'), 'v')
+  assert.equal(throwing.localStorage.length, 1)
+  throwing.localStorage.removeItem('k')
+  assert.equal(throwing.localStorage.getItem('k'), null)
+
+  const mem = createMemoryStorage()
+  mem.setItem('a', 1)
+  assert.equal(mem.getItem('a'), '1')
+  assert.equal(mem.key(0), 'a')
+  mem.clear()
+  assert.equal(mem.length, 0)
+  assert.equal(safeStorage('localStorage', throwing), throwing.localStorage)
+})
+
+test('単一ファイル埋め込み: CSS/JS をインライン化し外部参照を残さない', () => {
+  const files = {
+    './assets/index-abc.js': 'console.log("hi"); const s = "</script>";',
+    './assets/index-abc.css': '.a{color:red}',
+  }
+  const indexHtml = `<!doctype html><html lang="ja"><head><meta charset="UTF-8" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icon-v5.svg" />
+    <link rel="stylesheet" crossorigin href="./assets/index-abc.css" />
+    <title>Hermes Mobile</title></head><body><div id="root"></div>
+    <script type="module" crossorigin src="./assets/index-abc.js"></script></body></html>`
+
+  const { html, inlined } = inlineAssets(indexHtml, (rel) => {
+    if (!(rel in files)) throw new Error(`missing ${rel}`)
+    return files[rel]
+  })
+
+  assert.deepEqual(inlined.sort(), ['./assets/index-abc.css', './assets/index-abc.js'])
+  assert.ok(html.includes('<style>.a{color:red}</style>'))
+  assert.ok(html.includes('<script type="module">'))
+  assert.ok(html.includes('console.log("hi")'))
+  assert.ok(html.includes('<\\/script>'), 'スクリプト内の </script> を退避している')
+  assert.equal(html.includes('manifest.webmanifest'), false, 'manifest は落とす（404 回避）')
+  assert.equal(html.includes('icon-v5.svg'), false, 'アイコンは落とす')
+  assert.ok(html.indexOf(EMBED_BOOTSTRAP) < html.indexOf('<script type="module">'), '保存領域の安全化が先')
+  assert.equal(EMBED_BOOTSTRAP.includes('__HM_DEMO_EMBED__'), true)
+  assert.deepEqual(verifyEmbedHtml(html), [])
+
+  // 取りこぼしを検出できること（検査関数が空振りしない）
+  assert.notDeepEqual(verifyEmbedHtml('<script src="./x.js"></script>'), [])
+  assert.notDeepEqual(verifyEmbedHtml('<style>.a{background:url(./font.woff2)}</style>'), [])
+})
+
+test('npm run build:demo は埋め込みビルドを含む（package.json と実ファイル）', () => {
+  const pkgPath = path.join(here, '..', '..', '..', 'package.json')
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
+  assert.match(pkg.scripts['build:demo'], /scripts\/build-demo-embed\.mjs/)
+  assert.equal(fs.existsSync(path.join(here, '..', '..', '..', 'scripts', 'build-demo-embed.mjs')), true)
 })
