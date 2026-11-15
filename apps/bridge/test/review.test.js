@@ -1050,7 +1050,7 @@ test('answer: 担当の無いタスクは回答後に assign してワーカー�
       },
     },
   )
-  const r = await api.answer('t_noassign', { answers: [{ id: 'q1', choice: 'A' }], by: 'hajime' })
+  const r = await api.answer('t_noassign', { answers: [{ id: 'q1', choice: 'A' }], by: 'alice' })
   assert.equal(r.ok, true)
   assert.equal(r.assigned, 'mobile')
   const assign = calls.find((c) => c[0] === 'assign')
