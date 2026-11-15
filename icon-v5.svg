@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- 余白ゼロ・透明部分ゼロ。周囲24pxの透明マージンが白枠の正体だった -->
+  <rect width="512" height="512" fill="#06161a"/>
+  <g fill="#46e0c8">
+    <rect x="181" y="154" width="58" height="204" rx="29"/>
+    <rect x="273" y="154" width="58" height="204" rx="29"/>
+    <rect x="181" y="227" width="150" height="58" rx="29"/>
+  </g>
+</svg>
