@@ -3,13 +3,13 @@
    - ハッシュ付きアセットは cache-first
    - API / WS はネットワークのみ（失敗時は 503 の JSON `{ok:false, code:'OFFLINE', error:'Offline'}`）。
      表示文はフロントが `t('err.OFFLINE')` で多言語化する（SPEC §1.2 G4） */
-const CACHE = 'hermes-pilot-v3'
+const CACHE = 'hermes-pilot-v4'
 const SHELL = [
   '/',
-  '/icon-192-v5.png',
-  '/icon-512-v5.png',
-  '/icon-maskable-512-v5.png',
-  '/icon-v5.svg',
+  '/icon-192-v6.png',
+  '/icon-512-v6.png',
+  '/icon-maskable-512-v6.png',
+  '/icon-v6.svg',
 ]
 
 /** オフライン応答（JSON・フロントが code で訳す）。 */
