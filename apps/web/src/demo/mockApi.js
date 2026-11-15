@@ -25,8 +25,13 @@ export const DEMO_SESSION = 'demo-a2b-01'
 /** デモのリポジトリ（`/api/specs*` と `/api/repos` が返す値）。 */
 export const DEMO_REPO = 'hermes-pilot-demo'
 export const DEMO_REPO_PATH = '/demo/hermes-pilot'
-/** V6: デモの Architect ランナー（進行バーの表示を試せるよう agy がある体で返す）。 */
-export const DEMO_HAS_AGY = true
+/**
+ * V11 §3.3 / D51: デモの Architect ランナー表示名。
+ *
+ * ランナーは `Hermes Native` だけになったので、デモもその 1 種類しか返さない
+ * （進行バーと Seed シートのランナーピルが本番と同じ文字列になる）。
+ */
+export const DEMO_RUNNER_LABEL = 'Hermes Native'
 /** バッチの状態遷移（`ready -> running -> done`）の間隔。 */
 export const DEMO_TICK_MS = 800
 export const STEPS = 4
@@ -345,6 +350,20 @@ export function createDemoState(now = Date.now()) {
         priority: 0,
         result: 'dist-demo generated',
       },
+      {
+        // V11 §3.3 / D51: 初期ジョブ `j_demo_0`（awaiting_review）の `[ARCH]` タスク。
+        // Review の回答待ちなので `blocked`（進行バーの「🔍 進捗詳細」が本物のタスクを開ける）。
+        id: 't_demo_arch_0',
+        board: DEMO_BOARD,
+        title: '[ARCH] Add a spec markdown preview to the demo shell',
+        status: 'blocked',
+        assignee: 'architect',
+        body: 'Add a spec markdown preview to the demo shell.',
+        createdAt: now - 6 * MIN,
+        updatedAt: now - 6 * MIN,
+        priority: 0,
+        result: 'Round 1 sheet filed: review t_demo_review',
+      },
     ],
     report: null,
     receipt: null,
@@ -380,9 +399,9 @@ export function createArchitectState(now = Date.now()) {
         id: 'j_demo_0',
         board: DEMO_BOARD,
         status: 'awaiting_review',
-        runner: 'antigravity',
-        requestedRunner: 'antigravity',
-        runnerLabel: 'Antigravity (agy)',
+        runner: 'hermes',
+        requestedRunner: 'hermes',
+        runnerLabel: DEMO_RUNNER_LABEL,
         fallbackFrom: null,
         fallbackReason: null,
         autoStart: false,
@@ -399,7 +418,9 @@ export function createArchitectState(now = Date.now()) {
         completedSpec: null,
         launched: null,
         error: null,
-        taskId: null,
+        // V11 §3.3 / D51: Hermes Native のジョブは必ず `[ARCH]` タスクを持つ
+        // （進行バーの「🔍 進捗詳細」から本物のタスクを開ける）
+        taskId: 't_demo_arch_0',
         reviewTaskId: 't_demo_review',
         reviewTitle: '[DEMO-1] Interactive demo — three design decisions',
       },
@@ -407,9 +428,9 @@ export function createArchitectState(now = Date.now()) {
   }
 }
 
-/** ランナーの表示名（`architect.js` の `runnerLabel` と同じ文字列）。 */
-export function demoRunnerLabel(runner) {
-  return runner === 'antigravity' ? 'Antigravity (agy)' : 'Hermes Native'
+/** ランナーの表示名（本番 `architect.js` の `runnerLabel` と同じ文字列）。 */
+export function demoRunnerLabel() {
+  return DEMO_RUNNER_LABEL
 }
 
 let generation = 0
@@ -1048,7 +1069,7 @@ export const DEMO_STALLED_AFTER_MS = 180_000
 export function demoPublicJob(job) {
   return {
     ...job,
-    runnerLabel: demoRunnerLabel(job.runner),
+    runnerLabel: demoRunnerLabel(),
     phase: demoJobPhase(job),
     stalled: demoJobStalled(job),
     sheetPath: job.sheetPath ?? null,
@@ -1101,7 +1122,7 @@ export function demoLiveArchitect(job, at = Date.now()) {
     id: job.id,
     board: job.board,
     runner: job.runner,
-    runnerLabel: demoRunnerLabel(job.runner),
+    runnerLabel: demoRunnerLabel(),
     status: job.status,
     phase: demoJobPhase(job),
     stalled: demoJobStalled(job, at),
@@ -1143,28 +1164,27 @@ export function demoExecutionMode(value) {
  * 本物は 202 で即返り、背後で SPEC を書く。デモも同じで、`tickMs` ごとに
  * `running -> awaiting_spec -> spec_ready`（`autoStart` なら `launched`）と進める。
  *
- * @param {object} input 種（`seedText` / `runner` / `autoStart` / `executionPolicy` / `lang` / `chat`）
+ * V11 §3.3 / D51: ランナーは `Hermes Native` 固定（外部 CLI は起動しない）。
+ * 送られてきた `runner` は見ない（本番ブリッジも `hermes` 以外を 400 で弾く）。
+ *
+ * @param {object} input 種（`seedText` / `autoStart` / `executionPolicy` / `lang` / `chat`）
  * @returns {object} 作ったジョブ
  */
 export function startDemoArchitectJob(input = {}) {
   const now = Date.now()
-  const runner = input.runner === 'antigravity' || input.runner === 'hermes' ? input.runner : state.architect.runner
+  const runner = 'hermes'
   const executionPolicy = normalizeDemoExecutionPolicy(input.executionPolicy)
   const seq = ++state.architect.seq
   const seedText = String(input.seedText ?? '').slice(0, 400)
-  /*
-   * V10 §3.3 / D47・V9-B1 / D41: Agy Opt-in（antigravity）は**カンバンタスクを作らない**。
-   * `taskId: null` にして、LiveSheet の「📋 タスク」ボタンが出ないことを本番と揃える。
-   * Hermes Native のときだけ `[ARCH] ...` の実行中タスクを 1 件立てる。
-   */
-  const taskId = runner === 'antigravity' ? null : `t_demo_arch_${seq}`
+  // Hermes Native は必ず `[ARCH] ...` の実行中タスクを 1 件立てる（`taskId` で進捗詳細から開ける）
+  const taskId = `t_demo_arch_${seq}`
   const job = {
     id: `j_demo_${seq}`,
     board: DEMO_BOARD,
     status: 'running',
     runner,
     requestedRunner: runner,
-    runnerLabel: demoRunnerLabel(runner),
+    runnerLabel: demoRunnerLabel(),
     fallbackFrom: null,
     fallbackReason: null,
     autoStart: Boolean(input.autoStart),
@@ -1343,7 +1363,6 @@ export function demoArchitectJobs(board = DEMO_BOARD) {
     ok: true,
     board: slug,
     runner: state.architect.runner,
-    capabilities: { hasAgyCli: DEMO_HAS_AGY },
     jobs,
     specReady,
     pending,
@@ -1614,13 +1633,10 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
     case 'specs.content':
       return demoSpecContent(route.params.get('path'), state.now)
     // V6 §3.1/§3.2: Architect のランナー設定とジョブ（進行バーの材料）
+    // V11 §3.3 / D51: ランナーは `Hermes Native` 固定。`PUT` で別の値を送られても
+    // 本番ブリッジと同じく `hermes` のまま返す（UI から切り替える手段はもう無い）。
     case 'architect.config': {
-      if (method === 'PUT' || method === 'POST') {
-        const next = payload?.runner === 'antigravity' ? 'antigravity' : 'hermes'
-        state.architect.runner = next
-        publish('architect')
-      }
-      return { ok: true, runner: state.architect.runner, hasAgyCli: DEMO_HAS_AGY, demo: true }
+      return { ok: true, runner: state.architect.runner, demo: true }
     }
     case 'architect.jobs':
       return demoArchitectJobs(route.params.get('board'))

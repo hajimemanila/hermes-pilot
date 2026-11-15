@@ -15,11 +15,12 @@ import {
 } from '../lib/specSeed.js'
 
 /**
- * `Spec Seed` シート（SPEC V5 §3.3 ① / D26①・SPEC V7 §3.3 / D33・D35）。
+ * `Spec Seed` シート（SPEC V5 §3.3 ① / D26①・SPEC V7 §3.3 / D33・D35・
+ * SPEC-PILOT-V11 §3.3 / D51）。
  *
  * ゼロタイピングで仕様策定を始める入口。「一行メモ」だけで
- * `POST /api/architect/seed` に種を渡し、Architect（既定 Hermes Native・Opt-in で agy）が
- * 1タップ設計インタビュー → 仕様書まで進める。
+ * `POST /api/architect/seed` に種を渡し、Architect（`Hermes Native` 固定）が
+ * 1タップ設計インタビュー → 仕様書まで進める。外部 AI CLI は起動しない。
  *
  * - 音声は **OS キーボードの標準音声入力**を使う（Web Speech API の自前マイクは
  *   非 Secure Context・`continuous` 非互換で必ず失敗したため削除。SPEC V7 §1.3）
@@ -39,8 +40,6 @@ export function SpecSeedSheet({ board = '', repo = null, chat = null, onClose, o
   const [text, setText] = useState('')
   const [autoStart, setAutoStart] = useState(false)
   const [executionPolicy, setExecutionPolicy] = useState(DEFAULT_EXECUTION_POLICY)
-  const [runner, setRunner] = useState('hermes')
-  const [agyAvailable, setAgyAvailable] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const inputRef = useRef(null)
@@ -50,23 +49,6 @@ export function SpecSeedSheet({ board = '', repo = null, chat = null, onClose, o
   useEffect(() => {
     const timer = setTimeout(() => inputRef.current?.focus(), 150)
     return () => clearTimeout(timer)
-  }, [])
-
-  // 実行ランナー（既定 Hermes Native。agy がある環境だけ Opt-in を選べる）
-  useEffect(() => {
-    let alive = true
-    api('/api/architect/config')
-      .then((d) => {
-        if (!alive || !d?.ok) return
-        setAgyAvailable(Boolean(d.hasAgyCli))
-        setRunner(d.runner === 'antigravity' ? 'antigravity' : 'hermes')
-      })
-      .catch(() => {
-        /* 旧ブリッジ: Hermes Native のまま動かす */
-      })
-    return () => {
-      alive = false
-    }
   }, [])
 
   /** テンプレートチップ: 前置きを置いてフォーカス（喋る手間より速い）。 */
@@ -88,7 +70,7 @@ export function SpecSeedSheet({ board = '', repo = null, chat = null, onClose, o
     try {
       const res = await api('/api/architect/seed', {
         method: 'POST',
-        body: buildSeedPayload({ seedText: text, autoStart, executionPolicy, runner, board, repo, chat, lang }),
+        body: buildSeedPayload({ seedText: text, autoStart, executionPolicy, board, repo, chat, lang }),
       })
       // Vibe 連動の演出＋触覚（Dopamine 時のみ音が鳴る）。未初期化でも落ちない。
       try {
@@ -103,9 +85,7 @@ export function SpecSeedSheet({ board = '', repo = null, chat = null, onClose, o
       setError(e?.message ?? t('seed.failed'))
       setBusy(false)
     }
-  }, [autoStart, board, busy, chat, executionPolicy, lang, notify, onClose, onSeeded, repo, runner, t, text])
-
-  const runnerLabel = runner === 'antigravity' ? t('seed.runnerAgy') : t('seed.runnerHermes')
+  }, [autoStart, board, busy, chat, executionPolicy, lang, notify, onClose, onSeeded, repo, t, text])
 
   return (
     <Sheet title={`📝 ${t('seed.title')}`} onClose={() => !busy && onClose?.()}>
@@ -113,7 +93,7 @@ export function SpecSeedSheet({ board = '', repo = null, chat = null, onClose, o
 
       <div className="seed-row">
         <span className="seed-label">{t('seed.runner')}</span>
-        <span className={`pill${runner === 'antigravity' ? ' on' : ''}`}>{runnerLabel}</span>
+        <span className="pill on">{t('seed.runnerHermes')}</span>
       </div>
 
       <textarea
@@ -182,17 +162,6 @@ export function SpecSeedSheet({ board = '', repo = null, chat = null, onClose, o
           <span className="seed-hint">{t('seed.autoStartHint')}</span>
         </span>
       </label>
-
-      {agyAvailable ? (
-        <label className="seed-toggle">
-          <input
-            type="checkbox"
-            checked={runner === 'antigravity'}
-            onChange={(e) => setRunner(e.target.checked ? 'antigravity' : 'hermes')}
-          />
-          <span>{t('seed.runnerAgy')}</span>
-        </label>
-      ) : null}
 
       {error ? <div className="seed-error">{error}</div> : null}
 

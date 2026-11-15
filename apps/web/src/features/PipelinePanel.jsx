@@ -4,13 +4,14 @@ import { useI18n } from '../i18n/index.js'
 import { haptic } from '../lib/haptic.js'
 
 /**
- * 設定タブ「パイプライン＆Architect」（SPEC V5 §3.2・§3.3 / D25・D26①）。
+ * 設定タブ「パイプライン＆Architect」（SPEC V5 §3.2・§3.3 / D25・D26①・
+ * SPEC-PILOT-V11 §3.3 / D51）。
  *
  * 2 つのことだけを 1 画面に置く。どちらも**状態が見える**ことを優先する。
  *
- * 1. **Architect の実行ランナー** — 既定は `Hermes Native`。`agy` がある環境では
- *    `Antigravity (agy)` に Opt-in できる（公式 CLI を子プロセス起動するだけで、
- *    OAuth トークンには触れない）。無い環境では選択肢を出さず、理由を 1 行で書く。
+ * 1. **Architect の実行ランナー** — `Hermes Native` 固定（外部 AI CLI は起動しない）。
+ *    仕様書は「自分のターミナル等で `docs/SPEC-*.md` を置いて 1 タップ実装」または
+ *    「この画面の `Spec Seed` から Hermes Native で仕様策定」の 2 ルートで入る。
  * 2. **1 タップ環境最適化** — `POST /api/pipeline/optimize` で `SOUL.md` へ A2B 行動規範を
  *    冪等追記し、`spec-architect` ほかのスキルを配置する。適用済みかどうかは
  *    `GET /api/pipeline/status` を読み直して表示する（自己申告で「適用した」と言わない）。
@@ -20,8 +21,6 @@ import { haptic } from '../lib/haptic.js'
  */
 export function PipelinePanel({ notify, board = '' }) {
   const { t } = useI18n()
-  const [runner, setRunner] = useState('hermes')
-  const [agyAvailable, setAgyAvailable] = useState(false)
   const [status, setStatus] = useState(null)
   const [statusMissing, setStatusMissing] = useState(false)
   const [jobs, setJobs] = useState(null)
@@ -29,16 +28,6 @@ export function PipelinePanel({ notify, board = '' }) {
   const [error, setError] = useState(null)
 
   const load = useCallback(async () => {
-    // ランナー（旧ブリッジでは 404 → 既定のまま）
-    try {
-      const d = await api('/api/architect/config')
-      if (d?.ok) {
-        setAgyAvailable(Boolean(d.hasAgyCli))
-        setRunner(d.runner === 'antigravity' ? 'antigravity' : 'hermes')
-      }
-    } catch {
-      setAgyAvailable(false)
-    }
     // SOUL / スキルの適用状態（V5-1 の API。無いブリッジでは「使えない」と出す）
     try {
       const s = await api('/api/pipeline/status')
@@ -64,24 +53,6 @@ export function PipelinePanel({ notify, board = '' }) {
   useEffect(() => {
     load()
   }, [load])
-
-  /** ランナーを切り替える（agy が無い環境では選べない）。 */
-  const chooseRunner = useCallback(
-    async (next) => {
-      if (next === runner) return
-      haptic('tap')
-      try {
-        const d = await api('/api/architect/config', { method: 'PUT', body: { runner: next } })
-        if (d?.ok) {
-          setRunner(d.runner === 'antigravity' ? 'antigravity' : 'hermes')
-          notify?.(t(next === 'antigravity' ? 'seed.runnerAgy' : 'seed.runnerHermes'))
-        }
-      } catch (e) {
-        setError(e?.message ?? t('settings.pipelineUnavailable'))
-      }
-    },
-    [notify, runner, t],
-  )
 
   /** SOUL.md ＋ スキル配置を 1 タップで適用する。 */
   const optimize = useCallback(async () => {
@@ -117,31 +88,10 @@ export function PipelinePanel({ notify, board = '' }) {
 
       <div className="kv" style={{ alignItems: 'center' }}>
         <span>{t('settings.pipelineRunner')}</span>
-        <span className={`pill${runner === 'antigravity' ? ' on' : ''}`}>
-          {t(runner === 'antigravity' ? 'seed.runnerAgy' : 'seed.runnerHermes')}
-        </span>
+        <span className="pill on">{t('seed.runnerHermes')}</span>
       </div>
-      <div className="chips" style={{ marginBottom: 6 }} role="group" aria-label={t('settings.pipelineRunner')}>
-        <button
-          type="button"
-          className={`chip${runner === 'hermes' ? ' on' : ''}`}
-          aria-pressed={runner === 'hermes'}
-          onClick={() => chooseRunner('hermes')}
-        >
-          {t('seed.runnerHermes')}
-        </button>
-        <button
-          type="button"
-          className={`chip${runner === 'antigravity' ? ' on' : ''}`}
-          aria-pressed={runner === 'antigravity'}
-          disabled={!agyAvailable}
-          onClick={() => chooseRunner('antigravity')}
-        >
-          {t('seed.runnerAgy')}
-        </button>
-      </div>
-      <p className="row-sub" style={{ margin: '0 0 10px', lineHeight: 1.6 }}>
-        {agyAvailable ? t('settings.pipelineAgyOk') : t('settings.pipelineAgyMissing')}
+      <p className="row-sub" style={{ margin: '6px 0 10px', lineHeight: 1.6 }}>
+        {t('settings.pipelineRunnerHint')}
       </p>
 
       {statusMissing ? (

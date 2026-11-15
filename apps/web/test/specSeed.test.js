@@ -63,7 +63,7 @@ test('実行方針のラベル・説明は i18n キーへ写像される', () =>
   assert.equal(executionPolicyHintKey('???'), 'seed.policyZeroStopHint')
 })
 
-test('buildSeedPayload は runner/lang/executionPolicy を正規化し、任意項目だけ載せる', () => {
+test('buildSeedPayload は runner を hermes 固定にし、任意項目だけ載せる', () => {
   assert.deepEqual(buildSeedPayload({ seedText: '  a  ', board: 'demo' }), {
     seedText: 'a',
     autoStart: false,
@@ -76,7 +76,6 @@ test('buildSeedPayload は runner/lang/executionPolicy を正規化し、任意�
     seedText: 'x',
     autoStart: true,
     executionPolicy: 'visual-gate',
-    runner: 'antigravity',
     board: 'demo',
     repo: 'hermes-pilot',
     chat: '20261113_221400_f9da52',
@@ -84,12 +83,12 @@ test('buildSeedPayload は runner/lang/executionPolicy を正規化し、任意�
   })
   assert.equal(full.autoStart, true)
   assert.equal(full.executionPolicy, 'visual-gate')
-  assert.equal(full.runner, 'antigravity')
+  assert.equal(full.runner, 'hermes')
   assert.equal(full.repo, 'hermes-pilot')
   assert.equal(full.chat, '20261113_221400_f9da52')
   assert.equal(full.lang, 'en')
-  // 未知の runner は既定へ落とす（存在しないランナーを送らない）
-  assert.equal(buildSeedPayload({ seedText: 'x', runner: 'gpt' }).runner, 'hermes')
+  // V11 §3.3 / D51: ランナーは Hermes Native だけ。外から別の値を混ぜても hermes のまま
+  assert.equal(buildSeedPayload({ seedText: 'x', runner: 'hermes' }).runner, 'hermes')
   // 未知の方針も既定へ落とす（Bridge 側 normalizeExecutionPolicy と同じ既定）
   assert.equal(buildSeedPayload({ seedText: 'x', executionPolicy: 'bogus' }).executionPolicy, 'zero-stop')
   // 上限で切る
@@ -196,11 +195,12 @@ test('ポーリングは自律進行の 4 秒／人待ちの 20 秒（キュー�
   assert.equal(jobPollMs({ status: 'awaiting_spec', queueState: 'queued' }), 4000)
 })
 
-test('ランナー表示は agy からの自動フォールバックを隠さない', () => {
+test('ランナー表示は Hermes Native 固定（V11 D51）', () => {
   assert.equal(jobRunnerKey({ runner: 'hermes' }), 'seed.runnerHermes')
-  assert.equal(jobRunnerKey({ runner: 'antigravity' }), 'seed.runnerAgy')
-  assert.equal(jobRunnerKey({ runner: 'hermes', fallbackFrom: 'antigravity' }), 'seed.runnerFallback')
+  assert.equal(jobRunnerKey({}), 'seed.runnerHermes')
   assert.equal(jobRunnerKey(null), 'seed.runnerHermes')
+  // V11 で agy フォールバックは廃止。古いジョブに残る fallbackFrom でも表示は Hermes Native
+  assert.equal(jobRunnerKey({ runner: 'hermes', fallbackFrom: null }), 'seed.runnerHermes')
 })
 
 test('経過時間は時・分・秒へ分解される', () => {
@@ -300,18 +300,17 @@ test('検知済みシートの表示名はファイル名だけを取り出す',
   assert.equal(jobSheetName(null), '')
 })
 
-test('Hermes Native での再試行は失敗時と Agy 停滞時だけ明示ボタンにする', () => {
-  // 失敗はランナーを問わず出す（止まったものを黙って放置しない）
+test('Hermes Native の再試行は失敗・停滞のときに明示ボタンにする（V11 D54）', () => {
+  // 失敗は必ず出す（止まったものを黙って放置しない）
   assert.equal(shouldOfferHermesRetry({ status: 'failed', runner: 'hermes' }), true)
-  assert.equal(shouldOfferHermesRetry({ status: 'failed', runner: 'antigravity' }), true)
-  // Agy が 3 分停滞したら明示の逃げ道を出す（自動フォールバックは廃止・D41）
-  assert.equal(shouldOfferHermesRetry({ status: 'running', runner: 'antigravity', stalled: true }), true)
-  assert.equal(shouldOfferHermesRetry({ status: 'awaiting_spec', runner: 'antigravity', stalled: true }), true)
-  // Hermes 自身が長くかかっているだけでは切替を勧めない（勝手に二重起動しない）
-  assert.equal(shouldOfferHermesRetry({ status: 'running', runner: 'hermes', stalled: true }), false)
-  // 停滞していない Agy には出さない
-  assert.equal(shouldOfferHermesRetry({ status: 'running', runner: 'antigravity', stalled: false }), false)
-  assert.equal(shouldOfferHermesRetry({ status: 'awaiting_review', runner: 'antigravity' }), false)
+  assert.equal(shouldOfferHermesRetry({ status: 'failed', runner: 'hermes', stalled: false }), true)
+  // 3 分以上進捗が無い（stalled）なら、動いているか不明なので逃げ道を出す
+  assert.equal(shouldOfferHermesRetry({ status: 'running', runner: 'hermes', stalled: true }), true)
+  assert.equal(shouldOfferHermesRetry({ status: 'awaiting_spec', runner: 'hermes', stalled: true }), true)
+  // 停滞していない実行中ジョブには出さない（勝手に二重起動しない）
+  assert.equal(shouldOfferHermesRetry({ status: 'running', runner: 'hermes', stalled: false }), false)
+  // Review の回答待ちは人の操作で進むので出さない
+  assert.equal(shouldOfferHermesRetry({ status: 'awaiting_review', runner: 'hermes' }), false)
   assert.equal(shouldOfferHermesRetry(null), false)
 })
 

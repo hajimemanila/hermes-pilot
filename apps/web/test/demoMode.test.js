@@ -336,22 +336,28 @@ test('Architect: 設定の読み書き・ジョブ一覧・Seed の進行がデ�
   resetDemoState()
   setDemoTick(1)
 
+  // V11 §3.3 / D51: ランナーは Hermes Native 固定（切り替えの口は無い）
   const conf = await demoFetch('/api/architect/config')
   assert.equal(conf.ok, true)
   assert.equal(conf.runner, 'hermes')
-  assert.equal(conf.hasAgyCli, true, 'デモは agy がある体（ランナー切替を試せる）')
-  const put = await demoFetch('/api/architect/config', { method: 'PUT', body: { runner: 'antigravity' } })
+  assert.equal(conf.hasAgyCli, undefined, 'agy の検出結果は返さない')
+  const put = await demoFetch('/api/architect/config', { method: 'PUT', body: { runner: 'hermes' } })
   assert.equal(put.ok, true)
-  assert.equal(put.runner, 'antigravity')
+  assert.equal(put.runner, 'hermes')
 
   const jobs = await demoFetch('/api/architect/jobs?board=mobile')
   assert.equal(jobs.ok, true)
-  assert.equal(jobs.runner, 'antigravity')
+  assert.equal(jobs.runner, 'hermes')
+  assert.equal(jobs.capabilities, undefined, 'ランナー能力の広告は廃止（D51）')
   const waiting = jobs.jobs.find((j) => j.status === 'awaiting_review')
   assert.ok(waiting, '初期状態に Review 待ちのジョブがある（ArchitectJobBar 用）')
   assert.equal(waiting.reviewTaskId, 't_demo_review')
   assert.ok(waiting.reviewTitle)
   assert.ok(waiting.runnerLabel)
+  // V11 §3.3 / D51: 初期ジョブも Hermes Native。`[ARCH]` タスクに紐づく
+  assert.equal(waiting.runner, 'hermes')
+  assert.equal(waiting.runnerLabel, 'Hermes Native')
+  assert.equal(waiting.taskId, 't_demo_arch_0')
   assert.ok(Array.isArray(jobs.pending) && jobs.pending.length >= 1, '未起票 SPEC を持つ')
 
   const seed = await demoFetch('/api/architect/seed', {
@@ -884,40 +890,36 @@ test('V10-B3: /api/logs と /api/search は SettingsPane / SearchSheet の形を
   assert.deepEqual(blank.hits, [], '空クエリは 0 件（本番は 400 を返すが、デモは空で返す）')
 })
 
-test('V10-B3: antigravity の Seed はタスクを作らない（taskId === null）', async () => {
+test('V11-B3: Hermes Native の Seed は常に [ARCH] タスクを立てる（D51）', async () => {
   resetDemoState()
   setDemoTick(50)
   const seed = await demoFetch('/api/architect/seed', {
     method: 'POST',
-    body: { board: 'mobile', seedText: 'Agy parity', runner: 'antigravity', autoStart: false, lang: 'en' },
+    body: { board: 'mobile', seedText: 'Native parity', autoStart: false, lang: 'en' },
   })
   const jobs = await demoFetch('/api/architect/jobs?board=mobile')
   const job = jobs.jobs.find((j) => j.id === seed.jobId)
   assert.ok(job)
-  assert.equal(job.runner, 'antigravity')
-  assert.equal(job.taskId, null, 'Agy Opt-in はカンバンタスクを作らない（D41）')
+  assert.equal(job.runner, 'hermes')
+  assert.equal(job.runnerLabel, 'Hermes Native')
+  assert.equal(typeof job.taskId, 'string', 'Hermes Native はカンバンタスクを作る')
 
   const board = await demoFetch('/api/boards/mobile/tasks')
-  assert.equal(
-    board.tasks.some((t) => /^\[ARCH\]/.test(t.title)),
-    false,
-    'Agy のジョブはボードに現れない',
-  )
-
-  // Hermes Native なら [ARCH] タスクが立ち、進捗詳細から開ける
-  const hermes = await demoFetch('/api/architect/seed', {
-    method: 'POST',
-    body: { board: 'mobile', seedText: 'Hermes parity', runner: 'hermes', autoStart: false, lang: 'en' },
-  })
-  const jobs2 = await demoFetch('/api/architect/jobs?board=mobile')
-  const job2 = jobs2.jobs.find((j) => j.id === hermes.jobId)
-  assert.equal(typeof job2.taskId, 'string')
-  const board2 = await demoFetch('/api/boards/mobile/tasks')
-  const arch = board2.tasks.find((t) => t.id === job2.taskId)
+  const arch = board.tasks.find((t) => t.id === job.taskId)
   assert.ok(arch, '実行中タスクとして一覧に出る')
   assert.equal(arch.status, 'running')
   assert.equal(arch.assignee, 'architect')
-  assert.match(arch.title, /^\[ARCH\] Hermes parity/)
+  assert.match(arch.title, /^\[ARCH\] Native parity/)
+
+  // ランナーを偽って送っても Hermes Native のまま（切り替えの口はもう無い）
+  const forged = await demoFetch('/api/architect/seed', {
+    method: 'POST',
+    body: { board: 'mobile', seedText: 'Forced runner', runner: 'hermes', autoStart: false, lang: 'en' },
+  })
+  const jobs2 = await demoFetch('/api/architect/jobs?board=mobile')
+  const job2 = jobs2.jobs.find((j) => j.id === forged.jobId)
+  assert.equal(job2.runner, 'hermes')
+  assert.equal(typeof job2.taskId, 'string')
   await new Promise((resolve) => setTimeout(resolve, 80))
 })
 

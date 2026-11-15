@@ -69,14 +69,17 @@ export function canSubmit(text) {
 
 /**
  * `POST /api/architect/seed` の本文。
- * @param {{seedText: string, autoStart?: boolean, executionPolicy?: string, runner?: string, board?: string, repo?: string|null, chat?: string|null, lang?: string}} input 入力
+ *
+ * SPEC-PILOT-V11 §3.3 / D51: ランナーは `Hermes Native` のみなので `runner` は送らない
+ * （受け取っても常に `hermes` を載せる。API は `hermes` 以外を `INVALID_RUNNER` で弾く）。
+ *
+ * @param {{seedText: string, autoStart?: boolean, executionPolicy?: string, board?: string, repo?: string|null, chat?: string|null, lang?: string}} input 入力
  * @returns {object} 本文
  */
 export function buildSeedPayload({
   seedText,
   autoStart = false,
   executionPolicy = DEFAULT_EXECUTION_POLICY,
-  runner = 'hermes',
   board,
   repo = null,
   chat = null,
@@ -86,7 +89,7 @@ export function buildSeedPayload({
     seedText: String(seedText ?? '').trim().slice(0, SEED_MAX),
     autoStart: Boolean(autoStart),
     executionPolicy: normalizeExecutionPolicy(executionPolicy),
-    runner: runner === 'antigravity' ? 'antigravity' : 'hermes',
+    runner: 'hermes',
     lang: lang === 'en' ? 'en' : 'ja',
   }
   if (board) body.board = String(board)
@@ -255,12 +258,15 @@ export function jobSheetName(job) {
 }
 
 /**
- * Hermes Native での再試行を**明示ボタンとして**出すか（SPEC-PILOT-V9 §3.3 ① / D41）。
+ * Hermes Native での再試行を**明示ボタンとして**出すか（SPEC-PILOT-V11 §3.1 / D54）。
  *
- * Agy Opt-in では自動フォールバックを廃止したので、切替はユーザーの明示操作だけ。
- *  - `failed`: ランナーを問わず出す（止まったものを黙って放置しない）
- *  - Agy Opt-in が 3 分以上停滞（`stalled`）: GUI 側が書いているのか止まっているのか
- *    分からないので、明示の逃げ道を出す
+ * ランナーは `Hermes Native` だけになったので、失敗・停滞をそのまま放置せず、
+ * 同じ種で撃ち直せる 1 タップの逃げ道を必ず出す。
+ *  - `failed`: 止まったものを黙って放置しない
+ *  - `stalled`（3 分以上無進展）: 動いているのか止まっているのか分からないので出す
+ *
+ * `awaiting_review` は人の回答待ちでブリッジも `stalled` を立てないため、通常は出ない
+ * （返答すれば進む）。判定は `failed` と `stalled` の 2 つだけに保つ。
  *
  * @param {object|null} job ジョブ
  * @returns {boolean} 出すなら true
@@ -268,7 +274,7 @@ export function jobSheetName(job) {
 export function shouldOfferHermesRetry(job) {
   if (!job) return false
   if (String(job.status) === 'failed') return true
-  return job.runner === 'antigravity' && Boolean(job.stalled)
+  return Boolean(job.stalled)
 }
 
 /**
@@ -304,13 +310,15 @@ export function jobPollMs(job) {
 }
 
 /**
- * ジョブのランナー表示 → i18n キー（`agy` から自動フォールバックしたことを隠さない）。
- * @param {object} job ジョブ
+ * ジョブのランナー表示 → i18n キー（SPEC-PILOT-V11 §3.3 / D51）。
+ *
+ * ランナーは `Hermes Native` だけになったので、常に同じキーを返す
+ * （旧ブリッジが `runner` を欠いたジョブでも表示が空にならない）。
+ *
  * @returns {string} キー
  */
-export function jobRunnerKey(job) {
-  if (job?.fallbackFrom === 'antigravity') return 'seed.runnerFallback'
-  return job?.runner === 'antigravity' ? 'seed.runnerAgy' : 'seed.runnerHermes'
+export function jobRunnerKey() {
+  return 'seed.runnerHermes'
 }
 
 /**

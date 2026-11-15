@@ -29,13 +29,14 @@ import {
  *     ⏳ と「キュー待ち」、`running`（実行中）ならスピナーと「実行中」チップで区別する
  * - `job.stalled`（3 分以上無進展）ならバーを警告トーンにし、明示の警告文を出す
  * - **🔍 進捗詳細**: `onInspect` があればそれを呼ぶ。無ければ `job.taskId` ありは
- *   `hm:open-task`、タスクを持たない Agy Opt-in は `hm:open-live` を発火する
+ *   `hm:open-task`、タスクを持たないジョブは `hm:open-live` を発火する
  *   （カンバンタスクを作らないジョブでも死活監視を 1 タップで開ける）
  * - `awaiting_review`: インタビューシート到着 → **1 タップで Quick Review**（`hm:open-review`）
- * - `failed` / Agy の停滞: **明示の「🔄 Hermes Native で再試行」**（`shouldOfferHermesRetry`）。
- *   D41 で自動フォールバックを廃止したので、ランナー切替はこのボタンだけが入口。
+ * - `failed` / `stalled`: **明示の「🔄 Hermes Native で再試行」**（`shouldOfferHermesRetry`）。
+ *   ランナーは `Hermes Native` だけなので、止まったジョブはこのボタンで同じ種を撃ち直す
+ *   （SPEC-PILOT-V11 §3.1 / D54）。
  *
- * 再試行は `POST /api/architect/seed` を `runner: 'hermes'` で撃ち直し、**成功後に旧ジョブを
+ * 再試行は `POST /api/architect/seed` を撃ち直し、**成功後に旧ジョブを
  * 破棄**する（残すと 2 本並ぶ＝二重稼働になる）。全文は `job.seed`（公開用に 400 字へ切った
  * 要約）で送るので、長い種は要約で再開する。
  * `×` は**サーバー側にも破棄を永続化**する（`POST /api/architect/jobs/:id/dismiss`）ので、
@@ -125,7 +126,7 @@ export function ArchitectJobBar({
    *
    * 呼び出し元（`TasksPane` / `ChatPane`）が `onInspect` を渡していればそれに委ねる。
    * 渡していない場合は、タスクを持つジョブはタスク詳細（`hm:open-task`）、
-   * タスクを持たない Agy Opt-in は全体の `LiveSheet`（`hm:open-live`）へ振る。
+   * タスクを持たないジョブは全体の `LiveSheet`（`hm:open-live`）へ振る。
    */
   const inspect = useCallback(() => {
     if (!job) return
@@ -165,7 +166,7 @@ export function ArchitectJobBar({
   }, [job, onDismiss])
 
   /**
-   * Hermes Native で撃ち直す（明示ボタン専用・D41）。
+   * Hermes Native で撃ち直す（明示ボタン専用・SPEC-PILOT-V11 §3.1 / D54）。
    *
    * 順序は「seed → 旧ジョブの dismiss」。逆にすると seed が失敗したときに
    * 進行バーごと消えて理由が読めなくなる（実測）。成功後に旧ジョブを破棄するので、
@@ -184,7 +185,6 @@ export function ArchitectJobBar({
           autoStart: Boolean(job.autoStart),
           // 選んだ実行方針を落とさない（Visual-gate で回したジョブを Zero-stop で再開しない）
           executionPolicy: job.executionPolicy,
-          runner: 'hermes',
           board: board || job.board,
           repo,
           chat: chat ?? job.chat ?? null,
@@ -231,7 +231,7 @@ export function ArchitectJobBar({
             <span className={`job-bar-state${queued ? ' queued' : ' running'}`}>{t(queueKey)}</span>
           ) : null}
           {elapsed ? <span className="job-bar-elapsed">{elapsed}</span> : null}
-          <span className="job-bar-runner">{t(jobRunnerKey(job))}</span>
+          <span className="job-bar-runner">{t(jobRunnerKey())}</span>
         </div>
         {/* 現在フェーズと、検知済みのシート名（D42 の中間進捗を画面に出す） */}
         {phaseKey || sheetName ? (
@@ -254,7 +254,7 @@ export function ArchitectJobBar({
           <button type="button" className="job-bar-btn" onClick={inspect} aria-label={t('seed.inspectAria')}>
             🔍 {t('seed.inspect')}
           </button>
-          {/* Agy Opt-in が停滞したときだけ、明示の逃げ道（Hermes Native）を出す */}
+          {/* 停滞（3 分以上無進展）したときは、明示の逃げ道（例: 再試行）を出す */}
           {offerRetry ? (
             <button type="button" className="job-bar-btn" disabled={busy} onClick={retry}>
               {busy ? `⏳ ${t('seed.retrying')}` : `🔄 ${t('seed.retryHermes')}`}
