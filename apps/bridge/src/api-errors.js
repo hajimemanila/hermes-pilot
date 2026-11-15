@@ -93,7 +93,7 @@ export const ERROR_MESSAGES = {
   // --- その他（chat-profile.js / hermes.js / architect.js） ---
   PROFILE_UNKNOWN: 'Unknown profile: {profile}',
   HERMES_TOKEN_MISSING: 'Could not get the Hermes session token (is the dashboard running?)',
-  RUNNER_UNAVAILABLE: 'The agy CLI was not found on this machine',
+  INVALID_RUNNER: 'Only the Hermes Native runner is supported',
   INVALID_SEED: 'A seed text is required',
   INVALID_BOARD: 'The board name is invalid',
   INVALID_REPO: 'The repository path is invalid',

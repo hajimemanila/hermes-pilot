@@ -4,8 +4,9 @@
  * 「インストールしただけで自走する」ための**非破壊・冪等**な環境最適化だけを行う。
  * - `optimizeHermesSoul`  … `~/.hermes/SOUL.md` へ行動規範ブロックを 1 つだけ埋め込む
  *   （事前バックアップ＋マーカー間の置換。何度押してもブロックは 1 つ）。
- * - `optimizeAntigravitySkills` … Antigravity / 汎用エージェントのスキル置き場へ
+ * - `optimizeAgentSkills`（旧名 `optimizeAntigravitySkills`）… 汎用エージェントのスキル置き場へ
  *   `quick-review` / `annotation` / `spec-architect` をリンク（無理ならコピー）する。
+ *   **ファイル配置だけ**を行い、外部 AI CLI のサブプロセスは一切起動しない（SPEC V11 D50）。
  * - `getOptimizeStatus` … 適用済みかどうかを**真偽値と件数だけ**で返す（内容は返さない）。
  *
  * 禁止事項（この関数群が絶対にやらないこと）:
@@ -231,7 +232,10 @@ export function installSkill({ name, srcDir, destDir }) {
 }
 
 /**
- * Antigravity / 汎用エージェント向けに同梱スキルを配置する（冪等）。
+ * 汎用エージェントのスキル置き場へ同梱スキルを配置する（冪等）。
+ *
+ * **プロセスは起動しない**（`fs.linkSync` / `fs.cpSync` だけ）。外部 AI CLI を
+ * ラップ起動しないという SPEC V11 D50 の境界はここでも守る。
  *
  * @param {{home?: string, skillsSrcDir?: string, targets?: string[], names?: string[]}} [opts] 入力
  * @returns {{ok: boolean, targets: Array<{id: string, path: string, installed: string[], skipped: Array<object>, error?: string}>}} 結果
@@ -270,6 +274,14 @@ export function optimizeAntigravitySkills({
   }
   return { ok: out.every((t) => !t.error), targets: out }
 }
+
+/**
+ * `optimizeAntigravitySkills` の現行名（サーバー側はこちらを使う）。
+ *
+ * 名前から外部ツール連携を想像させないための別名で、実体は同じ関数。
+ * 繰り返しになるが**プロセスは起動しない**（リンク／コピーだけ）。
+ */
+export const optimizeAgentSkills = optimizeAntigravitySkills
 
 /**
  * 適用状況を返す（**中身は返さない**。真偽値・件数・ファイル名だけ）。

@@ -32,11 +32,11 @@ import { createLive } from './live.js'
 import { createInbox } from './inbox.js'
 import { createRepos, normalizePath } from './repos.js'
 import { createSpecs, listSpecs, readSpecContent } from './specs.js'
-import { createArchitect, sanitizeRunner } from './architect.js'
+import { createArchitect } from './architect.js'
 import {
   DEFAULT_SKILLS_SRC,
   getOptimizeStatus,
-  optimizeAntigravitySkills,
+  optimizeAgentSkills,
   optimizeHermesSoul,
 } from './pipeline-optimizer.js'
 import { createPairCodes } from './pair-codes.js'
@@ -104,11 +104,10 @@ const kanban = createKanban(cfg)
 const repos = createRepos(cfg, { boards: () => kanban.boards() })
 // Spec Launchpad（`docs/SPEC-*.md` → バッチ → カンバン一括起票）。SPEC §5.4 / D15④
 const specs = createSpecs(cfg, { tasks: (board) => kanban.tasks(board, { limit: 200 }), listSpecs })
-// Architect（仕様の種 → SPEC / A2B）。OPT-IN の `agy` CLI は公式サブプロセス起動のみ（SPEC V5 §3.2）
+// Architect（仕様の種 → SPEC / A2B）。ランナーは Hermes Native（`hermes kanban create`）だけ。
 const architect = createArchitect(cfg, {
   listSpecs,
   readTasks: (board) => kanban.tasks(board, { limit: 200 }),
-  hasAgyCli: () => Boolean(getCapabilities().hasAgyCli),
 })
 const review = createReview(cfg, { targets: () => repos.targets() })
 // 完了・ブロックの記録はブリッジ内蔵（D7）。外部 cron は要らない。
@@ -695,7 +694,7 @@ async function handleApi(req, res, url) {
       const doSoul = body?.soul !== false
       const doSkills = body?.skills !== false
       const soul = doSoul ? optimizeHermesSoul({ hermesHome: cfg.hermesHome }) : null
-      const skills = doSkills ? optimizeAntigravitySkills({ home: cfg.home, skillsSrcDir: DEFAULT_SKILLS_SRC }) : null
+      const skills = doSkills ? optimizeAgentSkills({ home: cfg.home, skillsSrcDir: DEFAULT_SKILLS_SRC }) : null
       const ok = (soul?.ok ?? true) && (skills?.ok ?? true)
       auth.audit({
         kind: 'pipeline.optimize',
@@ -722,25 +721,22 @@ async function handleApi(req, res, url) {
   // POST /api/architect/jobs/:id/dismiss
   //      … ジョブ破棄をサーバー側に永続化する（再取得しても進行バーに出ない。SPEC V7 §3.1）
   // GET  /api/architect/config ・ PUT /api/architect/config { runner }
-  //      … 実行ランナー（既定 `hermes`、Opt-in で `antigravity`）
+  //      … 実行ランナー（`hermes` 固定。他の値は INVALID_RUNNER = HTTP 400）
   if (a === 'architect') {
     if (b === 'config') {
       if (req.method === 'GET') {
-        return sendJson(res, 200, {
-          ok: true,
-          ...architect.getConfig(),
-          hasAgyCli: Boolean(getCapabilities().hasAgyCli),
-        })
+        return sendJson(res, 200, { ok: true, ...architect.getConfig() })
       }
       if (req.method === 'PUT' || req.method === 'POST') {
         if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
           return sendError(res, 429, 'RATE_LIMITED')
         }
         const body = await readJson(req)
-        const r = architect.setConfig({ runner: sanitizeRunner(body?.runner) })
+        // 正規化せずに渡す（未知のランナー名は INVALID_RUNNER で 400 にする）
+        const r = architect.setConfig({ runner: body?.runner })
         auth.audit({ kind: 'architect.config', runner: r.runner ?? null, ok: Boolean(r.ok) })
-        if (!r.ok) return sendFailure(res, 409, r)
-        return sendJson(res, 200, { ok: true, ...architect.getConfig(), hasAgyCli: Boolean(getCapabilities().hasAgyCli) })
+        if (!r.ok) return sendFailure(res, r.code === 'INVALID_RUNNER' ? 400 : 409, r)
+        return sendJson(res, 200, { ok: true, ...architect.getConfig() })
       }
       return sendError(res, 405, 'METHOD_NOT_ALLOWED')
     }

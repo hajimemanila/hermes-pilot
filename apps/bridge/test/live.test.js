@@ -168,8 +168,8 @@ function archJob(over = {}) {
     id: 'j1',
     board: 'hermes-pilot',
     status: 'running',
-    runner: 'antigravity',
-    runnerLabel: 'Agy',
+    runner: 'hermes',
+    runnerLabel: 'Hermes Native',
     taskId: null,
     reviewTaskId: null,
     reviewBoard: null,
@@ -212,7 +212,7 @@ test('tasks/turns の件数と architect は同じスナップショットに共
   assert.equal(s.counts.turns, 2)
   assert.equal(s.counts.architect, 1)
   assert.equal(s.architect[0].board, 'hermes-pilot')
-  assert.equal(s.architect[0].runnerLabel, 'Agy')
+  assert.equal(s.architect[0].runnerLabel, 'Hermes Native')
   assert.ok(s.architect[0].elapsedSec >= 120)
 })
 

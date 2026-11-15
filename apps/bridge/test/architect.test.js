@@ -6,8 +6,9 @@
  *  2. モックランナーが書いた `docs/SPEC-*.md` を検知して `spec_ready` になる
  *  3. `autoStart` は**1 回だけ**起票する（冪等）。OFF なら起票しない
  *  4. ランナー異常終了は `failed` として理由が残る
- *  5. `antigravity` は `agy` が無い環境では選べない（Opt-in の境界）
+ *  5. ランナーは `Hermes Native`（`hermes`）の 1 本だけで、旧 Opt-in 名は INVALID_RUNNER で弾く
  *  6. OAuth 認証ファイルへ触れるコードが**無い**（`scripts/check-oauth-boundary.mjs` も同じ境界を見る）
+ *  7. 仕様策定プロンプトに推奨スラッグと既存 SPEC 一覧、Round 1 高速化制約が入る（SPEC V11 D54）
  *
  * 実 CLI は起動しない（すべて DI モック）。一時ディレクトリだけを使う。
  */
@@ -24,11 +25,15 @@ import {
   ARCHITECT_PHASES,
   BOARD_RE,
   DEFAULT_REVIEW_BOARD,
+  DEFAULT_RUNNER,
   DISMISSED_MAX,
   EXECUTION_POLICIES,
+  EXISTING_SPECS_MAX,
   RUNNER_LABELS,
+  RUNNERS,
   SPEC_LAUNCH_KIND,
   SPEC_READY_KIND,
+  SPEC_SLUG_MAX,
   STALLED_AFTER_MS,
   TERMINAL_TASK_STATUSES,
   buildArchitectTaskBody,
@@ -44,15 +49,18 @@ import {
   findJobSpec,
   findRecentSheet,
   isJobStalled,
+  isSupportedRunner,
   makeJobId,
   normalizeExecutionPolicy,
   normalizeSeed,
   pendingSpecs,
   publicJob,
   queueStateOf,
+  recentSpecPaths,
   reviewBoardsFor,
   runnerLabel,
   sanitizeRunner,
+  suggestSpecSlug,
 } from '../src/architect.js'
 import { createKanban } from '../src/kanban.js'
 import { parseCreatedTask } from '../src/specs.js'
@@ -101,12 +109,19 @@ function seedInput(repo, over = {}) {
 }
 
 test('sanitizeRunner / runnerLabel / makeJobId / normalizeSeed', () => {
-  assert.equal(sanitizeRunner('antigravity'), 'antigravity')
-  assert.equal(sanitizeRunner('ANTIGRAVITY'), 'antigravity')
-  assert.equal(sanitizeRunner('nope'), 'hermes')
+  // SPEC V11 D50: ランナーは 1 本だけ（未知の値は既定へ倒す）
+  assert.deepEqual(RUNNERS, ['hermes'])
+  assert.equal(DEFAULT_RUNNER, 'hermes')
+  assert.equal(sanitizeRunner('hermes'), 'hermes')
+  assert.equal(sanitizeRunner('antigravity'), 'hermes')
   assert.equal(sanitizeRunner(undefined), 'hermes')
-  assert.equal(runnerLabel('antigravity'), RUNNER_LABELS.antigravity)
+  assert.equal(isSupportedRunner('hermes'), true)
+  assert.equal(isSupportedRunner('HERMES'), true)
+  assert.equal(isSupportedRunner(''), true, '未指定は既定として許す')
+  assert.equal(isSupportedRunner(undefined), true)
+  assert.equal(isSupportedRunner('antigravity'), false)
   assert.equal(runnerLabel('hermes'), 'Hermes Native')
+  assert.equal(runnerLabel('antigravity'), RUNNER_LABELS.hermes)
 
   const id = makeJobId(1_700_000_000_000, () => 0.5)
   assert.match(id, /^arch-[0-9a-z]+-[0-9a-z]{4}$/)
@@ -117,14 +132,54 @@ test('sanitizeRunner / runnerLabel / makeJobId / normalizeSeed', () => {
   assert.match('demo', BOARD_RE)
 })
 
+test('suggestSpecSlug は ASCII から推奨スラッグを作り、無ければ jobId 末尾を使う（D54）', () => {
+  assert.equal(SPEC_SLUG_MAX, 28)
+  assert.equal(suggestSpecSlug('Notification digest: group them', 'arch-1'), 'notification-digest-group-th', '28 文字で切る')
+  assert.equal(suggestSpecSlug('Notification digest', 'arch-1'), 'notification-digest')
+  assert.equal(suggestSpecSlug('通知まとめを仕様化', 'arch-mf3k-0a1b'), '0a1b', 'ASCII が無ければ jobId 末尾')
+  assert.equal(suggestSpecSlug('', 'arch-x'), 'x')
+  assert.equal(suggestSpecSlug('', ''), 'spec', '決め手が無くても空にはしない')
+  // 記号はハイフンに畳まれ、先頭・末尾のハイフンは落ちる
+  assert.equal(suggestSpecSlug('  --Fix: the   Bug!! --', 'arch-1'), 'fix-the-bug')
+  // 28 文字を超えない（末尾にハイフンを残さない）
+  const long = suggestSpecSlug('alpha beta gamma delta epsilon zeta', 'arch-1')
+  assert.ok(long.length <= SPEC_SLUG_MAX, long)
+  assert.equal(/-$/.test(long), false, long)
+})
+
+test('recentSpecPaths は既存 SPEC の相対パスを直近順に最大 6 件返す（D54）', () => {
+  assert.equal(EXISTING_SPECS_MAX, 6)
+  const specs = Array.from({ length: 9 }, (_, i) => ({ path: `docs/SPEC-${i}.md`, mtime: i }))
+  const out = recentSpecPaths(() => specs, '/repo')
+  assert.equal(out.length, 6)
+  assert.equal(out[0], 'docs/SPEC-8.md', 'mtime の新しい順')
+  assert.deepEqual(recentSpecPaths(() => [], '/repo'), [])
+  assert.deepEqual(
+    recentSpecPaths(() => {
+      throw new Error('boom')
+    }, '/repo'),
+    [],
+    '走査に失敗しても起票は止めない',
+  )
+  assert.deepEqual(recentSpecPaths(() => [{ path: '' }, null, { path: 'docs/SPEC-A.md', mtime: 1 }], '/repo'), [
+    'docs/SPEC-A.md',
+  ])
+})
+
 test('buildSeedPrompt は Round 1 を JSON ファースト（mode=standard）にして HTML 生成とブラウザ撮影を抑止する', () => {
-  const text = buildSeedPrompt({ jobId: 'arch-1', seedText: '通知をまとめる', board: 'demo', repoPath: '/tmp/x' })
-  // 主成果物は構造化 JSON シート
-  assert.match(text, /review\/sheets\/spec-<slug>-1\.json/)
+  const text = buildSeedPrompt({
+    jobId: 'arch-1',
+    seedText: '通知をまとめる',
+    board: 'demo',
+    repoPath: '/tmp/x',
+    suggestedSlug: 'notify',
+  })
+  // 主成果物は構造化 JSON シート（推奨スラッグ入りの具体名）
+  assert.match(text, /review\/sheets\/spec-notify-1\.json/)
   assert.match(text, /"mode": "standard"/)
-  assert.match(text, /mode=standard sheet=sheets\/spec-<slug>-1\.json/)
+  assert.match(text, /mode=standard sheet=sheets\/spec-notify-1\.json/)
   // 手書き HTML とヘッドレスブラウザ撮影は「見た目の比較が論点のときだけ」任意
-  assert.match(text, /Do NOT hand-write/)
+  assert.match(text, /do NOT hand-write/)
   assert.match(text, /headless browser/)
   assert.match(text, /visual UI-layout comparison/)
   assert.match(text, /optional/)
@@ -137,6 +192,32 @@ test('buildSeedPrompt は Round 1 を JSON ファースト（mode=standard）に
   assert.match(text, /Zero-Stop \| Fast-Track Review \| Visual Gate/)
   assert.match(text, /通知をまとめる/)
   assert.match(text, /Do not file anything yet/)
+})
+
+test('buildSeedPrompt は推奨スラッグ・既存 SPEC 一覧・Round 1 高速化制約を注入する（D54）', () => {
+  const text = buildSeedPrompt({
+    jobId: 'arch-abc-0001',
+    seedText: '通知まとめを仕様化',
+    board: 'demo',
+    repoPath: '/tmp/x',
+    existingSpecs: ['docs/SPEC-PILOT-V10.md', 'docs/SPEC-PILOT-V11.md'],
+  })
+  assert.match(text, /Suggested slug: 0001/, 'ASCII が無い種は jobId 末尾を推奨にする')
+  assert.match(text, /Existing specs: docs\/SPEC-PILOT-V10\.md, docs\/SPEC-PILOT-V11\.md/)
+  assert.match(text, /Round 1 speed rule/)
+  assert.match(text, /do NOT run npm test \/ npm run verify/)
+  assert.match(text, /write the sheet and block immediately/)
+
+  // 既存 SPEC が無いときは「無い」と明示する（探索させない）
+  assert.match(
+    buildSeedPrompt({ jobId: 'arch-1', seedText: 'seed', board: 'demo', repoPath: '/tmp/x' }),
+    /Existing specs: none in docs\/ yet/,
+  )
+  // 明示したスラッグはそのまま使う
+  assert.match(
+    buildSeedPrompt({ jobId: 'arch-1', seedText: 'seed', board: 'demo', repoPath: '/tmp/x', suggestedSlug: 'abc' }),
+    /Suggested slug: abc/,
+  )
 })
 
 test('buildSeedPrompt は spec-architect の Round 1/2 と Execution Mode を要求する', () => {
@@ -359,7 +440,7 @@ test('ランナー異常終了は failed として理由を残す', async () => 
   const repo = makeRepo()
   const arch = createArchitect(
     { reviewDir: path.join(repo, 'review') },
-    { runner: async () => ({ code: 2, stdout: '', stderr: 'agy: command not found' }) },
+    { runner: async () => ({ code: 2, stdout: '', stderr: 'hermes: command not found' }) },
   )
   await arch.seed(seedInput(repo))
   await settle()
@@ -368,41 +449,40 @@ test('ランナー異常終了は failed として理由を残す', async () => 
   assert.match(snapshot.jobs[0].error, /command not found/)
 })
 
-test('antigravity は agy がある時だけ選べる（Opt-in）', async () => {
+test('ランナーは hermes 固定: 旧 Opt-in 名は INVALID_RUNNER で弾く（D50）', async () => {
   const repo = makeRepo()
-  const seen = []
-  const without = createArchitect(
-    { reviewDir: path.join(repo, 'review') },
-    { hasAgyCli: () => false, runner: async () => ({ code: 0, stdout: '', stderr: '' }) },
-  )
-  const rejected = await without.seed(seedInput(repo, { runner: 'antigravity' }))
-  assert.equal(rejected.ok, false)
-  assert.equal(rejected.code, 'RUNNER_UNAVAILABLE')
-  assert.deepEqual(without.setConfig({ runner: 'antigravity' }), {
-    ok: false,
-    code: 'RUNNER_UNAVAILABLE',
-    error: 'agy CLI was not found on this machine',
-  })
-
-  const withAgy = createArchitect(
+  const calls = []
+  const arch = createArchitect(
     { reviewDir: path.join(repo, 'review') },
     {
-      hasAgyCli: () => true,
       runner: async (args) => {
-        seen.push(args.runnerId)
-        // agy が SPEC を書いたことにする（成果物があるのでフォールバックは起きない）
-        writeSpec(repo, 'SPEC-AGY.md', SPEC_TEXT, Date.now())
+        calls.push(args.runnerId)
         return { code: 0, stdout: '', stderr: '' }
       },
     },
   )
-  const accepted = await withAgy.seed(seedInput(repo, { runner: 'antigravity' }))
+
+  const rejected = await arch.seed(seedInput(repo, { runner: 'antigravity' }))
+  assert.equal(rejected.ok, false)
+  assert.equal(rejected.code, 'INVALID_RUNNER')
+  assert.equal(calls.length, 0, '受け付けない値ではランナーを起動しない')
+
+  assert.deepEqual(arch.setConfig({ runner: 'antigravity' }), {
+    ok: false,
+    code: 'INVALID_RUNNER',
+    error: 'Only the Hermes Native runner is supported',
+  })
+
+  // hermes（既定）は通り、公開ジョブのラベルも 1 本に揃う
+  const accepted = await arch.seed(seedInput(repo))
   assert.equal(accepted.ok, true)
+  assert.equal(accepted.runner, 'hermes')
   await settle()
-  assert.deepEqual(seen, ['antigravity'])
-  const snapshot = await withAgy.jobs({ board: 'demo' })
-  assert.equal(snapshot.capabilities.hasAgyCli, true)
-  assert.equal(snapshot.jobs[0].runnerLabel, RUNNER_LABELS.antigravity)
+  assert.deepEqual(calls, ['hermes'])
+  const snapshot = await arch.jobs({ board: 'demo' })
+  assert.equal('capabilities' in snapshot, false, '外部 CLI の可否はもう返さない')
+  assert.equal(snapshot.runner, 'hermes')
+  assert.equal(snapshot.jobs[0].runnerLabel, 'Hermes Native')
 })
 
 /** 実行引数・cwd・PATH を書き出すダミー CLI（`#!/bin/sh`）。 */
@@ -433,25 +513,6 @@ function readFakeOut(out) {
   }
 }
 
-test('createCliRunner は agy に -p/--mode auto を渡し、cwd と拡張 PATH を整える（D28）', async () => {
-  const repo = makeRepo()
-  const out = path.join(repo, 'agy.out')
-  const bin = fakeCli('agy')
-  process.env.HPA_FAKE_OUT = out
-  try {
-    const run = createCliRunner({ agyBin: bin })
-    const res = await run({ runnerId: 'antigravity', prompt: 'seed text', repoPath: repo, board: 'demo', jobId: 'arch-1' })
-    assert.equal(res.code, 0)
-    const seen = readFakeOut(out)
-    assert.deepEqual(seen.args, ['-p', 'seed text', '--mode', 'auto'], '存在しない --workspace は渡さない')
-    assert.equal(seen.pwd, fs.realpathSync(repo), 'cwd はリポジトリ')
-    // launchd の狭い PATH でも ~/.local/bin など既知の置き場所が補われる
-    assert.ok(seen.path.split(path.delimiter).includes(path.join(os.homedir(), '.local', 'bin')), seen.path)
-  } finally {
-    delete process.env.HPA_FAKE_OUT
-  }
-})
-
 test('createCliRunner の hermes は kanban create で [ARCH] タスクを起票する（正規ルート）', async () => {
   const repo = makeRepo()
   const out = path.join(repo, 'hermes.out')
@@ -468,13 +529,17 @@ test('createCliRunner の hermes は kanban create で [ARCH] タスクを起票
       jobId: 'arch-1',
     })
     assert.equal(res.code, 0)
-    const { args, pwd } = readFakeOut(out)
+    const { args, pwd, path: childPath } = readFakeOut(out)
     assert.deepEqual(args.slice(0, 6), ['kanban', '--board', 'demo', 'create', '[ARCH] 通知まとめの仕様化', '--json'])
     assert.ok(args.includes('--assignee') && args.includes('mobile'))
     const body = args[args.indexOf('--body') + 1]
     assert.match(body, /spec-architect/)
     assert.match(body, /Execution Contract/)
+    assert.match(body, /Suggested slug: /, '推奨スラッグを本文へ注入する（D54）')
+    assert.match(body, /Existing specs: /)
     assert.equal(pwd, fs.realpathSync(repo))
+    // launchd の狭い PATH でも ~/.local/bin など既知の置き場所が補われる
+    assert.ok(childPath.split(path.delimiter).includes(path.join(os.homedir(), '.local', 'bin')), childPath)
     // 0 終了＋JSON からタスク ID が取れる
     assert.equal(parseCreatedTask(res.stdout).id, 't_archfake')
   } finally {
@@ -482,98 +547,87 @@ test('createCliRunner の hermes は kanban create で [ARCH] タスクを起票
   }
 })
 
-test('agy が非0終了しても自動でカンバン起票せず failed で止まる（D41）', async () => {
+test('seed は推奨スラッグと既存 SPEC 一覧をランナーへ渡す（D54）', async () => {
   const repo = makeRepo()
+  writeSpec(repo, 'SPEC-PILOT-V10.md', SPEC_TEXT, 1_700_000_000_000)
   const calls = []
   const arch = createArchitect(
     { reviewDir: path.join(repo, 'review') },
     {
-      hasAgyCli: () => true,
+      now: () => 1_700_000_100_000,
       runner: async (args) => {
-        calls.push(args.runnerId)
-        if (args.runnerId === 'antigravity') return { code: 1, stdout: '', stderr: 'agy: unknown flag --mode' }
+        calls.push(args)
         return { code: 0, stdout: '{"id":"t_arch1"}', stderr: '' }
       },
     },
   )
-
-  assert.equal((await arch.seed(seedInput(repo, { runner: 'antigravity' }))).ok, true)
+  await arch.seed(seedInput(repo, { seedText: 'Notification digest: group them' }))
   await settle()
-  const job = (await arch.jobs({ board: 'demo' })).jobs[0]
-  assert.deepEqual(calls, ['antigravity'], 'Hermes Agent を裏で二重に起動しない（重複 [ARCH] 起票の根絶）')
-  assert.equal(job.status, 'failed', '失敗は失敗として残す（黙って継続しない）')
-  assert.match(job.error, /unknown flag/)
-  assert.equal(job.runner, 'antigravity', 'ランナーは Agy のまま（切替は人の明示操作だけ）')
-  assert.equal(job.taskId, null, '[ARCH] カンバンタスクを作らない')
-  assert.equal(job.fallbackFrom, null)
-  assert.equal(job.fallbackReason, null)
-  assert.equal(job.phase, 'failed')
+  assert.equal(calls.length, 1)
+  assert.match(calls[0].suggestedSlug, /^notification/)
+  assert.deepEqual(calls[0].existingSpecs, ['docs/SPEC-PILOT-V10.md'])
+  assert.match(String(calls[0].prompt), /Existing specs: docs\/SPEC-PILOT-V10\.md/)
 })
 
-test('agy の失敗理由は 600 字以内で failed に残る（D41）', async () => {
+test('ランナーの失敗理由は 600 字以内で failed に残る', async () => {
   const repo = makeRepo()
   const arch = createArchitect(
     { reviewDir: path.join(repo, 'review') },
-    {
-      hasAgyCli: () => true,
-      runner: async () => ({ code: 3, stdout: '', stderr: `agy: ${'x'.repeat(2000)}` }),
-    },
+    { runner: async () => ({ code: 3, stdout: '', stderr: `hermes: ${'x'.repeat(2000)}` }) },
   )
-  await arch.seed(seedInput(repo, { runner: 'antigravity' }))
+  await arch.seed(seedInput(repo))
   await settle()
   const job = (await arch.jobs({ board: 'demo' })).jobs[0]
   assert.equal(job.status, 'failed')
   assert.equal(job.error.length, 600)
 })
 
-test('agy が exit 0 で成果物が無くてもカンバン起票せず awaiting_spec で待つ（D41）', async () => {
+test('ランナーが exit 0 でタスク ID を返さなくても failed にせず awaiting_spec で待つ', async () => {
   const repo = makeRepo()
   const calls = []
   const arch = createArchitect(
     { reviewDir: path.join(repo, 'review') },
     {
-      hasAgyCli: () => true,
       runner: async (args) => {
         calls.push(args.runnerId)
         return { code: 0, stdout: '', stderr: '' }
       },
     },
   )
-  await arch.seed(seedInput(repo, { runner: 'antigravity' }))
+  await arch.seed(seedInput(repo))
   await settle()
   const job = (await arch.jobs({ board: 'demo' })).jobs[0]
-  assert.deepEqual(calls, ['antigravity'], '空振りでもカンバンへ落とさない')
-  assert.equal(job.status, 'awaiting_spec', 'GUI 側が非同期で書き終えるのを待つ')
-  assert.equal(job.runner, 'antigravity')
+  assert.deepEqual(calls, ['hermes'])
+  assert.equal(job.status, 'awaiting_spec', '成果物（SPEC / [review]）の検知を待つ')
+  assert.equal(job.runner, 'hermes')
   assert.equal(job.taskId, null)
   assert.equal(job.fallbackFrom, null)
   assert.equal(job.phase, 'spawning')
 })
 
-test('agy が 0 終了で SPEC を書いていればフォールバックせず spec_ready になる', async () => {
+test('ランナーが 0 終了で SPEC を書いていれば spec_ready になる', async () => {
   const repo = makeRepo()
   const calls = []
   const arch = createArchitect(
     { reviewDir: path.join(repo, 'review') },
     {
-      hasAgyCli: () => true,
       runner: async (args) => {
         calls.push(args.runnerId)
-        writeSpec(repo, 'SPEC-AGY-OK.md', SPEC_TEXT, Date.now())
+        writeSpec(repo, 'SPEC-NATIVE-OK.md', SPEC_TEXT, Date.now())
         return { code: 0, stdout: '', stderr: '' }
       },
     },
   )
-  await arch.seed(seedInput(repo, { runner: 'antigravity' }))
+  await arch.seed(seedInput(repo))
   await settle()
   const job = (await arch.jobs({ board: 'demo' })).jobs[0]
-  assert.deepEqual(calls, ['antigravity'])
+  assert.deepEqual(calls, ['hermes'])
   assert.equal(job.fallbackFrom, null)
   assert.equal(job.status, 'spec_ready')
   assert.equal(job.phase, 'spec_ready')
 })
 
-test('agy が 0 終了で review/sheets に JSON シートを書いていれば中間シートとして検知する（D42）', async () => {
+test('ランナーが review/sheets に JSON シートを書いていれば中間シートとして検知する（D42）', async () => {
   const repo = makeRepo()
   const reviewDir = path.join(repo, 'review')
   const sheets = path.join(reviewDir, 'sheets')
@@ -583,22 +637,20 @@ test('agy が 0 終了で review/sheets に JSON シートを書いていれば�
     { reviewDir },
     {
       now: () => clock,
-      hasAgyCli: () => true,
       readTasks: () => [],
       runner: async (args) => {
-        if (args.runnerId === 'antigravity') {
+        if (args.runnerId === 'hermes') {
           fs.writeFileSync(path.join(sheets, 'spec-notify-1.json'), '{"mode":"standard"}')
         }
         return { code: 0, stdout: '', stderr: '' }
       },
     },
   )
-  await arch.seed(seedInput(repo, { runner: 'antigravity' }))
+  await arch.seed(seedInput(repo))
   await settle()
   const job = (await arch.jobs({ board: 'demo' })).jobs[0]
-  assert.equal(job.status, 'awaiting_spec', 'カンバンへフォールバックしない')
-  assert.equal(job.runner, 'antigravity')
-  assert.equal(job.taskId, null)
+  assert.equal(job.status, 'awaiting_spec', 'カンバン起票の完了を待つ')
+  assert.equal(job.runner, 'hermes')
   assert.equal(job.sheetPath, 'sheets/spec-notify-1.json', '中間シートのパスを返す')
   assert.equal(job.phase, 'round1_sheet')
 })
@@ -691,14 +743,25 @@ test('buildArchitectTaskBody は Round 1 を JSON ファーストにし、既定
   assert.match(body, /受入条件（Verify）/)
 })
 
-test('ランナー設定は dataDir に保存され、壊れた JSON は既定へ戻る', async () => {
+test('ランナー設定は dataDir に保存され、壊れた JSON も未知の値も既定へ戻る', async () => {
   const repo = makeRepo()
   const dataDir = path.join(repo, 'data')
-  const arch = createArchitect({ reviewDir: path.join(repo, 'review'), dataDir }, { hasAgyCli: () => true })
+  const arch = createArchitect({ reviewDir: path.join(repo, 'review'), dataDir })
   assert.equal(arch.getConfig().runner, 'hermes')
-  assert.deepEqual(arch.setConfig({ runner: 'antigravity' }), { ok: true, runner: 'antigravity' })
-  assert.equal(arch.getConfig().runner, 'antigravity')
+  // 旧 Opt-in 名は受け付けない（400 相当）
+  assert.deepEqual(arch.setConfig({ runner: 'antigravity' }), {
+    ok: false,
+    code: 'INVALID_RUNNER',
+    error: 'Only the Hermes Native runner is supported',
+  })
+  // hermes は通り、0600 で保存される
+  assert.deepEqual(arch.setConfig({ runner: 'hermes' }), { ok: true, runner: 'hermes' })
+  assert.equal(arch.getConfig().runner, 'hermes')
   assert.equal(fs.statSync(path.join(dataDir, 'architect-config.json')).mode & 0o777, 0o600)
+
+  // 保存ファイルに古い値が残っていても既定へ倒す（未知の値で起動しない）
+  fs.writeFileSync(path.join(dataDir, 'architect-config.json'), '{"runner":"antigravity"}')
+  assert.equal(arch.getConfig().runner, 'hermes')
 
   fs.writeFileSync(path.join(dataDir, 'architect-config.json'), '{not json')
   assert.equal(arch.getConfig().runner, 'hermes')
@@ -1127,7 +1190,7 @@ test('publicJob は phase / stalled / sheetPath / reviewBoard を返す（D42）
       id: 'arch-1',
       board: 'demo',
       status: 'awaiting_spec',
-      runner: 'antigravity',
+      runner: 'hermes',
       startedAt: 1_000_000,
       reviewSeenOnce: true,
       reviewBoard: 'mobile',
@@ -1138,7 +1201,7 @@ test('publicJob は phase / stalled / sheetPath / reviewBoard を返す（D42）
     { at: 1_000_000 + 200_000 },
   )
   assert.equal(job.phase, 'round2_spec')
-  assert.equal(job.stalled, true, 'Agy Opt-in は 3 分で停滞警告')
+  assert.equal(job.stalled, true, '3 分無進展は停滞警告')
   assert.equal(job.sheetPath, 'sheets/spec-a-1.json')
   assert.equal(job.reviewBoard, 'mobile')
   assert.equal(job.repoPath, undefined, '機密は引き続き落とす')

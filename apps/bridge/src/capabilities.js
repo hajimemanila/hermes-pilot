@@ -21,26 +21,6 @@ export function hermesCliDirs(home = os.homedir()) {
 }
 
 /**
- * `agy`（Antigravity の公式 CLI）が入りやすいディレクトリ。
- *
- * **境界（SPEC V5 §3.2 / D25）**: ここで見るのは *実行ファイルの存在* だけ。
- * Antigravity の OAuth 認証ファイルやブラウザのプロファイルは
- * 読まない・コピーしない・再利用しない。`agy` を選んだときも公式 CLI を子プロセスで
- * 起動するだけで、トークンを直接扱わない。
- * @param {string} [home] ホーム
- * @returns {string[]} 候補ディレクトリ
- */
-export function agyCliDirs(home = os.homedir()) {
-  return [
-    path.join(home, '.local', 'bin'),
-    path.join(home, '.antigravity', 'bin'),
-    path.join(home, 'Applications', 'Antigravity.app', 'Contents', 'MacOS'),
-    '/opt/homebrew/bin',
-    '/usr/local/bin',
-  ]
-}
-
-/**
  * 実行環境の Capability（能力）検出。
  *
  * 公開プラグインとして「どこでも単体で動く」ために、個人環境の前提
@@ -172,22 +152,6 @@ export function resolveHermesBin({ pathEnv = process.env.PATH ?? '', home = os.h
 }
 
 /**
- * `agy`（Antigravity 公式 CLI）の実パスを解決する。見つからなければ `'agy'`。
- *
- * **境界**: 見るのは実行ファイルの存在だけ。認証ファイル・プロファイル・
- * トークンには触れない（SPEC V5 §3.2 / D25）。
- * @param {object} [opts] 差し替え
- * @param {string} [opts.pathEnv] PATH
- * @param {string} [opts.home] ホーム
- * @param {Function} [opts.accessSync] 実行ビット確認の差し替え（テスト用）
- * @returns {string} 絶対パス、または `'agy'`
- */
-export function resolveAgyBin({ pathEnv = process.env.PATH ?? '', home = os.homedir(), accessSync } = {}) {
-  const hit = findBinaryPath('agy', pathEnv, accessSync ?? fs.accessSync) ?? findInDirs('agy', agyCliDirs(home), { accessSync })
-  return hit ?? 'agy'
-}
-
-/**
  * 子プロセスへ渡す `PATH` を作る（既存 PATH の末尾に既知の置き場所を足す）。
  *
  * 重複は落とし、元の PATH の順序は保つ（先頭の優先度を変えない）。
@@ -198,7 +162,7 @@ export function resolveAgyBin({ pathEnv = process.env.PATH ?? '', home = os.home
  */
 export function buildAugmentedPath({ pathEnv = process.env.PATH ?? '', home = os.homedir() } = {}) {
   const out = []
-  for (const dir of [...toDirList(pathEnv), ...hermesCliDirs(home), ...agyCliDirs(home)]) {
+  for (const dir of [...toDirList(pathEnv), ...hermesCliDirs(home)]) {
     if (dir && !out.includes(dir)) out.push(dir)
   }
   return out.join(path.delimiter)
@@ -251,7 +215,7 @@ export function serviceCommands(caps = {}) {
  * @param {Function} [opts.appExists] アプリ存在確認
  * @param {string} [opts.home] ホーム（`hermes` CLI の候補ディレクトリ用）
  * @param {Function} [opts.hasBinaryFn] 実行ファイル存在確認の差し替え（テスト用）
- * @returns {{os: string, serviceManager: string, hasTailscale: boolean, hasHermesCli: boolean, hasAgyCli: boolean, pilotServiceUnit: string}} 検出結果
+ * @returns {{os: string, serviceManager: string, hasTailscale: boolean, hasHermesCli: boolean, pilotServiceUnit: string}} 検出結果
  */
 export function detectCapabilities({
   platform = process.platform,
@@ -270,8 +234,6 @@ export function detectCapabilities({
     hasTailscale: detectTailscale({ pathEnv, appExists }),
     // PATH に無くても既知の置き場所（~/.hermes/hermes-agent/.hermes/bin 等）を見る
     hasHermesCli: find('hermes', pathEnv) || cliDirs.some((dir) => find('hermes', dir)),
-    // Opt-in の Antigravity ランナー（SPEC V5 §3.2 / D25）。存在確認だけ。
-    hasAgyCli: find('agy', pathEnv) || agyCliDirs(homeDir).some((dir) => find('agy', dir)),
     pilotServiceUnit: PILOT_UNITS[platform] ?? DEFAULT_PILOT_UNIT,
   }
 }

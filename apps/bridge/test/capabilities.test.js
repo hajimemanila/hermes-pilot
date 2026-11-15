@@ -6,7 +6,6 @@ import path from 'node:path'
 import {
   DEFAULT_PILOT_UNIT,
   PILOT_UNITS,
-  agyCliDirs,
   buildAugmentedPath,
   detectCapabilities,
   detectTailscale,
@@ -15,7 +14,6 @@ import {
   hasBinary,
   hermesCliDirs,
   resetCapabilitiesCache,
-  resolveAgyBin,
   resolveHermesBin,
   serviceCommands,
   serviceManagerFor,
@@ -63,7 +61,7 @@ test('detectCapabilities は SPEC §5.3 の 5 項目を返す（darwin）', () =
     platform: 'darwin',
     pathEnv: fakeBin(['hermes', 'tailscale']),
     appExists: () => false,
-    // `agy` は Opt-in の追加項目なので、実機の有無に左右されない HOME を渡す
+    // 実機のホーム配下に何があっても結果が変わらないよう、空の HOME を渡す
     home: fakeBin([]),
   })
   assert.deepEqual(caps, {
@@ -71,29 +69,11 @@ test('detectCapabilities は SPEC §5.3 の 5 項目を返す（darwin）', () =
     serviceManager: 'launchd',
     hasTailscale: true,
     hasHermesCli: true,
-    hasAgyCli: false,
     pilotServiceUnit: 'ai.hermes.pilot',
   })
   assert.equal(PILOT_UNITS.darwin, caps.pilotServiceUnit)
-})
-
-test('detectCapabilities は agy CLI を PATH でも既知の置き場所でも見つける（Opt-in の前提）', () => {
-  // PATH にある場合
-  assert.equal(
-    detectCapabilities({ platform: 'darwin', pathEnv: fakeBin(['agy']), appExists: () => false, home: fakeBin([]) })
-      .hasAgyCli,
-    true,
-  )
-  // PATH に無くても ~/.local/bin にあれば拾う（実測: ~/.local/bin/agy）
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-home-'))
-  const localBin = path.join(home, '.local', 'bin')
-  fs.mkdirSync(localBin, { recursive: true })
-  fs.writeFileSync(path.join(localBin, 'agy'), '#!/bin/sh\n', { mode: 0o755 })
-  assert.equal(
-    detectCapabilities({ platform: 'linux', pathEnv: fakeBin([]), appExists: () => false, home }).hasAgyCli,
-    true,
-  )
-  assert.ok(agyCliDirs(home).includes(localBin))
+  // SPEC V11 D50: 外部 CLI の検出項目（旧 hasAgyCli）は返さない
+  assert.equal('hasAgyCli' in caps, false)
 })
 
 test('detectCapabilities は linux で systemd のユニット名を返す', () => {
@@ -203,32 +183,17 @@ test('resolveHermesBin は PATH が狭い環境でも既知の置き場所から
   assert.equal(resolveHermesBin({ pathEnv: '', home: fakeBin([]), accessSync: () => { throw new Error('no') } }), 'hermes')
 })
 
-test('resolveAgyBin は ~/.local/bin の agy を解決し、無ければ裸の名前を返す（境界維持）', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-home-'))
-  const localBin = path.join(home, '.local', 'bin')
-  fs.mkdirSync(localBin, { recursive: true })
-  fs.writeFileSync(path.join(localBin, 'agy'), '#!/bin/sh\n', { mode: 0o755 })
-
-  assert.equal(resolveAgyBin({ pathEnv: '', home, accessSync: accessUnder(home) }), path.join(localBin, 'agy'))
-  assert.equal(
-    resolveAgyBin({ pathEnv: '', home: fakeBin([]), accessSync: () => { throw new Error('no') } }),
-    'agy',
-  )
-  // 見るのは実行ファイルの置き場所だけ。認証ディレクトリは候補にすら入らない。
-  // （検査語は分割して組み立てる: 境界チェック自身の grep を汚さないため）
-  const dirs = agyCliDirs(home).join('\n')
-  const forbidden = [['\\.', 'gemini'].join(''), ['o', 'auth'].join(''), 'credentials'].join('|')
-  assert.equal(new RegExp(forbidden, 'i').test(dirs), false, dirs)
-})
-
 test('buildAugmentedPath は元の PATH を保ったまま既知の置き場所を足し、重複を作らない', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-home-'))
   const out = buildAugmentedPath({ pathEnv: ['/usr/bin', '/bin'].join(path.delimiter), home })
   const parts = out.split(path.delimiter)
   assert.deepEqual(parts.slice(0, 2), ['/usr/bin', '/bin'], '元の順序と優先度を変えない')
-  for (const dir of [...hermesCliDirs(home), ...agyCliDirs(home)]) assert.ok(parts.includes(dir), dir)
+  for (const dir of hermesCliDirs(home)) assert.ok(parts.includes(dir), dir)
   assert.equal(new Set(parts).size, parts.length, '重複を含まない')
   assert.equal(parts.filter((p) => !p).length, 0, '空セグメントを作らない')
   // PATH が空でも探索候補は載る（`launchd` の最小環境）
   assert.ok(buildAugmentedPath({ pathEnv: '', home }).split(path.delimiter).includes(path.join(home, '.local', 'bin')))
+  // SPEC V11 D50: 外部 CLI 向けのディレクトリは足さない
+  const dirs = buildAugmentedPath({ pathEnv: '', home }).split(path.delimiter)
+  assert.equal(dirs.some((d) => /antigravity|\.gemini/i.test(d)), false, dirs.join(':'))
 })

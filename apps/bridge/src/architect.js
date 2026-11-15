@@ -16,26 +16,25 @@
  *   `jobs()` は破棄済みを既定で除外する（`includeDismissed: true` は監査・テスト用）。
  * - `queueState`（`queued` / `running`）で「キュー待ち」と「実行中」を区別できる形で返す。
  *
- * ## 実行ランナーと境界（ToS / OAuth）
+ * ## 実行ランナー
  *
- * - 既定は `hermes`（Hermes Native）。`hermes -z <prompt> --in <repo>` の**公式 CLI を子プロセス**で 1 回だけ起動する。
- * - `antigravity` は Opt-in。`agy` の**公式ローカル CLI を子プロセス**で起動するだけで、
- *   Antigravity の OAuth 認証ファイルの読み取り・トークン流用・
- *   非公式エンドポイントのプロキシは**一切行わない**。`hasAgyCli`（実行ファイルの存在）だけを見る。
- *   `scripts/check-oauth-boundary.mjs` がこの境界を機械的に検査する。
+ * ランナーは **`Hermes Native` の 1 本だけ**（`RUNNERS = ['hermes']`）。`hermes kanban create` で
+ * `[ARCH]` タスクを起票する**公式ルート**を子プロセスで 1 回だけ呼び、あとはカンバンの
+ * 自走ワーカーが仕様書を書く。外部 AI CLI の検出・パス解決・子プロセス起動は
+ * SPEC V11 D50 で**完全に削除**した（サードパーティの CLI をラップ起動してサブスク枠を
+ * 消費させる行為は規約違反＝BAN 対象）。`scripts/check-oauth-boundary.mjs` が再混入を機械検査する。
+ * 旧 Opt-in ランナー名を指定された場合は `INVALID_RUNNER`（HTTP 400）で弾く。
  *
  * ## ステータス遷移
  *
  * `running`（CLI 実行中）→ `awaiting_spec`（CLI 正常終了・SPEC 待ち）→ `spec_ready`（完成検知）
  * → `launched`（autoStart で起票済み）/ `failed`（CLI 異常終了）
  *
- * ## Agy Opt-in の責務分離（SPEC V9 D41）
+ * ## 終了時の扱い（SPEC V9 D41 の決定を維持）
  *
- * `antigravity` の終了時（`exit 0` の空振り・非 0 終了とも）に**自動で**
- * `fallbackToKanban()` を呼ばない。カンバン `[ARCH]` タスクを裏で起票すると
- * GUI の Antigravity と Hermes Agent が二重稼働し、どちらが成果物を書いたか追えなくなる。
- * `exit 0` は `awaiting_spec`（`runner: 'antigravity'` / `mode: 'cli'`）で成果物を待ち、
- * 非 0 終了は `failed` に理由を残す。Hermes Native への切替は UI の明示操作だけ（D43）。
+ * ランナー（`hermes kanban create`）が非 0 終了したら `failed` に理由を残すだけで、
+ * 裏で勝手に別経路の起票へ切り替えたりはしない（二重稼働・重複起票の根絶）。
+ * 再試行は UI の明示操作（1 タップ再試行）だけ。
  *
  * ## ボード横断の Review 検知とフェーズ（SPEC V9 D42）
  *
@@ -49,15 +48,20 @@ import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { listSpecs as scanSpecs, parseCreatedTask } from './specs.js'
 import { appendChatReport } from './pipeline-watcher.js'
-import { buildAugmentedPath, resolveAgyBin, resolveHermesBin } from './capabilities.js'
+import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'
 
 /** `chat-reports.jsonl` の行種別（仕様書が完成した）。 */
 export const SPEC_READY_KIND = 'spec_ready'
 /** `chat-reports.jsonl` の行種別（autoStart がバッチを起票した）。 */
 export const SPEC_LAUNCH_KIND = 'spec_launch'
 
-/** 選べるランナー。既定は Hermes Native（公開プラグインの単体完動性）。 */
-export const RUNNERS = ['hermes', 'antigravity']
+/**
+ * 選べるランナー。**`Hermes Native` の 1 本だけ**（SPEC V11 D50）。
+ *
+ * 外部 AI CLI をラップ起動するランナーは規約違反（サブスク枠の消費）なので、
+ * 検出もパス解決も子プロセス起動もこのファイルには置かない。
+ */
+export const RUNNERS = ['hermes']
 
 /**
  * 実行方針（生成する SPEC 各バッチの既定 Execution Mode）。SPEC V7 §3.1 / D35。
@@ -112,20 +116,36 @@ export const RUNNER_TIMEOUT_MS = 15 * 60 * 1000
 /** ボード名の書式（`specs.launchSpec` と同じ）。 */
 export const BOARD_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/i
 
-/** ランナーの表示名。 */
+/** ランナーの表示名（ランナーは 1 本だけ）。 */
 export const RUNNER_LABELS = {
   hermes: 'Hermes Native',
-  antigravity: 'Antigravity (agy)',
+}
+
+/** ランナー名として受け付ける値（空・未指定は Hermes Native へ倒す）。 */
+export const DEFAULT_RUNNER = 'hermes'
+
+/**
+ * ランナー ID を正規化する（**常に `hermes`**。SPEC V11 D50）。
+ *
+ * 受け付ける値は `hermes` だけだが、`sanitizeRunner()` は表示用の緩い正規化なので
+ * 未知の値も既定へ倒す。API 入力の可否判定は `isSupportedRunner()` で行う。
+ * @param {unknown} value 入力
+ * @returns {'hermes'} ランナー
+ */
+export function sanitizeRunner(value) {
+  return DEFAULT_RUNNER
 }
 
 /**
- * ランナー ID を正規化する（未知は `hermes`）。
+ * 明示されたランナーが受け付けられるか（`''` / 未指定は既定として許す）。
  * @param {unknown} value 入力
- * @returns {'hermes'|'antigravity'} ランナー
+ * @returns {boolean} `hermes` か未指定なら true
  */
-export function sanitizeRunner(value) {
-  const text = String(value ?? '').trim().toLowerCase()
-  return RUNNERS.includes(text) ? text : 'hermes'
+export function isSupportedRunner(value) {
+  const text = String(value ?? '')
+    .trim()
+    .toLowerCase()
+  return text === '' || text === DEFAULT_RUNNER
 }
 
 /**
@@ -191,6 +211,76 @@ export function buildArchitectTaskTitle({ seedText, prompt } = {}) {
   return `[ARCH] ${String(line ?? 'Spec seed').slice(0, 80)}`
 }
 
+/** 推奨スラッグの最大長（`docs/SPEC-<SLUG>.md` のファイル名が長くなりすぎないように）。 */
+export const SPEC_SLUG_MAX = 28
+/** プロンプトへ注入する既存 SPEC の最大件数（探索ターンとトークンの節約）。 */
+export const EXISTING_SPECS_MAX = 6
+
+/**
+ * 種から「推奨スラッグ」を作る（純関数。SPEC V11 D54）。
+ *
+ * Round 1 のシート名（`review/sheets/spec-<slug>-1.json`）と Round 2 の SPEC 名
+ * （`docs/SPEC-<SLUG>.md`）が、種を撒くたびに違う名前になるのを防ぐための**目安**。
+ * 先頭付近の ASCII 英数字（`[A-Za-z0-9]`）を小文字ハイフン区切りにし、最大 28 文字。
+ * ASCII が 1 つも無ければ `jobId` の末尾セグメントを使う。
+ *
+ * @param {unknown} seedText 種の本文
+ * @param {unknown} jobId ジョブ ID（`arch-<base36>-<tail>`）
+ * @returns {string} スラッグ（空にはならない）
+ */
+export function suggestSpecSlug(seedText, jobId) {
+  /** @type {string[]} */
+  const words = []
+  for (const line of String(seedText ?? '')
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 3)) {
+    for (const token of line.match(/[A-Za-z0-9]+/g) ?? []) words.push(token)
+    if (words.length >= 4) break
+  }
+  const shape = (text) =>
+    String(text ?? '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+  let slug = shape(words.join('-'))
+  if (!slug) {
+    const tail = String(jobId ?? '')
+      .trim()
+      .split('-')
+      .filter(Boolean)
+      .pop()
+    slug = shape(tail)
+  }
+  if (!slug) return 'spec'
+  const clipped = slug.slice(0, SPEC_SLUG_MAX).replace(/-+$/g, '')
+  return clipped || slug.slice(0, SPEC_SLUG_MAX)
+}
+
+/**
+ * 既存 `docs/SPEC-*.md` の相対パスを「直近 N 件」で返す（SPEC V11 D54）。
+ *
+ * 名前の衝突と全量探索を減らすためにプロンプトへ注入する。走査に失敗しても
+ * 起票は止めない（空配列を返す）。
+ * @param {Function} listSpecsFn SPEC 走査（`specs.listSpecs`）
+ * @param {string} repoPath リポジトリ
+ * @param {number} [limit] 最大件数
+ * @returns {string[]} 相対パス（mtime の新しい順）
+ */
+export function recentSpecPaths(listSpecsFn, repoPath, limit = EXISTING_SPECS_MAX) {
+  try {
+    const list = listSpecsFn(repoPath) ?? []
+    return (Array.isArray(list) ? list : [])
+      .filter((s) => s && s.path)
+      .sort((a, b) => Number(b.mtime ?? 0) - Number(a.mtime ?? 0) || String(a.path).localeCompare(String(b.path)))
+      .slice(0, Math.max(1, Number(limit) || EXISTING_SPECS_MAX))
+      .map((s) => String(s.path))
+  } catch {
+    return []
+  }
+}
+
 /**
  * [`[ARCH]` タスクの本文]（spec-architect プロトコル＋実行契約）。
  *
@@ -198,11 +288,24 @@ export function buildArchitectTaskTitle({ seedText, prompt } = {}) {
  * `executionPolicy` は**生成する SPEC の各バッチ**に付す既定 Execution Mode を決める
  * （Architect 自身は止まらずに書き切るので、この本文の契約は常に zero-stop）。
  *
- * @param {{prompt: string, board: string, repoPath: string, jobId: string, executionPolicy?: string}} input 入力
+ * SPEC V11 D54: `suggestedSlug` / `existingSpecs` を渡すと、ファイル名の衝突回避と
+ * Round 1 の探索コスト削減の指示が本文に入る。
+ *
+ * @param {{prompt: string, board: string, repoPath: string, jobId: string, executionPolicy?: string, suggestedSlug?: string, existingSpecs?: string[]}} input 入力
  * @returns {string} 本文
  */
-export function buildArchitectTaskBody({ prompt, board, repoPath, jobId, executionPolicy = DEFAULT_EXECUTION_POLICY }) {
+export function buildArchitectTaskBody({
+  prompt,
+  board,
+  repoPath,
+  jobId,
+  executionPolicy = DEFAULT_EXECUTION_POLICY,
+  suggestedSlug,
+  existingSpecs,
+}) {
   const policy = normalizeExecutionPolicy(executionPolicy)
+  const slug = String(suggestedSlug ?? '').trim() || suggestSpecSlug(prompt, jobId)
+  const specs = (Array.isArray(existingSpecs) ? existingSpecs : []).map((s) => String(s ?? '').trim()).filter(Boolean)
   return [
     `[hermes-pilot:architect job=${jobId}] Architect (Kanban native)`,
     '',
@@ -213,15 +316,20 @@ export function buildArchitectTaskBody({ prompt, board, repoPath, jobId, executi
     'Mode: zero-stop',
     `Execution Policy: ${policy} (applies to the batches of the SPEC you write)`,
     'Follow the `spec-architect` skill protocol for the seed above.',
+    `Suggested slug: ${slug} (use it for review/sheets/spec-${slug}-1.json and docs/SPEC-<SLUG>.md unless it clearly clashes)`,
+    specs.length
+      ? `Existing specs: ${specs.join(', ')} (do not reuse these file names; pick a distinct slug)`
+      : 'Existing specs: none in docs/ yet (the slug above is free)',
     'Round 1: write the Quick Review JSON sheet under review/sheets/',
     '(spec-<slug>-1.json, "mode": "standard", 2-5 decisions) and file it as a blocked `[review]` task',
     'whose machine line is `mode=standard sheet=sheets/spec-<slug>-1.json`. Do not wait in chat.',
+    'Round 1 speed: locate only the relevant symbols (rg/grep), skip running npm test / npm run verify / browser_exec during Round 1, write the JSON sheet and block immediately.',
     'Round 1 speed: skip bespoke HTML sheets and browser mockups (browser_exec screenshots) unless',
     'the question itself is a visual UI layout comparison; the JSON alone renders the native form.',
     'Round 2: after the answers arrive, write `docs/SPEC-<SLUG>.md` with `### Batch <ID>: <Title>` sections,',
     'each carrying **Execution Mode** / **目的** / **変更・新規ファイル** / **受入条件（Verify）**.',
     ...executionPolicyLines(policy),
-    'Stay inside the official local CLI: never read or reuse Antigravity OAuth credentials or profiles.',
+    'Stay inside the official local CLI: the only runner is `hermes kanban create` (no external AI CLI is launched).',
     `Board: ${board}`,
     `Repository: ${repoPath}`,
   ].join('\n')
@@ -306,7 +414,8 @@ export function normalizeSeed(value) {
  *
  * 長文の質問を並べるのではなく、Quick Review シート → 1 タップ承認 → SPEC 生成、の順を固定する。
  * `executionPolicy` は**生成する SPEC の各バッチ**の既定 Execution Mode を決める（D35）。
- * @param {{jobId: string, seedText: string, board: string, repoPath: string, autoStart?: boolean, executionPolicy?: string, lang?: string}} input 入力
+ * SPEC V11 D54: 推奨スラッグと既存 SPEC 一覧を先に渡し、Round 1 の探索と名前衝突を減らす。
+ * @param {{jobId: string, seedText: string, board: string, repoPath: string, autoStart?: boolean, executionPolicy?: string, lang?: string, suggestedSlug?: string, existingSpecs?: string[]}} input 入力
  * @returns {string} プロンプト
  */
 export function buildSeedPrompt({
@@ -317,10 +426,14 @@ export function buildSeedPrompt({
   autoStart = false,
   executionPolicy = DEFAULT_EXECUTION_POLICY,
   lang = 'ja',
+  suggestedSlug,
+  existingSpecs,
 }) {
   const auto = autoStart
     ? 'The PWA will file the batches automatically as soon as this SPEC appears, so do not file them yourself.'
     : 'Do not file anything yet: the user taps "File batches & start" once the SPEC is ready.'
+  const slug = String(suggestedSlug ?? '').trim() || suggestSpecSlug(seedText, jobId)
+  const specs = (Array.isArray(existingSpecs) ? existingSpecs : []).map((s) => String(s ?? '').trim()).filter(Boolean)
   return [
     `[hermes-pilot:architect job=${jobId}]`,
     'You are the spec-architect. Follow the `spec-architect` skill protocol (Round 1 → Round 2).',
@@ -333,19 +446,25 @@ export function buildSeedPrompt({
     `Repository: ${repoPath}`,
     `Board: ${board}`,
     `UI language: ${lang}`,
+    `Suggested slug: ${slug}`,
+    specs.length
+      ? `Existing specs: ${specs.join(', ')}`
+      : 'Existing specs: none in docs/ yet (the suggested slug is free)',
     '',
     'Round 1 — instead of a wall of chat questions, write ONE structured sheet as JSON:',
-    '`review/sheets/spec-<slug>-1.json` with `"mode": "standard"` and 2-5 design decisions',
+    `\`review/sheets/spec-${slug}-1.json\` with \`"mode": "standard"\` and 2-5 design decisions`,
     '(each option marked `recommended: true` for the best one), then file it as a blocked [review]',
     'kanban task whose machine line reads',
-    '`[review] label=spec-<slug> round=1 mode=standard sheet=sheets/spec-<slug>-1.json target=<repo>`',
+    `\`[review] label=spec-${slug} round=1 mode=standard sheet=sheets/spec-${slug}-1.json target=<repo>\``,
     'so the phone renders the native 1-tap form. Stop there.',
+    'Do not reuse a file name from Existing specs above: pick a distinct slug if it would clash.',
     '',
-    'Round 1 speed rule — the JSON is the deliverable. Do NOT hand-write a long bespoke HTML sheet',
-    'and do NOT launch a headless browser (browser_exec or similar) to screenshot mockups unless the',
-    'question itself is a visual UI-layout comparison (placement, density, colour) that words cannot',
-    'settle; even then it is optional and comes after the JSON. For spec, logic, string, API and data',
-    'questions just check the cited file:line and file the sheet.',
+    'Round 1 speed rule — the JSON is the deliverable. Locate only the relevant symbols (rg/grep);',
+    'do NOT run npm test / npm run verify, and do NOT hand-write a long bespoke HTML sheet or launch',
+    'a headless browser (browser_exec or similar) to screenshot mockups unless the question itself is',
+    'a visual UI-layout comparison (placement, density, colour) that words cannot settle; even then it',
+    'is optional and comes after the JSON. For spec, logic, string, API and data questions just check',
+    'the cited file:line, write the sheet and block immediately.',
     'Round 2 — after the answers arrive, write docs/SPEC-<SLUG>.md. Every batch heading',
     '`### Batch <ID>: <Title>` must be followed by:',
     '  - **Execution Mode**: [Mode: Zero-Stop | Fast-Track Review | Visual Gate]',
@@ -363,14 +482,12 @@ export function buildSeedPrompt({
 /**
  * 既定のランナー実行（公式 CLI の子プロセス。シェルは介さない）。
  *
- * - `hermes`（既定）: `hermes kanban --board <b> create "[ARCH] …" --assignee mobile --json --body …`
- *   という**正規ルート**でカンバンに Architect タスクを起票する（自走ワーカーが着火する）。
- * - `antigravity`: `agy -p <prompt> --mode auto` を `cwd: repoPath` で実行する。
- *   どちらも `PATH` は `buildAugmentedPath()` で補う（`launchd` の狭い PATH 対策）。
- *
- * `agy` でもクレデンシャルには触れない: バイナリ名と引数だけを渡し、CLI 自身に認証を任せる。
- * @param {object} [cfg] 設定（`hermesBin` / `agyBin`）
- * @returns {Function} `({runnerId, prompt, repoPath, board, seedText, jobId, executionPolicy, timeoutMs}) => Promise<{code,stdout,stderr}>`
+ * `hermes kanban --board <b> create "[ARCH] …" --assignee mobile --json --body …` という
+ * **正規ルート**でカンバンに Architect タスクを起票する（自走ワーカーが着火する）。
+ * 外部 AI CLI のラッパー起動は SPEC V11 D50 で廃止した（`RUNNERS = ['hermes']` の 1 本だけ）。
+ * `PATH` は `buildAugmentedPath()` で補う（`launchd` の狭い PATH 対策）。
+ * @param {object} [cfg] 設定（`hermesBin`）
+ * @returns {Function} `({runnerId, prompt, repoPath, board, seedText, jobId, executionPolicy, suggestedSlug, existingSpecs, timeoutMs}) => Promise<{code,stdout,stderr}>`
  */
 export function createCliRunner(cfg = {}) {
   return ({
@@ -381,21 +498,24 @@ export function createCliRunner(cfg = {}) {
     seedText = '',
     jobId = '',
     executionPolicy = DEFAULT_EXECUTION_POLICY,
+    suggestedSlug,
+    existingSpecs,
     timeoutMs = RUNNER_TIMEOUT_MS,
   }) =>
     new Promise((resolve) => {
-      const antigravity = sanitizeRunner(runnerId) === 'antigravity'
-      let bin = ''
-      let args = []
-      if (antigravity) {
-        bin = cfg.agyBin ?? resolveAgyBin()
-        args = ['-p', prompt, '--mode', 'auto']
-      } else {
-        bin = cfg.hermesBin ?? resolveHermesBin()
-        const title = buildArchitectTaskTitle({ seedText: seedText || prompt })
-        const body = buildArchitectTaskBody({ prompt, board, repoPath, jobId, executionPolicy })
-        args = buildKanbanCreateArgs({ board, title, body })
-      }
+      const bin = cfg.hermesBin ?? resolveHermesBin()
+      const slug = String(suggestedSlug ?? '').trim() || suggestSpecSlug(seedText || prompt, jobId)
+      const title = buildArchitectTaskTitle({ seedText: seedText || prompt })
+      const body = buildArchitectTaskBody({
+        prompt,
+        board,
+        repoPath,
+        jobId,
+        executionPolicy,
+        suggestedSlug: slug,
+        existingSpecs,
+      })
+      const args = buildKanbanCreateArgs({ board, title, body })
       execFile(
         bin,
         args,
@@ -558,9 +678,8 @@ export function computePhase(job) {
 /**
  * ジョブが停滞しているか（SPEC V9 D42）。
  *
- * Agy Opt-in はカンバンタスクを持たないので `queueState` では「待ち」を説明できない。
- * `running` / `awaiting_spec` のまま `STALLED_AFTER_MS` を超えたら停滞とみなす
- * （`queued` は人が着火待ちなので対象外）。
+ * Hermes Native は起票後にカンバンタスクが動くので、`running` / `awaiting_spec` のまま
+ * `STALLED_AFTER_MS` を超えたら停滞とみなす（`queued` は人が着火待ちなので対象外）。
  *
  * @param {object} job ジョブ
  * @param {number} [at] 現在時刻（ミリ秒）
@@ -621,13 +740,12 @@ export function publicJob(job, { at = Date.now() } = {}) {
 /**
  * Architect を作る。
  *
- * @param {object} [cfg] 設定（`reviewDir` / `pluginDataDir` / `hermesBin` / `agyBin` / `dataDir`）
+ * @param {object} [cfg] 設定（`reviewDir` / `pluginDataDir` / `hermesBin` / `dataDir`）
  * @param {object} [deps] 差し替え（テスト用）
  * @param {Function} [deps.runner] ランナー（`createCliRunner` の形）
  * @param {Function} [deps.listSpecs] SPEC 走査（既定 `specs.listSpecs`）
  * @param {Function} [deps.readTasks] ボードのタスク読み取り
  * @param {Function} [deps.launchSpec] 一括起票（既定 `specs.createSpecs().launchSpec`）
- * @param {Function} [deps.hasAgyCli] `agy` の存在確認（既定 false＝Opt-in していない）
  * @param {Function} [deps.appendReport] `chat-reports.jsonl` 追記
  * @param {Function} [deps.now] 時刻
  * @param {Function} [deps.statSync] ディレクトリ確認
@@ -638,7 +756,6 @@ export function createArchitect(cfg = {}, deps = {}) {
   const runner = deps.runner ?? createCliRunner(cfg)
   const listSpecsFn = deps.listSpecs ?? ((repoPath) => scanSpecs(repoPath))
   const readTasks = deps.readTasks ?? (() => [])
-  const hasAgyCli = deps.hasAgyCli ?? (() => false)
   const statSync = deps.statSync ?? ((p) => fs.statSync(p))
   const report =
     deps.appendReport ??
@@ -705,38 +822,38 @@ export function createArchitect(cfg = {}, deps = {}) {
   }
 
   /**
-   * 設定（既定 `{runner:'hermes'}`）。壊れた JSON は既定へ戻す。
-   * @returns {{runner: 'hermes'|'antigravity'}} 設定
+   * 設定（既定 `{runner:'hermes'}`）。壊れた JSON も未知の値も既定へ戻す。
+   * @returns {{runner: 'hermes'}} 設定
    */
   function getConfig() {
-    if (!configPath) return { runner: 'hermes' }
+    if (!configPath) return { runner: DEFAULT_RUNNER }
     try {
       const raw = JSON.parse(fs.readFileSync(configPath, 'utf8'))
       return { runner: sanitizeRunner(raw?.runner) }
     } catch {
-      return { runner: 'hermes' }
+      return { runner: DEFAULT_RUNNER }
     }
   }
 
   /**
-   * ランナーを保存する（`antigravity` は `agy` がある時だけ許可）。
+   * ランナーを保存する（**`hermes` 以外は受け付けない**。SPEC V11 D50）。
    * @param {unknown} value ランナー
    * @returns {{ok: boolean, runner?: string, code?: string, error?: string}} 結果
    */
   function setConfig(value) {
-    const runnerId = sanitizeRunner(value?.runner ?? value)
-    if (runnerId === 'antigravity' && !hasAgyCli()) {
-      return { ok: false, code: 'RUNNER_UNAVAILABLE', error: 'agy CLI was not found on this machine' }
+    const raw = value?.runner ?? value
+    if (!isSupportedRunner(raw)) {
+      return { ok: false, code: 'INVALID_RUNNER', error: 'Only the Hermes Native runner is supported' }
     }
     if (configPath) {
       try {
         fs.mkdirSync(path.dirname(configPath), { recursive: true })
-        fs.writeFileSync(configPath, `${JSON.stringify({ runner: runnerId }, null, 2)}\n`, { mode: 0o600 })
+        fs.writeFileSync(configPath, `${JSON.stringify({ runner: DEFAULT_RUNNER }, null, 2)}\n`, { mode: 0o600 })
       } catch (e) {
         return { ok: false, code: 'WRITE_FAILED', error: e.message }
       }
     }
-    return { ok: true, runner: runnerId }
+    return { ok: true, runner: DEFAULT_RUNNER }
   }
 
   /**
@@ -763,10 +880,10 @@ export function createArchitect(cfg = {}, deps = {}) {
       return { ok: false, code: 'INVALID_REPO', error: 'repoPath does not exist' }
     }
 
-    const runnerId = sanitizeRunner(input.runner ?? getConfig().runner)
-    if (runnerId === 'antigravity' && !hasAgyCli()) {
-      return { ok: false, code: 'RUNNER_UNAVAILABLE', error: 'agy CLI was not found on this machine' }
+    if (!isSupportedRunner(input.runner ?? getConfig().runner)) {
+      return { ok: false, code: 'INVALID_RUNNER', error: 'Only the Hermes Native runner is supported' }
     }
+    const runnerId = DEFAULT_RUNNER
 
     const startedAt = now()
     const executionPolicy = normalizeExecutionPolicy(input.executionPolicy)
@@ -786,7 +903,7 @@ export function createArchitect(cfg = {}, deps = {}) {
       dismissed: false,
       reviewTaskId: null,
       reviewTitle: null,
-      mode: runnerId === 'antigravity' ? 'cli' : 'kanban',
+      mode: 'kanban',
       prompt: '',
       autoStart: Boolean(input.autoStart),
       seedText,
@@ -804,6 +921,12 @@ export function createArchitect(cfg = {}, deps = {}) {
     jobs.set(job.id, job)
     trimJobs()
 
+    // SPEC V11 D54: 推奨スラッグと既存 SPEC 一覧を先に決めてプロンプトへ入れる
+    // （Round 1 の探索ターンとファイル名衝突を減らす）。
+    const suggestedSlug = suggestSpecSlug(seedText, job.id)
+    const existingSpecs = recentSpecPaths(listSpecsFn, repoPath)
+    job.suggestedSlug = suggestedSlug
+
     const prompt = buildSeedPrompt({
       jobId: job.id,
       seedText,
@@ -812,36 +935,40 @@ export function createArchitect(cfg = {}, deps = {}) {
       autoStart: job.autoStart,
       executionPolicy,
       lang: job.lang,
+      suggestedSlug,
+      existingSpecs,
     })
     job.prompt = prompt
 
     // 背後の実行。落ちてもジョブに理由を残すだけで、呼び出し元は待たない。
     void Promise.resolve()
-      .then(() => runner({ runnerId, prompt, repoPath, board, seedText, jobId: job.id, executionPolicy }))
+      .then(() =>
+        runner({
+          runnerId,
+          prompt,
+          repoPath,
+          board,
+          seedText,
+          jobId: job.id,
+          executionPolicy,
+          suggestedSlug,
+          existingSpecs,
+        }),
+      )
       .then(async (res) => {
         job.finishedAt = now()
         const code = typeof res?.code === 'number' ? res.code : 0
         const taskId = res?.taskId ?? parseCreatedTask(res?.stdout)?.id ?? null
         if (code !== 0) {
-          // D41: 失敗しても自動でカンバン起票へ切り替えない（Hermes Agent との二重稼働を根絶）。
-          // Hermes Native への切替は UI の明示操作（🔄 Hermes Native で再試行）だけ。
+          // 失敗しても自動で別経路の起票へ切り替えない（二重稼働・重複起票を根絶）。
+          // 再試行は UI の明示操作（1 タップ再試行）だけ。
           const reason = String(res?.stderr || res?.stdout || `runner exited with ${code}`).trim()
           job.status = 'failed'
           job.error = reason.slice(0, 600)
           return
         }
         if (taskId) job.taskId = taskId
-        if (runnerId !== 'antigravity') {
-          job.status = 'awaiting_spec'
-          return
-        }
-        // D41: agy が exit 0 で返る（macOS の IDE ランチャーは成果物を書く前に返る）。
-        // 成果物があれば SPEC/Review 検知へ、無くてもカンバン起票はせず awaiting_spec で待つ。
-        // `hasArtifacts` は「いま検知できる成果物があるか」を記録するだけで、起票はしない。
-        job.awaitingArtifacts = !hasArtifacts(job)
         job.status = 'awaiting_spec'
-        job.runner = 'antigravity'
-        job.mode = 'cli'
       })
       .catch((e) => {
         job.finishedAt = now()
@@ -857,34 +984,6 @@ export function createArchitect(cfg = {}, deps = {}) {
       executionPolicy,
       autoStart: job.autoStart,
     }
-  }
-
-  /**
-   * ジョブの成果物（新 SPEC / 待機中 Review タスク / 中間シート）が出ているか。
-   *
-   * D42: `[review]` は `job.board` だけでなく `mobile` ボードにも撒かれるので両方を見る。
-   * @param {object} job ジョブ
-   * @returns {boolean} どれかあれば true
-   */
-  function hasArtifacts(job) {
-    try {
-      if (findJobSpec(job, listSpecsFn(job.repoPath) ?? [])) return true
-    } catch {
-      /* 走査に失敗しても判定は続ける */
-    }
-    for (const slug of reviewBoardsFor(job.board)) {
-      try {
-        if (findJobReviewTask(job, readTasks(slug) ?? [])) return true
-      } catch {
-        /* 同上 */
-      }
-    }
-    try {
-      if (findRecentSheet(cfg.reviewDir, job)) return true
-    } catch {
-      /* 同上 */
-    }
-    return false
   }
 
   /** 古いジョブを落とす（メモリだけの保持）。 */
@@ -1152,7 +1251,6 @@ export function createArchitect(cfg = {}, deps = {}) {
       ok: true,
       board: board || null,
       runner: getConfig().runner,
-      capabilities: { hasAgyCli: Boolean(hasAgyCli()) },
       jobs: visible.map((job) => publicJob(job, { at })),
       specReady,
       pending,
