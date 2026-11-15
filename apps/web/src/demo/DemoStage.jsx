@@ -122,7 +122,8 @@ export function DemoStage({ children }) {
     } catch {
       /* フレーム未生成 */
     }
-  }, [vibe, sound, lang])
+    // `theme` は本文で直接読まない（getResolvedTheme）が、テーマ切替だけでも送り直すために依存に入れる
+  }, [vibe, sound, theme, lang])
 
   // 子から「準備できた」が来たら設定を流し込む（取りこぼし防止に 2 回送る）
   useEffect(() => {
