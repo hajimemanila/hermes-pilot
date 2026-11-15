@@ -37,16 +37,22 @@ Architect の仕事は「仕様書を書くこと」ではなく、**Builder（�
 ### Round 1 — Quick Review 直結インタビュー
 
 チャットに箇条書きの質問を並べる代わりに、**設問シートを 1 枚だけ**作る。
+**第一推奨は構造化 JSON（`mode=standard`）**。手書き HTML とヘッドレスブラウザ撮影は
+「見た目の比較そのものが論点」のときだけの任意拡張。
 
 1. 質問は **3±1 問**。各問は「人が決めること 1 つ」。事実（`file:line`・実行結果）は
-   本文に書き、人には決定だけを残す。
+   本文に書き、人には決定だけを残す。根拠は**該当箇所の最小確認だけ**で足りる
+   （リポジトリ全体の作り込みやモック構築をしない。決まったら即シート）。
 2. 各問に選択肢 2〜3・`recommended: true` を 1 つ。理由（利点 / 代償）を必ず添える。
-3. 見た目の論点は**両案を絵にする**。既存画面への追加なら現行 UI の忠実な再現を先に撮る。
-4. 出力先は `quick-review` スキルと同じ場所・同じ形式:
+3. 見た目の論点（配置・情報密度・配色の比較そのもの）**だけ**両案を絵にする。
+   それ以外（仕様・ロジック・文言・API・データ設計）は `.json` のみで起票して即ブロックする
+   — `browser_exec` での撮影も 300 行級の HTML 生成も行わない。
+   既存画面への追加で絵が要るときは、現行 UI の忠実な再現を先に撮る。
+4. 出力先は `quick-review` スキルと同じ場所・同じ形式。**主成果物は `.json`**:
 
 ```text
-~/.hermes/plugin-data/hermes-pilot/review/sheets/spec-<slug>-1.html
-~/.hermes/plugin-data/hermes-pilot/review/sheets/spec-<slug>-1.json
+~/.hermes/plugin-data/hermes-pilot/review/sheets/spec-<slug>-1.json   ← これが主（mode=standard）
+~/.hermes/plugin-data/hermes-pilot/review/sheets/spec-<slug>-1.html   ← 見た目の論点のときだけ任意
 ```
 
 5. カンバンへ起票して **blocked** にする（回答が来るまで実装しない）:
@@ -55,11 +61,14 @@ Architect の仕事は「仕様書を書くこと」ではなく、**Builder（�
 hermes kanban create "Q1〜Q3: <プロジェクト名>の設計方針" --assignee <profile> --body "$(cat <<'BODY'
 <何が決まれば仕様書を書き始められるか。いま何が止まっているか。>
 
-[review] label=spec-<slug> round=1 mode=sheet sheet=sheets/spec-<slug>-1.html target=<repo_path> chat=<session_id>
+[review] label=spec-<slug> round=1 mode=standard sheet=sheets/spec-<slug>-1.json target=<repo_path> chat=<session_id>
 BODY
 )"
 hermes kanban block <task_id> "仕様インタビュー待ち（Q1〜Q3）" --kind needs_input
 ```
+
+`.json` だけで PWA のネイティブフォーム（`<StandardForm>`）と「シート全体を開く ↗」の
+両方が動く（`.html` が無ければブリッジが `.json` から安全な HTML を動的生成する）。
 
 待つ間は別のタスクを進める。**自分で回答を捏造しない。**
 
@@ -151,6 +160,9 @@ SPEC を書いたら、次を 1 つだけ出す:
 
 ## 落とし穴
 
+- **Round 1 に手書き HTML を作らない／`browser_exec` で撮らない**。見た目の比較そのものが
+  論点でなければ `.json` 1 枚で起票して即ブロックする（HTML とモック画像で数分失うだけで
+  判断は変わらない）。絵が要るのは配置・情報密度・配色の比較が主題のときだけ。
 - **`docs/SPEC-*.md` のファイル名は大文字 `SPEC` で始める**。`spec-*.md` は走査対象外。
 - `BATCH_ID_RE` は 16 文字まで。長い ID（`V5-1-optimizer`）は切り落とされる。
 - 本文中の `### ` 見出しは起票時のバッチ境界になる。**バッチ内の小見出しは `####` 以下**にする。

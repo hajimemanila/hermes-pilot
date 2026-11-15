@@ -40,38 +40,20 @@ metadata:
 各問は「人が決めること 1 つ」。**事実（`file:line` か実行結果）は本文に書き、人には決定だけを残す**。
 選択肢は 2〜3。推奨を 1 つ決め、理由（利点 / 代償）を必ず書く。
 
-### 2. 絵にする（見た目の論点だけ）
+### 2. 絵にする（任意・見た目の論点だけ）
 
-見た目・配置・文言が絡む問いは、**両方の案を絵にする**。現行 UI に加える変更なら、
-まず現行画面の忠実な再現を撮る（現物と乖離したモックを描かない）。
-絵の無い論点（命名、保存形式など）には無理に付けない。
+見た目・配置・情報密度・配色の**比較そのものが論点**のときだけ、両方の案を絵にする。
+現行 UI に加える変更なら、まず現行画面の忠実な再現を撮る（現物と乖離したモックを描かない）。
+絵の無い論点（命名、保存形式、API、ロジック）には付けない — 付けない方が速く、判断もぶれない。
+スクショが必要なときだけヘッドレスブラウザ（`browser_exec`）を使う。
 
-### 3. シートを作る（HTML + JSON）
+### 3. シートを作る（JSON が主・HTML は任意）
 
-置き場: `~/.hermes/plugin-data/hermes-pilot/review/sheets/<label>-<round>.html`
+**第一推奨は構造化 JSON 1 枚（`mode=standard`）**。PWA はこれでネイティブフォームを描く。
+`.html` は複数タブ比較・図解・スクショ並べが不可欠なときだけの**任意拡張**。
+
+置き場: `~/.hermes/plugin-data/hermes-pilot/review/sheets/<label>-<round>.json`
 （`mkdir -p` してから書く。`<label>` は `^[a-z0-9][a-z0-9._-]{0,40}$`）
-
-テンプレート: このスキルの `assets/sheet-template.html` をコピーして中身を差し替える。
-ブリッジが読むのはこの 2 点なので**構造は変えない**:
-
-- `#akForm` … 設問フォームのルート
-- `#out` … 回答テキストの出力先（`textarea`）
-- `#genBtn` … 回答テキストを組み立てるボタン（アプリ内では「回答を送信」に化ける）
-
-設問のマークアップ（ブリッジの注入スクリプトが `#akForm .q h3` を装飾する）:
-
-```html
-<section class="q" data-q="q1">
-  <h3>Q1. 帯の形は、流す・静止・今のまま、どれにするか</h3>
-  <label data-opt="A"><input type="radio" name="q1" value="A"> A. 流れるティッカー <span class="rec">推奨</span>
-    <span class="d">利点: 件名が長くても最後まで読める / 代償: 動く文字を追い続ける負担</span></label>
-  <label data-opt="B"><input type="radio" name="q1" value="B"> B. 静止 1 行
-    <span class="d">利点: 疲れない / 代償: 2 件目以降は省略</span></label>
-  <textarea name="note-q1" placeholder="補足（任意）"></textarea>
-</section>
-```
-
-同じディレクトリに **`<label>-<round>.json`** を必ず書く（PWA がネイティブフォームを描く元データ）:
 
 ```json
 {
@@ -92,26 +74,50 @@ metadata:
     }
   ],
   "has_global_note": true,
-  "sheet": "sheets/cockpit-03-1.html",
+  "sheet": "sheets/cockpit-03-1.json",
   "created_at": "2026-11-13"
 }
 ```
 
 挿絵を付けるなら `review/thumbs/<label>-<round>/q1-A.png` に置き、`thumb` は `thumbs/...` の相対パスにする。
 
+`.html` を併用する場合だけ、このスキルの `assets/sheet-template.html` をコピーして中身を差し替える。
+ブリッジが読むのはこの 3 点なので**構造は変えない**（`.json` だけで起票するときは不要）:
+
+- `#akForm` … 設問フォームのルート
+- `#out` … 回答テキストの出力先（`textarea`）
+- `#genBtn` … 回答テキストを組み立てるボタン（アプリ内では「回答を送信」に化ける）
+
+HTML を書くときの設問のマークアップ（ブリッジの注入スクリプトが `#akForm .q h3` を装飾する）:
+
+```html
+<section class="q" data-q="q1">
+  <h3>Q1. 帯の形は、流す・静止・今のまま、どれにするか</h3>
+  <label data-opt="A"><input type="radio" name="q1" value="A"> A. 流れるティッカー <span class="rec">推奨</span>
+    <span class="d">利点: 件名が長くても最後まで読める / 代償: 動く文字を追い続ける負担</span></label>
+  <label data-opt="B"><input type="radio" name="q1" value="B"> B. 静止 1 行
+    <span class="d">利点: 疲れない / 代償: 2 件目以降は省略</span></label>
+  <textarea name="note-q1" placeholder="補足（任意）"></textarea>
+</section>
+```
+
+> 旧手順（`.html` を主・`mode=sheet`）は**レガシー／カスタム HTML 拡張**として残る。
+> どちらの `mode` でも、`.json` さえあれば PWA は `<StandardForm>` で回答でき、
+> `.html` が無ければブリッジが `.json` から安全な HTML を動的生成する。
+
 ### 4. カンバンに起票して `blocked` にする
 
 本文の**機械可読行**（この 1 行がブリッジの唯一の手掛かり）:
 
 ```text
-[review] label=<label> round=<round> mode=sheet sheet=sheets/<label>-<round>.html target=<repo_path> chat=<session_id>
+[review] label=<label> round=<round> mode=standard sheet=sheets/<label>-<round>.json target=<repo_path> chat=<session_id>
 ```
 
 ```bash
 hermes kanban create "Q1〜Q3: <表題>" --body "$(cat <<'BODY'
 <人向けの要約。何が決まれば進めるか、いま何が止まっているか>
 
-[review] label=cockpit-03 round=1 mode=sheet sheet=sheets/cockpit-03-1.html target=~/Projects/your-repo chat=<session_id>
+[review] label=cockpit-03 round=1 mode=standard sheet=sheets/cockpit-03-1.json target=~/Projects/your-repo chat=<session_id>
 BODY
 )" --assignee <profile>
 
@@ -153,8 +159,12 @@ Q2. 既存バーは置き換えるか: (未選択 = お任せ)
 
 ## 落とし穴
 
-- **`sheet=` のパスは `review/` からの相対**（`sheets/x-1.html`）。`..`・絶対パスは拒否される
-- `image=` に `.html` を書いても `sheet` として救済されるが、`mode=sheet sheet=` を正しく書く
+- **`sheet=` のパスは `review/` からの相対**（`sheets/x-1.json`）。`..`・絶対パスは拒否される
+- 機械可読行は **`mode=standard sheet=sheets/<label>-<round>.json`** を第一推奨にする
+  （`.html` を併用したときだけ `mode=sheet sheet=sheets/x-1.html`）。`image=` に `.html` を書いても
+  `sheet` として救済されるが、`sheet=` を正しく書く
+- **見た目の比較が論点でないときに `.html` を手書きしたり `browser_exec` で撮ったりしない**。
+  JSON 1 枚で足りる論点に絵を付けると、シート 1 枚に数分かかり回答も遅れる
 - 同じ回答の再送は冪等（`.answer.json` の `sha256` で判定）。二重に `comment` は付かない
 - 回答は **`blocked` のときだけ**受け付ける。`ready` / `running` / `done` に送ると 409 `NOT_WAITING`
-- 2 ラウンド目は `round=2` で**新しいファイル**（`<label>-2.html` / `.json`）を作る（1 を上書きしない）
+- 2 ラウンド目は `round=2` で**新しいファイル**（`<label>-2.json` / `.html`）を作る（1 を上書きしない）

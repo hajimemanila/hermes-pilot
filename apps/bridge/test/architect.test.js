@@ -109,6 +109,28 @@ test('sanitizeRunner / runnerLabel / makeJobId / normalizeSeed', () => {
   assert.match('demo', BOARD_RE)
 })
 
+test('buildSeedPrompt は Round 1 を JSON ファースト（mode=standard）にして HTML 生成とブラウザ撮影を抑止する', () => {
+  const text = buildSeedPrompt({ jobId: 'arch-1', seedText: '通知をまとめる', board: 'demo', repoPath: '/tmp/x' })
+  // 主成果物は構造化 JSON シート
+  assert.match(text, /review\/sheets\/spec-<slug>-1\.json/)
+  assert.match(text, /"mode": "standard"/)
+  assert.match(text, /mode=standard sheet=sheets\/spec-<slug>-1\.json/)
+  // 手書き HTML とヘッドレスブラウザ撮影は「見た目の比較が論点のときだけ」任意
+  assert.match(text, /Do NOT hand-write/)
+  assert.match(text, /headless browser/)
+  assert.match(text, /visual UI-layout comparison/)
+  assert.match(text, /optional/)
+  // 既存契約は維持される
+  assert.match(text, /spec-architect/)
+  assert.match(text, /Round 1/)
+  assert.match(text, /Round 2/)
+  assert.match(text, /review\/sheets\//)
+  assert.match(text, /Execution Mode/)
+  assert.match(text, /Zero-Stop \| Fast-Track Review \| Visual Gate/)
+  assert.match(text, /通知をまとめる/)
+  assert.match(text, /Do not file anything yet/)
+})
+
 test('buildSeedPrompt は spec-architect の Round 1/2 と Execution Mode を要求する', () => {
   const text = buildSeedPrompt({ jobId: 'arch-1', seedText: '通知をまとめる', board: 'demo', repoPath: '/tmp/x' })
   assert.match(text, /spec-architect/)
@@ -609,6 +631,28 @@ test('buildArchitectTaskTitle / buildKanbanCreateArgs / findJobReviewTask の境
     'mobile',
   ])
   assert.match(buildArchitectTaskBody({ prompt: 'P', board: 'demo', repoPath: '/tmp/x', jobId: 'arch-1' }), /Round 2/)
+})
+
+test('buildArchitectTaskBody は Round 1 を JSON ファーストにし、既定でブラウザ撮影をさせない', () => {
+  const body = buildArchitectTaskBody({ prompt: 'P', board: 'demo', repoPath: '/tmp/x', jobId: 'arch-1' })
+  // Round 1 の主成果物は review/sheets/ 配下の JSON シート
+  assert.match(body, /Round 1/)
+  assert.match(body, /review\/sheets\//)
+  assert.match(body, /spec-<slug>-1\.json/)
+  assert.match(body, /"mode": "standard"/)
+  assert.match(body, /mode=standard sheet=sheets\/spec-<slug>-1\.json/)
+  // 手書き HTML・ヘッドレスブラウザ撮影は視覚比較が主題のときだけ
+  assert.match(body, /bespoke HTML/)
+  assert.match(body, /browser_exec/)
+  assert.match(body, /visual UI layout comparison/)
+  // 既存契約は維持される
+  assert.match(body, /Round 2/)
+  assert.match(body, /Mode: zero-stop/)
+  assert.match(body, /Execution Policy: /)
+  assert.match(body, /Board: demo/)
+  assert.match(body, /Repository: \/tmp\/x/)
+  assert.match(body, /### Batch <ID>: <Title>/)
+  assert.match(body, /受入条件（Verify）/)
 })
 
 test('ランナー設定は dataDir に保存され、壊れた JSON は既定へ戻る', async () => {
