@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { ApiError } from './api-errors.js'
+import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'
 
 /**
  * 運用系（状態の俯瞰 + キルスイッチ）。
@@ -186,9 +187,9 @@ export function createOps(cfg, hermes, auth, deps = {}) {
     if (cfg.runner) return cfg.runner(args)
     return new Promise((resolve) => {
       execFile(
-        cfg.hermesBin ?? 'hermes',
+        cfg.hermesBin ?? resolveHermesBin(),
         args,
-        { timeout: 20_000, maxBuffer: 1_000_000, env: { ...process.env } },
+        { timeout: 20_000, maxBuffer: 1_000_000, env: { ...process.env, PATH: buildAugmentedPath() } },
         (err, stdout, stderr) => {
           resolve({ code: err ? (err.code ?? 1) : 0, out: `${stdout ?? ''}${stderr ?? ''}`.trim() })
         },

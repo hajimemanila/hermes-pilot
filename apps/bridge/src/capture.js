@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import crypto from 'node:crypto'
 import { ApiError } from './api-errors.js'
+import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'
 
 /**
  * クイック起票。
@@ -78,9 +79,9 @@ export function createCapture(cfg = {}) {
     ((args) =>
       new Promise((resolve) => {
         execFile(
-          cfg.hermesBin ?? 'hermes',
+          cfg.hermesBin ?? resolveHermesBin(),
           args,
-          { timeout: 30_000, maxBuffer: 1_000_000, env: { ...process.env } },
+          { timeout: 30_000, maxBuffer: 1_000_000, env: { ...process.env, PATH: buildAugmentedPath() } },
           (err, stdout, stderr) => {
             resolve({ code: err ? (err.code ?? 1) : 0, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') })
           },

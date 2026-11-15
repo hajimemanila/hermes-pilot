@@ -25,8 +25,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
-import { listSpecs as scanSpecs } from './specs.js'
+import { listSpecs as scanSpecs, parseCreatedTask } from './specs.js'
 import { appendChatReport } from './pipeline-watcher.js'
+import { buildAugmentedPath, resolveAgyBin, resolveHermesBin } from './capabilities.js'
 
 /** `chat-reports.jsonl` の行種別（仕様書が完成した）。 */
 export const SPEC_READY_KIND = 'spec_ready'
@@ -72,6 +73,93 @@ export function sanitizeRunner(value) {
  */
 export function runnerLabel(value) {
   return RUNNER_LABELS[sanitizeRunner(value)]
+}
+
+/**
+ * [`[ARCH]` タスクのタイトル]（カンバン起票に載る 1 行）。
+ * @param {{seedText?: string, prompt?: string}} input 入力
+ * @returns {string} タイトル
+ */
+export function buildArchitectTaskTitle({ seedText, prompt } = {}) {
+  const line = String(seedText ?? prompt ?? '')
+    .split('\n')
+    .map((s) => s.trim())
+    .find(Boolean)
+  return `[ARCH] ${String(line ?? 'Spec seed').slice(0, 80)}`
+}
+
+/**
+ * [`[ARCH]` タスクの本文]（spec-architect プロトコル＋実行契約）。
+ *
+ * カンバン起票に載せるので、ワーカーが**チャットを見なくても**完走できる内容にする。
+ * @param {{prompt: string, board: string, repoPath: string, jobId: string}} input 入力
+ * @returns {string} 本文
+ */
+export function buildArchitectTaskBody({ prompt, board, repoPath, jobId }) {
+  return [
+    `[hermes-pilot:architect job=${jobId}] Architect (Kanban native)`,
+    '',
+    prompt,
+    '',
+    '---',
+    '[Hermes Pilot Execution Contract]',
+    'Mode: zero-stop',
+    'Follow the `spec-architect` skill protocol for the seed above.',
+    'Round 1: write the Quick Review sheet and file it as a blocked `[review]` task. Do not wait in chat.',
+    'Round 2: after the answers arrive, write `docs/SPEC-<SLUG>.md` with `### Batch <ID>: <Title>` sections,',
+    'each carrying **Execution Mode** / **目的** / **変更・新規ファイル** / **受入条件（Verify）**.',
+    'Stay inside the official local CLI: never read or reuse Antigravity OAuth credentials or profiles.',
+    `Board: ${board}`,
+    `Repository: ${repoPath}`,
+  ].join('\n')
+}
+
+/**
+ * `hermes kanban create` の引数（`specs.js` / `capture.js` と同じ正規ルート）。
+ * @param {{board: string, title: string, body: string, assignee?: string}} input 入力
+ * @returns {string[]} 引数
+ */
+export function buildKanbanCreateArgs({ board, title, body, assignee = 'mobile' }) {
+  return ['kanban', '--board', String(board ?? ''), 'create', String(title ?? ''), '--json', '--body', String(body ?? ''), '--assignee', String(assignee ?? 'mobile')]
+}
+
+/**
+ * 「[review] タスク」かどうか（タイトル・本文・ラベルを見る。読むだけ）。
+ * @param {object} task タスク
+ * @returns {boolean} review タスクなら true
+ */
+export function isReviewTask(task) {
+  if (!task) return false
+  const labels = [task.label, ...(Array.isArray(task.labels) ? task.labels : [])].filter(Boolean).map((l) => String(l))
+  const text = [task.title, task.body].filter(Boolean).map((v) => String(v)).join('\n')
+  return /\[review\]/i.test(text) || labels.some((l) => /^\[?review\]?$/i.test(l.trim()))
+}
+
+/**
+ * ジョブが待っている Quick Review タスクを見つける（純関数）。
+ *
+ * 条件: ① `job.taskId` と一致するタスク、または `startedAt - 猶予` 以降に作られた `[review]` タスク。
+ * ② そのタスクが `blocked` で、`[review]` の印を持つ（＝人の回答待ち）。
+ *
+ * @param {{taskId?: string|null, startedAt: number}} job ジョブ
+ * @param {Array<object>} tasks ボードのタスク
+ * @param {{slackMs?: number}} [opts] 制約
+ * @returns {{taskId: string, title: string, status: string}|null} 待機中タスク（無ければ null）
+ */
+export function findJobReviewTask(job, tasks, { slackMs = SPEC_MTIME_SLACK_MS } = {}) {
+  const since = Number(job?.startedAt ?? 0) - slackMs
+  const ownId = job?.taskId ? String(job.taskId) : ''
+  const list = Array.isArray(tasks) ? tasks : []
+  for (const task of list) {
+    if (!task || !task.id) continue
+    const same = ownId && String(task.id) === ownId
+    const fresh = Number(task.createdAt ?? 0) >= since
+    if (!same && !fresh) continue
+    if (!isReviewTask(task)) continue
+    if (String(task.status ?? '') !== 'blocked') continue
+    return { taskId: String(task.id), title: String(task.title ?? ''), status: 'blocked' }
+  }
+  return null
 }
 
 /**
@@ -141,25 +229,37 @@ export function buildSeedPrompt({ jobId, seedText, board, repoPath, autoStart = 
 /**
  * 既定のランナー実行（公式 CLI の子プロセス。シェルは介さない）。
  *
+ * - `hermes`（既定）: `hermes kanban --board <b> create "[ARCH] …" --assignee mobile --json --body …`
+ *   という**正規ルート**でカンバンに Architect タスクを起票する（自走ワーカーが着火する）。
+ * - `antigravity`: `agy -p <prompt> --mode auto` を `cwd: repoPath` で実行する。
+ *   どちらも `PATH` は `buildAugmentedPath()` で補う（`launchd` の狭い PATH 対策）。
+ *
  * `agy` でもクレデンシャルには触れない: バイナリ名と引数だけを渡し、CLI 自身に認証を任せる。
  * @param {object} [cfg] 設定（`hermesBin` / `agyBin`）
- * @returns {Function} `({runnerId, prompt, repoPath, timeoutMs}) => Promise<{code,stdout,stderr}>`
+ * @returns {Function} `({runnerId, prompt, repoPath, board, seedText, jobId, timeoutMs}) => Promise<{code,stdout,stderr}>`
  */
 export function createCliRunner(cfg = {}) {
-  return ({ runnerId, prompt, repoPath, timeoutMs = RUNNER_TIMEOUT_MS }) =>
+  return ({ runnerId, prompt, repoPath, board = '', seedText = '', jobId = '', timeoutMs = RUNNER_TIMEOUT_MS }) =>
     new Promise((resolve) => {
       const antigravity = sanitizeRunner(runnerId) === 'antigravity'
-      const bin = antigravity ? (cfg.agyBin ?? 'agy') : (cfg.hermesBin ?? 'hermes')
-      const args = antigravity
-        ? ['--prompt', prompt, '--workspace', repoPath]
-        : ['-z', prompt, '--in', repoPath]
+      let bin = ''
+      let args = []
+      if (antigravity) {
+        bin = cfg.agyBin ?? resolveAgyBin()
+        args = ['-p', prompt, '--mode', 'auto']
+      } else {
+        bin = cfg.hermesBin ?? resolveHermesBin()
+        const title = buildArchitectTaskTitle({ seedText: seedText || prompt })
+        const body = buildArchitectTaskBody({ prompt, board, repoPath, jobId })
+        args = buildKanbanCreateArgs({ board, title, body })
+      }
       execFile(
         bin,
         args,
-        { cwd: repoPath, timeout: timeoutMs, maxBuffer: 4_000_000, env: { ...process.env } },
+        { cwd: repoPath, timeout: timeoutMs, maxBuffer: 4_000_000, env: { ...process.env, PATH: buildAugmentedPath() } },
         (err, stdout, stderr) => {
           const code = err ? (typeof err.code === 'number' ? err.code : 1) : 0
-          resolve({ code, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') })
+          resolve({ code, stdout: String(stdout ?? ''), stderr: String(stderr ?? ''), bin, args })
         },
       )
     })
@@ -239,8 +339,16 @@ export function publicJob(job) {
     id: job.id,
     board: job.board,
     status: job.status,
+    stage: job.stage ?? job.status,
     runner: job.runner,
     runnerLabel: runnerLabel(job.runner),
+    requestedRunner: job.requestedRunner ?? job.runner ?? null,
+    fallbackFrom: job.fallbackFrom ?? null,
+    fallbackReason: job.fallbackReason ?? null,
+    taskId: job.taskId ?? null,
+    taskStatus: job.taskStatus ?? null,
+    reviewTaskId: job.reviewTaskId ?? null,
+    reviewTitle: job.reviewTitle ?? null,
     autoStart: Boolean(job.autoStart),
     seed: String(job.seedText ?? '').slice(0, 400),
     lang: job.lang,
@@ -366,6 +474,15 @@ export function createArchitect(cfg = {}, deps = {}) {
       repoPath,
       status: 'running',
       runner: runnerId,
+      requestedRunner: runnerId,
+      fallbackFrom: null,
+      fallbackReason: null,
+      taskId: null,
+      taskStatus: null,
+      reviewTaskId: null,
+      reviewTitle: null,
+      mode: runnerId === 'antigravity' ? 'cli' : 'kanban',
+      prompt: '',
       autoStart: Boolean(input.autoStart),
       seedText,
       lang: input.lang === 'en' ? 'en' : 'ja',
@@ -390,18 +507,37 @@ export function createArchitect(cfg = {}, deps = {}) {
       autoStart: job.autoStart,
       lang: job.lang,
     })
+    job.prompt = prompt
 
     // 背後の実行。落ちてもジョブに理由を残すだけで、呼び出し元は待たない。
     void Promise.resolve()
-      .then(() => runner({ runnerId, prompt, repoPath, board, jobId: job.id }))
-      .then((res) => {
+      .then(() => runner({ runnerId, prompt, repoPath, board, seedText, jobId: job.id }))
+      .then(async (res) => {
         job.finishedAt = now()
-        if (res && typeof res.code === 'number' && res.code !== 0) {
+        const code = typeof res?.code === 'number' ? res.code : 0
+        const taskId = res?.taskId ?? parseCreatedTask(res?.stdout)?.id ?? null
+        if (code !== 0) {
+          const reason = String(res?.stderr || res?.stdout || `runner exited with ${code}`).trim()
+          // agy の失敗は「停止」ではなくカンバン起票への自動フォールバックで救う（D28）
+          if (runnerId === 'antigravity') {
+            await fallbackToKanban(job, `exit-${code}: ${reason}`)
+            return
+          }
           job.status = 'failed'
-          job.error = String(res.stderr || res.stdout || `runner exited with ${res.code}`).trim().slice(0, 600)
+          job.error = reason.slice(0, 600)
           return
         }
-        job.status = 'awaiting_spec'
+        if (taskId) job.taskId = taskId
+        if (runnerId !== 'antigravity') {
+          job.status = 'awaiting_spec'
+          return
+        }
+        // agy が 0 で終わっても成果物（SPEC / Review タスク）が無いなら IDE ランチャー等の空振り。
+        if (hasArtifacts(job)) {
+          job.status = 'awaiting_spec'
+          return
+        }
+        await fallbackToKanban(job, 'no-output: agy exited 0 without a SPEC or [review] task')
       })
       .catch((e) => {
         job.finishedAt = now()
@@ -410,6 +546,68 @@ export function createArchitect(cfg = {}, deps = {}) {
       })
 
     return { ok: true, jobId: job.id, status: job.status, runner: runnerId, autoStart: job.autoStart }
+  }
+
+  /**
+   * agy 失敗・無生成時の自動フォールバック（同一ジョブ内で Hermes カンバン Architect へ）。
+   *
+   * 起票自体が失敗したときだけ `failed` にする（ジョブを無音で止めない）。
+   * @param {object} job ジョブ
+   * @param {string} reason 短い理由（英語コード＋抜粋）
+   * @returns {Promise<boolean>} 起票できたら true
+   */
+  async function fallbackToKanban(job, reason) {
+    job.fallbackFrom = job.fallbackFrom ?? (job.runner === 'antigravity' ? 'antigravity' : null)
+    job.fallbackReason = String(reason ?? '').slice(0, 200)
+    try {
+      const res = await runner({
+        runnerId: 'hermes',
+        prompt: job.prompt,
+        repoPath: job.repoPath,
+        board: job.board,
+        seedText: job.seedText,
+        jobId: job.id,
+      })
+      const code = typeof res?.code === 'number' ? res.code : 0
+      const taskId = res?.taskId ?? parseCreatedTask(res?.stdout)?.id ?? null
+      if (code !== 0) {
+        job.status = 'failed'
+        job.error = String(res?.stderr || res?.stdout || `kanban fallback exited with ${code}`)
+          .trim()
+          .slice(0, 600)
+        return false
+      }
+      job.runner = 'hermes'
+      job.mode = 'kanban'
+      job.taskId = taskId
+      job.status = 'awaiting_spec'
+      job.error = null
+      job.finishedAt = now()
+      return true
+    } catch (e) {
+      job.status = 'failed'
+      job.error = String(e?.message ?? e).slice(0, 600)
+      return false
+    }
+  }
+
+  /**
+   * ジョブの成果物（新 SPEC / 待機中 Review タスク）が出ているか。
+   * @param {object} job ジョブ
+   * @returns {boolean} どちらかあれば true
+   */
+  function hasArtifacts(job) {
+    try {
+      if (findJobSpec(job, listSpecsFn(job.repoPath) ?? [])) return true
+    } catch {
+      /* 走査に失敗しても判定は続ける */
+    }
+    try {
+      if (findJobReviewTask(job, readTasks(job.board) ?? [])) return true
+    } catch {
+      /* 同上 */
+    }
+    return false
   }
 
   /** 古いジョブを落とす（メモリだけの保持）。 */
@@ -456,7 +654,7 @@ export function createArchitect(cfg = {}, deps = {}) {
     }
 
     for (const job of [...mine].reverse()) {
-      if (job.status !== 'awaiting_spec' || job.spec) continue
+      if (!['awaiting_spec', 'awaiting_review', 'running'].includes(job.status) || job.spec) continue
       const found = findJobSpec(job, specsOf(job.repoPath), { taken })
       if (!found) continue
       taken.add(String(found.path))
@@ -479,6 +677,54 @@ export function createArchitect(cfg = {}, deps = {}) {
         originSessionId: job.chat,
         at: now(),
       })
+    }
+
+    // カンバンのタスク状態をジョブへ写す（`awaiting_review` 検知・failed 同期。SPEC V6 §3.2）
+    const tasksByBoard = new Map()
+    const tasksOf = (slug) => {
+      const key = String(slug ?? '')
+      if (!tasksByBoard.has(key)) {
+        let list = []
+        try {
+          list = readTasks(key) ?? []
+        } catch {
+          list = []
+        }
+        tasksByBoard.set(key, Array.isArray(list) ? list : [])
+      }
+      return tasksByBoard.get(key)
+    }
+
+    for (const job of mine) {
+      if (!['running', 'awaiting_spec', 'awaiting_review'].includes(job.status)) continue
+      const tasks = tasksOf(job.board)
+      const self = job.taskId ? tasks.find((t) => t && String(t.id) === String(job.taskId)) ?? null : null
+      job.taskStatus = self?.status ? String(self.status) : null
+      if (self && self.status === 'failed') {
+        job.status = 'failed'
+        job.error = String(self.result || job.error || 'Architect task failed').slice(0, 600)
+        continue
+      }
+      if (job.spec) continue // 完成 SPEC を検知済み（spec_ready / launched）
+      const review = findJobReviewTask(job, tasks)
+      if (review) {
+        job.status = 'awaiting_review'
+        job.reviewTaskId = review.taskId
+        job.reviewTitle = review.title
+        continue
+      }
+      // 回答が返ってレビューが blocked でなくなったら「仕様書執筆中」へ戻す
+      job.reviewTaskId = null
+      job.reviewTitle = null
+      if (job.status === 'awaiting_review') job.status = 'awaiting_spec'
+    }
+
+    // 公開表現の `stage`（カンバンタスクが動いている間は running として見せる）
+    for (const job of mine) {
+      job.stage =
+        job.status === 'awaiting_spec' && ['running', 'claimed'].includes(String(job.taskStatus ?? ''))
+          ? 'running'
+          : job.status
     }
 
     // autoStart: 完成 SPEC の未起票バッチを 1 回だけ起票する

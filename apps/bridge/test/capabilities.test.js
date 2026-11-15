@@ -7,12 +7,16 @@ import {
   DEFAULT_PILOT_UNIT,
   PILOT_UNITS,
   agyCliDirs,
+  buildAugmentedPath,
   detectCapabilities,
   detectTailscale,
+  findBinaryPath,
   getCapabilities,
   hasBinary,
   hermesCliDirs,
   resetCapabilitiesCache,
+  resolveAgyBin,
+  resolveHermesBin,
   serviceCommands,
   serviceManagerFor,
 } from '../src/capabilities.js'
@@ -155,4 +159,76 @@ test('getCapabilities は 1 度検出したらキャッシュする（テスト�
   const forced = getCapabilities({ platform: 'darwin', pathEnv: '', appExists: () => false })
   assert.equal(forced.serviceManager, 'launchd', 'opts 付きは再検出')
   resetCapabilitiesCache()
+})
+
+test('findBinaryPath は PATH（またはディレクトリ配列）から実行ファイルの絶対パスを返す', () => {
+  const empty = fakeBin([])
+  const withHermes = fakeBin(['hermes'])
+  assert.equal(findBinaryPath('hermes', [empty, withHermes].join(path.delimiter)), path.join(withHermes, 'hermes'))
+  assert.equal(findBinaryPath('hermes', [empty, withHermes]), path.join(withHermes, 'hermes'), '配列でも探す')
+  assert.equal(findBinaryPath('agy', [empty, withHermes]), null)
+  assert.equal(findBinaryPath('hermes', fakeBin(['hermes'], { mode: 0o644 })), null, '実行ビットが無ければ対象外')
+  assert.equal(findBinaryPath('', withHermes), null)
+  assert.equal(findBinaryPath('/bin/sh', withHermes), null, 'パス区切り入りの名前は受けない')
+  assert.ok(path.isAbsolute(findBinaryPath('hermes', withHermes)))
+})
+
+/** `home` 配下だけを「実在する」と見なす accessSync（実機の /opt/homebrew/bin 等に左右されない）。 */
+function accessUnder(home) {
+  return (target) => {
+    if (!String(target).startsWith(home)) {
+      const err = new Error('ENOENT')
+      err.code = 'ENOENT'
+      throw err
+    }
+    fs.accessSync(target, fs.constants.X_OK)
+  }
+}
+
+test('resolveHermesBin は PATH が狭い環境でも既知の置き場所から絶対パスを解決する', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-home-'))
+  const binDir = path.join(home, '.hermes', 'hermes-agent', '.hermes', 'bin')
+  fs.mkdirSync(binDir, { recursive: true })
+  fs.writeFileSync(path.join(binDir, 'hermes'), '#!/bin/sh\n', { mode: 0o755 })
+
+  // launchd 相当: PATH に hermes が載っていない
+  assert.equal(
+    resolveHermesBin({ pathEnv: fakeBin([]), home, accessSync: accessUnder(home) }),
+    path.join(binDir, 'hermes'),
+  )
+  // PATH に載っていればそちらを優先する（元の優先度を変えない）
+  const onPath = fakeBin(['hermes'])
+  assert.equal(resolveHermesBin({ pathEnv: onPath, home, accessSync: () => {} }), path.join(onPath, 'hermes'))
+  // どこにも無ければ裸の名前（execFile が PATH で探す従来動作に戻る）
+  assert.equal(resolveHermesBin({ pathEnv: '', home: fakeBin([]), accessSync: () => { throw new Error('no') } }), 'hermes')
+})
+
+test('resolveAgyBin は ~/.local/bin の agy を解決し、無ければ裸の名前を返す（境界維持）', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-home-'))
+  const localBin = path.join(home, '.local', 'bin')
+  fs.mkdirSync(localBin, { recursive: true })
+  fs.writeFileSync(path.join(localBin, 'agy'), '#!/bin/sh\n', { mode: 0o755 })
+
+  assert.equal(resolveAgyBin({ pathEnv: '', home, accessSync: accessUnder(home) }), path.join(localBin, 'agy'))
+  assert.equal(
+    resolveAgyBin({ pathEnv: '', home: fakeBin([]), accessSync: () => { throw new Error('no') } }),
+    'agy',
+  )
+  // 見るのは実行ファイルの置き場所だけ。認証ディレクトリは候補にすら入らない。
+  // （検査語は分割して組み立てる: 境界チェック自身の grep を汚さないため）
+  const dirs = agyCliDirs(home).join('\n')
+  const forbidden = [['\\.', 'gemini'].join(''), ['o', 'auth'].join(''), 'credentials'].join('|')
+  assert.equal(new RegExp(forbidden, 'i').test(dirs), false, dirs)
+})
+
+test('buildAugmentedPath は元の PATH を保ったまま既知の置き場所を足し、重複を作らない', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-home-'))
+  const out = buildAugmentedPath({ pathEnv: ['/usr/bin', '/bin'].join(path.delimiter), home })
+  const parts = out.split(path.delimiter)
+  assert.deepEqual(parts.slice(0, 2), ['/usr/bin', '/bin'], '元の順序と優先度を変えない')
+  for (const dir of [...hermesCliDirs(home), ...agyCliDirs(home)]) assert.ok(parts.includes(dir), dir)
+  assert.equal(new Set(parts).size, parts.length, '重複を含まない')
+  assert.equal(parts.filter((p) => !p).length, 0, '空セグメントを作らない')
+  // PATH が空でも探索候補は載る（`launchd` の最小環境）
+  assert.ok(buildAugmentedPath({ pathEnv: '', home }).split(path.delimiter).includes(path.join(home, '.local', 'bin')))
 })

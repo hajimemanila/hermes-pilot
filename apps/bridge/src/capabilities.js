@@ -98,6 +98,113 @@ export function hasBinary(name, pathEnv = process.env.PATH ?? '') {
 }
 
 /**
+ * PATH 文字列（またはディレクトリ配列）をディレクトリ一覧にする。
+ * @param {string|string[]} dirsOrPathEnv PATH 文字列かディレクトリ配列
+ * @returns {string[]} ディレクトリ一覧（空要素は落とす）
+ */
+export function toDirList(dirsOrPathEnv) {
+  if (Array.isArray(dirsOrPathEnv)) return dirsOrPathEnv.map((d) => String(d ?? '')).filter(Boolean)
+  return String(dirsOrPathEnv ?? '')
+    .split(path.delimiter)
+    .filter(Boolean)
+}
+
+/**
+ * PATH（またはディレクトリ配列）から実行ファイルの**絶対パス**を返す。
+ *
+ * `hasBinary` の「あるか」に対して、こちらは「どこにあるか」を返す。
+ * `launchd` のように PATH が狭い環境でも、見つけた実パスをそのまま
+ * `execFile` に渡せるようにするための土台（シェルは介さない）。
+ *
+ * @param {string} name コマンド名（パス区切りを含むものは対象外）
+ * @param {string|string[]} [dirsOrPathEnv] PATH 文字列かディレクトリ配列
+ * @param {Function} [accessSync] 実行ビット確認の差し替え（テスト用）
+ * @returns {string|null} 絶対パス（無ければ null）
+ */
+export function findBinaryPath(name, dirsOrPathEnv = process.env.PATH ?? '', accessSync = fs.accessSync) {
+  const cmd = String(name ?? '').trim()
+  if (!cmd || cmd.includes('/')) return null
+  for (const dir of toDirList(dirsOrPathEnv)) {
+    for (const candidate of [cmd, `${cmd}.exe`]) {
+      const full = path.resolve(dir, candidate)
+      try {
+        accessSync(full, fs.constants.X_OK)
+        return full
+      } catch {
+        /* 次のディレクトリへ */
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * 候補ディレクトリ群から実行ファイルを探す（`findBinaryPath` の薄い包み）。
+ * @param {string} name コマンド名
+ * @param {string[]} dirs 候補ディレクトリ
+ * @param {object} [opts] 差し替え
+ * @returns {string|null} 絶対パス（無ければ null）
+ */
+function findInDirs(name, dirs, { accessSync } = {}) {
+  const find = accessSync ? (p) => findBinaryPath(name, [p], accessSync) : (p) => findBinaryPath(name, [p])
+  for (const dir of dirs) {
+    if (!dir) continue
+    const hit = find(dir)
+    if (hit) return hit
+  }
+  return null
+}
+
+/**
+ * `hermes` CLI の実パスを解決する（PATH → 既知の置き場所 → 裸の名前）。
+ *
+ * 見つからなくても `'hermes'` を返す（既存の挙動を壊さない）。呼び出し側は
+ * そのまま `execFile` に渡せる。
+ * @param {object} [opts] 差し替え
+ * @param {string} [opts.pathEnv] PATH
+ * @param {string} [opts.home] ホーム（既知の置き場所の基準）
+ * @param {Function} [opts.accessSync] 実行ビット確認の差し替え（テスト用）
+ * @returns {string} 絶対パス、または `'hermes'`
+ */
+export function resolveHermesBin({ pathEnv = process.env.PATH ?? '', home = os.homedir(), accessSync } = {}) {
+  const hit = findBinaryPath('hermes', pathEnv, accessSync ?? fs.accessSync) ?? findInDirs('hermes', hermesCliDirs(home), { accessSync })
+  return hit ?? 'hermes'
+}
+
+/**
+ * `agy`（Antigravity 公式 CLI）の実パスを解決する。見つからなければ `'agy'`。
+ *
+ * **境界**: 見るのは実行ファイルの存在だけ。認証ファイル・プロファイル・
+ * トークンには触れない（SPEC V5 §3.2 / D25）。
+ * @param {object} [opts] 差し替え
+ * @param {string} [opts.pathEnv] PATH
+ * @param {string} [opts.home] ホーム
+ * @param {Function} [opts.accessSync] 実行ビット確認の差し替え（テスト用）
+ * @returns {string} 絶対パス、または `'agy'`
+ */
+export function resolveAgyBin({ pathEnv = process.env.PATH ?? '', home = os.homedir(), accessSync } = {}) {
+  const hit = findBinaryPath('agy', pathEnv, accessSync ?? fs.accessSync) ?? findInDirs('agy', agyCliDirs(home), { accessSync })
+  return hit ?? 'agy'
+}
+
+/**
+ * 子プロセスへ渡す `PATH` を作る（既存 PATH の末尾に既知の置き場所を足す）。
+ *
+ * 重複は落とし、元の PATH の順序は保つ（先頭の優先度を変えない）。
+ * @param {object} [opts] 差し替え
+ * @param {string} [opts.pathEnv] 元の PATH
+ * @param {string} [opts.home] ホーム
+ * @returns {string} 拡張した PATH
+ */
+export function buildAugmentedPath({ pathEnv = process.env.PATH ?? '', home = os.homedir() } = {}) {
+  const out = []
+  for (const dir of [...toDirList(pathEnv), ...hermesCliDirs(home), ...agyCliDirs(home)]) {
+    if (dir && !out.includes(dir)) out.push(dir)
+  }
+  return out.join(path.delimiter)
+}
+
+/**
  * Tailscale の有無（CLI か macOS アプリのどちらか）。
  * @param {object} [opts] 差し替え（テスト用）
  * @param {string} [opts.pathEnv] PATH
