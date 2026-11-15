@@ -16,7 +16,14 @@ import { useI18n } from '../i18n/index.js'
 import { getResolvedTheme, setThemePref } from '../lib/theme.js'
 import { haptic } from '../lib/haptic.js'
 import './demo.css'
-import { MSG_READY, MSG_SET, frameUrl, installSafeStorage, isEmbeddedSession } from './frame.js'
+import {
+  MSG_READY,
+  MSG_SET,
+  buildEmbeddedFrameSrcDoc,
+  frameUrl,
+  installSafeStorage,
+  isEmbeddedSession,
+} from './frame.js'
 import { STAGE_MIN_WIDTH as MIN_WIDTH, VIEWS as STAGE_VIEWS, fitScale } from './stage.js'
 
 /** 筐体の実寸（CSS px）。 */
@@ -61,7 +68,7 @@ export { frameUrl }
 
 export function DemoStage({ children }) {
   const { t, lang, setPref } = useI18n()
-  // 単一ファイル埋め込み（D32）: iframe を張れないので、この文書をそのまま全画面で使う
+  // 単一ファイル埋め込み（D32）: 相対 iframe URL が使えないので、自分の初期 HTML を srcDoc に複製する
   const [embedded] = useState(() => isEmbeddedSession())
   const [viewport, setViewport] = useState('phone')
   const [narrow, setNarrow] = useState(() => (globalThis.innerWidth || 0) < MIN_WIDTH)
@@ -71,6 +78,8 @@ export function DemoStage({ children }) {
   const [scale, setScale] = useState(1)
   const [ready, setReady] = useState(false)
   const [box, setBox] = useState({ width: 0, height: 0 })
+  // 埋め込みでは iframe の `src` を差し替えられないので、key を変えて文書ごと作り直す
+  const [frameKey, setFrameKey] = useState(0)
   const canvasRef = useRef(null)
   const frameRef = useRef(null)
 
@@ -164,8 +173,13 @@ export function DemoStage({ children }) {
   const restart = useCallback(() => {
     haptic('action')
     setReady(false)
+    if (embedded) {
+      // `srcDoc` は差し替えられないので key を進めて iframe を作り直す（同じ複製が新しい文書として起動する）
+      setFrameKey((k) => k + 1)
+      return
+    }
     const frame = frameRef.current
-    if (frame && !embedded) {
+    if (frame) {
       frame.src = frameUrl(globalThis.location?.href ?? '', false)
       return
     }
@@ -175,15 +189,27 @@ export function DemoStage({ children }) {
   const size = VIEWS[viewport] ?? (box.width ? box : { width: 1024, height: 768 })
   const isFull = viewport === 'full'
   const url = useMemo(() => frameUrl(globalThis.location?.href ?? '', embedded), [embedded])
+  /**
+   * 埋め込み時の筐体の中身。
+   *
+   * `srcdoc` は相対 URL を持てないので、**起動前に退避した自分の初期 HTML** を複製し、
+   * `demo/frame.js` が目印（`__HM_DEMO_FRAME__`）を 1 行差し込む。子は目印を見て
+   * 筐体バーを描かずバナー＋アプリだけを出す = PC 幅でもデバイスシミュレータが成立する。
+   * 退避できていない（空）ときは従来どおり全画面にフォールバックする。
+   */
+  const srcDoc = useMemo(
+    () => (embedded ? buildEmbeddedFrameSrcDoc(globalThis.__HM_INITIAL_HTML__) : ''),
+    [embedded],
+  )
 
   // 埋め込み（srcdoc / sandbox）では保存領域の参照だけで落ちるので、先に安全な実装へ差し替える
   useEffect(() => {
     if (embedded) installSafeStorage()
   }, [embedded])
 
-  // スマホ実機（狭い画面）と単一ファイル埋め込み: 筐体を出さず、`children`（バナー＋アプリ）を
-  // そのまま全画面に置く（埋め込みでは相対 iframe URL が解決できず 404 する・D32）
-  if (narrow || embedded) {
+  // スマホ実機（狭い画面）と、複製元が取れなかった埋め込み: 筐体を出さず、
+  // `children`（バナー＋アプリ）をそのまま全画面に置く
+  if (narrow || (embedded && !srcDoc)) {
     return <div className="demo-mobile">{children}</div>
   }
 
@@ -245,19 +271,37 @@ export function DemoStage({ children }) {
             className={`demo-device-screen${isFull ? ' is-full' : ''}`}
             style={{ width: size.width, height: size.height, transform: `scale(${scale})` }}
           >
-            <iframe
-              ref={frameRef}
-              className="demo-frame"
-              title={t('demo.badge')}
-              src={url}
-              width={size.width}
-              height={size.height}
-              onLoad={() => {
-                setReady(true)
-                pushSettings()
-                setTimeout(pushSettings, 150)
-              }}
-            />
+            {embedded ? (
+              // 埋め込み: 相対 URL が無いので、複製した自分の初期 HTML（srcDoc）を新しい文書として起動する
+              <iframe
+                key={`srcdoc-${frameKey}`}
+                ref={frameRef}
+                className="demo-frame"
+                title={t('demo.badge')}
+                srcDoc={srcDoc}
+                width={size.width}
+                height={size.height}
+                onLoad={() => {
+                  setReady(true)
+                  pushSettings()
+                  setTimeout(pushSettings, 150)
+                }}
+              />
+            ) : (
+              <iframe
+                ref={frameRef}
+                className="demo-frame"
+                title={t('demo.badge')}
+                src={url}
+                width={size.width}
+                height={size.height}
+                onLoad={() => {
+                  setReady(true)
+                  pushSettings()
+                  setTimeout(pushSettings, 150)
+                }}
+              />
+            )}
           </div>
         </div>
       </div>

@@ -39,10 +39,15 @@ import {
   stepIndex,
 } from '../src/demo/mockApi.js'
 import {
+  FRAME_ATTR,
+  FRAME_FLAG,
+  FRAME_QUERY,
+  buildEmbeddedFrameSrcDoc,
   createMemoryStorage,
   frameUrl,
   installSafeStorage,
   isEmbeddedSession,
+  isFrameSession,
   safeStorage,
 } from '../src/demo/frame.js'
 import { EMBED_BOOTSTRAP, inlineAssets, verifyEmbedHtml } from '../../../scripts/build-demo-embed.mjs'
@@ -541,6 +546,125 @@ test('npm run build:demo は埋め込みビルドを含む（package.json と実
   assert.match(pkg.scripts['build:demo'], /scripts\/build-demo-embed\.mjs/)
   assert.equal(fs.existsSync(path.join(here, '..', '..', '..', 'scripts', 'build-demo-embed.mjs')), true)
 })
+
+test('筐体判定: ?demo-frame=1 と <html data-hm-frame> の両方を見る', () => {
+  assert.equal(FRAME_QUERY, 'demo-frame')
+  assert.equal(FRAME_ATTR, 'data-hm-frame')
+  assert.equal(FRAME_FLAG, '__HM_DEMO_FRAME__')
+  // 静的サイト（URL モード）
+  assert.equal(isFrameSession({ location: { search: '?demo-frame=1' } }), true)
+  assert.equal(isFrameSession({ location: { search: '?a=1&demo-frame=1&b=2' } }), true)
+  assert.equal(isFrameSession({ location: { search: '?demo-frame=0' } }), false)
+  assert.equal(isFrameSession({ location: { search: '?demo-frame' } }), false)
+  assert.equal(isFrameSession({ location: { search: '' } }), false)
+
+  // 埋め込み（srcdoc）: 親が <html> に付ける目印属性
+  const withRoot = (attr) => ({
+    document: { documentElement: { getAttribute: (name) => (name === FRAME_ATTR ? attr : null) } },
+    location: { search: '' },
+  })
+  assert.equal(isFrameSession(withRoot('1')), true)
+  assert.equal(isFrameSession(withRoot(null)), false)
+  // 明示フラグ（テスト・手動起動用）
+  assert.equal(isFrameSession({ [FRAME_FLAG]: true, location: { search: '' } }), true)
+
+  // 壊れた window でも落ちない
+  assert.equal(isFrameSession(null), false)
+  assert.equal(
+    isFrameSession({
+      get location() {
+        throw new Error('SecurityError')
+      },
+    }),
+    false,
+  )
+})
+
+test('埋め込み筐体: 初期 HTML を srcDoc に複製し <html> に目印を 1 回だけ付ける', () => {
+  const base =
+    '<!doctype html><html lang="ja"><head><meta charset="UTF-8" /><title>Hermes Mobile</title></head>' +
+    '<body><div id="root"></div><script type="module">console.log("hi")</script></body></html>'
+  const doc = buildEmbeddedFrameSrcDoc(base)
+  assert.equal((doc.match(/data-hm-frame="1"/g) ?? []).length, 1, '目印は 1 回だけ')
+  assert.ok(doc.includes('<html lang="ja" data-hm-frame="1">'), '既存の属性を壊さず足す')
+  assert.ok(doc.indexOf('data-hm-frame') < doc.indexOf('<head>'), '目印は html 要素（描画より前）')
+  assert.ok(doc.includes('<div id="root"></div>'), '本文はそのまま残る')
+  assert.ok(doc.includes('console.log("hi")'), 'スクリプトもそのまま残る')
+  assert.equal(doc.startsWith('<!doctype html>'), true, 'doctype を保つ（srcdoc の quirks mode 回避）')
+
+  // 冪等: 2 回通しても増えない（既に目印がある HTML はそのまま返す）
+  assert.equal(buildEmbeddedFrameSrcDoc(doc), doc)
+  assert.equal(buildEmbeddedFrameSrcDoc(buildEmbeddedFrameSrcDoc(base)), doc)
+
+  // 属性なしの <html> でも壊れない
+  assert.ok(buildEmbeddedFrameSrcDoc('<html><body>x</body></html>').startsWith('<html data-hm-frame="1">'))
+
+  // 複製できない入力は空（呼び出し側は筐体を出さず全画面にフォールバックする）
+  assert.equal(buildEmbeddedFrameSrcDoc(''), '')
+  assert.equal(buildEmbeddedFrameSrcDoc(undefined), '')
+  assert.equal(buildEmbeddedFrameSrcDoc('   \n '), '')
+  assert.equal(buildEmbeddedFrameSrcDoc('<div id="root"></div>'), '', '<html> の無い断片は複製しない')
+})
+
+test('埋め込み筐体: バンドル内の目印文字列に釣られない（実測で踏んだ誤判定の回帰）', () => {
+  // 複製元の HTML にはアプリのバンドルが入っており、そこには定数名がそのまま現れる。
+  // 文字列一致で「もう目印が入っている」と判断すると何も注入できず、子が筐体を再帰的に描いてしまう。
+  const bundle = '<script type="module">const F="__HM_DEMO_FRAME__";const A="data-hm-frame";</script>'
+  const base = `<!doctype html><html lang="ja"><head></head><body><div id="root"></div>${bundle}</body></html>`
+  const doc = buildEmbeddedFrameSrcDoc(base)
+  assert.ok(doc.includes('<html lang="ja" data-hm-frame="1">'), 'バンドルに定数名があっても html に目印を付ける')
+  assert.equal(buildEmbeddedFrameSrcDoc(doc), doc, '付けたあとは足さない')
+})
+
+test('埋め込み筐体: 複製した srcDoc も外部参照ゼロのまま（Google Sites で 404 を出さない）', () => {
+  const files = {
+    './assets/index-abc.js': 'console.log("hi"); const s = "</script>";',
+    './assets/index-abc.css': '.a{color:red}',
+  }
+  const indexHtml = `<!doctype html><html lang="ja"><head><meta charset="UTF-8" />
+    <link rel="stylesheet" crossorigin href="./assets/index-abc.css" />
+    <title>Hermes Mobile</title></head><body><div id="root"></div>
+    <script type="module" crossorigin src="./assets/index-abc.js"></script></body></html>`
+  const { html } = inlineAssets(indexHtml, (rel) => files[rel])
+  const srcDoc = buildEmbeddedFrameSrcDoc(html)
+
+  assert.deepEqual(verifyEmbedHtml(srcDoc), [], '複製しても外部参照が増えない')
+  assert.equal((srcDoc.match(/data-hm-frame="1"/g) ?? []).length, 1)
+  assert.ok(srcDoc.indexOf('data-hm-frame') < srcDoc.indexOf('<script type="module">'), '目印がアプリより先')
+  // 元のブートストラップ（保存領域の安全化）も複製に残る = 子フレームでも localStorage で落ちない
+  assert.ok(srcDoc.includes(EMBED_BOOTSTRAP), '安全化スクリプトを維持している')
+})
+
+test('通常ビルドにデモが混ざらない: main.jsx は demo/ を静的 import しない', () => {
+  const mainSrc = fs.readFileSync(path.join(SRC, 'main.jsx'), 'utf8')
+  assert.equal(/^\s*import\s+[^\n]*from\s+['"]\.\/demo\//m.test(mainSrc), false, 'static import がある')
+  assert.equal(/^\s*import\s+['"]\.\/demo\//m.test(mainSrc), false, '副作用 import がある')
+  // 退避・筐体判定は if (DEMO) の中でだけ行う（本番ビルドでは丸ごと消える）
+  const demoBlock = mainSrc.slice(mainSrc.indexOf('if (DEMO) {'))
+  assert.ok(demoBlock.length > 0, 'if (DEMO) ブロックがある')
+  assert.ok(demoBlock.includes('__HM_INITIAL_HTML__'), '初期 HTML の退避はデモ分岐の中')
+  assert.ok(demoBlock.includes('isFrameSession'), '筐体判定はデモ分岐の中')
+  assert.ok(demoBlock.includes("import('./demo/frame.js')"), 'demo/frame.js は動的 import')
+  assert.equal(mainSrc.indexOf('__HM_INITIAL_HTML__') > mainSrc.indexOf('if (DEMO) {'), true)
+
+  // demo/ 以外の src から demo/ を静的 import している人が居ないこと
+  const offenders = []
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        if (entry.name !== 'demo' && entry.name !== 'node_modules') walk(full)
+        continue
+      }
+      if (!/\.(js|jsx|mjs)$/.test(entry.name)) continue
+      const src = fs.readFileSync(full, 'utf8')
+      if (/^\s*import\s+[^\n]*from\s+['"][^'"]*demo\//m.test(src)) offenders.push(path.relative(SRC, full))
+    }
+  }
+  walk(SRC)
+  assert.deepEqual(offenders, [], 'demo/ を静的 import しているファイルがある')
+})
+
 
 /* ------------------------------------------------------------------ *
  * V10-B3（SPEC-PILOT-V10 §3.3 / D47）: モック API・WS の V3〜V9 完全パリティ

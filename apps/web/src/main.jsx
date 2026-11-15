@@ -24,12 +24,47 @@ const DEMO = import.meta.env.VITE_DEMO_MODE === '1'
  * PC では `DemoStage` が `?demo-frame=1` の iframe にこのアプリを読み込み、その中身が
  * デバイスのビューポート（390/820）になる。ここでは筐体バーを描かず、ガイドバー＋アプリだけを出す
  * （親から来る環境設定は `demo/frame.js` が受ける）。
+ *
+ * 埋め込みビルド（`google-sites-embed.html` / `srcdoc`）では相対 URL が解決できず iframe を張れないため、
+ * **親が自分の初期 HTML を `srcDoc` に複製**して筐体を作る。その複製の中では
+ * `window.__HM_DEMO_FRAME__` が立っている（判定は `demo/frame.js` の `isFrameSession`）。
+ *
+ * `demo/frame.js` の静的 import はここに置かない（本番バンドルへ `demo/` を持ち込まないため）。
+ * 判定は `if (DEMO)` の中の動的 import で行う。
  */
-const FRAME = DEMO && new URLSearchParams(globalThis.location?.search ?? '').get('demo-frame') === '1'
+
+/**
+ * 筐体の `srcDoc` 用に、**描画前の**初期 HTML を退避する。
+ *
+ * `srcdoc` は相対 URL を持てないので、複製した文書にアプリをそのまま起動させるのが唯一の方法。
+ * `createRoot().render()` より前に呼ぶこと（React が描いた DOM を複製しないため）。
+ * `<!doctype html>` を前置しないと `srcdoc` が quirks mode になり、レイアウトが崩れる。
+ *
+ * @returns {string} 退避できなければ空文字
+ */
+function captureInitialHtml() {
+  try {
+    const html = document.documentElement?.outerHTML ?? ''
+    return html ? `<!doctype html>\n${html}` : ''
+  } catch {
+    return ''
+  }
+}
 
 async function mount() {
   const root = createRoot(document.getElementById('root'))
   if (DEMO) {
+    // 埋め込み（srcdoc）では保存領域の参照だけで落ちるので、描画より前に差し替える
+    const frameMod = await import('./demo/frame.js')
+    const isFrame = frameMod.isFrameSession()
+    if (isFrame && frameMod.isEmbeddedSession()) frameMod.installSafeStorage()
+
+    // 筐体の srcDoc の複製元を退避する（中身側では退避しない = 同じ HTML を二重に持たない）
+    if (!isFrame) {
+      const initialHtml = captureInitialHtml()
+      if (initialHtml) globalThis.__HM_INITIAL_HTML__ = initialHtml
+    }
+
     // バックエンド無しで A2B の 4 ステップを体験するデモ（SPEC-PILOT-V5 §3.4）
     const mock = await import('./demo/mockApi.js')
     globalThis.__hmDemoFetch = mock.demoFetch
@@ -39,8 +74,8 @@ async function mount() {
 
     const { DemoBanner } = await import('./demo/DemoBanner.jsx')
 
-    if (FRAME) {
-      const { announceReady, listenDemoSettings } = await import('./demo/frame.js')
+    if (isFrame) {
+      const { announceReady, listenDemoSettings } = frameMod
       listenDemoSettings()
       root.render(
         <I18nProvider>

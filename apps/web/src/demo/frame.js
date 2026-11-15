@@ -72,6 +72,83 @@ export function frameUrl(href = globalThis.location?.href ?? '', embedded = fals
   }
 }
 
+/**
+ * 「この文書は筐体（`DemoStage`）の中身」と示す目印。
+ *
+ * 通常の静的サイトでは `?demo-frame=1` の URL で区別できるが、埋め込みビルドの
+ * `google-sites-embed.html` は **相対 URL が解決できず iframe を張れない**。そこで親は
+ * 自分の初期 HTML を `srcDoc` に複製し、`<html>` に目印属性を 1 つ足して子を作る
+ * （`buildEmbeddedFrameSrcDoc`）。子はこの目印を見て筐体バーを描かず、バナー＋アプリだけを出す。
+ *
+ * 目印は **HTML の属性**（`FRAME_ATTR`）で付ける。JS のブール値だと、複製元の HTML には
+ * アプリのバンドル（= この定数の文字列そのもの）が入っているため、文字列一致では
+ * 「もう目印が入っている」と誤判定して何も注入できなかった（実測）。
+ */
+export const FRAME_FLAG = '__HM_DEMO_FRAME__'
+
+/** `<html>` に付ける目印属性（`srcdoc` 複製ではこちらを使う）。 */
+export const FRAME_ATTR = 'data-hm-frame'
+
+/** 筐体の中身を開くときのクエリ名（`?demo-frame=1`）。 */
+export const FRAME_QUERY = 'demo-frame'
+
+/**
+ * 筐体（iframe）の中身として開かれた文書か。
+ *
+ * 3 通りを 1 か所で判定する:
+ * - 静的サイト: `?demo-frame=1`
+ * - 埋め込み（`srcdoc`）: `<html data-hm-frame="1">`（親が複製時に付ける）
+ * - 明示フラグ: `window.__HM_DEMO_FRAME__ === true`（テスト・将来の手動起動用）
+ *
+ * @param {Window} [win] 対象の window
+ * @returns {boolean} 筐体の中身なら true
+ */
+export function isFrameSession(win = globalThis.window) {
+  if (!win) return false
+  try {
+    if (win[FRAME_FLAG] === true) return true
+  } catch {
+    /* 目印が読めなくても次の判定へ */
+  }
+  try {
+    if (win.document?.documentElement?.getAttribute?.(FRAME_ATTR) === '1') return true
+  } catch {
+    /* document が読めない環境は URL 判定だけに任せる */
+  }
+  try {
+    const search = String(win.location?.search ?? '')
+    if (!search) return false
+    return new URLSearchParams(search).get(FRAME_QUERY) === '1'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 埋め込み（`srcdoc`）の筐体に載せる `srcDoc` を作る。
+ *
+ * 相対 URL が使えない環境でデバイスシミュレータを出すための唯一の方法が
+ * 「自分の文書をそのまま複製する」こと。親は起動前に退避した初期 HTML
+ * （`window.__HM_INITIAL_HTML__`）をここへ渡し、`<html>` に目印を 1 つ足す。
+ * 目印は属性なので、子は**描画より前**（バンドル評価時）に自分の立場を知れる。
+ *
+ * 冪等: すでに目印がある HTML を渡したら**そのまま返す**（二重に付けない）。
+ * 複製できない入力（空・`<html>` が無い断片）は `''` を返し、呼び出し側は
+ * 筐体を出さず全画面にフォールバックする。
+ *
+ * @param {string} html 複製元の HTML（`document.documentElement.outerHTML` 相当）
+ * @returns {string} `srcDoc`（複製できないときは空文字）
+ */
+export function buildEmbeddedFrameSrcDoc(html) {
+  const source = String(html ?? '')
+  if (!source.trim()) return ''
+  const root = /<html\b([^>]*)>/i.exec(source)
+  if (!root) return ''
+  if (new RegExp(`\\b${FRAME_ATTR}\\s*=`, 'i').test(root[1])) return source
+  const marked = `<html${root[1]} ${FRAME_ATTR}="1">`
+  return source.slice(0, root.index) + marked + source.slice(root.index + root[0].length)
+}
+
 /** メモリだけの Storage 代替（サンドボックスでも例外を投げない）。 */
 export function createMemoryStorage() {
   const map = new Map()
