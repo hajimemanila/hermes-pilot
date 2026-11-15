@@ -45,13 +45,21 @@ English README: [`README.md`](README.md)
                  1 タップ回答     受入条件を明記            （カンバン）             LiveSheet/WorkerFeed   X 換算 280 文字以内
 ```
 
+**2 つの正規ルート（どちらも外部 AI CLI を起動しません）:**
+
+- **A. SPEC 配置 → 1 タップ自律実装（基本ルート）** — `docs/SPEC-*.md`（必要なら先に
+  `review/sheets/*.json`）を自分でリポジトリへ置きます。自分のターミナル、公式 Antigravity Remote PWA、
+  任意のエディタのどれでも構いません。Hermes Pilot はファイル監視（`Spec Launchpad` / `reviewWatcher`）
+  だけで受け取り、1 タップの起票から自律実装が始まります。
+- **B. `Hermes Native` による仕様策定（スマホ完結）** — `Spec Seed` → Quick Review → `docs/SPEC-*.md` →
+  Launchpad。Hermes 自身の `hermes kanban create` で回すため、外部プロセスはゼロです（下の 1〜4）。
+
 1. **📝 Spec Seed** — タスクタブで 1 行を入力（音声ディクテーション可）し、**実行モード**を選びます。
    - **`Zero-Stop`**（既定）— 全バッチが承認待ちで止まらず最後まで自走します。
    - **`Visual-Gate`** — チェックポイントで止まり、次のバッチへ進む前に描画結果（スクショ／赤入れ）を
      目で確認できます。
-   - **ランナー** — 既定は `Hermes Native`（Hermes 自身が Architect を回す）。**`Antigravity (agy)` は Opt-in のみ**:
-     `agy` CLI が存在し、かつ自分で選んだときだけサブプロセスとして使い、仕様上 **カンバンタスクを作りません**
-     （`taskId: null`）。同じ内容のカードが二重に blocked で並ぶのを防ぐためです。
+   - **ランナー** — `Hermes Native` 固定です。Architect は Hermes 自身の中で回り、外部 AI CLI を
+     サブプロセスとして起動することはありません（上の「2 つの正規ルート」を参照）。
 2. **Quick Review ヒアリング** — Architect が推奨案つきの 3(±1) 問をシートに載せます。
    「⚡ 推奨を一括承認」で 1 タップですべて回答できます。
 3. **📄 仕様書** — 2 ラウンド目で `docs/SPEC-<SLUG>.md` を書きます。決定表・バッチごとの `Execution Mode`・
@@ -60,7 +68,8 @@ English README: [`README.md`](README.md)
    一覧し、1 タップでカンバンに起票します。同じ `[ID]` の未完了タスクがあるバッチは飛ばすので、
    二度押し・再読み込みでも重複しません。
 5. **⚡ ライブ監視** — `ArchitectJobBar` がジョブのフェーズ（`spawning → round1_sheet → round2_spec →
-   spec_ready → launched`）を出し、進まなくなると停滞警告を出し、ランナーを明示して再試行できます。
+   spec_ready → launched`）を出し、進まなくなると停滞警告を出し、失敗・停滞したジョブは 1 タップで
+   再試行できます。
    `LiveSheet` と `WorkerFeed` が実行中ワーカーのログを流します。
 6. **🏆 Mission Receipt** — バッチ完走後、完走サマリが **1200×630 の PNG レシート**と、
    **JA/EN とも X 換算 280 文字以内**のシェア文（KPI の数値は 1 つも落とさず、見出しとフッターから削る）

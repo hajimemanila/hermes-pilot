@@ -47,13 +47,21 @@ One line of intent becomes a spec a worker can finish, without a chat backlog of
  (or dictation) 1-tap answers      batch + acceptance      filing (kanban)       LiveSheet/WorkerFeed X-weight ≤ 280 text
 ```
 
+**Two safe routes — neither spawns an external AI CLI:**
+
+- **A. SPEC file → one-tap autonomous run (the basic route)** — place `docs/SPEC-*.md` (and, when you want a
+  review round first, `review/sheets/*.json`) into the repository yourself: your terminal, the official
+  Antigravity Remote PWA, or any editor. Hermes Pilot only watches the files (`Spec Launchpad` /
+  `reviewWatcher`), so one tap files the batches and the autonomous run starts with no external process.
+- **B. `Hermes Native` spec authoring (phone-only)** — `Spec Seed` → Quick Review → `docs/SPEC-*.md` →
+  Launchpad, driven by `hermes kanban create` inside Hermes itself (steps 1–4 below).
+
 1. **📝 Spec Seed** — type (or dictate) one line in the Tasks tab and pick an **execution policy**:
    - **`Zero-Stop`** (default) — every batch runs to the end autonomously; no approval stops.
    - **`Visual-Gate`** — the run pauses at checkpoints so you can look at the rendered result (screenshot /
      annotation) before the next batch starts.
-   - **Runner** — `Hermes Native` (default) drives the Architect through Hermes itself. **`Antigravity (agy)`
-     is opt-in only**: it is used when the `agy` CLI exists *and* you select it, it runs as a subprocess, and
-     by design it files **no kanban task** (`taskId: null`) so a blocked card cannot appear twice.
+   - **Runner** — fixed to `Hermes Native`: the Architect is driven inside Hermes itself, and Hermes Pilot
+     never starts an external AI CLI as a subprocess (see *Two safe routes* above).
 2. **Quick Review interview** — the Architect asks 3 (±1) questions on a sheet with recommended options; the
    *⚡ Accept All Recommended* button answers them all in one tap.
 3. **📄 Spec** — a second round writes `docs/SPEC-<SLUG>.md`: decisions table, per-batch `Execution Mode`,
@@ -62,8 +70,8 @@ One line of intent becomes a spec a worker can finish, without a chat backlog of
    Markdown preview, and files them as kanban tasks. A batch whose `[ID]` task is still open is skipped, and
    re-tapping or reloading never duplicates cards.
 5. **⚡ Live run** — `ArchitectJobBar` shows the job's phase (`spawning → round1_sheet → round2_spec →
-   spec_ready → launched`), a stall warning when a phase stops moving, and a retry with an explicit runner
-   switch. `LiveSheet` and `WorkerFeed` stream the running workers.
+   spec_ready → launched`), a stall warning when a phase stops moving, and a one-tap retry for a job that
+   failed or stalled. `LiveSheet` and `WorkerFeed` stream the running workers.
 6. **🏆 Mission Receipt** — when the batches finish, the completion summary exports a **1200×630 PNG receipt**
    and a share text that is **X-weighted ≤ 280 characters in both JA and EN** (KPI numbers are never dropped;
    the header and footer give way first).

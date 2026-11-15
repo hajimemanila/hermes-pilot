@@ -122,10 +122,18 @@ tailscale serve status
 | POST | `/api/auth/login` | アプリトークン → セッション Cookie（`HttpOnly` / `SameSite=Strict`） |
 | GET | `/api/auth/pairing` | ペアリング情報。ワンタイムコード（10 分・1 回限り）の URL、`targets`、`qrRows`（21×21）/`qrPng`/`qrSvg`、`expiresAt`。**アプリトークンそのものは載せない** |
 | GET | `/api/me` | バージョン確認（`{ ok, version }`） |
-| GET | `/api/capabilities` | OS・サービス管理・`agy` CLI の有無などの実行環境 |
+| GET | `/api/capabilities` | OS・サービス管理などの実行環境検出結果（外部 AI CLI の検出はしない） |
 | GET | `/api/overview` | Hermes 状態＋メモリ/ディスク＋実行中タスク数＋ESTOP 状態 |
 
 ### A2B パイプライン
+
+A2B は **2 つの正規ルート**だけを持ちます。どちらも外部 AI CLI の子プロセスを起動しません。
+
+1. **SPEC 配置 → 1 タップ自律実装（基本）** — ユーザーが `docs/SPEC-*.md`（必要なら `review/sheets/*.json`）を
+   自分のターミナル・公式 Antigravity Remote PWA・任意のエディタでリポジトリへ置く。ブリッジは
+   `Spec Launchpad` / `reviewWatcher` のファイル監視だけで受け取り、起票して自律実装を始める。
+2. **`Hermes Native` 仕様策定（スマホ完結）** — `Spec Seed` → Quick Review → `docs/SPEC-*.md` → Launchpad。
+   Hermes 自身の `hermes kanban create` で回すため規約上の問題がなく、外部プロセスはゼロ。
 
 | メソッド | パス | 用途 |
 |---|---|---|
@@ -136,8 +144,8 @@ tailscale serve status
 | POST | `/api/architect/seed` | `{ repo?, board?, seedText, runner?, autoStart?, executionPolicy?, chat?, lang? }` → **202** と `jobId` を即返し、Architect は背後で走る |
 | GET | `/api/architect/jobs?board=&repo=` | ジョブ / 完成 SPEC（`spec_ready`）/ 未起票 SPEC |
 | POST | `/api/architect/jobs/:id/dismiss` | ジョブ破棄を永続化（再取得しても進行バーに出ない） |
-| GET | `/api/architect/config` | 実行ランナー設定（`runner`）と `hasAgyCli` |
-| PUT | `/api/architect/config` | `{ runner }` を `hermes` / `antigravity` に切替（Opt-in） |
+| GET | `/api/architect/config` | 実行ランナー設定（`runner` は常に `hermes`） |
+| PUT | `/api/architect/config` | `{ runner }`。`hermes` 以外は **400 `INVALID_RUNNER`**（ランナーは `Hermes Native` 固定） |
 | GET | `/api/pipeline/status` | 環境最適化の適用状況（`SOUL.md` の中身は返さない） |
 | POST | `/api/pipeline/optimize` | `{ soul?, skills? }` … `SOUL.md` へ冪等追記＋3 スキル配置 |
 | GET | `/api/telemetry/receipt?board=&spec=&hours=` | 完了レシート用の集計（コスト・キャッシュ率・節約見込・操作メトリクス）。欠損は `null` ＋ `missing` |
