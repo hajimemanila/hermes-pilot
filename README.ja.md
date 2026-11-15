@@ -7,6 +7,8 @@ PWA プラグインです。エージェントが判断を仰ぐ場面を「1 �
 
 English README: [`README.md`](README.md)
 
+**[▶ インタラクティブデモを試す](https://hajimemanila.github.io/hermes-pilot/)** — インストール不要・Hermes 不要。A2B フロー（Spec Seed → Quick Review → Spec Launchpad → Architect 進行 → Mission Receipt）をモックで一通り触れます。単一ファイルは [`demo/index.html`](demo/index.html) にも同梱（Google Sites に埋め込み可）。
+
 ```text
 [スマホ / タブレット PWA] → https://<tailscale-host>/（または http://<lan-ip>:4097）
                               │

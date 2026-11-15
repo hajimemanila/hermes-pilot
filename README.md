@@ -7,6 +7,8 @@ kanban, chat, terminal and usage into a single installable PWA.
 
 日本語版は [`README.ja.md`](README.ja.md)。
 
+**[▶ Try the interactive demo](https://hajimemanila.github.io/hermes-pilot/)** — no install, no Hermes: a self-contained mock of the A2B flow (Spec Seed → Quick Review → Spec Launchpad → Architect progress → Mission Receipt). The single file is also in this repo at [`demo/index.html`](demo/index.html) and embeds into Google Sites.
+
 ```text
 [phone / tablet PWA] → https://<tailscale-host>/ (or http://<lan-ip>:4097)
                               │
