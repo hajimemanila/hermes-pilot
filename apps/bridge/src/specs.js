@@ -2,7 +2,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { ApiError } from './api-errors.js'
-import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'
 
 /**
  * Spec Launchpad — `docs/SPEC-*.md` を検出し、バッチ見出しをカンバンへ一括起票する。
@@ -541,9 +540,9 @@ function defaultRunner(cfg = {}, runner) {
   return (args) =>
     new Promise((resolve) => {
       execFile(
-        cfg.hermesBin ?? resolveHermesBin(),
+        cfg.hermesBin ?? 'hermes',
         args,
-        { timeout: 30_000, maxBuffer: 2_000_000, env: { ...process.env, PATH: buildAugmentedPath() } },
+        { timeout: 30_000, maxBuffer: 2_000_000, env: { ...process.env } },
         (err, stdout, stderr) => {
           resolve({ code: err ? (err.code ?? 1) : 0, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') })
         },
