@@ -17,28 +17,36 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 import {
   BOARD_RE,
+  DISMISSED_MAX,
+  EXECUTION_POLICIES,
   RUNNER_LABELS,
   SPEC_LAUNCH_KIND,
   SPEC_READY_KIND,
+  TERMINAL_TASK_STATUSES,
   buildArchitectTaskBody,
   buildArchitectTaskTitle,
   buildKanbanCreateArgs,
   buildSeedPrompt,
   createArchitect,
   createCliRunner,
+  executionModeLabel,
   filedBatchIds,
   findJobReviewTask,
   findJobSpec,
   makeJobId,
+  normalizeExecutionPolicy,
   normalizeSeed,
   pendingSpecs,
   publicJob,
+  queueStateOf,
   runnerLabel,
   sanitizeRunner,
 } from '../src/architect.js'
+import { createKanban } from '../src/kanban.js'
 import { parseCreatedTask } from '../src/specs.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -684,3 +692,199 @@ test('実行コードは OAuth クレデンシャルへ触れない（境界の�
     }
   }
 })
+
+// ---------------------------------------------------------------------------
+// SPEC V7 §3.1 — 状態遷移修正・ジョブ破棄 API・実行方針受付
+// ---------------------------------------------------------------------------
+
+/** `body` 列を持つ合成カンバン DB を作る（本番スキーマと同じ列名）。 */
+function makeKanbanBoard(dir, slug = 'demo') {
+  const boardDir = path.join(dir, 'kanban', 'boards', slug)
+  fs.mkdirSync(boardDir, { recursive: true })
+  fs.writeFileSync(path.join(boardDir, 'board.json'), JSON.stringify({ slug, name: 'Demo' }))
+  const db = new DatabaseSync(path.join(boardDir, 'kanban.db'))
+  db.exec(`
+    CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT, body TEXT, assignee TEXT, status TEXT,
+      priority INTEGER, created_at INTEGER, started_at INTEGER, completed_at INTEGER,
+      workspace_path TEXT, branch_name TEXT, worker_pid INTEGER, last_heartbeat_at INTEGER,
+      result TEXT, consecutive_failures INTEGER, session_id TEXT, current_step_key TEXT)
+  `)
+  return { db, boardDir }
+}
+
+test('kanban.tasks は body を返し、findJobReviewTask が本文の [review] を検出できる（§3.1①）', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pilot-kb-body-'))
+  const { db } = makeKanbanBoard(dir)
+  const ins = db.prepare(`INSERT INTO tasks (id, title, body, assignee, status, priority, created_at,
+      started_at, completed_at, consecutive_failures) VALUES (?,?,?,?,?,?,?,?,?,?)`)
+  // 本文にだけ `[review]` があり、タイトルには無いタスク（本文が読めないと検出できない形）
+  ins.run('t_arch', '[ARCH] 通知まとめ', 'Round 2 を書いています', 'mobile', 'running', 0, 1_700_000_000, 1_700_000_000, null, 0)
+  ins.run('t_rev', '通知まとめ: 決定 3 件', '回答待ち\n[review] Q1: 通知はまとめる？', 'mobile', 'blocked', 0, 1_700_000_005, null, null, 0)
+  db.close()
+
+  const kb = createKanban({ kanbanRoot: path.join(dir, 'kanban'), kanbanDb: path.join(dir, 'kanban.db') })
+  const tasks = kb.tasks('demo', { limit: 10 })
+  assert.equal(tasks.length, 2)
+  const rev = tasks.find((t) => t.id === 't_rev')
+  assert.match(String(rev.body), /\[review\]/, 'SQLite の body 列が返る')
+  assert.equal(tasks.find((t) => t.id === 't_arch').body, 'Round 2 を書いています')
+
+  const job = { startedAt: 1_700_000_000_000, taskId: 't_arch' }
+  assert.equal(findJobReviewTask(job, tasks)?.taskId, 't_rev', '本文の [review] から Review タスクを拾える')
+
+  // 本文を落とした一覧（PWA のタスク一覧）では検出できない = body 列が効いている証拠
+  const slim = kb.tasks('demo', { limit: 10, withBody: false })
+  assert.equal(slim.every((t) => !('body' in t)), true)
+  assert.equal(findJobReviewTask(job, slim), null)
+})
+
+test('親 [ARCH] が done / archived なら jobsFor は awaiting_spec で残さない（§3.1②）', async () => {
+  const repo = makeRepo()
+  const clock = 1_700_000_000_000
+  /** @type {Array<object>} */
+  let tasks = [{ id: 't_arch', title: '[ARCH] 通知まとめ', status: 'running', createdAt: clock }]
+  const arch = createArchitect(
+    {},
+    {
+      now: () => clock,
+      readTasks: () => tasks,
+      runner: async () => ({ code: 0, stdout: '{"id":"t_arch"}', stderr: '' }),
+    },
+  )
+
+  await arch.seed(seedInput(repo))
+  await settle()
+  let snap = await arch.jobs({ board: 'demo' })
+  assert.equal(snap.jobs.length, 1)
+  assert.equal(snap.jobs[0].status, 'awaiting_spec')
+  assert.equal(snap.jobs[0].queueState, 'running', '実行中は running')
+
+  // ワーカーが着火待ち（ready）→ キュー待ちとして区別できる
+  tasks = [{ id: 't_arch', title: '[ARCH] 通知まとめ', status: 'ready', createdAt: clock }]
+  snap = await arch.jobs({ board: 'demo' })
+  assert.equal(snap.jobs[0].status, 'awaiting_spec')
+  assert.equal(snap.jobs[0].queueState, 'queued', 'ready はキュー待ち')
+  assert.equal(snap.jobs[0].stage, 'awaiting_spec', 'キュー待ちを実行中と偽らない')
+
+  // 親が終端になったら進行バーから落ちる（「仕様書を書いています…」の残留を止める）
+  for (const status of TERMINAL_TASK_STATUSES) {
+    tasks = [{ id: 't_arch', title: '[ARCH] 通知まとめ', status, createdAt: clock }]
+    snap = await arch.jobs({ board: 'demo' })
+    assert.equal(snap.jobs.length, 0, `${status} はアクティブ一覧に残さない`)
+    assert.equal(snap.jobs.some((j) => j.status === 'awaiting_spec'), false)
+  }
+})
+
+test('queueStateOf は ready と実行中を分ける（純関数）', () => {
+  assert.equal(queueStateOf('ready'), 'queued')
+  assert.equal(queueStateOf('todo'), 'queued')
+  assert.equal(queueStateOf('running'), 'running')
+  assert.equal(queueStateOf('claimed'), 'running')
+  assert.equal(queueStateOf('done'), null)
+  assert.equal(queueStateOf(undefined), null)
+})
+
+test('dismiss は破棄を永続化し、再取得でも再起動でもアクティブ一覧に出さない（§3.1②）', async () => {
+  const repo = makeRepo()
+  const clock = 1_700_000_000_000
+  const dataDir = path.join(repo, 'data')
+  const make = () =>
+    createArchitect(
+      { dataDir },
+      {
+        now: () => clock,
+        readTasks: () => [],
+        runner: async () => ({ code: 0, stdout: '{"id":"t_arch"}', stderr: '' }),
+      },
+    )
+
+  const arch = make()
+  const seeded = await arch.seed(seedInput(repo))
+  await settle()
+  assert.equal((await arch.jobs({ board: 'demo' })).jobs.length, 1)
+
+  // 不正・不明な ID は 4xx 相当のコードで返す（サーバーは 400 / 404 に写す）
+  assert.equal(arch.dismiss('   ').code, 'INVALID_JOB_ID')
+  assert.equal(arch.dismiss('arch-nope-0000').code, 'JOB_NOT_FOUND')
+
+  const out = arch.dismiss(seeded.jobId)
+  assert.deepEqual(out, { ok: true, jobId: seeded.jobId, persisted: true })
+  assert.equal((await arch.jobs({ board: 'demo' })).jobs.length, 0, '破棄したジョブはアクティブ一覧に出ない')
+  assert.equal(
+    (await arch.jobs({ board: 'demo', includeDismissed: true })).jobs.filter((j) => j.dismissed).length,
+    1,
+    '監査用には includeDismissed で参照できる',
+  )
+
+  // 破棄 ID はデータストアに残る（0600）
+  const file = path.join(dataDir, 'architect-dismissed.json')
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600)
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).ids, [seeded.jobId])
+  assert.ok(DISMISSED_MAX >= 100)
+
+  // 再起動相当（同じ dataDir で作り直す）でも破棄は生きている
+  const restarted = make()
+  assert.equal(restarted.dismiss(seeded.jobId).ok, true, '永続ストアから復元されている')
+  assert.equal(restarted.dismiss('arch-other-0000').code, 'JOB_NOT_FOUND', '未知の ID は通さない')
+
+  // 壊れた JSON は空集合へ戻す（起動を止めない）
+  fs.writeFileSync(file, '{not json')
+  const broken = make()
+  assert.equal(broken.dismiss(seeded.jobId).code, 'JOB_NOT_FOUND')
+})
+
+test('executionPolicy は zero-stop 既定で正規化され、プロンプトと公開ジョブに載る（§3.1③）', async () => {
+  assert.deepEqual(EXECUTION_POLICIES, ['zero-stop', 'visual-gate'])
+  assert.equal(normalizeExecutionPolicy(undefined), 'zero-stop')
+  assert.equal(normalizeExecutionPolicy('VISUAL-GATE'), 'visual-gate')
+  assert.equal(normalizeExecutionPolicy('visual_gate'), 'visual-gate')
+  assert.equal(normalizeExecutionPolicy('nope'), 'zero-stop')
+  assert.equal(executionModeLabel('visual-gate'), '[Mode: Visual Gate]')
+  assert.equal(executionModeLabel(undefined), '[Mode: Zero-Stop]')
+
+  const base = { jobId: 'arch-1', seedText: '通知をまとめる', board: 'demo', repoPath: '/tmp/x' }
+  const zero = buildSeedPrompt(base)
+  assert.match(zero, /Round 1 Quick Review interview is mandatory under both policies/)
+  assert.match(zero, /Execution policy chosen by the user: `zero-stop`/)
+  assert.match(zero, /\[Mode: Zero-Stop\]/)
+
+  const gate = buildSeedPrompt({ ...base, executionPolicy: 'visual-gate' })
+  assert.match(gate, /Round 1 Quick Review interview is mandatory under both policies/, '両方針ともインタビューは維持')
+  assert.match(gate, /Execution policy chosen by the user: `visual-gate`/)
+  assert.match(gate, /\[Mode: Visual Gate\]/)
+  assert.doesNotMatch(gate, /\[Mode: Zero-Stop\]/, 'バッチ既定は Visual Gate に切り替わる')
+
+  // [ARCH] タスク本文（カンバン起票）にも方針が載る
+  const bodyArgs = { prompt: 'P', board: 'demo', repoPath: '/tmp/x', jobId: 'arch-1' }
+  assert.match(buildArchitectTaskBody(bodyArgs), /Execution Policy: zero-stop/)
+  assert.match(buildArchitectTaskBody({ ...bodyArgs, executionPolicy: 'visual-gate' }), /\[Mode: Visual Gate\]/)
+
+  // seed → ランナー → 公開ジョブまで通しで保持される
+  const repo = makeRepo()
+  const calls = []
+  const arch = createArchitect(
+    {},
+    {
+      now: () => 1_700_000_000_000,
+      readTasks: () => [],
+      runner: async (args) => {
+        calls.push(args)
+        return { code: 0, stdout: '{"id":"t_arch"}', stderr: '' }
+      },
+    },
+  )
+  const seeded = await arch.seed(seedInput(repo, { executionPolicy: 'visual-gate' }))
+  assert.equal(seeded.executionPolicy, 'visual-gate')
+  await settle()
+  assert.equal(calls[0].executionPolicy, 'visual-gate', 'ランナーへ渡る')
+  assert.match(String(calls[0].prompt), /\[Mode: Visual Gate\]/)
+  const job = (await arch.jobs({ board: 'demo' })).jobs[0]
+  assert.equal(job.executionPolicy, 'visual-gate')
+  assert.equal(job.id, seeded.jobId)
+
+  // 未指定は既定（zero-stop）に正規化される
+  const plain = await arch.seed(seedInput(repo, { executionPolicy: 'bogus' }))
+  assert.equal(plain.executionPolicy, 'zero-stop')
+  assert.equal(publicJob({ id: 'x', board: 'demo', status: 'running' }).executionPolicy, 'zero-stop')
+})
+

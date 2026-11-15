@@ -8,6 +8,14 @@
  *  3. `jobs()`   … 未起票の SPEC を数えて返す（1 タップ一括起票カードの材料）
  *  4. `autoStart` … ON のジョブだけ、完成 SPEC の未起票バッチを**1 回だけ**起票する（冪等）
  *
+ * ## スタックしないための終端判定（SPEC V7 §3.1）
+ *
+ * - 親 `[ARCH]` タスクが `done` / `archived` になったら、SPEC 未検知でもジョブは終端にして
+ *   進行バー（`jobs`）から落とす。落とさないと「仕様書を書いています…」が残り続ける。
+ * - `dismiss(jobId)` は破棄を**データストアに永続化**する（リロード・再起動で復活しない）。
+ *   `jobs()` は破棄済みを既定で除外する（`includeDismissed: true` は監査・テスト用）。
+ * - `queueState`（`queued` / `running`）で「キュー待ち」と「実行中」を区別できる形で返す。
+ *
  * ## 実行ランナーと境界（ToS / OAuth）
  *
  * - 既定は `hermes`（Hermes Native）。`hermes -z <prompt> --in <repo>` の**公式 CLI を子プロセス**で 1 回だけ起動する。
@@ -36,6 +44,21 @@ export const SPEC_LAUNCH_KIND = 'spec_launch'
 
 /** 選べるランナー。既定は Hermes Native（公開プラグインの単体完動性）。 */
 export const RUNNERS = ['hermes', 'antigravity']
+
+/**
+ * 実行方針（生成する SPEC 各バッチの既定 Execution Mode）。SPEC V7 §3.1 / D35。
+ *
+ * どちらの方針でも Round 1 の Quick Review インタビューは必ず行い、
+ * 変わるのは「各バッチを止まらずに完走させるか・要所で視覚確認を挟むか」だけ。
+ */
+export const EXECUTION_POLICIES = ['zero-stop', 'visual-gate']
+/** 実行方針の既定値（未指定・不正値はこれへ正規化する）。 */
+export const DEFAULT_EXECUTION_POLICY = 'zero-stop'
+
+/** 親 `[ARCH]` タスクがこの状態になったらジョブは終端（進行バーに残さない）。 */
+export const TERMINAL_TASK_STATUSES = ['done', 'archived']
+/** 破棄したジョブ ID を保持する上限（古いものから落とす）。 */
+export const DISMISSED_MAX = 500
 
 /** 0 行の種はインタビューにならない。長すぎる種はプロンプトを壊す。 */
 export const SEED_MIN = 1
@@ -76,6 +99,47 @@ export function runnerLabel(value) {
 }
 
 /**
+ * 実行方針を正規化する（未指定・不正値は `zero-stop`）。
+ * @param {unknown} value 入力
+ * @returns {'zero-stop'|'visual-gate'} 実行方針
+ */
+export function normalizeExecutionPolicy(value) {
+  const text = String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, '-')
+  return EXECUTION_POLICIES.includes(text) ? text : DEFAULT_EXECUTION_POLICY
+}
+
+/**
+ * 実行方針に対応する SPEC バッチの `Execution Mode` 表記。
+ * @param {unknown} value 実行方針
+ * @returns {string} `[Mode: Zero-Stop]` / `[Mode: Visual Gate]`
+ */
+export function executionModeLabel(value) {
+  return normalizeExecutionPolicy(value) === 'visual-gate' ? '[Mode: Visual Gate]' : '[Mode: Zero-Stop]'
+}
+
+/**
+ * プロンプトへ差し込む実行方針の指示（両方針共通で Quick Review は必須）。
+ * @param {unknown} value 実行方針
+ * @returns {string[]} 行
+ */
+function executionPolicyLines(value) {
+  const policy = normalizeExecutionPolicy(value)
+  const mode = executionModeLabel(policy)
+  const intent =
+    policy === 'visual-gate'
+      ? 'pause at the visual checkpoints and wait for approval before going further'
+      : 'do not stop for approval: run every batch autonomously to done'
+  return [
+    `- Round 1 Quick Review interview is mandatory under both policies: still write the sheet and stop.`,
+    `- Execution policy chosen by the user: \`${policy}\`. Every batch in the generated SPEC must default to`,
+    `  **Execution Mode**: \`${mode}\` : ${intent}.`,
+  ]
+}
+
+/**
  * [`[ARCH]` タスクのタイトル]（カンバン起票に載る 1 行）。
  * @param {{seedText?: string, prompt?: string}} input 入力
  * @returns {string} タイトル
@@ -92,10 +156,14 @@ export function buildArchitectTaskTitle({ seedText, prompt } = {}) {
  * [`[ARCH]` タスクの本文]（spec-architect プロトコル＋実行契約）。
  *
  * カンバン起票に載せるので、ワーカーが**チャットを見なくても**完走できる内容にする。
- * @param {{prompt: string, board: string, repoPath: string, jobId: string}} input 入力
+ * `executionPolicy` は**生成する SPEC の各バッチ**に付す既定 Execution Mode を決める
+ * （Architect 自身は止まらずに書き切るので、この本文の契約は常に zero-stop）。
+ *
+ * @param {{prompt: string, board: string, repoPath: string, jobId: string, executionPolicy?: string}} input 入力
  * @returns {string} 本文
  */
-export function buildArchitectTaskBody({ prompt, board, repoPath, jobId }) {
+export function buildArchitectTaskBody({ prompt, board, repoPath, jobId, executionPolicy = DEFAULT_EXECUTION_POLICY }) {
+  const policy = normalizeExecutionPolicy(executionPolicy)
   return [
     `[hermes-pilot:architect job=${jobId}] Architect (Kanban native)`,
     '',
@@ -104,10 +172,12 @@ export function buildArchitectTaskBody({ prompt, board, repoPath, jobId }) {
     '---',
     '[Hermes Pilot Execution Contract]',
     'Mode: zero-stop',
+    `Execution Policy: ${policy} (applies to the batches of the SPEC you write)`,
     'Follow the `spec-architect` skill protocol for the seed above.',
     'Round 1: write the Quick Review sheet and file it as a blocked `[review]` task. Do not wait in chat.',
     'Round 2: after the answers arrive, write `docs/SPEC-<SLUG>.md` with `### Batch <ID>: <Title>` sections,',
     'each carrying **Execution Mode** / **目的** / **変更・新規ファイル** / **受入条件（Verify）**.',
+    ...executionPolicyLines(policy),
     'Stay inside the official local CLI: never read or reuse Antigravity OAuth credentials or profiles.',
     `Board: ${board}`,
     `Repository: ${repoPath}`,
@@ -192,10 +262,19 @@ export function normalizeSeed(value) {
  * Architect へ渡すプロンプト（`spec-architect` プロトコル）。
  *
  * 長文の質問を並べるのではなく、Quick Review シート → 1 タップ承認 → SPEC 生成、の順を固定する。
- * @param {{jobId: string, seedText: string, board: string, repoPath: string, autoStart?: boolean, lang?: string}} input 入力
+ * `executionPolicy` は**生成する SPEC の各バッチ**の既定 Execution Mode を決める（D35）。
+ * @param {{jobId: string, seedText: string, board: string, repoPath: string, autoStart?: boolean, executionPolicy?: string, lang?: string}} input 入力
  * @returns {string} プロンプト
  */
-export function buildSeedPrompt({ jobId, seedText, board, repoPath, autoStart = false, lang = 'ja' }) {
+export function buildSeedPrompt({
+  jobId,
+  seedText,
+  board,
+  repoPath,
+  autoStart = false,
+  executionPolicy = DEFAULT_EXECUTION_POLICY,
+  lang = 'ja',
+}) {
   const auto = autoStart
     ? 'The PWA will file the batches automatically as soon as this SPEC appears, so do not file them yourself.'
     : 'Do not file anything yet: the user taps "File batches & start" once the SPEC is ready.'
@@ -222,6 +301,9 @@ export function buildSeedPrompt({ jobId, seedText, board, repoPath, autoStart = 
     '  - **変更・新規ファイル**: the exact paths to touch',
     '  - **受入条件（Verify）**: the command that proves it works',
     '',
+    'Execution policy for the batches you generate:',
+    ...executionPolicyLines(executionPolicy),
+    '',
     auto,
   ].join('\n')
 }
@@ -236,10 +318,19 @@ export function buildSeedPrompt({ jobId, seedText, board, repoPath, autoStart = 
  *
  * `agy` でもクレデンシャルには触れない: バイナリ名と引数だけを渡し、CLI 自身に認証を任せる。
  * @param {object} [cfg] 設定（`hermesBin` / `agyBin`）
- * @returns {Function} `({runnerId, prompt, repoPath, board, seedText, jobId, timeoutMs}) => Promise<{code,stdout,stderr}>`
+ * @returns {Function} `({runnerId, prompt, repoPath, board, seedText, jobId, executionPolicy, timeoutMs}) => Promise<{code,stdout,stderr}>`
  */
 export function createCliRunner(cfg = {}) {
-  return ({ runnerId, prompt, repoPath, board = '', seedText = '', jobId = '', timeoutMs = RUNNER_TIMEOUT_MS }) =>
+  return ({
+    runnerId,
+    prompt,
+    repoPath,
+    board = '',
+    seedText = '',
+    jobId = '',
+    executionPolicy = DEFAULT_EXECUTION_POLICY,
+    timeoutMs = RUNNER_TIMEOUT_MS,
+  }) =>
     new Promise((resolve) => {
       const antigravity = sanitizeRunner(runnerId) === 'antigravity'
       let bin = ''
@@ -250,7 +341,7 @@ export function createCliRunner(cfg = {}) {
       } else {
         bin = cfg.hermesBin ?? resolveHermesBin()
         const title = buildArchitectTaskTitle({ seedText: seedText || prompt })
-        const body = buildArchitectTaskBody({ prompt, board, repoPath, jobId })
+        const body = buildArchitectTaskBody({ prompt, board, repoPath, jobId, executionPolicy })
         args = buildKanbanCreateArgs({ board, title, body })
       }
       execFile(
@@ -330,6 +421,24 @@ export function pendingSpecs(specs, tasks) {
 }
 
 /**
+ * 親タスクの状態から「キュー待ち（queued）」と「実行中（running）」を判別する（SPEC V7 §3.1）。
+ *
+ * `ready` は着手中ではない＝キュー待ち。`running` / `claimed` は実行中。
+ * 判定できない状態（`blocked` など）は `null`（UI は従来の表示にフォールバック）。
+ *
+ * @param {unknown} taskStatus 親 `[ARCH]` タスクの status
+ * @returns {'queued'|'running'|null} キュー状態
+ */
+export function queueStateOf(taskStatus) {
+  const s = String(taskStatus ?? '')
+    .trim()
+    .toLowerCase()
+  if (['running', 'claimed', 'in_progress'].includes(s)) return 'running'
+  if (['ready', 'todo', 'scheduled', 'blocked'].includes(s)) return 'queued'
+  return null
+}
+
+/**
  * 保存するジョブの形（機密を持たない。種は先頭 400 字だけ）。
  * @param {object} job 内部ジョブ
  * @returns {object} 公開用
@@ -347,6 +456,9 @@ export function publicJob(job) {
     fallbackReason: job.fallbackReason ?? null,
     taskId: job.taskId ?? null,
     taskStatus: job.taskStatus ?? null,
+    queueState: job.queueState ?? queueStateOf(job.taskStatus),
+    executionPolicy: normalizeExecutionPolicy(job.executionPolicy),
+    dismissed: Boolean(job.dismissed),
     reviewTaskId: job.reviewTaskId ?? null,
     reviewTitle: job.reviewTitle ?? null,
     autoStart: Boolean(job.autoStart),
@@ -403,6 +515,52 @@ export function createArchitect(cfg = {}, deps = {}) {
 
   const configPath = cfg.dataDir ? path.join(cfg.dataDir, 'architect-config.json') : null
 
+  // 破棄したジョブ（リロード・再起動で復活させない）。SPEC V7 §3.1②
+  const dismissedPath = cfg.dataDir ? path.join(cfg.dataDir, 'architect-dismissed.json') : null
+  /** @type {Set<string>} */
+  const dismissedIds = loadDismissed()
+
+  /**
+   * 破棄済みジョブ ID を読む（壊れた JSON・不在は空集合）。
+   * @returns {Set<string>} ID 集合
+   */
+  function loadDismissed() {
+    if (!dismissedPath) return new Set()
+    try {
+      const raw = JSON.parse(fs.readFileSync(dismissedPath, 'utf8'))
+      const list = Array.isArray(raw) ? raw : Array.isArray(raw?.ids) ? raw.ids : []
+      return new Set(list.map((v) => String(v ?? '').trim()).filter(Boolean))
+    } catch {
+      return new Set()
+    }
+  }
+
+  /**
+   * 破棄済みジョブ ID を保存する（最新 `DISMISSED_MAX` 件）。
+   * @returns {boolean} 保存できたら true（`dataDir` 未設定ならファイルを持たないので true）
+   */
+  function saveDismissed() {
+    if (!dismissedPath) return true
+    const ids = [...dismissedIds].slice(-DISMISSED_MAX)
+    try {
+      fs.mkdirSync(path.dirname(dismissedPath), { recursive: true })
+      fs.writeFileSync(dismissedPath, `${JSON.stringify({ ids }, null, 2)}\n`, { mode: 0o600 })
+      return true
+    } catch {
+      return false // 保存に失敗してもジョブはメモリ上で破棄済みにする（再取得で戻るのは次善）
+    }
+  }
+
+  /** ジョブが破棄済みか。 */
+  function isDismissed(job) {
+    return Boolean(job?.dismissed) || dismissedIds.has(String(job?.id ?? ''))
+  }
+
+  /** ジョブが終端（親 [ARCH] が done / archived）か。 */
+  function isTerminal(job) {
+    return TERMINAL_TASK_STATUSES.includes(String(job?.status ?? ''))
+  }
+
   /**
    * 設定（既定 `{runner:'hermes'}`）。壊れた JSON は既定へ戻す。
    * @returns {{runner: 'hermes'|'antigravity'}} 設定
@@ -440,8 +598,8 @@ export function createArchitect(cfg = {}, deps = {}) {
 
   /**
    * 仕様の種を撒く（202 で即答し、ランナーは背後で走る）。
-   * @param {object} input `{repoPath, board, seedText, runner?, autoStart?, chat?, lang?}`
-   * @returns {Promise<object>} `{ok, jobId, status, runner, autoStart}` または `{ok:false, code, error}`
+   * @param {object} input `{repoPath, board, seedText, runner?, autoStart?, executionPolicy?, chat?, lang?}`
+   * @returns {Promise<object>} `{ok, jobId, status, runner, executionPolicy, autoStart}` または `{ok:false, code, error}`
    */
   async function seed(input = {}) {
     const seedText = normalizeSeed(input.seedText)
@@ -468,6 +626,7 @@ export function createArchitect(cfg = {}, deps = {}) {
     }
 
     const startedAt = now()
+    const executionPolicy = normalizeExecutionPolicy(input.executionPolicy)
     const job = {
       id: makeJobId(startedAt),
       board,
@@ -479,6 +638,9 @@ export function createArchitect(cfg = {}, deps = {}) {
       fallbackReason: null,
       taskId: null,
       taskStatus: null,
+      queueState: null,
+      executionPolicy,
+      dismissed: false,
       reviewTaskId: null,
       reviewTitle: null,
       mode: runnerId === 'antigravity' ? 'cli' : 'kanban',
@@ -505,13 +667,14 @@ export function createArchitect(cfg = {}, deps = {}) {
       board,
       repoPath,
       autoStart: job.autoStart,
+      executionPolicy,
       lang: job.lang,
     })
     job.prompt = prompt
 
     // 背後の実行。落ちてもジョブに理由を残すだけで、呼び出し元は待たない。
     void Promise.resolve()
-      .then(() => runner({ runnerId, prompt, repoPath, board, seedText, jobId: job.id }))
+      .then(() => runner({ runnerId, prompt, repoPath, board, seedText, jobId: job.id, executionPolicy }))
       .then(async (res) => {
         job.finishedAt = now()
         const code = typeof res?.code === 'number' ? res.code : 0
@@ -545,7 +708,14 @@ export function createArchitect(cfg = {}, deps = {}) {
         job.error = String(e?.message ?? e).slice(0, 600)
       })
 
-    return { ok: true, jobId: job.id, status: job.status, runner: runnerId, autoStart: job.autoStart }
+    return {
+      ok: true,
+      jobId: job.id,
+      status: job.status,
+      runner: runnerId,
+      executionPolicy,
+      autoStart: job.autoStart,
+    }
   }
 
   /**
@@ -567,6 +737,7 @@ export function createArchitect(cfg = {}, deps = {}) {
         board: job.board,
         seedText: job.seedText,
         jobId: job.id,
+        executionPolicy: job.executionPolicy,
       })
       const code = typeof res?.code === 'number' ? res.code : 0
       const taskId = res?.taskId ?? parseCreatedTask(res?.stdout)?.id ?? null
@@ -622,8 +793,9 @@ export function createArchitect(cfg = {}, deps = {}) {
 
   /**
    * ジョブの進み具合と、完成 SPEC・未起票 SPEC を返す。
-   * @param {{board?: string, repoPath?: string, include?: {repoPath?: string, board?: string}}} [query] 絞り込み
+   * @param {{board?: string, repoPath?: string, include?: {repoPath?: string, board?: string}, includeDismissed?: boolean}} [query] 絞り込み
    *   `include` はジョブが 1 つも無いボードでも「未起票 SPEC」を数えるための追加走査先
+   *   `includeDismissed` は破棄済みジョブも返す（監査・テスト用。既定は除外）
    * @returns {Promise<object>} `{ok, board, runner, capabilities, jobs, specReady, pending}`
    */
   async function jobsFor(query = {}) {
@@ -700,6 +872,17 @@ export function createArchitect(cfg = {}, deps = {}) {
       const tasks = tasksOf(job.board)
       const self = job.taskId ? tasks.find((t) => t && String(t.id) === String(job.taskId)) ?? null : null
       job.taskStatus = self?.status ? String(self.status) : null
+      job.queueState = queueStateOf(job.taskStatus)
+      // 親 [ARCH] が終端（done / archived）なら、SPEC 未検知でもジョブを終端にする。
+      // ここを落とすと「仕様書を書いています…」が進行バーに残り続ける（SPEC V7 §3.1②）。
+      if (self && TERMINAL_TASK_STATUSES.includes(String(self.status))) {
+        job.status = String(self.status)
+        job.queueState = null
+        job.reviewTaskId = null
+        job.reviewTitle = null
+        job.finishedAt = job.finishedAt ?? now()
+        continue
+      }
       if (self && self.status === 'failed') {
         job.status = 'failed'
         job.error = String(self.result || job.error || 'Architect task failed').slice(0, 600)
@@ -727,8 +910,11 @@ export function createArchitect(cfg = {}, deps = {}) {
           : job.status
     }
 
+    // 進行バーに出すジョブ（破棄済み・終端は既定で落とす）。SPEC V7 §3.1②
+    const visible = mine.filter((job) => !isTerminal(job) && (query.includeDismissed || !isDismissed(job)))
+
     // autoStart: 完成 SPEC の未起票バッチを 1 回だけ起票する
-    for (const job of mine) {
+    for (const job of visible) {
       if (!job.autoStart || job.status !== 'spec_ready' || job.launchStarted) continue
       job.launchStarted = true
       let tasks = []
@@ -787,7 +973,7 @@ export function createArchitect(cfg = {}, deps = {}) {
     // 未起票の SPEC（Seed と関係なくても、新しく置かれた SPEC を拾う）
     const pending = []
     const seenRepo = new Set()
-    const scans = mine.map((job) => ({ repoPath: job.repoPath, board: job.board }))
+    const scans = visible.map((job) => ({ repoPath: job.repoPath, board: job.board }))
     if (query.include?.repoPath) scans.push({ repoPath: query.include.repoPath, board: query.include.board ?? board })
     for (const scan of scans) {
       if (seenRepo.has(scan.repoPath)) continue
@@ -803,7 +989,7 @@ export function createArchitect(cfg = {}, deps = {}) {
       }
     }
 
-    const specReady = mine
+    const specReady = visible
       .filter((j) => j.completedSpec && (j.status === 'spec_ready' || j.status === 'launched'))
       .map((j) => ({
         jobId: j.id,
@@ -823,16 +1009,48 @@ export function createArchitect(cfg = {}, deps = {}) {
       board: board || null,
       runner: getConfig().runner,
       capabilities: { hasAgyCli: Boolean(hasAgyCli()) },
-      jobs: mine.map(publicJob),
+      jobs: visible.map(publicJob),
       specReady,
       pending,
+    }
+  }
+
+  /**
+   * ジョブを破棄する（サーバー側に永続化し、リロード・再起動で復活させない）。SPEC V7 §3.1②。
+   *
+   * 破棄は**監査のための記録**であってタスクの削除ではない（カンバン側は触らない）。
+   * @param {unknown} jobId ジョブ ID
+   * @returns {{ok: boolean, jobId?: string, persisted?: boolean, code?: string, error?: string}} 結果
+   */
+  function dismiss(jobId) {
+    const id = String(jobId ?? '').trim()
+    if (!id) return { ok: false, code: 'INVALID_JOB_ID', error: 'jobId is required' }
+    const job = jobs.get(id) ?? null
+    if (!job && !dismissedIds.has(id)) return { ok: false, code: 'JOB_NOT_FOUND', error: 'job not found' }
+    if (job) {
+      job.dismissed = true
+      job.dismissedAt = now()
+    }
+    dismissedIds.add(id)
+    trimDismissed()
+    const persisted = saveDismissed() && dismissedPath !== null
+    return { ok: true, jobId: id, persisted }
+  }
+
+  /** 破棄 ID の保持数を上限へ丸める（古いものから落とす）。 */
+  function trimDismissed() {
+    while (dismissedIds.size > DISMISSED_MAX) {
+      const oldest = dismissedIds.values().next().value
+      if (oldest == null) break
+      dismissedIds.delete(oldest)
     }
   }
 
   /** テスト用にジョブを捨てる。 */
   function reset() {
     jobs.clear()
+    dismissedIds.clear()
   }
 
-  return { seed, jobs: jobsFor, getConfig, setConfig, reset }
+  return { seed, jobs: jobsFor, dismiss, getConfig, setConfig, reset }
 }

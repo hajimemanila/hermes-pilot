@@ -471,6 +471,8 @@
   "err.INVALID_SEED": "A seed text is required",
   "err.INVALID_BOARD": "The board name is invalid",
   "err.INVALID_REPO": "The repository path is invalid",
+  "err.INVALID_JOB_ID": "A job id is required",
+  "err.JOB_NOT_FOUND": "The architect job was not found",
   "err.WRITE_FAILED": "Could not write the output",
   "repo.noBoard": "No boards",
   "repo.boardMore": " +{rest} more",

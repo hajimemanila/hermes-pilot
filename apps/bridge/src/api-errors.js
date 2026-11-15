@@ -97,6 +97,8 @@ export const ERROR_MESSAGES = {
   INVALID_SEED: 'A seed text is required',
   INVALID_BOARD: 'The board name is invalid',
   INVALID_REPO: 'The repository path is invalid',
+  INVALID_JOB_ID: 'A job id is required',
+  JOB_NOT_FOUND: 'The architect job was not found',
   WRITE_FAILED: 'Could not write the output',
 }
 

@@ -700,10 +700,12 @@ async function handleApi(req, res, url) {
   }
 
   // --- Architect（仕様の種 → SPEC）／ハイブリッド A2B（SPEC V5 §3.2・§3.3① / D23・D25・D26①）--
-  // POST /api/architect/seed { repo?, board?, seedText, runner?, autoStart?, chat?, lang? }
+  // POST /api/architect/seed { repo?, board?, seedText, runner?, autoStart?, executionPolicy?, chat?, lang? }
   //      … 202 で `{ok, jobId, status}` を即返し、Architect は背後で走る（画面を待たせない）
   // GET  /api/architect/jobs?board=<slug>&repo=<id>
   //      … ジョブ / 完成 SPEC（`spec_ready`）/ 未起票 SPEC（一括起票カードの材料）
+  // POST /api/architect/jobs/:id/dismiss
+  //      … ジョブ破棄をサーバー側に永続化する（再取得しても進行バーに出ない。SPEC V7 §3.1）
   // GET  /api/architect/config ・ PUT /api/architect/config { runner }
   //      … 実行ランナー（既定 `hermes`、Opt-in で `antigravity`）
   if (a === 'architect') {
@@ -742,6 +744,7 @@ async function handleApi(req, res, url) {
         seedText: body?.seedText,
         runner: body?.runner,
         autoStart: Boolean(body?.autoStart),
+        executionPolicy: body?.executionPolicy,
         chat: body?.chat,
         lang: body?.lang,
       })
@@ -750,6 +753,7 @@ async function handleApi(req, res, url) {
         board,
         repo: target.repo,
         runner: r.runner ?? null,
+        executionPolicy: r.executionPolicy ?? null,
         autoStart: Boolean(body?.autoStart),
         chars: String(body?.seedText ?? '').length,
         ok: Boolean(r.ok),
@@ -758,7 +762,17 @@ async function handleApi(req, res, url) {
       return r.ok ? sendJson(res, 202, r) : sendFailure(res, 400, r)
     }
 
-    if (b === 'jobs' && req.method === 'GET') {
+    if (b === 'jobs' && c && d === 'dismiss' && req.method === 'POST') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendError(res, 429, 'RATE_LIMITED')
+      }
+      const r = architect.dismiss(c)
+      auth.audit({ kind: 'architect.dismiss', jobId: String(c), ok: Boolean(r.ok), persisted: Boolean(r.persisted) })
+      if (!r.ok) return sendFailure(res, r.code === 'JOB_NOT_FOUND' ? 404 : 400, r)
+      return sendJson(res, 200, { ok: true, jobId: r.jobId, persisted: Boolean(r.persisted) })
+    }
+
+    if (b === 'jobs' && !c && req.method === 'GET') {
       const board = String(url.searchParams.get('board') ?? '').trim()
       const target = resolveSpecRepo({ repoId: url.searchParams.get('repo'), boardSlug: board || null })
       const snapshot = await architect.jobs({
@@ -794,7 +808,9 @@ async function handleApi(req, res, url) {
       return r.ok ? sendJson(res, 201, r) : sendFailure(res, 400, r)
     }
     if (b && c === 'tasks' && !d) {
-      const list = kanban.tasks(b, { limit: Number(url.searchParams.get('limit') ?? 60) })
+      // 一覧は本文を載せない（1 件 1.5KB 平均 × 60 件で 90KB になり、モバイル回線で重い）。
+      // 本文は詳細（/api/boards/:slug/tasks/:id）から取る。
+      const list = kanban.tasks(b, { limit: Number(url.searchParams.get('limit') ?? 60), withBody: false })
       // 履歴（kanban-sop）に記録があるタスクだけ git / Discord を添える
       const enriched = await Promise.all(
         list.map(async (t) => {

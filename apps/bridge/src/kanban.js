@@ -117,17 +117,24 @@ export function createKanban(cfg) {
 
   /**
    * タスク一覧（更新の新しい順）。
+   *
+   * `body` は Architect の `findJobReviewTask` が `[review]` の本文を読むために要る
+   * （SPEC V7 §3.1①）。重い一覧（PWA のタスク一覧）だけは `withBody: false` で落とせる。
+   *
    * @param {string} slug ボード
-   * @param {{limit?: number, statuses?: string[]}} [opts] オプション
+   * @param {{limit?: number, statuses?: string[], withBody?: boolean}} [opts] オプション
    * @returns {Array<object>} タスク
    */
   function tasks(slug, opts = {}) {
     const limit = Math.min(Number(opts.limit ?? 60), 200)
+    const withBody = opts.withBody !== false
     const db = new DatabaseSync(dbFor(slug), { readOnly: true })
     try {
+      // 古い板の `tasks` に `body` 列が無くても落とさない（無ければ空文字）
+      const bodyCol = hasColumn(db, 'tasks', 'body') ? 'body' : "'' AS body"
       const rows = db
         .prepare(
-          `SELECT id, title, status, priority, assignee, created_at, started_at, completed_at,
+          `SELECT id, title, ${bodyCol}, status, priority, assignee, created_at, started_at, completed_at,
                   workspace_path, branch_name, worker_pid, last_heartbeat_at, result,
                   consecutive_failures, session_id, current_step_key
              FROM tasks
@@ -135,24 +142,28 @@ export function createKanban(cfg) {
             LIMIT ?`,
         )
         .all(limit)
-      return rows.map((r) => ({
-        id: r.id,
-        title: r.title,
-        status: r.status,
-        priority: Number(r.priority ?? 0),
-        assignee: r.assignee,
-        createdAt: Number(r.created_at ?? 0) * 1000,
-        startedAt: r.started_at ? Number(r.started_at) * 1000 : null,
-        completedAt: r.completed_at ? Number(r.completed_at) * 1000 : null,
-        workspace: r.workspace_path,
-        branch: r.branch_name,
-        running: r.status === 'running',
-        workerPid: r.worker_pid ?? null,
-        elapsedSec: r.started_at ? Math.max(0, Math.round(Date.now() / 1000 - Number(r.started_at))) : null,
-        result: r.result ? String(r.result).slice(0, 400) : null,
-        failures: Number(r.consecutive_failures ?? 0),
-        sessionId: r.session_id ?? null,
-      }))
+      return rows.map((r) => {
+        const row = {
+          id: r.id,
+          title: r.title,
+          status: r.status,
+          priority: Number(r.priority ?? 0),
+          assignee: r.assignee,
+          createdAt: Number(r.created_at ?? 0) * 1000,
+          startedAt: r.started_at ? Number(r.started_at) * 1000 : null,
+          completedAt: r.completed_at ? Number(r.completed_at) * 1000 : null,
+          workspace: r.workspace_path,
+          branch: r.branch_name,
+          running: r.status === 'running',
+          workerPid: r.worker_pid ?? null,
+          elapsedSec: r.started_at ? Math.max(0, Math.round(Date.now() / 1000 - Number(r.started_at))) : null,
+          result: r.result ? String(r.result).slice(0, 400) : null,
+          failures: Number(r.consecutive_failures ?? 0),
+          sessionId: r.session_id ?? null,
+        }
+        if (withBody) row.body = r.body == null ? '' : String(r.body)
+        return row
+      })
     } finally {
       db.close()
     }
@@ -258,6 +269,24 @@ export function createKanban(cfg) {
       return db.prepare(sql).all(arg)
     } catch {
       return []
+    }
+  }
+
+  /**
+   * テーブルに列があるか（板のスキーマ版差を吸収する）。
+   * @param {import('node:sqlite').DatabaseSync} db DB
+   * @param {string} table テーブル名
+   * @param {string} column 列名
+   * @returns {boolean} あれば true
+   */
+  function hasColumn(db, table, column) {
+    try {
+      return db
+        .prepare(`PRAGMA table_info(${table})`)
+        .all()
+        .some((c) => String(c?.name ?? '') === column)
+    } catch {
+      return false
     }
   }
 

@@ -471,6 +471,8 @@
   "err.INVALID_SEED": "seed テキストが必要です",
   "err.INVALID_BOARD": "ボード名が不正です",
   "err.INVALID_REPO": "リポジトリのパスが不正です",
+  "err.INVALID_JOB_ID": "ジョブ ID が必要です",
+  "err.JOB_NOT_FOUND": "仕様策定ジョブが見つかりません",
   "err.WRITE_FAILED": "出力を書き込めませんでした",
   "repo.noBoard": "ボードなし",
   "repo.boardMore": " ほか {rest}",
