@@ -1,7 +1,7 @@
 {
   "name": "hermes-pilot",
   "label": "Hermes Pilot",
-  "description": "Pair a phone with the Hermes Pilot PWA — one-time QR code, bridge status, scan directories and the keep-alive service, all from the standard dashboard.",
+  "description": "Pair a phone with the Hermes Pilot PWA and drive the A2B pipeline from it — Spec Seed to filed batches, live architect progress, one-tap review sheets and visual annotation — plus the one-time pairing QR, bridge status, scan directories and the keep-alive service, all from the standard dashboard.",
   "icon": "QrCode",
   "version": "0.1.0",
   "tab": {

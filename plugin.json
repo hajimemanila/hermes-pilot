@@ -2,7 +2,7 @@
   "name": "hermes-pilot",
   "displayName": "Hermes Pilot",
   "version": "0.1.0",
-  "description": "Drive an autonomous Hermes Agent from your phone or tablet: Quick Review sheets, visual annotation, kanban, chat and terminal in one installable PWA.",
+  "description": "The A2B pipeline for an autonomous Hermes Agent, in your pocket: turn a one-line Spec Seed into a Quick Review interview, a spec the batch runner can execute, filed kanban batches, live monitoring and a Mission Receipt — plus annotation, chat, terminal and usage in one installable PWA.",
   "author": "Hermes Pilot contributors",
   "license": "MIT",
   "kind": "app",
@@ -21,7 +21,8 @@
   },
   "skills": [
     "skills/quick-review/SKILL.md",
-    "skills/annotation/SKILL.md"
+    "skills/annotation/SKILL.md",
+    "skills/spec-architect/SKILL.md"
   ],
   "storage": {
     "data": "~/.hermes/plugin-data/hermes-pilot",
@@ -41,7 +42,25 @@
   },
   "api": {
     "auth": ["POST /api/auth/login", "GET /api/auth/pairing"],
+    "pipeline": ["GET /api/pipeline/status", "POST /api/pipeline/optimize"],
+    "architect": [
+      "POST /api/architect/seed",
+      "GET /api/architect/jobs",
+      "POST /api/architect/jobs/:id/dismiss",
+      "GET /api/architect/config",
+      "PUT /api/architect/config"
+    ],
+    "specs": [
+      "GET /api/specs",
+      "GET /api/specs/content",
+      "POST /api/specs/launch",
+      "GET /api/specs/reports"
+    ],
     "review": "/api/review/*",
+    "boards": "/api/boards/*",
+    "telemetry": "GET /api/telemetry/receipt",
+    "live": "GET /api/live",
+    "usage": "GET /api/usage",
     "capabilities": "GET /api/capabilities"
   },
   "i18n": ["en", "ja"],

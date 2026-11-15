@@ -2,7 +2,8 @@
 
 Drive an autonomous [Hermes Agent](https://hermes-agent.nousresearch.com/docs) from your phone or tablet.
 **Hermes Pilot** turns the decisions an agent needs into one-tap review sheets and annotated screenshots,
-and puts kanban, chat, terminal and usage into a single installable PWA.
+carries a one-line idea all the way to filed, self-running kanban batches (**the A2B pipeline**), and puts
+kanban, chat, terminal and usage into a single installable PWA.
 
 日本語版は [`README.ja.md`](README.ja.md)。
 
@@ -22,15 +23,70 @@ and puts kanban, chat, terminal and usage into a single installable PWA.
   unblocked. Skill: `skills/quick-review/`.
 - **Annotation** — the agent attaches a screenshot; you draw on it with a finger (rectangles, arrows, notes)
   and send back an ordered, coordinate-tagged fix list. Skill: `skills/annotation/`.
+- **Spec Architect** — a one-line seed becomes a design interview, then a `docs/SPEC-*.md` whose batches a
+  worker can execute without asking again. Skill: `skills/spec-architect/`.
 - **Tasks / Inbox** — boards, task detail, event history, per-task git diff, approve / comment / abort.
 - **Chat** — streaming Hermes chat with thinking log, tool log, attachments, snippets, cross-session search.
 - **Terminal** — a real PTY over the bridge, with command snippets that follow your OS.
-- **English and Japanese** (`en` is the fallback, `ja` is bundled), **Dark / Light / System** themes and a
-  **two-pane tablet layout** at ≥ 820 px.
+- **English and Japanese** (`en` is the fallback, `ja` is bundled), **Dark / Light / System** themes and two
+  two-pane layouts: a **narrow master-detail from 680 px** (280 px master, for portrait tablets such as the
+  iPad mini) and the **wide two-pane from 820 px** (380 px review master / 360 px tasks master). Below 680 px
+  every detail opens as a full-height sheet.
 - **No external plugins required** — repositories are found by scanning your project folders, and system
   status uses only the standard Hermes APIs.
 
-### Decision cockpit (v2)
+## The A2B pipeline (seed → running batches)
+
+One line of intent becomes a spec a worker can finish, without a chat backlog of questions.
+
+```text
+📝 Spec Seed ──► Quick Review ──► 📄 SPEC-<SLUG>.md ──► 🚀 Spec Launchpad ──► ⚡ live run ──► 🏆 Mission Receipt
+ one line       3(±1) questions    Execution Mode per      idempotent batch      ArchitectJobBar    1200×630 PNG
+ (or dictation) 1-tap answers      batch + acceptance      filing (kanban)       LiveSheet/WorkerFeed X-weight ≤ 280 text
+```
+
+1. **📝 Spec Seed** — type (or dictate) one line in the Tasks tab and pick an **execution policy**:
+   - **`Zero-Stop`** (default) — every batch runs to the end autonomously; no approval stops.
+   - **`Visual-Gate`** — the run pauses at checkpoints so you can look at the rendered result (screenshot /
+     annotation) before the next batch starts.
+   - **Runner** — `Hermes Native` (default) drives the Architect through Hermes itself. **`Antigravity (agy)`
+     is opt-in only**: it is used when the `agy` CLI exists *and* you select it, it runs as a subprocess, and
+     by design it files **no kanban task** (`taskId: null`) so a blocked card cannot appear twice.
+2. **Quick Review interview** — the Architect asks 3 (±1) questions on a sheet with recommended options; the
+   *⚡ Accept All Recommended* button answers them all in one tap.
+3. **📄 Spec** — a second round writes `docs/SPEC-<SLUG>.md`: decisions table, per-batch `Execution Mode`,
+   changed-file list and acceptance commands, so a worker never has to ask "how should this work?".
+4. **🚀 Spec Launchpad** — the Tasks tab lists the spec's `### Batch <ID>` entries with an accordion and
+   Markdown preview, and files them as kanban tasks. A batch whose `[ID]` task is still open is skipped, and
+   re-tapping or reloading never duplicates cards.
+5. **⚡ Live run** — `ArchitectJobBar` shows the job's phase (`spawning → round1_sheet → round2_spec →
+   spec_ready → launched`), a stall warning when a phase stops moving, and a retry with an explicit runner
+   switch. `LiveSheet` and `WorkerFeed` stream the running workers.
+6. **🏆 Mission Receipt** — when the batches finish, the completion summary exports a **1200×630 PNG receipt**
+   and a share text that is **X-weighted ≤ 280 characters in both JA and EN** (KPI numbers are never dropped;
+   the header and footer give way first).
+
+```bash
+# 1) seed (returns 202 with a jobId; the Architect runs in the background)
+curl -s -X POST -H "x-client: mobile" -H "content-type: application/json" \
+     -d '{"board":"<board>","seedText":"Add a dark-mode receipt export","autoStart":false}' \
+     "http://127.0.0.1:4097/api/architect/seed?t=$(cat ~/.hermes/plugin-data/hermes-pilot/token)"
+
+# 2) job status / completed specs / un-filed specs
+curl -s -H "x-client: mobile" \
+     "http://127.0.0.1:4097/api/architect/jobs?board=<board>&t=$(cat ~/.hermes/plugin-data/hermes-pilot/token)"
+
+# 3) file the batches (idempotent; same-board open tasks are skipped)
+curl -s -X POST -H "x-client: mobile" -H "content-type: application/json" \
+     -d '{"board":"<board>","specRelPath":"docs/SPEC-DARK-RECEIPT.md","batchIds":["B1","B2"]}' \
+     "http://127.0.0.1:4097/api/specs/launch?t=$(cat ~/.hermes/plugin-data/hermes-pilot/token)"
+
+# 4) done — completion summary + receipt data (read-only aggregation)
+curl -s -H "x-client: mobile" \
+     "http://127.0.0.1:4097/api/telemetry/receipt?board=<board>&hours=24&t=$(cat ~/.hermes/plugin-data/hermes-pilot/token)"
+```
+
+## Decision cockpit (v2)
 
 Five additions that shorten the loop from "the agent needs a decision" to "it is running again".
 Every one of them is reachable from the phone and from the standard dashboard.
@@ -71,7 +127,23 @@ Every one of them is reachable from the phone and from the standard dashboard.
   curl -s -H "x-client: mobile" "http://127.0.0.1:4097/api/snippets/term?lang=ja" # terminal
   ```
 
-### Interactive demo (no backend needed)
+## Comfort and one-tap setup
+
+- **Vibe mode** — `⚡ Dopamine ⇄ 🧘 Serotonin` in Settings changes how loud the app is (motion, colour, the
+  receipt canvas title), not what it does. Haptics and sound are separate toggles and **survive a Vibe
+  switch**, so turning the volume down never silently disables the buzz you rely on.
+- **Snippet band toggle** — the chip band above the chat composer, the annotation toolbar and the terminal
+  keys can each be collapsed. The choice is per band and remembered, so a small phone keeps the composer and
+  the keyboard from fighting for the same 390 px.
+- **1-tap environment optimisation** — *Settings → Optimise this Hermes* (`POST /api/pipeline/optimize`)
+  appends the A2B discipline section to `~/.hermes/SOUL.md` (idempotent — an existing section is never
+  duplicated) and places the three bundled skills into `~/.hermes/skills/`. `GET /api/pipeline/status` reports
+  what is already applied without returning any `SOUL.md` content.
+- **Legacy cron cleanup** — `migrate` (and `init`) removes the old `mobile-akapen-watch` /
+  `mobile-review-watch` cron entries, because the bridge's own watcher writes the completion feed now and two
+  writers produced duplicate reports. Other cron entries and the store's top-level shape are untouched.
+
+## Interactive demo (no backend needed)
 
 `npm run build:demo` produces a static site in `apps/web/dist-demo` that needs **no bridge, no gateway and no
 database** — put it on GitHub Pages (or any static host) and anyone can walk the pipeline.
@@ -99,6 +171,22 @@ strips the demo branch and its dynamic imports — `apps/web/dist` contains no m
 screenshots (only the `demo.*` UI strings that live in the shared dictionaries). `apps/web/dist-demo` is
 git-ignored and excluded from `npm pack`.
 
+### Google Sites (single-file embed)
+
+`npm run build:demo` also writes **`apps/web/dist-demo/google-sites-embed.html`**: one self-contained file
+with the JS, CSS and SVG images inlined, `localStorage` replaced by an in-memory shim and the PWA `<link>`
+tags removed. The build fails (`exit 1`) if any external reference survives its own `verifyEmbedHtml()`
+check, so a broken file cannot reach the site.
+
+1. `npm run build:demo`
+2. Google Sites → *Insert* → **Embed** → **Embed code** → paste the whole content of
+   `google-sites-embed.html` → *Insert*.
+3. Open the page on a desktop browser: because the embedded document knows it is a frame
+   (`window.__HM_DEMO_FRAME__`), it still renders the **`Phone 390×844` / `Tablet 820×1180` / `Full window`**
+   device simulator with its top bar. *Restart tour* re-creates the inner iframe instead of reloading the
+   `srcdoc` page, so it works inside Google Sites too.
+4. For GitHub Pages, publish `apps/web/dist-demo` as-is (relative `base`); the embed file is optional there.
+
 ## Requirements
 
 - Node.js **≥ 22.19**
@@ -118,7 +206,7 @@ npx hermes-pilot init
 2. generates a **256-bit hex app token** in `token` with mode `0600` (an existing token is never replaced),
 3. if a legacy `~/Projects/akapen`, `~/.hermes/plugin-data/akapen` or `~/.hermes/mobile-pwa` exists, migrates
    it (files are **copied**, `mtime` preserved, kanban `[akapen]` tags rewritten to `[review]`),
-4. copies the bundled skills `quick-review` and `annotation` into `~/.hermes/skills/`,
+4. copies the bundled skills `quick-review`, `annotation` and `spec-architect` into `~/.hermes/skills/`,
 5. detects your reachable address (Tailscale MagicDNS name, otherwise the LAN IP) and prints the
    **pairing URL plus a QR code in the terminal**.
 
@@ -177,6 +265,24 @@ Both labels want port 4097. If the old agent is still bound to it, start the new
 (`npx hermes-pilot start --port 4098`), verify, then swap. The old `~/.hermes/mobile-pwa/` directory is
 copied, never deleted — remove it yourself when you no longer need it.
 
+## Security
+
+The bridge is the only thing listening, and it is the only thing that can reach Hermes.
+
+| Surface | Rule |
+|---|---|
+| Listen address | `127.0.0.1:4097` by default. Nothing is exposed unless you put Tailscale `serve` (or another TLS proxy) in front of it. |
+| Device credential | A 256-bit hex app token in `~/.hermes/plugin-data/hermes-pilot/token` (`0600`). It is exchanged once for an **`HttpOnly`, `SameSite=Strict` session cookie**; the token is then stripped from the address bar with `history.replaceState`. |
+| QR pairing | The QR carries a **one-time pairing code** (10-minute TTL, single use), not the app token. Treat a screenshot of it as a password anyway; rotations are `rm …/token` + restart, which signs every device out. |
+| Hermes session token | Never leaves the bridge. The PWA only ever holds the app token / cookie. |
+| Writes | Every mutating call needs the **`X-Client: mobile`** header (401 without it) **and** the session cookie, so a cross-site form post cannot drive the app. |
+| Kill switch | Long-press 1.5 s + typed confirmation, and the API re-checks the `confirm` field. The UI never shells out to raw `launchctl`. |
+| Rate limits | Reads 120/min per endpoint bucket, writes 60/min. |
+| Audit | Every write appends to `~/.hermes/plugin-data/hermes-pilot/audit.jsonl` (viewable in Settings). |
+| Read-only data | Kanban SQLite, usage and receipts are opened read-only; the bridge aggregates them and never migrates a board on its own. |
+| Public paths | Only the app shell (`/`, `/assets/*`, `/manifest.webmanifest`, `/sw.js`, `/icon-*`, `/auth`, `/healthz`) is unauthenticated — Android's WebAPK generator fetches those without credentials. Everything under `/api/*` and `/ws/*` is behind auth. |
+| Demo | `apps/web/dist-demo` (and the Google Sites embed) is **mock data only** — no token, no bridge, no network calls; nothing from it can reach your Hermes. |
+
 ## Data and environment
 
 Everything persistent lives under `~/.hermes/plugin-data/hermes-pilot/`:
@@ -213,13 +319,23 @@ review/        sheets/, shots/, library/, feed.jsonl, chat-reports.jsonl, task-c
 ```bash
 npm install                 # postinstall fixes node-pty permissions
 npm run dev                 # Vite on :4098, proxies /api and /ws to :4097
-npm test                    # unit tests (616)
-npm run verify              # tests + PWA 34-point check + production build
-npm run build:demo          # static interactive demo -> apps/web/dist-demo (no backend)
+npm test                    # unit tests (808)
+npm run verify              # test + check:pwa (34 checks) + check:oauth + production build + audit:responsive
+npm run build:demo          # static interactive demo -> apps/web/dist-demo (+ google-sites-embed.html)
 npm run deploy              # atomic, verified swap of apps/web/dist
 npm run migrate:pilot       # the same migration as `init`, on demand
 node bin/hermes-pilot.mjs --help
 ```
+
+`npm run verify` is the gate every change has to pass, measured on this tree:
+
+| Step | What it proves |
+|---|---|
+| `npm test` | **808** unit / integration tests, 0 fail (node:test, no framework). |
+| `check:pwa` | **34/34** PWA checks against `apps/web/public` (manifest, icons, maskable, service worker, viewport). |
+| `check:oauth` | **0** violations: no device credential or OAuth token is readable from the browser bundle. |
+| `build` | Vite production build succeeds and contains no `demo/` code. |
+| `audit:responsive` | layout audit at `390×844`, `844×390`, `820×1180` … — tap targets ≥ 44 px, no clipping regressions. |
 
 Layout:
 
@@ -231,7 +347,7 @@ apps/web/src/            React PWA (i18n/, features/, lib/pairing.js, lib/theme.
 apps/web/src/demo/       interactive demo only (mockApi.js, DemoStage.jsx, demo.css) — never in dist/
 apps/web/dist/           production build served by the bridge
 apps/web/dist-demo/      static demo build (`npm run build:demo`, git-ignored)
-skills/                  bundled quick-review / annotation skills
+skills/                  bundled skills: quick-review / annotation / spec-architect
 docs/                    SPEC-PUBLIC-PLUGIN.md (the spec), OPERATIONS.md, PLAN.md, EVIDENCE.md
 ```
 

@@ -2,6 +2,7 @@
 
 自律走行する [Hermes Agent](https://hermes-agent.nousresearch.com/docs) を、スマホやタブレットから**操縦**するための
 PWA プラグインです。エージェントが判断を仰ぐ場面を「1 タップのレビューシート」と「スクショへの赤入れ」に変え、
+**1 行の思いつきを、起票済みで自走するカンバンバッチまで運ぶ（A2B パイプライン）**うえで、
 カンバン・チャット・ターミナル・使用量を 1 つのインストール可能な PWA にまとめます。
 
 English README: [`README.md`](README.md)
@@ -21,15 +22,69 @@ English README: [`README.md`](README.md)
   起票します。スマホから 1 タップで回答すると、コメントとして返り、ワーカーが再開します。スキル: `skills/quick-review/`
 - **Annotation（赤入れ）**: エージェントが添付したスクショに指で赤を入れ（矩形・矢印・メモ）、座標付きの修正リストとして返します。
   スキル: `skills/annotation/`
+- **Spec Architect（仕様化）**: 1 行の種から設計ヒアリングを行い、ワーカーが追加質問なしに完走できる
+  `docs/SPEC-*.md` を作ります。スキル: `skills/spec-architect/`
 - **タスク / 承認待ち**: ボード切替、詳細、イベント履歴、タスクごとの git 差分、承認・コメント・中断
 - **チャット**: ストリーミング、思考ログ、ツールログ、添付、定型スニペット、セッション横断検索
 - **ターミナル**: 実 PTY。OS に応じたコマンドスニペット付き
-- **英語・日本語**（既定フォールバックは `en`、`ja` 同梱）、**Dark / Light / System** テーマ、
-  **820px 以上でタブレット 2 ペイン**
+- **英語・日本語**（既定フォールバックは `en`、`ja` 同梱）、**Dark / Light / System** テーマ、そして 2 段階の
+  2 ペイン: **680px から狭幅マスター・ディテール**（左 280px。iPad mini 縦などの 744/768px 用）と
+  **820px から広幅 2 ペイン**（レビュー左 380px / タスク左 360px）。680px 未満は詳細が全画面シートで開きます
 - **外部プラグイン不要** — リポジトリはプロジェクトフォルダの 1 階層スキャンで見つけ、システム状態は
   Hermes 標準 API だけで組み立てます
 
-### 意思決定コックピット（v2）
+## A2B パイプライン（種 → 自走するバッチ）
+
+1 行の意図が、ワーカーが最後まで走れる仕様書になります。質問をチャットに積みません。
+
+```text
+📝 Spec Seed ──► Quick Review ──► 📄 SPEC-<SLUG>.md ──► 🚀 Spec Launchpad ──► ⚡ ライブ監視 ──► 🏆 Mission Receipt
+ 1 行（音声可）   3(±1) 問        バッチごとの実行モード     冪等な一括起票          ArchitectJobBar        1200×630 PNG
+                 1 タップ回答     受入条件を明記            （カンバン）             LiveSheet/WorkerFeed   X 換算 280 文字以内
+```
+
+1. **📝 Spec Seed** — タスクタブで 1 行を入力（音声ディクテーション可）し、**実行モード**を選びます。
+   - **`Zero-Stop`**（既定）— 全バッチが承認待ちで止まらず最後まで自走します。
+   - **`Visual-Gate`** — チェックポイントで止まり、次のバッチへ進む前に描画結果（スクショ／赤入れ）を
+     目で確認できます。
+   - **ランナー** — 既定は `Hermes Native`（Hermes 自身が Architect を回す）。**`Antigravity (agy)` は Opt-in のみ**:
+     `agy` CLI が存在し、かつ自分で選んだときだけサブプロセスとして使い、仕様上 **カンバンタスクを作りません**
+     （`taskId: null`）。同じ内容のカードが二重に blocked で並ぶのを防ぐためです。
+2. **Quick Review ヒアリング** — Architect が推奨案つきの 3(±1) 問をシートに載せます。
+   「⚡ 推奨を一括承認」で 1 タップですべて回答できます。
+3. **📄 仕様書** — 2 ラウンド目で `docs/SPEC-<SLUG>.md` を書きます。決定表・バッチごとの `Execution Mode`・
+   変更ファイル・受入コマンドまで含むので、ワーカーが「どう実装するか」を聞き返しません。
+4. **🚀 Spec Launchpad** — タスクタブが仕様書の `### Batch <ID>` をアコーディオン＋Markdown プレビューで
+   一覧し、1 タップでカンバンに起票します。同じ `[ID]` の未完了タスクがあるバッチは飛ばすので、
+   二度押し・再読み込みでも重複しません。
+5. **⚡ ライブ監視** — `ArchitectJobBar` がジョブのフェーズ（`spawning → round1_sheet → round2_spec →
+   spec_ready → launched`）を出し、進まなくなると停滞警告を出し、ランナーを明示して再試行できます。
+   `LiveSheet` と `WorkerFeed` が実行中ワーカーのログを流します。
+6. **🏆 Mission Receipt** — バッチ完走後、完走サマリが **1200×630 の PNG レシート**と、
+   **JA/EN とも X 換算 280 文字以内**のシェア文（KPI の数値は 1 つも落とさず、見出しとフッターから削る）
+   を出力します。
+
+```bash
+# 1) 種を起票（202 と jobId を即返し、Architect は背後で走る）
+curl -s -X POST -H "x-client: mobile" -H "content-type: application/json" \
+     -d '{"board":"<board>","seedText":"レシートのダークモード書き出しを足す","autoStart":false}' \
+     "http://127.0.0.1:4097/api/architect/seed?t=$(cat ~/.hermes/plugin-data/hermes-pilot/token)"
+
+# 2) ジョブの状態・完成 SPEC・未起票 SPEC
+curl -s -H "x-client: mobile" \
+     "http://127.0.0.1:4097/api/architect/jobs?board=<board>&t=$(cat ~/.hermes/plugin-data/hermes-pilot/token)"
+
+# 3) バッチを一括起票（冪等。同じ板の未完了はスキップ）
+curl -s -X POST -H "x-client: mobile" -H "content-type: application/json" \
+     -d '{"board":"<board>","specRelPath":"docs/SPEC-DARK-RECEIPT.md","batchIds":["B1","B2"]}' \
+     "http://127.0.0.1:4097/api/specs/launch?t=$(cat ~/.hermes/plugin-data/hermes-pilot/token)"
+
+# 4) 完走後 — 完走サマリとレシートの材料（読み取り専用の集計）
+curl -s -H "x-client: mobile" \
+     "http://127.0.0.1:4097/api/telemetry/receipt?board=<board>&hours=24&t=$(cat ~/.hermes/plugin-data/hermes-pilot/token)"
+```
+
+## 意思決定コックピット（v2）
 
 「エージェントが判断を待っている」から「また走り出した」までを最短にする 5 つ。スマホからも標準
 ダッシュボードからも触れます。
@@ -67,7 +122,21 @@ English README: [`README.md`](README.md)
   curl -s -H "x-client: mobile" "http://127.0.0.1:4097/api/snippets/term?lang=ja" # 端末
   ```
 
-### 触って試せるデモ（バックエンド不要）
+## 快適さと 1 タップ設定
+
+- **Vibe モード** — 設定の `⚡ ドーパミン ⇄ 🧘 セロトニン` は「見た目と手触りの強さ」だけを変え、機能は変えません。
+  ハプティクスと効果音は独立トグルで、**Vibe を切り替えても維持**されます（音量を下げたつもりが振動まで
+  止まる事故を起こさないため）。
+- **スニペット帯トグル** — チャット入力欄の上、注釈ツールバー、端末キーのチップ帯はそれぞれ折りたためます。
+  選択は帯ごとに記憶され、390px の画面で入力欄とキーボードが場所を取り合いません。
+- **1 タップ環境最適化** — *設定 → この Hermes を最適化*（`POST /api/pipeline/optimize`）が
+  `~/.hermes/SOUL.md` へ A2B の規律節を**冪等に**追記し、同梱 3 スキルを `~/.hermes/skills/` へ配置します。
+  `GET /api/pipeline/status` は適用済みかだけを返し、`SOUL.md` の中身は返しません。
+- **旧 cron の自動片付け** — `migrate`（と `init`）は旧 `mobile-akapen-watch` / `mobile-review-watch` の
+  cron を削除します。完了フィードはブリッジ内蔵の監視が書くようになり、2 者が書くと報告が二重になるためです。
+  他の cron とストアのトップレベル構造は変更しません。
+
+## 触って試せるデモ（バックエンド不要）
 
 `npm run build:demo` で `apps/web/dist-demo` に**ブリッジもゲートウェイも DB も要らない**静的サイトを
 生成します。GitHub Pages などの静的ホスティングに置けば、誰でもパイプラインを体験できます。
@@ -95,6 +164,20 @@ data URL として組み立てるため、デモは外部ネットワークに�
 ツアー用 CSS・スクショは入りません（共有辞書の `demo.*` 文言だけは辞書に残ります）。
 `apps/web/dist-demo` は git 管理外で、`npm pack` にも含まれません。
 
+### Google Sites（単一ファイル埋め込み）
+
+`npm run build:demo` は **`apps/web/dist-demo/google-sites-embed.html`** も生成します。JS・CSS・SVG 画像を
+すべてインライン化し、`localStorage` をメモリ実装に差し替え、PWA 用の `<link>` を外した 1 ファイルです。
+生成直後の `verifyEmbedHtml()` 自己チェックで外部参照が 1 つでも残っていれば**ビルドが exit 1 で失敗**する
+ため、壊れたファイルがサイトに出ることはありません。
+
+1. `npm run build:demo`
+2. Google Sites → *挿入* → **埋め込み** → **コードを埋め込む** → `google-sites-embed.html` の中身を丸ごと貼り付け
+3. PC ブラウザで開くと、埋め込み文書が自分をフレームだと認識する（`window.__HM_DEMO_FRAME__`）ため、
+   **`Phone 390×844` / `Tablet 820×1180` / `Full window`** のデバイスシミュレータと上部バーがそのまま出ます。
+   「ツアーを最初から」は `srcdoc` の reload ではなく内側 iframe の再生成なので、Google Sites 上でも動きます
+4. GitHub Pages なら `apps/web/dist-demo` をそのまま公開（相対 `base`）。埋め込みファイルは任意です。
+
 ## 必要なもの
 
 - Node.js **22.19 以上**
@@ -114,7 +197,7 @@ npx hermes-pilot init
 2. **256-bit hex のアプリトークン**を `token` に `0600` で生成（既にあれば作り直さない）
 3. 旧 `~/Projects/akapen` / `~/.hermes/plugin-data/akapen` / `~/.hermes/mobile-pwa` があれば移行
    （**コピー**のみ・`mtime` 保持・カンバンの `[akapen]` タグを `[review]` に書換）
-4. 同梱スキル `quick-review` / `annotation` を `~/.hermes/skills/` へ配置
+4. 同梱スキル `quick-review` / `annotation` / `spec-architect` を `~/.hermes/skills/` へ配置
 5. 到達可能なアドレス（Tailscale の MagicDNS 名、無ければ LAN IP）を検出して、
    **ペアリング URL とターミナル QR** を表示
 
@@ -172,6 +255,24 @@ launchctl bootout gui/$(id -u)/ai.hermes.hermes-mobile
 （`npx hermes-pilot start --port 4098`）、あとで入れ替えてください。旧 `~/.hermes/mobile-pwa/` は
 コピーされるだけで削除されません。不要になったら手動で消してください。
 
+## セキュリティ
+
+待ち受けているのはブリッジだけであり、Hermes に手が届くのもブリッジだけです。
+
+| 面 | ルール |
+|---|---|
+| 待受 | 既定は `127.0.0.1:4097`。Tailscale `serve` などの TLS プロキシを前段に置かない限り外には出ません |
+| 端末の資格情報 | `~/.hermes/plugin-data/hermes-pilot/token`（`0600`）の 256-bit hex アプリトークン。1 回だけ **`HttpOnly` / `SameSite=Strict` のセッション Cookie** に交換し、トークンは `history.replaceState` でアドレスバーから消します |
+| QR ペアリング | QR に載るのは**ワンタイムのペアリングコード**（10 分・1 回限り）で、アプリトークンそのものではありません。それでもスクショの共有はパスワード扱いで。ローテーションは `rm …/token` ＋ 再起動で全端末がログアウトします |
+| Hermes のセッショントークン | ブリッジの外に出ません。PWA が持つのはアプリトークン／Cookie だけです |
+| 書き込み | 変更系は **`X-Client: mobile`** ヘッダ（無いと 401）とセッション Cookie の両方が必要で、クロスサイトのフォーム送信では動きません |
+| キルスイッチ | 1.5 秒長押し＋確認語。API 側でも `confirm` を検査します。UI から生の `launchctl` は叩きません |
+| レート制限 | 読み取り 120 回/分（エンドポイント別バケット）、書き込み 60 回/分 |
+| 監査 | すべての書き込みを `~/.hermes/plugin-data/hermes-pilot/audit.jsonl` へ追記（設定タブから閲覧可） |
+| 読み取り専用 | カンバン SQLite・使用量・レシートは読み取り専用で開き、ブリッジが勝手に板を移行することはありません |
+| 公開パス | 認証不要なのはアプリの殻（`/`, `/assets/*`, `/manifest.webmanifest`, `/sw.js`, `/icon-*`, `/auth`, `/healthz`）だけ。Android の WebAPK 生成が資格情報なしで取りに来るためです。`/api/*` と `/ws/*` はすべて認証の内側です |
+| デモ | `apps/web/dist-demo`（と Google Sites 埋め込み）は**モックデータのみ**。トークンもブリッジもネットワークも使いません |
+
 ## データと環境変数
 
 永続データはすべて `~/.hermes/plugin-data/hermes-pilot/` の下にあります。
@@ -208,13 +309,23 @@ review/        sheets/, shots/, library/, feed.jsonl, chat-reports.jsonl, task-c
 ```bash
 npm install                 # postinstall が node-pty の権限を直す
 npm run dev                 # Vite :4098（/api・/ws は 4097 へプロキシ）
-npm test                    # 単体テスト（616 件）
-npm run verify              # test + check:pwa（34 項目）+ 本番ビルド
-npm run build:demo          # バックエンド不要の静的デモ → apps/web/dist-demo
+npm test                    # 単体テスト（808 件）
+npm run verify              # test + check:pwa（34 項目）+ check:oauth + 本番ビルド + audit:responsive
+npm run build:demo          # バックエンド不要の静的デモ → apps/web/dist-demo（+ google-sites-embed.html）
 npm run deploy              # 検証付きで dist を原子的に切替（無停止）
 npm run migrate:pilot       # init と同じ移行を単体で実行
 node bin/hermes-pilot.mjs --help
 ```
+
+`npm run verify` はすべての変更が通す関門です（このツリーでの実測）:
+
+| 手順 | 何を保証するか |
+|---|---|
+| `npm test` | **808 件**の単体・結合テストが 0 fail（node:test、フレームワーク無し） |
+| `check:pwa` | `apps/web/public` に対する **34/34** 項目（マニフェスト・アイコン・マスカブル・Service Worker・viewport） |
+| `check:oauth` | **0 違反**: 端末の資格情報や OAuth トークンがブラウザ側バンドルから読めないこと |
+| `build` | Vite 本番ビルドが通り、`demo/` のコードが混入していないこと |
+| `audit:responsive` | `390×844` / `844×390` / `820×1180` などのレイアウト監査（タップ 44px 以上・新規の見切れなし） |
 
 構成:
 
@@ -226,7 +337,7 @@ apps/web/src/            React PWA（i18n/, features/, lib/pairing.js, lib/theme
 apps/web/src/demo/       デモ専用（mockApi.js, DemoStage.jsx, demo.css）— dist には入りません
 apps/web/dist/           ブリッジが配信する本番ビルド
 apps/web/dist-demo/      静的デモビルド（`npm run build:demo`・git 管理外）
-skills/                  同梱スキル quick-review / annotation
+skills/                  同梱スキル quick-review / annotation / spec-architect
 docs/                    SPEC-PUBLIC-PLUGIN.md（仕様）, OPERATIONS.md, PLAN.md, EVIDENCE.md
 ```
 

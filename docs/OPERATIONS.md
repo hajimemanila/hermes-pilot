@@ -1,30 +1,71 @@
-# 運用（Hermes Mobile PWA）
+# 運用（Hermes Pilot）
+
+Hermes Pilot は **PWA**（`apps/web/dist`）と **ブリッジ**（`apps/bridge/src`、既定 `127.0.0.1:4097`）の
+2 つで動きます。端末が見るのは PWA だけで、データの読み書きはすべてブリッジが Hermes 側
+（ダッシュボード `:9119`・各ボードのカンバン SQLite・`~/.hermes`）に対して行います。
+
+## CLI（`npx hermes-pilot …`）
+
+| コマンド | 用途 |
+|---|---|
+| `hermes-pilot init` | 初回設定。データディレクトリ作成・アプリトークン（256-bit / `0600`）生成・旧環境からの移行・同梱 3 スキル（`quick-review` / `annotation` / `spec-architect`）配置・到達可能アドレスの検出とペアリング QR 表示。冪等 |
+| `hermes-pilot start [--port 4097] [--host 127.0.0.1] [--tls-port 8444]` | 必要なら UI をビルドしてブリッジを起動 |
+| `hermes-pilot qr [--tls-port 8444]` | 接続先候補とターミナル QR を表示 |
+| `hermes-pilot service install \| uninstall \| restart \| status` | 常駐（macOS は launchd `ai.hermes.pilot`、Linux は systemd --user） |
+| `hermes-pilot migrate [--dry-run]` | `init` と同じ移行だけを実行（旧 cron の片付けを含む） |
+| `hermes-pilot --help` | コマンド一覧 |
+
+更新後にダッシュボードのプラグインファイルを入れ替えるときは `npx hermes-pilot init --force`。
+
+## 検証スイート
+
+| コマンド | 内容 | このツリーでの実測 |
+|---|---|---|
+| `npm test` | 単体・結合テスト（`node:test`） | **808 件 / 0 fail** |
+| `npm run check:pwa` | PWA 34 項目（manifest・アイコン・マスカブル・Service Worker・viewport） | **34/34** |
+| `npm run check:oauth` | OAuth / 資格情報の境界検査 | **0 違反** |
+| `npm run build` | Vite 本番ビルド（`demo/` 非混入） | exit 0 |
+| `npm run audit:responsive` | `390×844` / `844×390` / `820×1180` のレイアウト監査 | 0 違反 |
+| `npm run verify` | 上記 5 つを直列実行（変更時の関門） | exit 0 |
+
+## デモビルドと Google Sites 公開
+
+```bash
+npm run build:demo    # VITE_DEMO_MODE=1 / base ./ / outDir apps/web/dist-demo
+                      # → dist-demo（静的サイト）と dist-demo/google-sites-embed.html（単一ファイル）
+```
+
+- `apps/web/dist-demo` … GitHub Pages などにそのまま置ける静的サイト（ブリッジ・ゲートウェイ・DB 不要）
+- `apps/web/dist-demo/google-sites-embed.html` … JS / CSS / SVG をインライン化した単一 HTML。
+  生成後の `verifyEmbedHtml()` 自己チェック（外部参照 0）に落ちると**ビルドが exit 1 で止まる**
+- Google Sites は *挿入 → 埋め込み → コードを埋め込む* にこの HTML の中身を貼る。PC 幅で開くと
+  `Phone 390×844` / `Tablet 820×1180` / `Full window` のシミュレータと上部バーが出る
+  （埋め込み文書は `__HM_DEMO_FRAME__` で自分をフレームと判定する）。「ツアーを最初から」は
+  `srcdoc` の reload ではなく内側 iframe の再生成で動く
+- 本番（`npm run build`）にはデモのコード・ツアー CSS・スクショは入りません
 
 ## 起動・停止
 
-### 常駐（launchd）
+### 常駐（launchd / systemd）
 
 ```bash
-# 1) 設置（このリポジトリの deploy/ から）
-cp ~/Projects/hermes-mobile-pwa/deploy/ai.hermes.hermes-mobile.plist ~/Library/LaunchAgents/
-
-# 2) 登録（ゲートウェイ内からは実行できないため、通常のターミナルで）
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.hermes.hermes-mobile.plist
-
-# 再起動 / 停止
-launchctl kickstart -k gui/$(id -u)/ai.hermes.hermes-mobile
-launchctl bootout gui/$(id -u)/ai.hermes.hermes-mobile
+npx hermes-pilot service install     # 登録して起動（macOS: launchd、Linux: systemd --user）
+npx hermes-pilot service status      # 状態
+npx hermes-pilot service restart     # 反映（plist / unit を書き換えたときもこれ）
+npx hermes-pilot service uninstall   # 解除
 ```
 
-ログ: `~/.hermes/logs/hermes-mobile.log` / `.error.log`
+- macOS: `~/Library/LaunchAgents/ai.hermes.pilot.plist`（ラベル `ai.hermes.pilot`）、
+  ログは `~/.hermes/logs/pilot.out.log` / `pilot.err.log`
+- Linux: `~/.config/systemd/user/hermes-pilot.service`
 
 ### `launchctl bootstrap` が `5: Input/output error` になる
 
 **すでに登録済み**のときに出る（二重 bootstrap はエラー 5）。まず状態を見る:
 
 ```bash
-launchctl print gui/$(id -u)/ai.hermes.hermes-mobile | head -6   # state = running なら登録済み
-launchctl list | grep hermes-mobile                              # 2列目が直近の終了コード
+launchctl print gui/$(id -u)/ai.hermes.pilot | head -6   # state = running なら登録済み
+launchctl list | grep hermes-pilot                       # 2列目が直近の終了コード
 ```
 
 - 2列目が **75**（EX_TEMPFAIL）= ポート 4097 が埋まっていて起動できていない。
@@ -33,33 +74,32 @@ launchctl list | grep hermes-mobile                              # 2列目が直
 - 登録をやり直したいときは先に外す:
 
 ```bash
-launchctl bootout gui/$(id -u)/ai.hermes.hermes-mobile
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.hermes.hermes-mobile.plist
+npx hermes-pilot service uninstall && npx hermes-pilot service install
 ```
 
-- 反映したいだけなら `kickstart -k`（plist を書き換えた場合もこれで再読込される）
+- 反映したいだけなら `npx hermes-pilot service restart`（plist を書き換えた場合もこれで再読込される）
 
 
 ### 手動起動（動作確認）
 
 ```bash
-cd ~/Projects/hermes-mobile-pwa
-PATH=/opt/homebrew/opt/node@24/bin:$PATH npm start
+cd <repo>                      # このリポジトリのルート
+npm start                      # = node apps/bridge/src/server.js
 ```
 
 ## 公開（Tailscale）
 
 ```bash
 # 別オリジン :8444 → ブリッジ :4097（既存 443 / 8443 は触らない）
-/Applications/Tailscale.app/Contents/MacOS/Tailscale \
-  serve --bg --https=8444 http://127.0.0.1:4097
+tailscale serve --bg --https=8444 http://127.0.0.1:4097
+# macOS アプリ版しか無い場合: /Applications/Tailscale.app/Contents/MacOS/Tailscale serve --bg ...（同じ引数）
 
 # 確認
-/Applications/Tailscale.app/Contents/MacOS/Tailscale serve status
+tailscale serve status
 ```
 
 - 端末から `https://<host>:8444/` を開くと **ログイン画面**が出る
-- トークン: `~/.hermes/mobile-pwa/token`（0600）。`/auth?t=<token>` を一度開けば Cookie が入る
+- トークン: `~/.hermes/plugin-data/hermes-pilot/token`（0600）。`/auth?t=<token>` を一度開けば Cookie が入る
 - ブリッジの起動ログにも「管理画面: …/auth?t=…」として出る
 
 ## 認証と安全装置
@@ -67,30 +107,89 @@ PATH=/opt/homebrew/opt/node@24/bin:$PATH npm start
 - 端末に渡るのは**アプリトークンのみ**。Hermes のセッショントークンはブリッジの外に出ない
 - 書き込み系は `X-Client: mobile` ヘッダ必須（無いと 401）
 - キルスイッチは**長押し1.5秒 + 確認語**（API 側でも `confirm` を検査）
-- 実行結果は `~/.hermes/mobile-pwa/audit.jsonl` に追記（設定タブから閲覧）
+- 実行結果は `~/.hermes/plugin-data/hermes-pilot/audit.jsonl` に追記（設定タブから閲覧）
 - レート制限: 読み取り 120 回/分（エンドポイント別バケット）/ 書き込み 60 回/分
 
 ## API（このブリッジの口）
 
+すべて `/api/*` は認証必須。書き込みは追加で `X-Client: mobile` ヘッダが必要。
+
+### 基本
+
 | メソッド | パス | 用途 |
 |---|---|---|
 | GET | `/healthz` | 死活（認証不要） |
-| GET | `/api/overview` | Hermes 状態 + メモリ/ディスク + SystemOps + 実行中タスク数 |
+| POST | `/api/auth/login` | アプリトークン → セッション Cookie（`HttpOnly` / `SameSite=Strict`） |
+| GET | `/api/auth/pairing` | ペアリング情報。ワンタイムコード（10 分・1 回限り）の URL、`targets`、`qrRows`（21×21）/`qrPng`/`qrSvg`、`expiresAt`。**アプリトークンそのものは載せない** |
+| GET | `/api/me` | バージョン確認（`{ ok, version }`） |
+| GET | `/api/capabilities` | OS・サービス管理・`agy` CLI の有無などの実行環境 |
+| GET | `/api/overview` | Hermes 状態＋メモリ/ディスク＋実行中タスク数＋ESTOP 状態 |
+
+### A2B パイプライン
+
+| メソッド | パス | 用途 |
+|---|---|---|
+| GET | `/api/specs?repo=<id>\|board=<slug>` | リポジトリの `docs/SPEC-*.md` とバッチ一覧 |
+| GET | `/api/specs/content?board=&repo=&path=` | SPEC 1 枚の全文（リポジトリ境界内・`.md` のみ・256KB 上限） |
+| POST | `/api/specs/launch` | バッチを一括起票。同一ボードの未完了 `[ID]` はスキップ（冪等） |
+| GET | `/api/specs/reports?board=&limit=` | 直近のパイプライン完走レポート |
+| POST | `/api/architect/seed` | `{ repo?, board?, seedText, runner?, autoStart?, executionPolicy?, chat?, lang? }` → **202** と `jobId` を即返し、Architect は背後で走る |
+| GET | `/api/architect/jobs?board=&repo=` | ジョブ / 完成 SPEC（`spec_ready`）/ 未起票 SPEC |
+| POST | `/api/architect/jobs/:id/dismiss` | ジョブ破棄を永続化（再取得しても進行バーに出ない） |
+| GET | `/api/architect/config` | 実行ランナー設定（`runner`）と `hasAgyCli` |
+| PUT | `/api/architect/config` | `{ runner }` を `hermes` / `antigravity` に切替（Opt-in） |
+| GET | `/api/pipeline/status` | 環境最適化の適用状況（`SOUL.md` の中身は返さない） |
+| POST | `/api/pipeline/optimize` | `{ soul?, skills? }` … `SOUL.md` へ冪等追記＋3 スキル配置 |
+| GET | `/api/telemetry/receipt?board=&spec=&hours=` | 完了レシート用の集計（コスト・キャッシュ率・節約見込・操作メトリクス）。欠損は `null` ＋ `missing` |
+
+### カンバン・レビュー
+
+| メソッド | パス | 用途 |
+|---|---|---|
 | GET | `/api/boards` | カンバン一覧（`current` フラグ付き） |
-| GET | `/api/boards/:slug/tasks` | タスク一覧 |
+| GET | `/api/boards/:slug/tasks` | タスク一覧（本文なし。git / Discord 付き） |
+| POST | `/api/boards/:slug/tasks` | クイック起票 |
 | GET | `/api/boards/:slug/tasks/:id` | タスク詳細（events / runs / comments） |
-| POST | `/api/boards/:slug/tasks/:id/comment` | タスクにコメント |
-| POST | `/api/boards/:slug/tasks/:id/unblock` | blocked タスクを再開（`ready` へ戻す） |
-| POST | `/api/boards/:slug/tasks/:id/close` | タスクの完了・取消（archive） |
+| GET | `/api/boards/:slug/tasks/:id/diff` | そのタスクのコミット差分（`?file=` で単一ファイル） |
+| GET | `/api/boards/:slug/tasks/:id/worker` | 実行中ワーカーのライブ進捗（フェーズ・feed） |
+| POST | `/api/boards/:slug/tasks/:id/comment` | コメント |
+| POST | `/api/boards/:slug/tasks/:id/unblock` | blocked を `ready` へ戻す |
+| POST | `/api/boards/:slug/tasks/:id/close` | 完了・取消（archive） |
 | POST | `/api/boards/:slug/tasks/:id/abort` | 実行中タスクの中断（reclaim → block） |
 | GET | `/api/inbox` | ボード横断の blocked タスク一覧 |
-| GET / POST | `/api/review`, `/api/review/:id/*` | レビュー一覧・シート取得・回答・注釈保存（旧 `/api/akapen` は廃止） |
-| GET / POST | `/api/repos`, `/api/repos/:id/board` | リポジトリ一覧・リポジトリ用ボード作成 |
-| GET | `/api/usage`, `/api/live` | 24h 使用量集計・ライブ実行状況 |
-| POST | `/api/gateway/:action` | `drain` / `restart` / `stop` / `start`（`confirm` 必須） |
+| GET | `/api/review` | レビューシート一覧（review / ready / done） |
+| GET | `/api/review/:id/sheet` | シート HTML（sandbox 隔離。回答は postMessage） |
+| GET | `/api/review/:id/data` | `sheet.json`（PWA ネイティブフォーム用の構造化データ） |
+| GET | `/api/review/:id/image` | 注釈の下地画像（`?compare=1` で前ラウンド＝Before） |
+| GET | `/api/review/:id/thumb/:name` | サムネイル |
+| POST | `/api/review/:id/answer` | 回答を保存 → comment → unblock（冪等。レビュー待ち以外は 409） |
+| POST | `/api/review/:id/reopen` | 反映が違うとき review に戻す |
+| POST | `/api/review/:id/approve` | 赤入れせず 1 タップ検収（`Visual check passed` を残して done / unblock） |
+| GET | `/api/review/:id/session` / `/api/review/:id/worker` | 対応するワーカーの `session_id` / 進捗 |
+| GET | `/api/review/library` / `/api/review/library/file` | 注釈の下地にできる画像 |
+| POST | `/api/review/annotation/new` | 画像から注釈タスクを 1 件作る（旧 `/api/review/from-image` も受ける） |
+| POST | `/api/review/:id/annotation` | 赤入れ（座標付きの指摘）を保存 |
+| GET | `/api/review/feed` / `/api/review/chat-reports` / `/api/review/chat-report` | 作業フィード・全会話ぶんの完了報告・会話別の完了報告 |
+| GET | `/api/review/targets` | レビューの対象（ボード・作業ディレクトリ） |
+
+### 監視・検索・その他
+
+| メソッド | パス | 用途 |
+|---|---|---|
+| GET | `/api/live` | 5 秒ポーリング用。実行中ターンと実行中タスク／Architect の合成 |
+| GET | `/api/usage?hours=24` | 24h の使用量（合計・モデル別・上位セッション。全プロファイル合算） |
 | GET | `/api/sessions` | Hermes セッション一覧（整形） |
+| GET | `/api/sessions/:id/transcript` | resume できない会話（カンバン作業ログ等）の読み取り専用トランスクリプト |
+| GET | `/api/search?q=&limit=&hours=` | 全プロファイル・全セッション横断の抜粋検索（読み取り専用） |
+| GET | `/api/discord/session?session_id=` | そのセッションの Discord スレッド |
+| GET | `/api/snippets` / `/api/snippets/term` | 定型スニペット（チャット / 端末。Hot・非表示・カスタム） |
+| PUT | `/api/snippets` | マイ定義を保存（`~/.hermes/plugin-data/hermes-pilot/snippets.json` 0600） |
+| GET / POST / DELETE | `/api/repos`, `/api/repos/scan`, `/api/repos/:id/board`, `/api/repos/:id` | リポジトリ一覧・追加・走査・ボード作成・削除（自動検出は hidden へ） |
+| POST | `/api/gateway/:action` | `drain` / `restart` / `stop` / `start`（`confirm` 必須） |
 | GET | `/api/logs?file=gateway&lines=200` | ログ末尾 |
 | GET | `/api/audit?lines=80` | 監査ログ |
+| GET | `/api/asset-log` | アイコン取得ログ（インストール時の実態確認） |
+| POST | `/api/client-error` | 端末側の例外を受け取る（下部ナビ消失などの原因調査用） |
 | WS | `/ws/chat` | Hermes `/api/ws` への中継（JSON-RPC 素通し） |
 | WS | `/ws/term` | 実 PTY（zsh） |
 
@@ -143,15 +242,15 @@ $ curl -s -o /dev/null -w "%{http_code}\n" https://<host>:8444/manifest.webmanif
 
 | 症状 | 見るところ |
 |---|---|
-| ログイン画面から進まない | `~/.hermes/mobile-pwa/token` と Cookie の有効期限 |
-| 「ブリッジに接続できません」 | `lsof -nP -iTCP:4097` / `~/.hermes/logs/hermes-mobile.error.log` |
+| ログイン画面から進まない | `~/.hermes/plugin-data/hermes-pilot/token` と Cookie の有効期限 |
+| 「ブリッジに接続できません」 | `lsof -nP -iTCP:4097` / `~/.hermes/logs/pilot.err.log` |
 | チャットだけ失敗 | `node scripts/probe-bridge.mjs`（上流 9119 の生存も確認） |
 | 端末が `closed` | PTY 起動失敗。`audit.jsonl` の `term.error`、`spawn-helper` の権限 |
 | タスクが出ない | ボード slug と `~/.hermes/kanban/boards/<slug>/kanban.db` の存在 |
 
 ## 端末の認証は再起動で切れない（2026-10-23 修正）
 
-端末セッションは `~/.hermes/mobile-pwa/sessions.json`（0600）に**永続化**している。
+端末セッションは `~/.hermes/plugin-data/hermes-pilot/sessions.json`（0600）に**永続化**している。
 ブリッジの再起動・launchd の kickstart・Mac の再起動ではログアウトしない。実測:
 
 ```
@@ -164,7 +263,7 @@ kill → launchd が自動復帰（pid 1877）
 
 **再認証が必要になるのは次の 4 つだけ**:
 
-1. トークンをローテーションした（`rm ~/.hermes/mobile-pwa/token` → 再起動）。`tokenFingerprint` が変わるので全端末が自動失効
+1. トークンをローテーションした（`rm ~/.hermes/plugin-data/hermes-pilot/token` → 再起動）。`tokenFingerprint` が変わるので全端末が自動失効
 2. 30日間その端末を使っていない（最終利用からスライディング）
 3. `npm run revoke` で明示的に失効
 4. 端末側でサイトデータを消した / PWA を入れ直した（Cookie が消える）
@@ -208,7 +307,7 @@ conn=ready → kill → conn=closed (t=18.1s) → conn=ready (t=20.0s)   ← リ
   → ページ自体がスクロールしてナビが画面外に出る経路を塞ぐ
 - `.nav { flex: 0 0 auto; position: sticky; bottom: 0 }`
 - タブ内の描画エラーは **ErrorBoundary** で 1 画面に閉じ込める（ナビは残る）
-- 万一の原因調査用に、端末の例外を `~/.hermes/mobile-pwa/client-errors.log` に記録する
+- 万一の原因調査用に、端末の例外を `~/.hermes/plugin-data/hermes-pilot/client-errors.log` に記録する
   （`POST /api/client-error`、30件/分まで）
 
 ## 添付（画像・ファイル）と定型スニペット（2026-10-23 追加）
@@ -236,7 +335,7 @@ conn=ready → kill → conn=closed (t=18.1s) → conn=ready (t=20.0s)   ← リ
 ### 定型スニペット
 
 - `GET /api/snippets` … 組み込み14件 + マイ（`hot` がバーに出る）
-- `PUT /api/snippets {custom: [...]}` … マイ定義を保存（最大12件、名前20字・本文400字、`~/.hermes/mobile-pwa/snippets.json` 0600）
+- `PUT /api/snippets {custom: [...]}` … マイ定義を保存（最大12件、名前20字・本文400字、`~/.hermes/plugin-data/hermes-pilot/snippets.json` 0600）
 - バーは**5個 + ＋**。タップで入力欄に挿入（送信しない）、**長押し550msで即送信**
 - 挿入時 `{{...}}` は選択状態にする（そのまま打ち替えられる）
 - 長押し送信では**書きかけの下書きを消さない**（`sendText(override)` は `override != null` のとき `setText('')` をしない）
@@ -273,7 +372,7 @@ conn=ready → kill → conn=closed (t=18.1s) → conn=ready (t=20.0s)   ← リ
   → 打ちかけの文字にコマンドが連結される事故を防ぐ（実測で確認）
 - 破壊的コマンド（再帰削除・pkill・killall・sudo など）は**入れない**。
   `test/term-snippets.test.js` が禁止パターンとマーカー文字列を機械的に検査する
-- 再起動系は端末 PTY（`ai.hermes.hermes-mobile`）が gateway と別プロセスなので、
+- 再起動系は端末 PTY（`ai.hermes.pilot`）が gateway と別プロセスなので、
   **gateway を再起動しても端末と画面は切れない**
 
 ### 収録（バー6件 + シート15件）
@@ -438,7 +537,7 @@ TUI 由来ヒットをタップ → 通常表示（16メッセージ・composer 
 ### 実測（390×844 / :8444）
 
 ```
-POST /api/boards/hermes-mobile-pwa/tasks {"title":"API probe: 起票テスト",...}
+POST /api/boards/<board>/tasks {"title":"API probe: 起票テスト",...}
   → ok:true created:true task.id=t_3fddc454 priority:5
 同じ idempotencyKey で再送 → created:false / 同じ t_3fddc454（CLI は1回だけ）
 タイトル空 → 400
@@ -599,7 +698,7 @@ GET /api/inbox → items 1 / counts {needs_input: 1}
 POST comment {"body":"モバイルから承認します。反映してください。"} → ok:true
 空コメント → 400 / 監査 kanban.comment {board, task, chars:21}
 UI: バー「承認待ち 1 件 / 回答する ›」→ シート
-  「inbox-probe: 本番反映の可否」「hermes-mobile-pwa ・ 回答待ち ・ 再発1 ・ 18秒前」
+  「inbox-probe: 本番反映の可否」「<board> ・ 回答待ち ・ 再発1 ・ 18秒前」
   理由・直前コメント表示 → 返信「UIから: 承認します。反映OK。」送信 → 3秒前のコメントとして反映・入力欄クリア
 アーカイブ後 → items 0（バーも消える）。コメント4件は DB に残存
 ```
@@ -607,7 +706,7 @@ UI: バー「承認待ち 1 件 / 回答する ›」→ シート
 ### 実測: 片付け（2026-11-12・本番ブリッジ :4097）
 
 ```
-POST /api/boards/hermes-mobile-pwa/tasks/<probe>/close {"action":"cancel","note":"endpoint probe"}
+POST /api/boards/<board>/tasks/<probe>/close {"action":"cancel","note":"endpoint probe"}
   → {ok:true, action:"cancel", status:"archived", changed:true}
 再送（同じ action） → {ok:true, status:"archived", noop:true}   # CLI は呼ばれない
 {"action":"delete"} → 400「action は done か cancel を指定してください」
@@ -616,7 +715,7 @@ tasks/..%2F..%2Fetc/close → 400「タスクIDが不正です」
 UI（390×844）: 承認待ちシートのカード下「この判断待ちを片付ける」→ 完了にする / 取消（アーカイブ）
   長押し1.5秒 → トースト「取消（アーカイブ）しました」→ カードが一覧から消える
   赤ペンタブの注釈エディタ末尾でも同じ操作 → 「完了にしました」→ 判断待ち 0 件
-監査: ~/.hermes/mobile-pwa/audit.jsonl に kanban.close {board, task, action, status, noop}
+監査: ~/.hermes/plugin-data/hermes-pilot/audit.jsonl に kanban.close {board, task, action, status, noop}
 ```
 
 ## アイコン（マスカブル対応 / 2026-10-23 修正）
@@ -1033,7 +1132,7 @@ WebAPK インストール基盤（Google Play Services 側）** にある。
 
 実測（390×844）:
 ```
-並び: hermes-mobile-pwa(13:49) → web-console(03:44) → app-dev-env → … → git-ops
+並び: <board-a>(13:49) → <board-b>(03:44) → <board-c> → … → <board-z>
 選択: SampleApp 開発環境構築 → チャット → タスク → 復元、再読込後も復元（localStorage=app-dev-env）
 npm test 82 pass（boards-order.test.js 追加）
 ```
@@ -1089,9 +1188,9 @@ tablet: chipRow 38px / チップ表示幅 760px（スマホは366px） / 横ス�
 - 「＋」のシートは**1 段**のまま。プロファイル 3 行の下に **リポジトリ節**（前回 + 一覧順で 4 行 → 「すべてのリポジトリ」17 件 → 「リポジトリを選ばない」）
 - リポジトリを押すと開始。板が**複数**なら「ボードを選ぶ」段、**無い**なら「ボードを作る」確認の段（Q3=A: 黙って増やさない）
 - 選択の効果は 3 つ: `session.create` の **`cwd`**（作業ディレクトリ）/ **`hm.board`**（タスクタブと起票の既定ボード）/ ヘッダーの **repo 札**
-- 対応は **板の `default_workdir` と repo の path の一致だけ**（小文字比較）。`mobile`（akapen）のように repo に紐づかない板は出ない
+- 対応は **板の `default_workdir` と repo の path の一致だけ**（小文字比較）。repo に紐づかない板（汎用の `mobile` ボードなど）は出ない
 - 一覧は Git Ops の `repos.json`（`/api/repos`）。板の作成は `POST /api/repos/:id/board` → `hermes kanban boards create`（監査 `repos.board.create`）
-- 実測（:4098 = 同じ dist / 同じ `~/.hermes`）: `session.create {cwd}` の応答 `info.cwd` が repo のパス、repo 選択後のタスクタブが `hermes-mobile-pwa`。**ボード作成の往復だけは本番の板を増やさないため未検証**
+- 実測（:4098 = 同じ dist / 同じ `~/.hermes`）: `session.create {cwd}` の応答 `info.cwd` が repo のパス、repo 選択後のタスクタブがそのリポジトリの板。**ボード作成の往復だけは本番の板を増やさないため未検証**
 - 落とし穴: 端末の `HERMES_HOME` が profile を指していると、2 つ目のブリッジは別の token/kanban を見る（401 になる）。検証用に別ポートで立てるときは `env -u HERMES_HOME`
 
 ## 無停止デプロイ（改修中に PWA を落とさない）
@@ -1115,4 +1214,4 @@ npm run deploy     # ビルド → index.html と /assets/ 参照の検証 → d
 - **Android 戻るジェスチャー統一**: `Sheet` コンポーネントで `history.pushState` / `popstate` を管理し、すべてのシートで「戻る」で閉じられるように統一
 - **タスク再開・赤ペン全件・Object URL 解放**: `InboxSheet` に `unblock` 再開導線、赤ペン「完了」タブに「すべて表示」切替、`ChatPane` 添付プレビューに `URL.revokeObjectURL` を追加
 - **ハプティック・ローダー統一**: `haptic.js`（設定タブで ON/OFF 可）、`Spinner` / `Loader` / `RefreshButton` を全タブに導入
-- 検証: `npm run verify`（単体テスト 189 件、PWA チェック 34 項目、Vite ビルド）すべて通過
+- 検証: `npm run verify`（単体テスト 808 件、PWA チェック 34 項目、OAuth 境界 0 違反、Vite ビルド、レスポンシブ監査）すべて通過
