@@ -20,6 +20,11 @@ import { renderMarkdown } from '../lib/markdown.js'
 import { batchIdOf, specProgress } from '../lib/specProgress.js'
 import { useI18n } from '../i18n/index.js'
 import { useSplitLayout } from '../lib/useSplitLayout.js'
+import { collapseTaskEvents } from '../lib/tasksView.js'
+import { WorkerFeed } from './ReviewPane.jsx'
+
+/** 実行中タスクの詳細を追いかける間隔（heartbeat と worker の進捗が増えるため）。 */
+const DETAIL_POLL_MS = 5000
 
 /** タスク状態 → 辞書キー（未知は生の値）。 */
 const STATUS_KEY = {
@@ -591,6 +596,30 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
     }
   }
 
+  /** 実行中／待機中のあいだ詳細を再同期する（heartbeat・イベント・worker の進捗が増えるため）。 */
+  useEffect(() => {
+    const id = detail?.id
+    const status = detail?.status
+    if (!id) return
+    if (!(status === 'running' || status === 'ready')) return
+    let alive = true
+    const timer = setInterval(async () => {
+      if (document.visibilityState !== 'visible') return
+      try {
+        const d = await api(`/api/boards/${encodeURIComponent(board)}/tasks/${encodeURIComponent(id)}`)
+        if (!alive) return
+        // 別のタスクを開いた／閉じたときに古い応答で上書きしない
+        setDetail((prev) => (prev && prev.id === id ? { ...prev, ...d, loading: false } : prev))
+      } catch {
+        /* 一時的な失敗は次の tick で取り直す */
+      }
+    }, DETAIL_POLL_MS)
+    return () => {
+      alive = false
+      clearInterval(timer)
+    }
+  }, [detail?.id, detail?.status, board])
+
   /** 差分サマリ（アコーディオンを開いたときだけ取りに行く）。 */
   const loadDiff = async (id) => {
     if (diff?.files) return
@@ -945,19 +974,38 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
                 </div>
               ) : null}
 
+              {detail.sessionId ? (
+                <div style={{ marginTop: 12 }}>
+                  <WorkerFeed
+                    taskId={detail.id}
+                    open={detail.status === 'running' || detail.status === 'ready'}
+                    endpoint={`/api/boards/${encodeURIComponent(board)}/tasks/${encodeURIComponent(detail.id)}/worker?limit=30`}
+                  />
+                </div>
+              ) : null}
+
               <div className="list-head" style={{ marginTop: 16 }}>
                 <span>{t('tasks.events')}</span>
               </div>
               <div className="timeline">
-                {(detail.events ?? []).map((e, i) => (
-                  <div key={i} className="tl">
-                    <span className="tl-dot" />
-                    <span className="tl-main">
-                      <span className="row-title">{e.kind}</span>
-                      <span className="row-sub">{relTime(e.at)}</span>
-                    </span>
-                  </div>
-                ))}
+                {collapseTaskEvents(detail.events ?? []).map((e, i) => {
+                  const merged = e.kind === 'heartbeat' && e.count > 1
+                  return (
+                    <div key={i} className="tl">
+                      <span className="tl-dot" />
+                      <span className="tl-main">
+                        <span className="row-title">
+                          {merged ? t('tasks.heartbeatCount', { n: e.count }) : e.kind}
+                        </span>
+                        <span className="row-sub">
+                          {merged
+                            ? t('tasks.heartbeatRange', { first: relTime(e.firstAt), last: relTime(e.at) })
+                            : relTime(e.at)}
+                        </span>
+                      </span>
+                    </div>
+                  )
+                })}
                 {!(detail.events ?? []).length ? <div className="empty">{t('tasks.noEvents')}</div> : null}
               </div>
           </>

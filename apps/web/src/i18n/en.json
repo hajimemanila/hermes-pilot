@@ -730,6 +730,8 @@
   "tasks.abortSub": "reclaim → block (stops re-runs)",
   "tasks.events": "Events",
   "tasks.noEvents": "No events",
+  "tasks.heartbeatCount": "heartbeat ×{n}",
+  "tasks.heartbeatRange": "({first} – {last})",
   "settings.pairing": "Pair a device",
   "settings.pairingHint": "Show a QR code for a second phone or tablet. Opening it signs that device in, so the long token never has to be typed.",
   "settings.showPairingQr": "Show Pairing QR",

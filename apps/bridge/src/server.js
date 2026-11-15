@@ -1,7 +1,6 @@
 import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
-import os from 'node:os'
 import { WebSocketServer, WebSocket } from 'ws'
 import { createRequire } from 'node:module'
 import { loadConfig, VERSION } from './config.js'
@@ -25,6 +24,7 @@ import { createGitInfo } from './gitinfo.js'
 import { createDiscord } from './discord.js'
 import { createSearch } from './search.js'
 import { createTranscript } from './transcript.js'
+import { createWorkerFeed } from './workerFeed.js'
 import { createCapture } from './capture.js'
 import { createUsage } from './usage.js'
 import { createTelemetry } from './telemetry.js'
@@ -161,6 +161,19 @@ async function listStateDbs() {
   }
   return out
 }
+
+/**
+ * 実行ワーカーのトランスクリプトを読む（レビュー詳細とタスク詳細で共通）。
+ *
+ * セッションの DB はイベントが記録した実パス（`info.db`）を最優先。記録が無い／空でも
+ * `/api/boards/:slug/tasks/:id` は任意のボードを扱うので、全プロファイルの state.db を
+ * 横断して messages が 1 件以上あった DB を採用する（選択ロジックは `workerFeed.js`）。
+ */
+const readWorkerFeed = createWorkerFeed({
+  listStateDbs,
+  read: (sessionId, opts) => transcript.read(sessionId, opts),
+})
+
 const capture = createCapture(cfg)
 // Zero-Typing 実行サマリ（完了レシート・SPEC-PILOT-V5 §3.3 ③ / D26③）。
 // usage / 完走レポート / カンバン / audit.jsonl を読むだけで、書き込みはしない。
@@ -873,6 +886,20 @@ async function handleApi(req, res, url) {
       })
       return sendJson(res, 200, out)
     }
+    if (b && c === 'tasks' && d && e === 'worker' && req.method === 'GET') {
+      // 任意のボードの実行中タスクでもワーカーのライブ進捗を読めるようにする（SPEC V8-B3）
+      const info = kanban.taskSession(b, d)
+      if (!info) return sendError(res, 404, 'NO_SESSION')
+      const { feed, db, profile } = await readWorkerFeed(info.sessionId, info, Number(url.searchParams.get('limit') ?? 40))
+      return sendJson(res, 200, {
+        taskId: d,
+        status: kanban.task(b, d).status,
+        sessionId: info.sessionId,
+        db,
+        profile,
+        feed,
+      })
+    }
     if (b && c === 'tasks' && d && e === 'abort' && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
         return sendError(res, 429, 'RATE_LIMITED')
@@ -953,15 +980,8 @@ async function handleApi(req, res, url) {
       // worker（profile mobile）の進行を読む。session.resume は通らないので state.db を直接読む
       const info = review.sessionId(b)
       if (!info) return sendError(res, 404, 'NO_SESSION')
-      // セッションの DB はイベントが記録した実パスを優先（無ければ profiles/mobile）
-      const profileDb =
-        info.db || path.join(path.dirname(cfg.kanbanRoot || path.join(os.homedir(), '.hermes', 'kanban')), 'profiles', 'mobile', 'state.db')
-      const feed = transcript.read(info.sessionId, {
-        dbPath: profileDb,
-        limit: Number(url.searchParams.get('limit') ?? 40),
-        includeTools: true,
-      })
-      return sendJson(res, 200, { taskId: b, status: info.status, sessionId: info.sessionId, feed })
+      const { feed, db, profile } = await readWorkerFeed(info.sessionId, info, Number(url.searchParams.get('limit') ?? 40))
+      return sendJson(res, 200, { taskId: b, status: info.status, sessionId: info.sessionId, db, profile, feed })
     }
     // /api/review/library            … 注釈の下地にできる画像（library + shots）
     // /api/review/library/file?path= … その画像

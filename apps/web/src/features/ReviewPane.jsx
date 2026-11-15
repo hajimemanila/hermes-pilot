@@ -126,18 +126,26 @@ function ItemRow({ item, onOpen }) {
  */
 
 
-/** worker（profile mobile）の進行。反映中でも「何をしているか」が見えるようにする。 */
-function WorkerFeed({ taskId, open }) {
+/**
+ * worker（profile mobile）の進行。反映中でも「何をしているか」が見えるようにする。
+ *
+ * レビュー詳細とタスク詳細（任意のボード）の両方から使うので名前付きで公開する。
+ * エンドポイントは `endpoint` で差し替えられる（既定はレビュー詳細）。
+ *
+ * @param {{taskId: string, open?: boolean, endpoint?: string|null}} props プロパティ
+ */
+export function WorkerFeed({ taskId, open = false, endpoint = null }) {
   const { t } = useI18n()
   const [feed, setFeed] = useState(null)
   const [error, setError] = useState(null)
   const boxRef = React.useRef(null)
+  const url = endpoint || `/api/review/${taskId}/worker?limit=30`
 
   useEffect(() => {
     let alive = true
     const load = async () => {
       try {
-        const r = await api(`/api/review/${taskId}/worker?limit=30`)
+        const r = await api(url)
         if (!alive) return
         setFeed(r)
         setError(null)
@@ -156,7 +164,7 @@ function WorkerFeed({ taskId, open }) {
       alive = false
       if (id) clearInterval(id)
     }
-  }, [open, taskId])
+  }, [open, taskId, url])
 
   useEffect(() => {
     const el = boxRef.current

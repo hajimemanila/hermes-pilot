@@ -730,6 +730,8 @@
   "tasks.abortSub": "reclaim → block（再実行を止める）",
   "tasks.events": "イベント",
   "tasks.noEvents": "イベントなし",
+  "tasks.heartbeatCount": "heartbeat {n} 回",
+  "tasks.heartbeatRange": "（{first} 〜 {last}）",
   "settings.pairing": "端末を追加",
   "settings.pairingHint": "2 台目のスマホ／タブレット用の QR を表示します。読み取るだけでログインできるので、長いトークンを打ち直す必要はありません。",
   "settings.showPairingQr": "ペアリング QR を表示",

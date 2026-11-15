@@ -170,6 +170,62 @@ export function createKanban(cfg) {
   }
 
   /**
+   * 実行ワーカーのセッションと、その会話が入っている state.db を引く。
+   *
+   * `tasks.session_id` は `complete --force` などで空になるので、`task_events` の
+   * `owner_admitted` / `worker_bound` / `spawned` の payload も見る。`db` はイベントにしか
+   * 残らない（どのプロファイルの state.db か）ため、session_id がタスク行にあっても
+   * イベントを読む。
+   *
+   * @param {import('node:sqlite').DatabaseSync} db ボードの DB（開いているもの）
+   * @param {string} id タスク ID
+   * @returns {{sessionId: string, db: string|null}|null} 見つからなければ null
+   */
+  function resolveSessionInfoIn(db, id) {
+    let sessionId = null
+    try {
+      const r = db.prepare('SELECT session_id FROM tasks WHERE id = ?').get(id)
+      if (r?.session_id) sessionId = String(r.session_id)
+    } catch {
+      /* 古い板に session_id 列が無い */
+    }
+    let dbPath = null
+    for (const ev of safeAll(
+      db,
+      `SELECT payload FROM task_events WHERE task_id = ?
+         AND kind IN ('owner_admitted','worker_bound','spawned') ORDER BY id DESC LIMIT 8`,
+      id,
+    )) {
+      const p = safeJson(ev?.payload)
+      if (!p || typeof p !== 'object') continue
+      if (!sessionId && p.session_id) sessionId = String(p.session_id)
+      if (!dbPath && p.db) dbPath = String(p.db)
+      if (sessionId && dbPath) break
+    }
+    return sessionId ? { sessionId, db: dbPath } : null
+  }
+
+  /**
+   * 実行ワーカーのセッション情報（ボードを指定して引く）。
+   * @param {string} slug ボード
+   * @param {string} id タスク ID
+   * @returns {{sessionId: string, db: string|null}|null} 見つからなければ null
+   */
+  function taskSession(slug, id) {
+    let db
+    try {
+      db = new DatabaseSync(dbFor(slug), { readOnly: true })
+    } catch {
+      return null
+    }
+    try {
+      return resolveSessionInfoIn(db, id)
+    } finally {
+      db.close()
+    }
+  }
+
+  /**
    * タスク詳細（イベント・実行履歴・コメント付き）。
    * @param {string} slug ボード
    * @param {string} id タスク ID
@@ -204,6 +260,8 @@ export function createKanban(cfg) {
         `SELECT author, body, created_at FROM task_comments WHERE task_id = ? ORDER BY id DESC LIMIT 10`,
         id,
       ).map((c) => ({ author: c.author, body: c.body, at: Number(c.created_at) * 1000 }))
+      // 実行ワーカーのライブ進捗（`<WorkerFeed>`）は sessionId がある時だけ出す
+      const session = resolveSessionInfoIn(db, id)
       return {
         id: row.id,
         title: row.title,
@@ -214,6 +272,7 @@ export function createKanban(cfg) {
         workspace: row.workspace_path,
         branch: row.branch_name,
         workerPid: row.worker_pid ?? null,
+        sessionId: session?.sessionId ?? null,
         startedAt: row.started_at ? Number(row.started_at) * 1000 : null,
         completedAt: row.completed_at ? Number(row.completed_at) * 1000 : null,
         result: row.result,
@@ -298,5 +357,5 @@ export function createKanban(cfg) {
     }
   }
 
-  return { boards, tasks, task, abort }
+  return { boards, tasks, task, taskSession, abort }
 }

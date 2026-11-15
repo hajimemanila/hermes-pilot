@@ -657,6 +657,7 @@ export function demoRoute(path) {
     const taskId = parts[4] ? decodeURIComponent(parts[4]) : ''
     if (!taskId) return { name: 'board.tasks', id: boardSlug, params }
     if (parts[5] === 'diff') return { name: 'board.taskDiff', id: boardSlug, taskId, params }
+    if (parts[5] === 'worker') return { name: 'board.taskWorker', id: boardSlug, taskId, params }
     if (parts[5] === 'abort') return { name: 'board.taskAbort', id: boardSlug, taskId, params }
     return { name: 'board.task', id: boardSlug, taskId, params }
   }
@@ -881,6 +882,10 @@ const DEMO_COMMITS = {
 
 /**
  * タスク詳細のデモ応答（形は `kanban.task` に合わせる）。
+ *
+ * `events` は本物（`task_events` を `ORDER BY id DESC`）と同じ**新しい順**で返す。
+ * 実行中／待機中は heartbeat を 3 連続で入れ、詳細シートの折りたたみを体験できるようにする。
+ *
  * @param {object} task 一覧の行
  * @returns {object} 詳細
  */
@@ -888,6 +893,16 @@ export function demoTaskDetail(task) {
   const commit = DEMO_COMMITS[task.id] || null
   const startedAt = task.createdAt ? task.createdAt + 5_000 : null
   const endedAt = task.status === 'done' ? task.updatedAt ?? Date.now() : null
+  const lastBeat = endedAt ?? Date.now()
+  const beats = [0, 1, 2].map((i) => ({
+    kind: 'heartbeat',
+    at: lastBeat - i * 60_000,
+    payload: {},
+  }))
+  const tail = [
+    { kind: 'claimed', at: startedAt ?? lastBeat, payload: { run_id: 1 } },
+    { kind: 'created', at: task.createdAt ?? lastBeat, payload: { status: 'ready' } },
+  ]
   return {
     id: task.id,
     board: task.board ?? DEMO_BOARD,
@@ -899,24 +914,52 @@ export function demoTaskDetail(task) {
     workspace: DEMO_REPO_PATH,
     branch: commit?.branch ?? 'main',
     workerPid: null,
+    sessionId: DEMO_SESSION,
     startedAt,
     completedAt: task.status === 'done' ? (task.updatedAt ?? Date.now()) : null,
     result: task.result ?? null,
-    events: [
-      { kind: 'created', at: task.createdAt ?? Date.now(), payload: { status: 'ready' } },
-      { kind: 'claimed', at: startedAt ?? Date.now(), payload: { run_id: 1 } },
-      {
-        kind: task.status === 'done' ? 'completed' : 'heartbeat',
-        at: endedAt ?? Date.now(),
-        payload: task.status === 'done' ? { outcome: 'done' } : {},
-      },
-    ],
+    // 新しい順（本物の `kanban.task()` と同じ）。done は heartbeat の代わりに completed。
+    events:
+      task.status === 'done'
+        ? [{ kind: 'completed', at: endedAt ?? Date.now(), payload: { outcome: 'done' } }, ...tail]
+        : [...beats, ...tail],
     runs: [{ id: 1, status: task.status === 'done' ? 'done' : 'running', startedAt, endedAt }],
     comments: [{ author: 'mobile', body: 'demo comment', at: task.createdAt ?? Date.now() }],
     git: commit
       ? { head: commit.head, branch: commit.branch, subject: commit.subject, dirty: false }
       : { head: null, branch: 'main', subject: '', dirty: false },
     demo: true,
+  }
+}
+
+/**
+ * worker のライブ進捗のデモ応答（形は `transcript.read` に合わせる）。
+ * @param {string} taskId タスク ID
+ * @returns {object} フィード（messages は古い順）
+ */
+export function demoWorkerFeed(taskId) {
+  const now = Date.now()
+  const row = (id, role, text, toolName = null) => ({
+    id,
+    role,
+    at: now - (5 - id) * 40_000,
+    text,
+    toolName,
+    toolArgs: null,
+  })
+  return {
+    ok: true,
+    sessionId: DEMO_SESSION,
+    title: `demo worker ${taskId}`,
+    messages: [
+      row(1, 'assistant', 'Reading the task body and the files it names.'),
+      row(2, 'tool', 'node --test apps/web/test/tasksView.test.js', 'terminal'),
+      row(3, 'tool', 'grep -n "heartbeat" apps/web/src/features/TasksPane.jsx', 'terminal'),
+      row(4, 'assistant', 'Collapsing consecutive heartbeats into one row.'),
+      row(5, 'tool', 'npm test', 'terminal'),
+    ],
+    oldestId: 1,
+    hasMore: false,
   }
 }
 
@@ -1219,7 +1262,7 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
     case 'review.reopen':
       return { ok: true, moved: 'blocked' }
     case 'review.worker':
-      return { items: [], messages: [], sessionId: DEMO_SESSION }
+      return { taskId: route.id, status: 'running', sessionId: DEMO_SESSION, db: null, profile: null, feed: demoWorkerFeed(route.id) }
     case 'review.annotationNew':
       return { ok: false, message: 'demo', demo: true }
     case 'review.misc':
@@ -1242,6 +1285,19 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
       const file = route.params.get('file')
       if (!file) return demoDiffSummary(task)
       return demoFilePatch(task, String(file))
+    }
+    // V8-B3: 任意のボードの実行中タスクでも worker のライブ進捗を出す
+    case 'board.taskWorker': {
+      const task = state.tasks.find((t) => t.id === route.taskId)
+      if (!task) return { ok: false, code: 'TASK_NOT_FOUND', error: 'task not found', id: route.taskId, demo: true }
+      return {
+        taskId: task.id,
+        status: task.status,
+        sessionId: DEMO_SESSION,
+        db: null,
+        profile: null,
+        feed: demoWorkerFeed(task.id),
+      }
     }
     case 'board.taskAbort': {
       const task = state.tasks.find((t) => t.id === route.taskId)

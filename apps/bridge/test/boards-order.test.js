@@ -83,3 +83,34 @@ test('ボード一覧は最終活動の新しい順（アーカイブは最後�
   assert.ok(order.indexOf('empty') < order.indexOf('old'))
   assert.equal(order.filter((s) => s !== 'old').pop(), 'empty')
 })
+
+test('task / taskSession はワーカーの sessionId と state.db を返す（V8-B3）', () => {
+  const dir = tmp('hm-board-session-')
+  const root = path.join(dir, 'kanban')
+  makeBoard(root, 'arch', { tasks: [{ status: 'running', at: 1700000000 }] })
+  const dbPath = path.join(root, 'boards', 'arch', 'kanban.db')
+  const db = new DatabaseSync(dbPath)
+  db.exec('ALTER TABLE tasks ADD COLUMN session_id TEXT')
+  db.exec('CREATE TABLE task_events (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT, kind TEXT, payload TEXT, created_at INTEGER)')
+  db.prepare("UPDATE tasks SET session_id = 'sess_row' WHERE id = 'arch-0'").run()
+  db.prepare("INSERT INTO task_events (task_id,kind,payload,created_at) VALUES ('arch-0','owner_admitted',?,1)").run(
+    JSON.stringify({ session_id: 'sess_row', db: '/tmp/profiles/mobile/state.db' }),
+  )
+  db.close()
+
+  const kanban = createKanban(cfgFor(dir))
+  const detail = kanban.task('arch', 'arch-0')
+  assert.equal(detail.sessionId, 'sess_row', '詳細に sessionId が入っていない')
+  const info = kanban.taskSession('arch', 'arch-0')
+  assert.equal(info.sessionId, 'sess_row')
+  assert.equal(info.db, '/tmp/profiles/mobile/state.db', 'db が取れていない')
+})
+
+test('taskSession は手掛かりが無ければ null（古い板でも落ちない）', () => {
+  const dir = tmp('hm-board-nosession-')
+  const root = path.join(dir, 'kanban')
+  makeBoard(root, 'plain', { tasks: [{ status: 'done', at: 1700000000 }] })
+  const kanban = createKanban(cfgFor(dir))
+  assert.equal(kanban.taskSession('plain', 'plain-0'), null)
+  assert.equal(kanban.task('plain', 'plain-0').sessionId, null)
+})

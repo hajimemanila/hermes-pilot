@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { createWorkerFeed, feedCandidates, pickFeed } from '../src/workerFeed.js'
 import {
   parseReviewLine,
   parseReplyText,
@@ -1055,4 +1056,150 @@ test('answer: 担当の無いタスクは回答後に assign してワーカー�
   assert.equal(r.assigned, 'mobile')
   const assign = calls.find((c) => c[0] === 'assign')
   assert.deepEqual(assign, ['assign', 't_noassign', 'mobile'], 'assign が呼ばれていない')
+})
+
+/* ------------------------------------------------------------------ *
+ * V8-B3: 実行ワーカーのセッション解決と、プロファイル横断の feed 検索
+ * ------------------------------------------------------------------ */
+
+/**
+ * `session_id` 列と `task_events` を持つ一時ボードを作る。
+ * @param {{sessionId?: string|null, events?: Array<{kind: string, payload: object}>}} [opts] 中身
+ * @returns {{root: string, dbPath: string}} 置き場所
+ */
+function sessionBoard({ sessionId = null, events = [] } = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-session-'))
+  const boardDir = path.join(root, 'kanban', 'boards', 'mobile')
+  fs.mkdirSync(boardDir, { recursive: true })
+  fs.writeFileSync(path.join(boardDir, 'board.json'), JSON.stringify({ slug: 'mobile' }))
+  const dbPath = path.join(boardDir, 'kanban.db')
+  const db = new DatabaseSync(dbPath)
+  db.exec(`CREATE TABLE tasks (
+    id TEXT PRIMARY KEY, title TEXT, body TEXT, status TEXT, assignee TEXT,
+    priority INTEGER DEFAULT 0, created_at INTEGER, started_at INTEGER, completed_at INTEGER,
+    result TEXT, last_heartbeat_at INTEGER, session_id TEXT)`)
+  db.exec(`CREATE TABLE task_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT, kind TEXT, payload TEXT, created_at INTEGER)`)
+  db.prepare('INSERT INTO tasks (id,title,status,created_at,session_id) VALUES (?,?,?,?,?)').run(
+    't_worker',
+    'worker の進捗',
+    'running',
+    Math.floor(Date.now() / 1000),
+    sessionId,
+  )
+  for (const e of events) {
+    db.prepare('INSERT INTO task_events (task_id,kind,payload,created_at) VALUES (?,?,?,?)').run(
+      't_worker',
+      e.kind,
+      JSON.stringify(e.payload ?? {}),
+      Math.floor(Date.now() / 1000),
+    )
+  }
+  db.close()
+  return { root, dbPath }
+}
+
+test('review.sessionId は tasks 行に session_id があっても task_events の db を補完する', () => {
+  const { root } = sessionBoard({
+    sessionId: 'sess_row',
+    events: [{ kind: 'owner_admitted', payload: { session_id: 'sess_row', db: '/tmp/profiles/mobile/state.db' } }],
+  })
+  const api = createReview({ kanbanRoot: path.join(root, 'kanban') })
+  const info = api.sessionId('t_worker')
+  assert.equal(info.sessionId, 'sess_row')
+  assert.equal(info.db, '/tmp/profiles/mobile/state.db', 'db が補完されていない')
+  assert.equal(info.status, 'running')
+})
+
+test('review.sessionId は tasks 行が空でもイベントの session_id で解決する', () => {
+  const { root } = sessionBoard({
+    sessionId: null,
+    events: [{ kind: 'worker_bound', payload: { session_id: 'sess_event', db: '/tmp/p/state.db' } }],
+  })
+  const api = createReview({ kanbanRoot: path.join(root, 'kanban') })
+  const info = api.sessionId('t_worker')
+  assert.equal(info.sessionId, 'sess_event')
+  assert.equal(info.db, '/tmp/p/state.db')
+})
+
+test('review.sessionId は手掛かりが無ければ null', () => {
+  const { root } = sessionBoard({})
+  const api = createReview({ kanbanRoot: path.join(root, 'kanban') })
+  assert.equal(api.sessionId('t_worker'), null)
+})
+
+test('workerFeed は info.db を優先し、空なら全プロファイルを横断して messages のある DB を採る', async () => {
+  const calls = []
+  const read = (sid, opts) => {
+    calls.push(opts.dbPath)
+    // イベントが指す DB は空、profile 側にだけ会話がある（実測: 別プロファイルで動いた worker）
+    if (opts.dbPath === '/tmp/event/state.db') return { ok: true, sessionId: sid, messages: [] }
+    if (opts.dbPath === '/tmp/default/state.db') return { ok: true, sessionId: sid, messages: [] }
+    if (opts.dbPath === '/tmp/mobile/state.db')
+      return { ok: true, sessionId: sid, messages: [{ id: 1, role: 'tool', text: 'npm test' }] }
+    return { ok: false, sessionId: sid, messages: [], reason: 'no db' }
+  }
+  const readWorkerFeed = createWorkerFeed({
+    listStateDbs: async () => [
+      { profile: 'default', path: '/tmp/default/state.db' },
+      { profile: 'mobile', path: '/tmp/mobile/state.db' },
+    ],
+    read,
+  })
+  const hit = await readWorkerFeed('sess_1', { db: '/tmp/event/state.db' }, 30)
+  assert.equal(hit.db, '/tmp/mobile/state.db', 'messages のある DB が選ばれていない')
+  assert.equal(hit.profile, 'mobile')
+  assert.equal(hit.feed.messages.length, 1)
+  // info.db が最初に読まれる（優先）
+  assert.equal(calls[0], '/tmp/event/state.db')
+})
+
+test('workerFeed は info.db が重複していても二度読まない', async () => {
+  const calls = []
+  const readWorkerFeed = createWorkerFeed({
+    listStateDbs: async () => [{ profile: 'mobile', path: '/tmp/mobile/state.db' }],
+    read: (sid, opts) => {
+      calls.push(opts.dbPath)
+      return { ok: true, sessionId: sid, messages: [] }
+    },
+  })
+  const hit = await readWorkerFeed('sess_2', { db: '/tmp/mobile/state.db' })
+  assert.deepEqual(calls, ['/tmp/mobile/state.db'])
+  // どこも空でも DB は特定できている（UI は「まだ出力がありません」を出す）
+  assert.equal(hit.db, '/tmp/mobile/state.db')
+  assert.deepEqual(hit.feed.messages, [])
+})
+
+test('workerFeed は sessionId が無ければ DB を読まない', async () => {
+  let called = 0
+  const readWorkerFeed = createWorkerFeed({
+    listStateDbs: async () => [{ profile: 'mobile', path: '/tmp/mobile/state.db' }],
+    read: () => {
+      called += 1
+      return { ok: true, messages: [] }
+    },
+  })
+  assert.deepEqual(await readWorkerFeed('', {}), { feed: null, db: null, profile: null })
+  assert.equal(called, 0)
+})
+
+test('feedCandidates は info.db を先頭に置き、重複と空パスを落とす', () => {
+  const out = feedCandidates(
+    { db: '/tmp/a/state.db' },
+    [
+      { profile: 'default', path: '/tmp/b/state.db' },
+      { profile: 'mobile', path: '/tmp/a/state.db' },
+      { profile: 'broken', path: '' },
+    ],
+  )
+  assert.deepEqual(out.map((c) => c.path), ['/tmp/a/state.db', '/tmp/b/state.db'])
+  assert.equal(out[0].profile, 'event')
+})
+
+test('pickFeed は messages のある最初の結果を選び、無ければ先頭を返す', () => {
+  const empty = { feed: { messages: [] }, db: '/tmp/a', profile: 'a' }
+  const full = { feed: { messages: [{ id: 1 }] }, db: '/tmp/b', profile: 'b' }
+  assert.equal(pickFeed([empty, full]), full)
+  assert.equal(pickFeed([empty]), empty)
+  assert.deepEqual(pickFeed([]), { feed: null, db: null, profile: null })
 })
