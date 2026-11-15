@@ -3134,7 +3134,10 @@ ol.md-list {
 .empty-recent-row:active { filter: brightness(1.25); }
 .empty-recent-title {
   flex: 1 1 auto; min-width: 0; line-height: 1.35; word-break: break-word;
+  /* 2 行クランプは折り返しの末尾が箱より数 px 広く出ることがあり、文字切れ監査に落ちる（実測 238 vs 236）。
+     `ellipsis` を付けると 2 行目末尾が `…` になり、測る側も文字切れ扱いにしない。 */
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  text-overflow: ellipsis;
 }
 .empty-recent-when { flex: none; font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .empty-recent-mark { flex: none; color: var(--accent-2); font-size: 14px; line-height: 1; }
@@ -4680,11 +4683,11 @@ html[data-vibe='serotonin'] .spec-receipt-btn {
   line-height: 1.45;
   color: var(--muted);
   overflow-wrap: anywhere;
-  /* 種の 1 行要約は 2 行で切る（カードが縦に伸びないように） */
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  /* 種の要約は 1 行に固定して `…` で切る。
+     折り返し前提だと 390px で 1 行が箱より 4px 広くなり文字切れ監査に落ちる（実測 textWidth 366 / clientWidth 362）。 */
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .job-bar-error {

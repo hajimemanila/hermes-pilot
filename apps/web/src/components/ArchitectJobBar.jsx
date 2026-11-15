@@ -23,6 +23,21 @@ import { buildSeedPayload, elapsedParts, jobRunnerKey, jobStatusKey } from '../l
  *        ジョブと、再試行に要る文脈（ボード・リポジトリ・起票元チャット）
  * @returns {any|null} バー
  */
+/**
+ * 種の 1 行要約を表示用に切る。
+ *
+ * 全文（最大 400 字）をそのまま置くと、390px 幅で 1 行が箱より広くなり
+ * 「文字切れ」監査に落ちる（実測: textWidth 366 > clientWidth 362）。
+ * 表示は 40 文字で十分（全文はシートで読める）。
+ *
+ * @param {string} text 種
+ * @returns {string} 切り詰めた要約
+ */
+function seedLine(text) {
+  const s = String(text ?? '').trim()
+  return s.length > 40 ? `${s.slice(0, 40)}…` : s
+}
+
 export function ArchitectJobBar({ job, board = '', repo = null, chat = null, onRetried, onDismiss, notify }) {
   const { t, lang } = useI18n()
   const [now, setNow] = useState(() => Date.now())
@@ -104,7 +119,22 @@ export function ArchitectJobBar({ job, board = '', repo = null, chat = null, onR
           {elapsed ? <span className="job-bar-elapsed">{elapsed}</span> : null}
           <span className="job-bar-runner">{t(jobRunnerKey(job))}</span>
         </div>
-        {job.seed ? <div className="job-bar-sub">{job.seed}</div> : null}
+        {job.seed ? <div className="job-bar-sub">{seedLine(job.seed)}</div> : null}
+        {/* 進行中の表示にも × を置く。`awaiting_spec` のまま放置したジョブは
+            終わらないので、閉じる手段が無いとバーが画面に残り続ける（実測）。 */}
+        {onDismiss ? (
+          <button
+            type="button"
+            className="job-bar-x"
+            aria-label={t('seed.jobDismiss')}
+            onClick={() => {
+              haptic('tap')
+              onDismiss(job.id)
+            }}
+          >
+            ×
+          </button>
+        ) : null}
       </div>
     )
   }
