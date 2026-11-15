@@ -4720,6 +4720,48 @@ html[data-vibe='serotonin'] .spec-receipt-btn {
   border-left-color: var(--warn);
 }
 
+/*
+ * 停滞（3 分以上無進展・SPEC-PILOT-V9 D42/D43）。
+ * `queued` より後ろに置く — 同じ特異度なので、後勝ちで警告色を確実に当てる。
+ */
+.job-bar.stalled {
+  border-left-color: var(--warn);
+  background: var(--warn-bg, var(--surface-2));
+}
+
+/* 現在フェーズと検知済みシート名の行（進行中だけ出る補助行） */
+.job-bar-meta {
+  gap: 6px;
+}
+
+.job-bar-phase {
+  flex: none;
+  max-width: 100%;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.job-bar-file {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job-bar-warn {
+  color: var(--warn-fg, var(--warn));
+}
+
 .job-bar-wait {
   flex: none;
   font-size: 13px;

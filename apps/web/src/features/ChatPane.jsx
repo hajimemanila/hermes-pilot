@@ -453,6 +453,10 @@ export function ChatPane({
    *
    * Architect が仕様書を書き終えた瞬間にバナーを出すため、表示中は 20 秒ごとに見る。
    * 旧ブリッジ（404）では黙ってカードを出さない。
+   *
+   * ボード未選択（リポジトリ未指定の会話）でも必ず取得する（SPEC-PILOT-V9 §3.3 ③）。
+   * ブリッジの `jobsFor()` はアクティブジョブをボード横断で返すので、別ボードで走っている
+   * Architect の進行バーもチャットから消えない。
    */
   const seedBoard = repo?.boards?.[0]?.slug ?? ''
   const loadSpecJobs = useCallback(async () => {
@@ -467,9 +471,35 @@ export function ChatPane({
 
   /** 進行バーに出すジョブ（SPEC V6 §3.3 ②）。`spec_ready` / `launched` はバナーが引き継ぐ。 */
   const activeJob = useMemo(
-    () => pickActiveArchitectJob(specJobs?.jobs ?? [], specJobClosed),
-    [specJobs, specJobClosed],
+    () => pickActiveArchitectJob(specJobs?.jobs ?? [], specJobClosed, seedBoard),
+    [specJobs, specJobClosed, seedBoard],
   )
+
+  /**
+   * 進行バーの「🔍 進捗詳細」（SPEC-PILOT-V9 §3.3 ③ / D43 後半）。
+   *
+   * チャットにはタスク詳細も `LiveSheet` も無いので、`App` が受け取るイベントで振る:
+   * - `taskId` あり … `hm:open-task`（タスクタブへ切り替えてそのタスク詳細／WorkerFeed）
+   * - `taskId` なし … `hm:open-live`（カンバンタスクを持たない Agy Opt-in の全体監視）
+   */
+  const inspectArchitectJob = useCallback((job) => {
+    if (!job) return
+    haptic('tap')
+    try {
+      const event = job.taskId ? 'hm:open-task' : 'hm:open-live'
+      window.dispatchEvent(
+        new CustomEvent(event, {
+          detail: {
+            taskId: job.taskId ?? null,
+            board: job.board ?? seedBoard ?? null,
+            jobId: job.id ?? null,
+          },
+        }),
+      )
+    } catch {
+      /* 遷移できなくても画面は壊さない */
+    }
+  }, [seedBoard])
 
   // 進行中は 4 秒・人待ち／停止は 20 秒（SPEC V6 §3.3 ③）
   const jobPollInterval = jobPollMs(activeJob)
@@ -2393,6 +2423,7 @@ export function ChatPane({
         board={seedBoard}
         repo={repo?.id ?? null}
         chat={sid ?? activeDrawerSid ?? null}
+        onInspect={inspectArchitectJob}
         onRetried={() => loadSpecJobs()}
         onDismiss={async (jobId) => {
           // バーがサーバー側へ破棄を永続化したあとに呼ばれる。ローカルでも閉じ、

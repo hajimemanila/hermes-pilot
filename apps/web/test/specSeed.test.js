@@ -15,19 +15,23 @@ import {
   TEMPLATE_IDS,
   buildSeedPayload,
   canSubmit,
+  countRunningArchitect,
   dismissJobPath,
   elapsedParts,
   executionPolicyHintKey,
   executionPolicyKey,
   isQueuedJob,
+  jobPhaseKey,
   jobPollMs,
   jobQueueKey,
   jobRunnerKey,
+  jobSheetName,
   jobStatusKey,
   jobTitleKey,
   normalizeExecutionPolicy,
   pickActiveArchitectJob,
   pickSpecBanner,
+  shouldOfferHermesRetry,
 } from '../src/lib/specSeed.js'
 
 test('送信可否は空文字と上限超えを弾く', () => {
@@ -253,5 +257,78 @@ test('A2B バナーは完成 SPEC を優先し、起票済みは出さない', (
   assert.equal(
     pickSpecBanner({ specReady: [{ spec: 'docs/S.md', batchCount: 2, launched: true }], pending: [] }),
     null,
+  )
+})
+
+test('進行バーは表示中ボードのジョブを優先し、無ければ別ボードでフォールバックする', () => {
+  const jobs = [
+    { id: 'pilot', board: 'hermes-pilot', status: 'running', createdAt: 300 },
+    { id: 'mobile', board: 'mobile', status: 'awaiting_spec', createdAt: 200 },
+  ]
+  // 表示中ボードがあれば、古くてもそのボードを出す（見ている画面の文脈を優先）
+  assert.equal(pickActiveArchitectJob(jobs, [], 'mobile').id, 'mobile')
+  assert.equal(pickActiveArchitectJob(jobs, [], 'hermes-pilot').id, 'pilot')
+  // そのボードにジョブが無ければ別ボードのアクティブジョブを出す（バーを消さない・D42/D43）
+  assert.equal(pickActiveArchitectJob(jobs, [], 'other-board').id, 'pilot')
+  // 優先ボード未指定・空文字は従来の並び（新しい順）
+  assert.equal(pickActiveArchitectJob(jobs).id, 'pilot')
+  assert.equal(pickActiveArchitectJob(jobs, [], '').id, 'pilot')
+  // 閉じたジョブは優先ボードにあっても飛ばす
+  assert.equal(pickActiveArchitectJob(jobs, ['mobile'], 'mobile').id, 'pilot')
+})
+
+test('ジョブのフェーズは i18n キーへ写像され、未知は出さない', () => {
+  assert.equal(jobPhaseKey({ phase: 'spawning' }), 'seed.phaseSpawning')
+  assert.equal(jobPhaseKey({ phase: 'round1_sheet' }), 'seed.phaseRound1Sheet')
+  assert.equal(jobPhaseKey({ phase: 'awaiting_review' }), 'seed.statusAwaitingReview')
+  assert.equal(jobPhaseKey({ phase: 'round2_spec' }), 'seed.phaseRound2Spec')
+  assert.equal(jobPhaseKey({ phase: 'spec_ready' }), 'seed.statusReady')
+  assert.equal(jobPhaseKey({ phase: 'launched' }), 'seed.statusLaunched')
+  assert.equal(jobPhaseKey({ phase: 'failed' }), 'seed.statusFailed')
+  // 旧ブリッジ（phase 無し）・未知値は札を出さない
+  assert.equal(jobPhaseKey({ status: 'running' }), null)
+  assert.equal(jobPhaseKey({ phase: 'nope' }), null)
+  assert.equal(jobPhaseKey(null), null)
+})
+
+test('検知済みシートの表示名はファイル名だけを取り出す', () => {
+  assert.equal(jobSheetName({ sheetPath: 'review/sheets/spec-notify-1.json' }), 'spec-notify-1.json')
+  assert.equal(jobSheetName({ sheetPath: 'sheets\\spec-a-2.json' }), 'spec-a-2.json')
+  assert.equal(jobSheetName({ sheetPath: 'spec-x.json' }), 'spec-x.json')
+  assert.equal(jobSheetName({ sheetPath: '  ' }), '')
+  assert.equal(jobSheetName({}), '')
+  assert.equal(jobSheetName(null), '')
+})
+
+test('Hermes Native での再試行は失敗時と Agy 停滞時だけ明示ボタンにする', () => {
+  // 失敗はランナーを問わず出す（止まったものを黙って放置しない）
+  assert.equal(shouldOfferHermesRetry({ status: 'failed', runner: 'hermes' }), true)
+  assert.equal(shouldOfferHermesRetry({ status: 'failed', runner: 'antigravity' }), true)
+  // Agy が 3 分停滞したら明示の逃げ道を出す（自動フォールバックは廃止・D41）
+  assert.equal(shouldOfferHermesRetry({ status: 'running', runner: 'antigravity', stalled: true }), true)
+  assert.equal(shouldOfferHermesRetry({ status: 'awaiting_spec', runner: 'antigravity', stalled: true }), true)
+  // Hermes 自身が長くかかっているだけでは切替を勧めない（勝手に二重起動しない）
+  assert.equal(shouldOfferHermesRetry({ status: 'running', runner: 'hermes', stalled: true }), false)
+  // 停滞していない Agy には出さない
+  assert.equal(shouldOfferHermesRetry({ status: 'running', runner: 'antigravity', stalled: false }), false)
+  assert.equal(shouldOfferHermesRetry({ status: 'awaiting_review', runner: 'antigravity' }), false)
+  assert.equal(shouldOfferHermesRetry(null), false)
+})
+
+test('稼働中の Architect 件数は running / awaiting_spec だけを数える', () => {
+  assert.equal(countRunningArchitect(null), 0)
+  assert.equal(countRunningArchitect([]), 0)
+  assert.equal(
+    countRunningArchitect([
+      { id: 'a', status: 'running' },
+      { id: 'b', status: 'awaiting_spec' },
+      // 判断待ちは 🔔 の担当なので数えない（`/api/live` の counts.architect と同じ規則）
+      { id: 'c', status: 'awaiting_review' },
+      { id: 'd', status: 'spec_ready' },
+      { id: 'e', status: 'failed' },
+      // 破棄済みは数えない
+      { id: 'f', status: 'running', dismissed: true },
+    ]),
+    2,
   )
 })

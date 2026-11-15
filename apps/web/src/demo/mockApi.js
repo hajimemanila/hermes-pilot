@@ -1015,9 +1015,82 @@ export function demoFilePatch(task, file) {
  * V6: Architect（Seed → 仕様書 → Review → 起票）の進行
  * ------------------------------------------------------------------ */
 
-/** 公開用のジョブ（形は `architect.publicJob` + V6 の追加フィールド）。 */
+/** 停滞とみなす無進展時間（本番 `architect.js` の `STALLED_AFTER_MS` と同じ 3 分）。 */
+export const DEMO_STALLED_AFTER_MS = 180_000
+
+/**
+ * 公開用のジョブ（形は `architect.publicJob` + V6 の追加フィールド）。
+ *
+ * V9 §3.1 / D42・D43: ブリッジと同じ `phase` / `stalled` / `sheetPath` / `reviewBoard` を
+ * 返す（デモでも進行バーがフェーズ・停滞警告・進捗詳細を本番と同じ見た目で出せる）。
+ */
 export function demoPublicJob(job) {
-  return { ...job, runnerLabel: demoRunnerLabel(job.runner) }
+  return {
+    ...job,
+    runnerLabel: demoRunnerLabel(job.runner),
+    phase: demoJobPhase(job),
+    stalled: demoJobStalled(job),
+    sheetPath: job.sheetPath ?? null,
+    reviewBoard: job.reviewTaskId ? DEMO_BOARD : null,
+  }
+}
+
+/**
+ * ジョブの現在フェーズ（本番 `architect.computePhase` と同じ規則・SPEC-PILOT-V9 §3.1 / D42）。
+ * @param {object} job ジョブ
+ * @returns {'spawning'|'round1_sheet'|'awaiting_review'|'round2_spec'|'spec_ready'|'launched'|'failed'} フェーズ
+ */
+export function demoJobPhase(job) {
+  const status = String(job?.status ?? '')
+  if (status === 'failed') return 'failed'
+  if (status === 'launched') return 'launched'
+  if (status === 'spec_ready') return 'spec_ready'
+  if (status === 'awaiting_review') return 'awaiting_review'
+  // 一度 Review まで行って回答後に戻ったジョブは Round 2（仕様書の執筆）
+  if (job?.reviewSeenOnce) return 'round2_spec'
+  if (job?.sheetPath) return 'round1_sheet'
+  return 'spawning'
+}
+
+/**
+ * 停滞しているか（本番 `architect.isJobStalled` と同じ規則・180 秒）。
+ * @param {object} job ジョブ
+ * @param {number} [at] 現在時刻
+ * @returns {boolean} 停滞なら true
+ */
+export function demoJobStalled(job, at = Date.now()) {
+  const status = String(job?.status ?? '')
+  if (!['running', 'awaiting_spec'].includes(status)) return false
+  // キュー待ちはディスパッチャ待ちなので「停滞」ではない
+  if (String(job?.queueState ?? '') === 'queued') return false
+  const start = Number(job?.startedAt ?? job?.createdAt ?? 0)
+  if (!Number.isFinite(start) || start <= 0) return false
+  return at - start >= DEMO_STALLED_AFTER_MS
+}
+
+/**
+ * `/api/live` の Architect 行（本番 `live.snapshot` の整形と同じ形・V9 §3.2 / D43）。
+ * @param {object} job ジョブ
+ * @param {number} [at] 現在時刻
+ * @returns {object} 行
+ */
+export function demoLiveArchitect(job, at = Date.now()) {
+  const startedAt = Number(job.startedAt ?? job.createdAt ?? 0) || null
+  return {
+    id: job.id,
+    board: job.board,
+    runner: job.runner,
+    runnerLabel: demoRunnerLabel(job.runner),
+    status: job.status,
+    phase: demoJobPhase(job),
+    stalled: demoJobStalled(job, at),
+    taskId: job.taskId ?? null,
+    reviewTaskId: job.reviewTaskId ?? null,
+    reviewBoard: job.reviewTaskId ? DEMO_BOARD : null,
+    seed: String(job.seed ?? '').slice(0, 200),
+    startedAt,
+    elapsedSec: startedAt ? Math.max(0, Math.round((at - startedAt) / 1000)) : null,
+  }
 }
 
 /**
@@ -1380,8 +1453,26 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
     }
     case 'specs.reports':
       return { reports: state.report ? [{ ...state.report }] : [] }
-    case 'live':
-      return { counts: { turns: state.tasks.filter((t) => t.status === 'running').length }, turns: [] }
+    case 'live': {
+      /*
+       * V9 §3.2 / D43: 稼働中の Architect ジョブも返す（本番 `live.snapshot` と同じ形）。
+       * `counts.architect` は `running` / `awaiting_spec` だけを数え、一覧には
+       * `awaiting_review`（判断待ち）も含める — デモでも LiveSheet の 3 列目が点灯する。
+       */
+      const at = Date.now()
+      const architect = state.architect.jobs
+        .filter((j) => !j.dismissed && ['running', 'awaiting_spec', 'awaiting_review'].includes(String(j.status)))
+        .map((j) => demoLiveArchitect(j, at))
+      return {
+        counts: {
+          turns: state.tasks.filter((t) => t.status === 'running').length,
+          architect: architect.filter((j) => ['running', 'awaiting_spec'].includes(String(j.status))).length,
+        },
+        turns: [],
+        architect,
+        demo: true,
+      }
+    }
     case 'usage':
       return { hours: 24, cacheHitRate: 0.994, totalTokens: 1_240_000, cost: 1.08, saved: 12.4, demo: true }
     case 'audit':

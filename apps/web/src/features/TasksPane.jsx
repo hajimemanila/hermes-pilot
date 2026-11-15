@@ -10,7 +10,7 @@ import { SpecSeedSheet } from './SpecSeedSheet.jsx'
 import { SpecReadyBanner } from '../components/SpecReadyBanner.jsx'
 import { SpecMarkdownSheet } from '../components/SpecMarkdownSheet.jsx'
 import { ArchitectJobBar } from '../components/ArchitectJobBar.jsx'
-import { jobPollMs, pickActiveArchitectJob, pickSpecBanner } from '../lib/specSeed.js'
+import { countRunningArchitect, jobPollMs, pickActiveArchitectJob, pickSpecBanner } from '../lib/specSeed.js'
 import { LiveSheet } from './LiveSheet.jsx'
 import { InboxSheet } from './InboxSheet.jsx'
 import { pendingCount } from '../lib/reviewView.js'
@@ -429,14 +429,26 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
   /**
    * 進行バーに出すジョブ（`running` / `awaiting_review` / `awaiting_spec` / `failed` の 1 件）。
    * `spec_ready` / `launched` は `SpecReadyBanner` が引き継ぐ。
+   *
+   * 第 3 引数に表示中のボードを渡す（D43 後半）。ブリッジはアクティブジョブをボード横断で
+   * 返すので、選択中ボードのジョブを優先しつつ、別ボードのものもフォールバックで出す。
    */
   const activeJob = useMemo(
-    () => pickActiveArchitectJob(architectJobs?.jobs ?? [], architectJobClosed),
-    [architectJobs, architectJobClosed],
+    () => pickActiveArchitectJob(architectJobs?.jobs ?? [], architectJobClosed, board ?? ''),
+    [architectJobs, architectJobClosed, board],
   )
 
   // 状態が変わった瞬間に間隔を切り替える（効果の再生成は status/id だけで足りる）
   const pollMs = jobPollMs(activeJob)
+
+  /*
+   * 稼働中の Architect ジョブ件数（D43 後半）。`/api/live` の `counts.architect` と同じ規則
+   * （`running` / `awaiting_spec`）。カンバンタスクを持たない Agy Opt-in も数に入れる。
+   */
+  const architectRunning = useMemo(
+    () => countRunningArchitect(architectJobs?.jobs ?? []),
+    [architectJobs],
+  )
 
   useEffect(() => {
     loadArchitectJobs()
@@ -574,22 +586,40 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
     }
   }, [latestReport, board])
 
-  /* ChatPane の「📋 ボードを見る」で Tasks タブへ来たとき、そのボードを選ぶ。 */
+  /*
+   * ChatPane の「📋 ボードを見る」で Tasks タブへ来たとき、そのボードを選ぶ。
+   * `taskId` 付き（`ArchitectJobBar` / `LiveSheet` の「進捗詳細・タスク」・D43）なら、
+   * ボード一覧が揃った時点でそのタスク詳細も開く。
+   */
   useEffect(() => {
     if (!focusBoard?.board) return
     // ボード一覧の取得前に消費すると選択が空振りする（実測: チップが既定のまま残った）
     if (!boards.length) return
     if (boards.some((b) => b.slug === focusBoard.board)) setBoard(focusBoard.board)
+    const taskId = String(focusBoard.taskId ?? '').trim()
+    if (taskId) openTask({ id: taskId, title: '' }, focusBoard.board)
     onConsumedFocusBoard?.()
+    // openTask は毎レンダー作り直される素の関数。focusBoard が変わった時だけ開けば足りる
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusBoard, boards, onConsumedFocusBoard])
 
-  const openTask = async (task) => {
-    setDetail({ loading: true, ...task })
+  /**
+   * タスク詳細を開く。
+   *
+   * @param {{id: string, title?: string}} task タスク（最低限 id）
+   * @param {string} [boardSlug] そのタスクのボード（別ボードのジョブから開くとき・D43）。
+   *        省略時は表示中のボード。取得先 URL と、詳細の再同期先をこのボードに固定する。
+   */
+  const openTask = async (task, boardSlug = board) => {
+    const targetBoard = String(boardSlug ?? board ?? '').trim()
+    setDetail({ loading: true, board: targetBoard, ...task })
     setDiff(null)
     setPatch(null)
     try {
-      const d = await api(`/api/boards/${encodeURIComponent(board)}/tasks/${encodeURIComponent(task.id)}`)
-      setDetail(d)
+      const d = await api(
+        `/api/boards/${encodeURIComponent(targetBoard)}/tasks/${encodeURIComponent(task.id)}`,
+      )
+      setDetail({ ...d, board: targetBoard })
     } catch (e) {
       notify(e.message)
       setDetail(null)
@@ -602,14 +632,16 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
     const status = detail?.status
     if (!id) return
     if (!(status === 'running' || status === 'ready')) return
+    // 別ボードのタスクを開いている場合がある（D43 の導線）ので、詳細自身のボードを優先する
+    const detailBoard = String(detail?.board ?? board ?? '')
     let alive = true
     const timer = setInterval(async () => {
       if (document.visibilityState !== 'visible') return
       try {
-        const d = await api(`/api/boards/${encodeURIComponent(board)}/tasks/${encodeURIComponent(id)}`)
+        const d = await api(`/api/boards/${encodeURIComponent(detailBoard)}/tasks/${encodeURIComponent(id)}`)
         if (!alive) return
         // 別のタスクを開いた／閉じたときに古い応答で上書きしない
-        setDetail((prev) => (prev && prev.id === id ? { ...prev, ...d, loading: false } : prev))
+        setDetail((prev) => (prev && prev.id === id ? { ...prev, ...d, board: detailBoard, loading: false } : prev))
       } catch {
         /* 一時的な失敗は次の tick で取り直す */
       }
@@ -618,14 +650,39 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
       alive = false
       clearInterval(timer)
     }
-  }, [detail?.id, detail?.status, board])
+  }, [detail?.id, detail?.status, detail?.board, board])
+
+  /** 詳細が対象にしているボード（別ボードのタスクを開いたときの取り違えを防ぐ・D43）。 */
+  const detailBoard = String(detail?.board ?? board ?? '')
+
+  /*
+   * Architect ジョブの「🔍 進捗詳細」（SPEC-PILOT-V9 §3.3 ② / D43 後半）。
+   *
+   * - `taskId` あり（Hermes Native）… そのタスクの詳細を開く（実行中なら WorkerFeed も出る）
+   * - `taskId` なし（Agy Opt-in。カンバンタスクを作らない）… 全体の `LiveSheet` を開く
+   *
+   * 別ボードのジョブでも、取得先はジョブの `board` をそのまま使う（表示中ボードに無いタスクでも
+   * 詳細 API は開ける）。ボード一覧に居る場合だけ選択も切り替える。
+   */
+  const inspectArchitectJob = (job) => {
+    const taskId = String(job?.taskId ?? '').trim()
+    const targetBoard = String(job?.board ?? board ?? '').trim()
+    if (!taskId || !targetBoard) {
+      setLiveOpen(true)
+      return
+    }
+    haptic('tap')
+    if (targetBoard !== board && boards.some((b) => b.slug === targetBoard)) setBoard(targetBoard)
+    const title = String(job?.seed ?? '').trim()
+    openTask({ id: taskId, title: title ? title.slice(0, 40) : taskId }, targetBoard)
+  }
 
   /** 差分サマリ（アコーディオンを開いたときだけ取りに行く）。 */
   const loadDiff = async (id) => {
     if (diff?.files) return
     setDiff({ loading: true })
     try {
-      const d = await api(`/api/boards/${encodeURIComponent(board)}/tasks/${encodeURIComponent(id)}/diff`)
+      const d = await api(`/api/boards/${encodeURIComponent(detailBoard)}/tasks/${encodeURIComponent(id)}/diff`)
       setDiff(d)
     } catch (e) {
       setDiff({ ok: false, reason: e.message })
@@ -641,7 +698,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
     setPatch({ path: file, loading: true })
     try {
       const d = await api(
-        `/api/boards/${encodeURIComponent(board)}/tasks/${encodeURIComponent(id)}/diff?file=${encodeURIComponent(file)}`,
+        `/api/boards/${encodeURIComponent(detailBoard)}/tasks/${encodeURIComponent(id)}/diff?file=${encodeURIComponent(file)}`,
       )
       setPatch({ ...d, path: file })
     } catch (e) {
@@ -652,13 +709,17 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
   const abortTask = async (task) => {
     setBusy(true)
     try {
-      const r = await api(`/api/boards/${encodeURIComponent(board)}/tasks/${encodeURIComponent(task.id)}/abort`, {
-        method: 'POST',
-        body: { reason: t('tasks.abortReason') },
-      })
+      const targetBoard = String(task?.board ?? detailBoard).trim()
+      const r = await api(
+        `/api/boards/${encodeURIComponent(targetBoard)}/tasks/${encodeURIComponent(task.id)}/abort`,
+        {
+          method: 'POST',
+          body: { reason: t('tasks.abortReason') },
+        },
+      )
       notify(t('tasks.aborted', { reclaim: r.reclaimed, block: r.blocked }))
       setDetail(null)
-      loadTasks(board)
+      loadTasks(targetBoard)
     } catch (e) {
       notify(e.message)
     } finally {
@@ -979,7 +1040,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
                   <WorkerFeed
                     taskId={detail.id}
                     open={detail.status === 'running' || detail.status === 'ready'}
-                    endpoint={`/api/boards/${encodeURIComponent(board)}/tasks/${encodeURIComponent(detail.id)}/worker?limit=30`}
+                    endpoint={`/api/boards/${encodeURIComponent(detailBoard)}/tasks/${encodeURIComponent(detail.id)}/worker?limit=30`}
                   />
                 </div>
               ) : null}
@@ -1042,6 +1103,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
         board={board ?? ''}
         repo={specsInfo?.repo ?? null}
         chat={readActiveChatId(globalThis.localStorage) || null}
+        onInspect={inspectArchitectJob}
         onRetried={async () => {
           await Promise.all([loadArchitectJobs(), loadSpecs(board)])
         }}
@@ -1152,15 +1214,21 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
           <span className="stat-v">{disk ? `${disk.percent}%` : '—'}</span>
         </div>
         <button
-          className={`stat ${running ? 'warn' : ''}`}
+          className={`stat ${running || architectRunning ? 'warn' : ''}`}
           onClick={() => setLiveOpen(true)}
           aria-label={t('tasks.liveAria')}
         >
           <span className="stat-k">
             {t('tasks.runningLabel')}
-            {liveTurns ? <i className="live-dot" title={t('tasks.turnTitle', { n: liveTurns })} /> : null}
+            {liveTurns || architectRunning ? (
+              <i
+                className="live-dot"
+                title={t('tasks.turnTitle', { n: liveTurns + architectRunning })}
+              />
+            ) : null}
           </span>
-          <span className="stat-v">{running + liveTurns}</span>
+          {/* Architect（仕様策定）の稼働分も「実行中」に数える（D43 後半）。 */}
+          <span className="stat-v">{running + liveTurns + architectRunning}</span>
         </button>
       </div>
 

@@ -176,29 +176,114 @@ export const JOB_POLL_ACTIVE_MS = 4000
 export const JOB_POLL_IDLE_MS = 20000
 
 /**
- * 進行バーに出すジョブを 1 件選ぶ（SPEC V6 §3.3 ①）。
+ * 進行バーに出すジョブを 1 件選ぶ（SPEC V6 §3.3 ①・SPEC-PILOT-V9 §3.3 ① / D43）。
  *
  * `spec_ready` / `launched` は既存の `SpecReadyBanner` が引き継ぐので出さない
  * （二重カードにしない）。新しいジョブを優先し、同時刻なら `failed` を先に見せる
  * （止まっているものを黙って隠さない）。`×` で閉じたジョブ・サーバー側で破棄済み
  * （`dismissed`）のジョブは再表示しない。
  *
+ * `preferredBoard` を渡すと、そのボードのジョブを優先しつつ、1 件も無ければ
+ * 別ボードのアクティブジョブをフォールバックで返す（ブリッジの `jobsFor()` が
+ * ボード横断でアクティブジョブを返すようになったため、リポジトリ未選択の
+ * チャットからでも進行バーが消えない）。2 引数呼び出しは従来と同一。
+ *
  * @param {Array<object>} jobs `/api/architect/jobs` の `jobs`
  * @param {string[]} [dismissedIds] 閉じたジョブの ID
+ * @param {string} [preferredBoard] 優先するボード slug（空なら従来どおり）
  * @returns {object|null} ジョブ（無ければ null）
  */
-export function pickActiveArchitectJob(jobs, dismissedIds = []) {
+export function pickActiveArchitectJob(jobs, dismissedIds = [], preferredBoard = '') {
   const list = (Array.isArray(jobs) ? jobs : []).filter(
     (job) => job && JOB_ACTIVE_STATUSES.includes(String(job.status)) && !job.dismissed,
   )
   const dismissed = new Set((Array.isArray(dismissedIds) ? dismissedIds : []).map((id) => String(id)))
   const candidates = list.filter((job) => !dismissed.has(String(job.id)))
   if (!candidates.length) return null
+  const preferred = String(preferredBoard ?? '').trim()
+  const boardRank = (job) => (preferred && String(job.board ?? '') === preferred ? 0 : 1)
   return candidates.sort((a, b) => {
+    // ボード一致を先に（別ボードしか無ければ両方 1 で従来の並びに戻る）
+    const byBoard = preferred ? boardRank(a) - boardRank(b) : 0
+    if (byBoard) return byBoard
     const diff = (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0)
     if (diff) return diff
     return (a.status === 'failed' ? 0 : 1) - (b.status === 'failed' ? 0 : 1)
   })[0]
+}
+
+/**
+ * ジョブの現在フェーズ → i18n キー（SPEC-PILOT-V9 §3.3 ① / D42・D43）。
+ *
+ * ブリッジの `phase`（`spawning` 〜 `failed`）をそのまま写像する。旧ブリッジは
+ * `phase` を返さないので `null`（＝UI はフェーズ札を出さない）にフォールバックする。
+ *
+ * @param {object|null} job ジョブ
+ * @returns {string|null} キー（未知・未指定は null）
+ */
+export function jobPhaseKey(job) {
+  switch (String(job?.phase ?? '')) {
+    case 'spawning':
+      return 'seed.phaseSpawning'
+    case 'round1_sheet':
+      return 'seed.phaseRound1Sheet'
+    case 'awaiting_review':
+      return 'seed.statusAwaitingReview'
+    case 'round2_spec':
+      return 'seed.phaseRound2Spec'
+    case 'spec_ready':
+      return 'seed.statusReady'
+    case 'launched':
+      return 'seed.statusLaunched'
+    case 'failed':
+      return 'seed.statusFailed'
+    default:
+      return null
+  }
+}
+
+/**
+ * 検知済みのシート（`job.sheetPath`）から表示用のファイル名を取る。
+ * @param {object|null} job ジョブ
+ * @returns {string} ファイル名（未検知は空文字）
+ */
+export function jobSheetName(job) {
+  const path = String(job?.sheetPath ?? '').trim()
+  if (!path) return ''
+  const parts = path.split(/[\\/]/)
+  return String(parts[parts.length - 1] ?? '').trim()
+}
+
+/**
+ * Hermes Native での再試行を**明示ボタンとして**出すか（SPEC-PILOT-V9 §3.3 ① / D41）。
+ *
+ * Agy Opt-in では自動フォールバックを廃止したので、切替はユーザーの明示操作だけ。
+ *  - `failed`: ランナーを問わず出す（止まったものを黙って放置しない）
+ *  - Agy Opt-in が 3 分以上停滞（`stalled`）: GUI 側が書いているのか止まっているのか
+ *    分からないので、明示の逃げ道を出す
+ *
+ * @param {object|null} job ジョブ
+ * @returns {boolean} 出すなら true
+ */
+export function shouldOfferHermesRetry(job) {
+  if (!job) return false
+  if (String(job.status) === 'failed') return true
+  return job.runner === 'antigravity' && Boolean(job.stalled)
+}
+
+/**
+ * 稼働中（＝実行中として数える）Architect ジョブの件数（D43）。
+ *
+ * `/api/live` の `counts.architect` と同じ規則（`running` / `awaiting_spec`）。
+ * `awaiting_review` は「判断待ち」ピルの担当なので、ここでは数えない。
+ *
+ * @param {Array<object>} jobs ジョブ一覧
+ * @returns {number} 件数
+ */
+export function countRunningArchitect(jobs) {
+  return (Array.isArray(jobs) ? jobs : []).filter(
+    (job) => job && !job.dismissed && ['running', 'awaiting_spec'].includes(String(job.status)),
+  ).length
 }
 
 /**
