@@ -6,7 +6,7 @@
   "author": "Hermes Pilot contributors",
   "license": "MIT",
   "kind": "app",
-  "homepage": "https://github.com/hajimenakagawa/hermes-pilot",
+  "homepage": "https://github.com/hajimemanila/hermes-pilot",
   "entrypoints": {
     "cli": "bin/hermes-pilot.mjs",
     "bridge": "apps/bridge/src/server.js",
