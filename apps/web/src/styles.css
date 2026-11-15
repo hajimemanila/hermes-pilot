@@ -341,18 +341,30 @@ button.stat:active {
 /*
  * どのタブにいても同じ位置に出す。横に流れる 1 行（狭い端末では横スクロール）にして、
  * ページ全体が横に伸びないようにする（scrollWidth <= clientWidth を保つ）。
+ *
+ * **折り返さない**（`flex-wrap: nowrap`）: 390px 幅で 🔔 判断待ちのピルが 1 枚増えると
+ * 4 枚目（💎 キャッシュ燃費）が 2 行目へ落ち、計器盤の高さが 46px → 74px に伸びて
+ * 下の一覧が 28px ずれる（実測）。1 行固定＋はみ出し分は横スクロールにすると
+ * 高さはピルの枚数に依らず 46px、ページの横溢れも出ない。
+ * スクロールバーは場所を食うので隠す（`scrollbar-width` + 下の `::-webkit-scrollbar`）。
  */
 .telemetry {
   flex: none;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 4px 6px;
   /* ピルは 25px の見た目のまま、当たり判定（44px）が切られない高さを確保する */
   padding: 10px 12px;
   border-bottom: 1px solid var(--line);
   background: var(--glass);
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  overscroll-behavior-x: contain;
+  /* 横スクロールで端のピルを出したとき、12px の余白を残す */
+  scroll-padding-inline: 12px;
 }
 
 .telemetry::-webkit-scrollbar {
@@ -364,8 +376,10 @@ button.stat:active {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  max-width: 64vw;
-  padding: 3px 9px;
+  /* 1 行固定なので、極端に長いラベルでも 1 枚で計器盤を埋めないよう上限を掛ける */
+  max-width: 62vw;
+  /* 4 枚並んでも 390px に収まるよう左右 8px（9px だと 7px 溢れて 💎 が欠ける・実測） */
+  padding: 3px 8px;
   border-radius: 999px;
   border: 1px solid var(--line);
   background: var(--surface);
@@ -426,7 +440,10 @@ button.t-pill:active {
 }
 
 .t-tool {
-  max-width: 26vw;
+  /* ツール名は 1 行固定の計器盤では最も伸縮してよい部分（省略して詰める）。
+     26vw のままだと 390px で実行中ピルが 151px まで伸び、4 枚目が画面外へ出る。 */
+  max-width: 22vw;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   font-weight: 500;
