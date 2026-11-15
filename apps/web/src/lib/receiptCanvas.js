@@ -11,6 +11,7 @@
  */
 
 import { fmtCost, fmtNumber } from './format.js'
+import { X_WEIGHT_LIMIT, fitBlocks } from './shareBudget.js'
 import { translate } from '../i18n/lang.js'
 
 /** デザイン空間の幅（px）。 */
@@ -197,11 +198,27 @@ export function receiptBatches(receipt) {
  * 数値は `kpiValue()` と同じ整形を使うので、画面・PNG・シェア文でブレない。
  * `null` の項目は「—」で残す（行ごと消すとレイアウトが不安定になるため）。
  *
+ * 出来上がった 5 行は `fitBlocks()` に通し、X の加重長（`X_WEIGHT_LIMIT` = 280）に収める。
+ * 落とす順は SPEC-SHARE280 §2.2 で固定（フッター → 人の手数 → 節約見込 → 所要時間の併記 →
+ * 見出しを `…` で詰める → 見出しごと落とす）。**数値は 1 つも落とさない。**
+ *
  * @param {object} receipt API 応答
- * @param {{lang?: string}} [opts] 言語
+ * @param {{lang?: string, limit?: number}} [opts] 言語と予算（既定 `X_WEIGHT_LIMIT`）
  * @returns {string} 複数行のシェア文
  */
 export function buildShareText(receipt, opts = {}) {
+  return buildShareTextDetailed(receipt, opts).text
+}
+
+/**
+ * `buildShareText()` の計画つき版（テストが「どの段で収まったか」を検査するために使う）。
+ * 戻り値の `text` は `buildShareText()` と完全に同じ文字列。
+ *
+ * @param {object} receipt API 応答
+ * @param {{lang?: string, limit?: number}} [opts] 言語と予算
+ * @returns {{text: string, applied: number[]}} 確定したシェア文と適用した段の index
+ */
+export function buildShareTextDetailed(receipt, opts = {}) {
   const lang = opts.lang
   const k = receipt?.kpi ?? {}
   const done = Number(k.batchesDone) || 0
@@ -210,13 +227,17 @@ export function buildShareText(receipt, opts = {}) {
   const batchesText = tr(lang, 'receipt.share.batches', { batches, done, total })
   const line1 = `🏆 ${tr(lang, 'receipt.share.title')} — ${receiptHeading(receipt)}`
   const wall = durationLabel(k.wallDurationMin, lang)
-  const line2 = [
-    `✅ ${batchesText}`,
-    `⏱ ${kpiValue('duration', receipt, lang)}${wall ? ` (${tr(lang, 'receipt.share.wall', { wall })})` : ''}`,
-    `🧪 ${kpiValue('tests', receipt, lang)} ${tr(lang, 'receipt.share.testsSuffix')}`,
-    `🔌 ${kpiValue('apiCalls', receipt, lang)}`,
-    `🪙 ${kpiValue('totalTokens', receipt, lang)} ${tr(lang, 'receipt.share.tokensSuffix')}`,
-  ].join(' · ')
+  const wallPart = wall ? ` (${tr(lang, 'receipt.share.wall', { wall })})` : ''
+  const line2With = (withWall) =>
+    [
+      `✅ ${batchesText}`,
+      `⏱ ${kpiValue('duration', receipt, lang)}${withWall ? wallPart : ''}`,
+      `🧪 ${kpiValue('tests', receipt, lang)} ${tr(lang, 'receipt.share.testsSuffix')}`,
+      `🔌 ${kpiValue('apiCalls', receipt, lang)}`,
+      `🪙 ${kpiValue('totalTokens', receipt, lang)} ${tr(lang, 'receipt.share.tokensSuffix')}`,
+    ].join(' · ')
+  const line2 = line2With(true)
+  const line2NoWall = line2With(false)
   const line3 = `💰 ${kpiValue('cost', receipt, lang)} · 💎 ${kpiValue('cache', receipt, lang)} ${tr(
     lang,
     'receipt.share.cacheSuffix',
@@ -228,7 +249,18 @@ export function buildShareText(receipt, opts = {}) {
     'receipt.share.typedSuffix',
   )} · ${kpiValue('zeroTyping', receipt, lang)} ${tr(lang, 'receipt.share.zeroSuffix')}`
   const line5 = tr(lang, 'receipt.share.footer')
-  return [line1, line2, line3, line4, line5].join('\n')
+
+  // 6 段・この順で固定（SPEC-SHARE280 §2.2 / D45）。収まった段で止まる。
+  const steps = [
+    { drop: 4 }, // フッター
+    { drop: 3 }, // 人の手数
+    { drop: 2 }, // 節約見込（コスト・キャッシュも一緒に落ちる＝「行ごと」の決定どおり）
+    { set: [1, line2NoWall] }, // 所要時間の併記だけ外す（数値は残る）
+    { truncate: 0 }, // 見出し（レポート名）を … で詰める
+    { cutAt: [0, ' — '] }, // それでも駄目なら見出しごと落とす
+  ]
+  const limit = Number.isFinite(Number(opts.limit)) ? Number(opts.limit) : X_WEIGHT_LIMIT
+  return fitBlocks([line1, line2, line3, line4, line5], { limit, steps })
 }
 
 /**

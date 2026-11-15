@@ -6,6 +6,7 @@ import {
   RECEIPT_SCALE,
   RECEIPT_W,
   buildShareText,
+  buildShareTextDetailed,
   drawReceipt,
   fmtTokenShort,
   kpiValue,
@@ -14,6 +15,7 @@ import {
   receiptHeading,
   receiptKpis,
 } from '../src/lib/receiptCanvas.js'
+import { X_WEIGHT_LIMIT, xWeight } from '../src/lib/shareBudget.js'
 import { translate } from '../src/i18n/lang.js'
 
 /** 実 API 応答に近い固定データ（`/api/telemetry/receipt`）。 */
@@ -186,8 +188,14 @@ test('buildShareText は EN / JA で必要な数値とラベルを含む', () =>
   assert.equal(en.includes('tests'), true)
   assert.equal(ja.includes('タスク完了'), true)
   assert.equal(ja.includes('赤入れ'), true)
-  assert.equal(en.split('\n').length, 5, '5 行の固定フォーマット')
-  assert.equal(ja.split('\n').length, 5)
+
+  // X の加重 280 に収めるためフッター（5 行目）だけが落ちる（SPEC-SHARE280 §0 Q1=A/Q2=A）
+  assert.equal(xWeight(ja), 275, 'JA は 275 加重（280 ちょうどまで使う）')
+  assert.equal(xWeight(en), 259, 'EN は 259 加重')
+  assert.equal(ja.split('\n').length, 4, 'JA は 4 行（フッターが落ちる）')
+  assert.equal(en.split('\n').length, 4, 'EN は 4 行')
+  assert.equal(ja.includes(translate('ja', 'receipt.share.footer')), false, '落ちるのはフッターだけ')
+  assert.ok(xWeight(ja) <= X_WEIGHT_LIMIT && xWeight(en) <= X_WEIGHT_LIMIT)
 })
 
 test('buildShareText は欠損値でも行数を保つ（— を出す）', () => {
@@ -195,6 +203,117 @@ test('buildShareText は欠損値でも行数を保つ（— を出す）', () =
   assert.equal(text.split('\n').length, 5)
   assert.match(text, /—/)
   assert.equal(buildShareText(null, { lang: 'ja' }).split('\n').length, 5)
+  // 空 receipt は 5 行のまま 280 に収まる（段が 1 つも要らない）
+  assert.equal(xWeight(buildShareText({ kpi: {} }, { lang: 'ja' })), 245)
+  assert.equal(xWeight(buildShareText({ kpi: {} }, { lang: 'en' })), 233)
+})
+
+/** 数値を大きくした fixture（実データの上限側。SPEC-SHARE280 §1.3 の `big` と同じ実測になる）。 */
+const bigReceipt = {
+  ...receipt,
+  label: 'V9 batch',
+  kpi: {
+    ...receipt.kpi,
+    costUsd: 1084.4,
+    cachePct: 99.9,
+    savedUsd: 325.75,
+    humanTaps: 1234567,
+    redlines: 1234,
+    typedChars: 12345678,
+    zeroTypingScore: 98,
+    batchesDone: 9,
+    batchesTotal: 9,
+    durationMin: 125,
+    wallDurationMin: 190,
+    apiCalls: 12345678,
+    totalTokens: 124480000,
+    tests: 4021234,
+  },
+}
+
+/** 見出しだけを伸ばした fixture（120 字 / 400 字）。 */
+const heading120 = { ...receipt, label: 'A'.repeat(120) }
+const heading400 = { ...receipt, label: 'X'.repeat(400) }
+
+/**
+ * 全 12 通り（6 fixture × JA/EN）。`applied` は SPEC-SHARE280 §2.2 の 6 段の index。
+ * - 0 = フッター落とし / 1 = 人の手数 / 2 = 節約見込 / 3 = 所要時間の併記を外す /
+ *   4 = 見出しを … で詰める / 5 = 見出しごと落とす
+ */
+const SHARE_PATTERNS = [
+  ['base', receipt, { ja: [0], en: [0] }],
+  ['big', bigReceipt, { ja: [0, 1], en: [0, 1] }],
+  ['heading120', heading120, { ja: [0, 1, 2], en: [0, 1, 2] }],
+  ['heading400', heading400, { ja: [0, 1, 2, 3, 4], en: [0, 1, 2, 3, 4] }],
+  ['empty', { kpi: {} }, { ja: [], en: [] }],
+  ['null', null, { ja: [], en: [] }],
+]
+
+/** KPI が載っている行（blocks の index）。1 = KPI 行 / 2 = コスト行 / 3 = 人の手数。 */
+const KPI_BLOCK = { duration: 1, tests: 1, apiCalls: 1, totalTokens: 1, cost: 2, cache: 2, saved: 2, zeroTyping: 3 }
+/** 段 index → 落とす blocks[index]（set / truncate / cutAt は行を落とさない）。 */
+const DROPPED_BLOCK = { 0: 4, 1: 3, 2: 2 }
+
+test('buildShareText は 12 通りすべてで X 加重 280 以下・2〜5 行・数値を行ごとだけ落とす', () => {
+  for (const [name, r, expectedApplied] of SHARE_PATTERNS) {
+    for (const lang of ['ja', 'en']) {
+      const { text, applied } = buildShareTextDetailed(r, { lang })
+      const lines = text.split('\n')
+      const where = `${name}/${lang}`
+
+      // 1. 必ず 280 以下（Q1=A: 280 ちょうどまで使う）
+      assert.ok(xWeight(text) <= X_WEIGHT_LIMIT, `${where}: ${xWeight(text)} <= ${X_WEIGHT_LIMIT}`)
+      // 2. 段の適用順（収まった段で止まる）
+      assert.deepEqual(applied, expectedApplied[lang], `${where}: applied`)
+      // 3. 行の形（2〜5 行・空行なし・末尾に空行なし）
+      assert.ok(lines.length >= 2 && lines.length <= 5, `${where}: ${lines.length} 行`)
+      assert.equal(text.includes('\n\n'), false, `${where}: 空行を残さない`)
+      assert.equal(text.endsWith('\n'), false, `${where}: 末尾に空行なし`)
+      for (const line of lines) assert.ok(line.trim().length > 0, `${where}: 空の行を作らない`)
+      // 4. バッチ進捗は必ず残る（KPI 行より前に落ちる段が無い）
+      assert.ok(text.includes(receiptBatches(r) ?? '—'), `${where}: バッチ進捗`)
+      // 5. 数値は「行ごと」だけが落ちる（同じ行に載っている KPI は必ず完全な形で残る）
+      const dropped = new Set(applied.map((i) => DROPPED_BLOCK[i]).filter((b) => b !== undefined))
+      for (const key of KPI_KEYS) {
+        const value = kpiValue(key, r, lang)
+        if (text.includes(value)) continue
+        assert.ok(
+          dropped.has(KPI_BLOCK[key]),
+          `${where}: ${key} の値 ${value} が行を落とさずに消えた（数値は … で切らない）`,
+        )
+      }
+      // 6. `…` が出るのは見出し（1 行目）の末尾だけ（数値に … を付けない）
+      lines.forEach((line, i) => {
+        if (!line.includes('…')) return
+        assert.equal(i, 0, `${where}: ${i + 1} 行目に … が出た`)
+        assert.ok(line.endsWith('…'), `${where}: 見出しの … は末尾`)
+      })
+      // 7. buildShareText() は同じ文字列を返す（呼び出し側 = MissionReceiptSheet.jsx は無変更）
+      assert.equal(buildShareText(r, { lang }), text)
+    }
+  }
+})
+
+test('buildShareText は極端な見出しでも数値の行を壊さず、280 に収める', () => {
+  // 400 字の見出し: 見出しを … で詰めて 280 ちょうどにし、KPI 行（2 行目）は無傷で残す
+  const ja = buildShareTextDetailed(heading400, { lang: 'ja' })
+  assert.equal(xWeight(ja.text), 280)
+  const [head, kpiLine] = ja.text.split('\n')
+  assert.ok(head.endsWith('…'), '見出しだけを詰める')
+  for (const key of ['duration', 'tests', 'apiCalls', 'totalTokens']) {
+    assert.ok(kpiLine.includes(kpiValue(key, heading400, 'ja')), `KPI 行の ${key} は無傷`)
+  }
+  assert.equal(kpiLine.includes('…'), false, '数値の行に … を付けない')
+
+  // 予算を下げられる（テスト用）。base は 200 でも 6 段だけで収まる
+  const tight = buildShareText(receipt, { lang: 'en', limit: 200 })
+  assert.ok(xWeight(tight) <= 200, 'limit を渡すとその予算で収める')
+  assert.equal(tight.includes('\n\n'), false)
+
+  // 6 段で届かない極小予算でも、空行・末尾改行のような壊れ方はしない
+  const hopeless = buildShareText(heading400, { lang: 'en', limit: 80 })
+  assert.equal(hopeless.includes('\n\n'), false)
+  assert.equal(hopeless.endsWith('\n'), false)
 })
 
 test('drawReceipt は 1200×630 の枠内だけに描き、KPI を全部載せる（dopamine / serotonin）', () => {
