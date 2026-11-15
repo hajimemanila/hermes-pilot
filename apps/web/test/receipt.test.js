@@ -7,6 +7,7 @@ import {
   RECEIPT_W,
   buildShareText,
   drawReceipt,
+  fmtTokenShort,
   kpiValue,
   receiptBatches,
   receiptFilename,
@@ -42,8 +43,22 @@ const receipt = {
     batchesDone: 5,
     batchesTotal: 5,
     durationMin: 62,
+    activeDurationMin: 62,
+    wallDurationMin: 95,
+    durationCapped: false,
+    apiCalls: 128,
+    totalTokens: 12448000,
     tests: 402,
     pwaChecks: 12,
+  },
+  scope: {
+    scoped: true,
+    taskIds: ['a', 'b'],
+    batchIds: ['V5-1', 'V5-2'],
+    tasks: 5,
+    intervals: 3,
+    usage: { sessionIds: 4, sinceMs: null, untilMs: null, fallback: false },
+    usageScoped: true,
   },
   missing: [],
 }
@@ -101,6 +116,7 @@ test('receiptKpis は辞書のラベルだけを使い、価格/キャッシュ/
   for (const lang of ['en', 'ja']) {
     const kpis = receiptKpis(receipt, lang)
     assert.equal(kpis.length, KPI_KEYS.length)
+    assert.equal(KPI_KEYS.length, 8, '4×2 の 8 KPI')
     assert.deepEqual(kpis.map((k) => k.key), KPI_KEYS)
     for (const k of kpis) assert.equal(k.label, translate(lang, `receipt.kpi.${k.key}`), '画面とPNGでラベルが一致する')
     const by = Object.fromEntries(kpis.map((k) => [k.key, k]))
@@ -110,15 +126,35 @@ test('receiptKpis は辞書のラベルだけを使い、価格/キャッシュ/
     assert.equal(by.zeroTyping.value, '100%')
     assert.equal(by.tests.value, '402')
     assert.equal(by.duration.value, lang === 'ja' ? '1 時間 2 分' : '1h 2m', '60 分以上は時間＋分で出す')
+    assert.equal(by.apiCalls.value, lang === 'ja' ? '128 回' : '128 calls')
+    assert.equal(by.totalTokens.value, '12.4M', 'トークンは 1.2M / 480K / 950 の短縮表記')
     assert.match(by.saved.note, /90%/, '節約額には概算の根拠（割引率）を添える')
+    assert.match(by.duration.note, lang === 'ja' ? /経過/ : /wall/, '所要時間には経過時間を併記する')
+    assert.equal(by.apiCalls.note, translate(lang, 'receipt.kpi.apiCallsScope'), 'スコープの注記が付く')
+    assert.equal(by.totalTokens.note, translate(lang, 'receipt.kpi.totalTokensScope'))
   }
+})
+
+test('kpiValue はトークンを 950 / 480K / 1.2M の 3 段で短縮する', () => {
+  assert.equal(fmtTokenShort(950), '950')
+  assert.equal(fmtTokenShort(480_000), '480K')
+  assert.equal(fmtTokenShort(1_240_000), '1.2M')
+  assert.equal(fmtTokenShort(12_400_000), '12.4M')
+  assert.equal(fmtTokenShort(0), '0')
+  assert.equal(kpiValue('totalTokens', { kpi: { totalTokens: 950 } }, 'en'), '950')
+  assert.equal(kpiValue('apiCalls', { kpi: { apiCalls: 0 } }, 'en'), '0 calls', '0 は — ではなく 0 と出す')
 })
 
 test('receiptKpis は空データでも「—」で崩れない', () => {
   const kpis = receiptKpis({ ok: true, kpi: {} }, 'en')
   for (const k of kpis) assert.equal(k.value, '—')
   assert.equal(kpiValue('unknown', {}, 'en'), '—')
-  assert.deepEqual(receiptKpis(null, 'ja').map((k) => k.value), ['—', '—', '—', '—', '—', '—'])
+  assert.deepEqual(receiptKpis(null, 'ja').map((k) => k.value), ['—', '—', '—', '—', '—', '—', '—', '—'])
+  // 欠損タイルは理由を出す（空欄を「壊れている」と読ませない）
+  const by = Object.fromEntries(kpis.map((k) => [k.key, k]))
+  assert.equal(by.apiCalls.note, translate('en', 'receipt.kpi.apiCallsNote'))
+  assert.equal(by.totalTokens.note, translate('en', 'receipt.kpi.totalTokensNote'))
+  assert.equal(by.duration.note, translate('en', 'receipt.kpi.durationNote', { hours: 24 }))
 })
 
 test('buildShareText は EN / JA で必要な数値とラベルを含む', () => {
@@ -140,6 +176,9 @@ test('buildShareText は EN / JA で必要な数値とラベルを含む', () =>
     assert.ok(text.includes('34'), 'タップ数')
     assert.ok(text.includes('100%'), 'ゼロタイピング度')
     assert.ok(text.includes('5/5'), 'バッチ進捗')
+    assert.ok(text.includes(kpiValue('apiCalls', receipt, 'en')) || text.includes('128'), 'API コール数')
+    assert.ok(text.includes('12.4M'), 'トークン数')
+    assert.ok(text.includes('1 時間 35 分') || text.includes('1h 35m'), '経過時間も併記する')
   }
 
   // 言語ごとの語彙（EN に日本語が混ざらない / JA は日本語のラベル）
@@ -181,6 +220,16 @@ test('drawReceipt は 1200×630 の枠内だけに描き、KPI を全部載せ�
           assert.ok(c[key] >= -1 && c[key] <= RECEIPT_W + 1, `${c.op}.${key} が枠内 (${c[key]})`)
         }
       }
+      // 4×2 のタイル配置: KPI ラベルが 4 列 × 2 行に並ぶ（1200px 幅で欠けない）
+      const labelTexts = ctx.calls.filter((c) => {
+        if (c.op !== 'fillText') return false
+        // 値ではなくラベル（辞書の KPI 名）の座標を見る
+        return out.kpis.some((k) => k.label === c.text && c.text !== k.value)
+      })
+      assert.equal(labelTexts.length, 8, '8 個の KPI ラベルを描く')
+      assert.equal(new Set(labelTexts.map((c) => Math.round(c.x))).size, 4, '4 列')
+      assert.equal(new Set(labelTexts.map((c) => Math.round(c.y))).size, 2, '2 行')
+      for (const c of labelTexts) assert.ok(c.y < RECEIPT_H - 60, 'フッターと重ならない')
       const rect = ctx.calls.find((c) => c.op === 'fillRect')
       assert.deepEqual([rect.x, rect.y, rect.w, rect.h], [0, 0, RECEIPT_W, RECEIPT_H], '背景は全面')
 

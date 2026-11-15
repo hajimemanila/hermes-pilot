@@ -142,6 +142,16 @@ export function MissionReceiptSheet({ board = null, spec = null, hours = 24, onC
   const kpis = data ? receiptKpis(data, lang) : []
   const shareText = data ? buildShareText(data, { lang }) : ''
   const missing = Array.isArray(data?.missing) ? data.missing : []
+  // Spec スコープの内訳（どのセッション・タスクを合算したか）を 1 行で出す（V7-2）
+  const scope = data?.scope ?? null
+  const scopeLine = scope
+    ? [
+        t('receipt.scope.usage', { sessions: Number(scope.usage?.sessionIds ?? data?.kpi?.sessions ?? 0), tasks: Number(scope.tasks ?? 0) }),
+        scope.usage?.fallback ? t('receipt.scope.fallback') : null,
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    : ''
 
   /** 1 タップで PNG を保存（共有シート対応端末では共有も選べる）。 */
   const savePng = useCallback(async () => {
@@ -257,6 +267,7 @@ export function MissionReceiptSheet({ board = null, spec = null, hours = 24, onC
                 </div>
               ))}
             </div>
+            {scopeLine ? <div className="receipt-note receipt-scope">{scopeLine}</div> : null}
 
             <div className="receipt-actions">
               <button type="button" className="receipt-btn primary" onClick={savePng} disabled={busy}>

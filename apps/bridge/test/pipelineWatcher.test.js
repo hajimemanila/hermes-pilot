@@ -408,6 +408,57 @@ test('buildPipelineReport は純関数（counts・issues・nextSteps・halted �
   assert.equal(rep.issues.length >= 2, true)
 })
 
+test('buildPipelineReport は Spec スコープの実稼働時間と API コール・トークンを出す', () => {
+  const t0 = Date.parse('2026-11-15T10:00:00Z') / 1000
+  const rep = buildPipelineReport({
+    status: 'done',
+    label: 'V7',
+    board: BOARD,
+    specRelPath: 'docs/SPEC-PILOT-V7.md',
+    tasks: [
+      { id: 'a', title: '[V7-1] x', status: 'done', started_at: t0, completed_at: t0 + 40 * 60, result: 'ok' },
+      { id: 'b', title: '[V7-2] y', status: 'done', started_at: t0 + 20 * 60, completed_at: t0 + 60 * 60, result: 'ok' },
+      { id: 'c', title: '[V7-3] z', status: 'done', started_at: t0 + 180 * 60, completed_at: t0 + 210 * 60, result: 'ok' },
+    ],
+    startedAt: t0 * 1000,
+    now: (t0 + 210 * 60) * 1000,
+    usage: {
+      apiCalls: 128,
+      totalTokens: 1_240_000,
+      totals: { input: 900_000, output: 300_000, cacheRead: 40_000 },
+      scope: { sessionIds: 2, sinceMs: null, untilMs: null, fallback: false },
+    },
+  })
+  // 40 分と 40 分の重なりは 1 本にマージし、離れた 30 分は足す（40+40+30 ではなく 90 分）
+  assert.equal(rep.timing.activeDurationMin, 90)
+  assert.equal(rep.timing.wallDurationMin, 210)
+  assert.equal(rep.usage.apiCalls, 128)
+  assert.equal(rep.usage.totalTokens, 1_240_000)
+  assert.match(rep.markdown, /### 🎉 Pipeline Completed: V7 \(3\/3 done/)
+  assert.match(rep.markdown, /⏱ 実稼働 1 時間 30 分 · 経過 3 時間 30 分/)
+  assert.match(rep.markdown, /🔌 128 API · 🪙 1\.2M tokens/)
+  assert.match(rep.markdown, /#### ⏱ 所要時間・使用量 \/ Time & Usage/)
+  assert.match(rep.markdown, /- 実稼働（重複区間をマージ）: 1 時間 30 分/)
+  assert.match(rep.markdown, /- 経過時間: 3 時間 30 分/)
+  assert.match(rep.markdown, /- API コール数: 128/)
+  assert.match(rep.markdown, /- トークン数: 1\.2M（入力 900K · 出力 300K · キャッシュ読取 40K）/)
+  assert.match(rep.text, /⏱ 実稼働 1 時間 30 分/)
+})
+
+test('buildPipelineReport は usage 未指定でも時間だけは出す（— で埋める）', () => {
+  const t0 = Date.parse('2026-11-15T10:00:00Z') / 1000
+  const rep = buildPipelineReport({
+    status: 'done',
+    label: 'plain',
+    board: BOARD,
+    tasks: [{ id: 'a', title: 'A', status: 'done', started_at: t0, completed_at: t0 + 15 * 60 }],
+    now: (t0 + 15 * 60) * 1000,
+  })
+  assert.equal(rep.timing.activeDurationMin, 15)
+  assert.equal(rep.usage.apiCalls, null)
+  assert.match(rep.markdown, /- API コール数: —/)
+})
+
 test('extractIssuesAndRemaining は blocked/failed を優先し、重複を除いて 8 件まで', () => {
   const tasks = []
   for (let i = 0; i < 12; i += 1) {

@@ -22,8 +22,28 @@ export const RECEIPT_H = 630
 /** PNG の書き出し倍率（Retina。1200×630 の等倍へ縮小して保存する）。 */
 export const RECEIPT_SCALE = 2
 
-/** 画面・PNG 共通の KPI 定義（順序がそのまま表示順）。 */
-export const KPI_KEYS = ['cost', 'cache', 'saved', 'zeroTyping', 'tests', 'duration']
+/** 画面・PNG 共通の KPI 定義（順序がそのまま表示順・`4×2` の 8 項目）。 */
+export const KPI_KEYS = ['cost', 'cache', 'saved', 'zeroTyping', 'tests', 'duration', 'apiCalls', 'totalTokens']
+
+/** KPI タイルの列数（1200px 幅で `4×2`）。 */
+export const KPI_COLUMNS = 4
+
+/**
+ * トークン数の短縮表記（`950` / `480K` / `1.2M`）。レシートの狭いタイルに収めるため、
+ * `format.js` の `fmtTokens` より 1 桁短く丸める。
+ * @param {number} n トークン数
+ * @returns {string} 表示値
+ */
+export function fmtTokenShort(n) {
+  const v = Number(n)
+  if (!Number.isFinite(v) || v < 0) return '0'
+  if (v >= 1e6) {
+    const m = v / 1e6
+    return `${m >= 100 ? Math.round(m) : Math.round(m * 10) / 10}M`
+  }
+  if (v >= 1e3) return `${Math.round(v / 1e3)}K`
+  return String(Math.round(v))
+}
 
 /**
  * 表示言語つきの翻訳。`lang` を省くと現在の言語。
@@ -70,9 +90,36 @@ export function kpiValue(key, receipt, lang) {
         })
       }
       return tr(lang, 'receipt.value.min', { min: fmtNumber(k.durationMin, { maximumFractionDigits: 0 }) })
+    case 'apiCalls':
+      return k.apiCalls === null || k.apiCalls === undefined
+        ? na
+        : tr(lang, 'receipt.value.calls', { n: fmtNumber(k.apiCalls, { maximumFractionDigits: 0 }) })
+    case 'totalTokens':
+      return k.totalTokens === null || k.totalTokens === undefined ? na : fmtTokenShort(k.totalTokens)
     default:
       return na
   }
+}
+
+/**
+ * 分を「42 分」「1 時間 2 分」へ整形する（キャップ表現なしの素の整形）。
+ * 所要時間の主指標と経過時間の併記で同じ書式を使う。
+ *
+ * @param {number|null|undefined} min 分
+ * @param {string} [lang] 言語
+ * @returns {string|null} 表示値（算出不能なら null）
+ */
+export function durationLabel(min, lang) {
+  if (min === null || min === undefined) return null
+  const v = Number(min)
+  if (!Number.isFinite(v) || v <= 0) return null
+  if (v >= 60) {
+    return tr(lang, 'receipt.value.hours', {
+      h: fmtNumber(Math.floor(v / 60), { maximumFractionDigits: 0 }),
+      m: fmtNumber(Math.round(v % 60), { maximumFractionDigits: 0 }),
+    })
+  }
+  return tr(lang, 'receipt.value.min', { min: fmtNumber(v, { maximumFractionDigits: 0 }) })
 }
 
 /**
@@ -91,7 +138,7 @@ export function receiptKpis(receipt, lang) {
     key,
     label: tr(lang, `receipt.kpi.${key}`),
     value: kpiValue(key, receipt, lang),
-    // 節約額とゼロタイピング度合いだけは「概算・換算」であることを添える。
+    // 節約額・ゼロタイピング・スコープ集計は「概算・範囲」であることを添える。
     // 欠損（—）のタイルは理由を出す（空欄を「壊れている」と読ませない）。
     note:
       key === 'saved' && k.savedUsd !== null && k.savedUsd !== undefined
@@ -100,9 +147,19 @@ export function receiptKpis(receipt, lang) {
           ? tr(lang, 'receipt.kpi.zeroTypingNote')
           : key === 'duration' && (k.durationMin === null || k.durationMin === undefined)
             ? tr(lang, 'receipt.kpi.durationNote', { hours: receipt?.windowHours ?? 24 })
-            : key === 'tests' && (k.tests === null || k.tests === undefined)
-              ? tr(lang, 'receipt.kpi.testsNote')
-              : '',
+            : key === 'duration' && durationLabel(k.wallDurationMin, lang)
+              ? tr(lang, 'receipt.kpi.wallNote', { wall: durationLabel(k.wallDurationMin, lang) })
+              : key === 'tests' && (k.tests === null || k.tests === undefined)
+                ? tr(lang, 'receipt.kpi.testsNote')
+                : key === 'apiCalls' && (k.apiCalls === null || k.apiCalls === undefined)
+                  ? tr(lang, 'receipt.kpi.apiCallsNote')
+                  : key === 'apiCalls'
+                    ? tr(lang, 'receipt.kpi.apiCallsScope')
+                    : key === 'totalTokens' && (k.totalTokens === null || k.totalTokens === undefined)
+                      ? tr(lang, 'receipt.kpi.totalTokensNote')
+                      : key === 'totalTokens'
+                        ? tr(lang, 'receipt.kpi.totalTokensScope')
+                        : '',
   }))
 }
 
@@ -152,10 +209,14 @@ export function buildShareText(receipt, opts = {}) {
   const batches = receiptBatches(receipt) ?? '—'
   const batchesText = tr(lang, 'receipt.share.batches', { batches, done, total })
   const line1 = `🏆 ${tr(lang, 'receipt.share.title')} — ${receiptHeading(receipt)}`
-  const line2 = `✅ ${batchesText} · ⏱ ${kpiValue('duration', receipt, lang)} · 🧪 ${kpiValue('tests', receipt, lang)} ${tr(
-    lang,
-    'receipt.share.testsSuffix',
-  )}`
+  const wall = durationLabel(k.wallDurationMin, lang)
+  const line2 = [
+    `✅ ${batchesText}`,
+    `⏱ ${kpiValue('duration', receipt, lang)}${wall ? ` (${tr(lang, 'receipt.share.wall', { wall })})` : ''}`,
+    `🧪 ${kpiValue('tests', receipt, lang)} ${tr(lang, 'receipt.share.testsSuffix')}`,
+    `🔌 ${kpiValue('apiCalls', receipt, lang)}`,
+    `🪙 ${kpiValue('totalTokens', receipt, lang)} ${tr(lang, 'receipt.share.tokensSuffix')}`,
+  ].join(' · ')
   const line3 = `💰 ${kpiValue('cost', receipt, lang)} · 💎 ${kpiValue('cache', receipt, lang)} ${tr(
     lang,
     'receipt.share.cacheSuffix',
@@ -318,14 +379,15 @@ export function drawReceipt(ctx, receipt, opts = {}) {
     .join('  ·  ')
   text(meta, 60, 236, { font: `400 18px ${mono}`, color: '#8b95a5', maxWidth: W - 120 })
 
-  // KPI タイル（3 列 × 2 行）
-  const gap = 24
-  const tileW = (W - 120 - gap * 2) / 3
-  const tileH = 132
+  // KPI タイル（4 列 × 2 行 = 8 項目）
+  const gap = 20
+  const cols = KPI_COLUMNS
+  const tileW = (W - 120 - gap * (cols - 1)) / cols
+  const tileH = 128
   const top = 272
   kpis.forEach((k, i) => {
-    const col = i % 3
-    const row = Math.floor(i / 3)
+    const col = i % cols
+    const row = Math.floor(i / cols)
     const x = 60 + col * (tileW + gap)
     const y = top + row * (tileH + gap)
     roundRectPath(ctx, x, y, tileW, tileH, 18)
@@ -334,15 +396,15 @@ export function drawReceipt(ctx, receipt, opts = {}) {
     ctx.strokeStyle = dopamine ? 'rgba(232,196,122,0.32)' : 'rgba(255,255,255,0.14)'
     ctx.lineWidth = 1.5
     ctx.stroke()
-    text(k.label, x + 22, y + 38, {
-      font: `500 18px ${sans}`,
+    text(k.label, x + 18, y + 34, {
+      font: `500 15px ${sans}`,
       color: '#93a0b1',
-      maxWidth: tileW - 44,
+      maxWidth: tileW - 36,
     })
-    text(k.value, x + 22, y + 92, {
-      font: `700 40px ${dopamine ? sans : mono}`,
+    text(k.value, x + 18, y + 86, {
+      font: `700 32px ${dopamine ? sans : mono}`,
       color: dopamine ? '#ffd98a' : '#f2f5fa',
-      maxWidth: tileW - 44,
+      maxWidth: tileW - 36,
     })
   })
 

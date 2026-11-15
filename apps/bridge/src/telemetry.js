@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { readTailText } from './tail.js'
+import { readRuns, runsPathFor } from './specs.js'
 
 /**
  * Zero-Typing 実行サマリ（完了レシート）の集計（SPEC-PILOT-V5 §3.3 ③ / D26③）。
@@ -194,38 +195,227 @@ export function sameSpec(a, b) {
 }
 
 /**
- * タスク群から status 件数と所要時間（分）を出す。
+ * 時刻値を epoch ms へ正規化する（epoch 秒・ms・ISO 文字列・不正値をすべて受ける）。
  *
- * 所要時間は **集計窓の内側** に丸める: 窓内に完了したタスクの「最短開始 〜 最遅完了」で、
- * 開始が窓より前なら窓の開始に切り上げる。古いタスク 1 件で「33,000 分」のような
- * 意味のない数字が出るのを防ぐ。
+ * カンバン DB は **秒**（`started_at`）、API 応答は **ms**（`startedAt`）なので、
+ * 1e12 未満は秒として扱う。0 以下・解釈不能は `0`（＝区間なし）。
  *
- * @param {Array<{status?: string, createdAt?: number|null, startedAt?: number|null, completedAt?: number|null}>} tasks タスク
- * @param {{since?: number}} [opts] 集計窓の開始（epoch ms）
- * @returns {{batchesDone: number, batchesTotal: number, durationMin: number|null, durationCapped: boolean}} 集計
+ * @param {unknown} value 時刻
+ * @returns {number} epoch ms（不明なら 0）
+ */
+export function toMs(value) {
+  if (value === null || value === undefined || value === '') return 0
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value <= 0) return 0
+    return value < 1e12 ? Math.round(value * 1000) : Math.round(value)
+  }
+  const raw = String(value).trim()
+  if (!raw) return 0
+  if (/^\d+(\.\d+)?$/.test(raw)) return toMs(Number(raw))
+  const parsed = Date.parse(raw)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+}
+
+/** タスクの ID（camel / snake 両対応）。 */
+function taskIdOf(task) {
+  return String(task?.id ?? task?.taskId ?? '').trim()
+}
+
+/** タスクの開始時刻（ms）。`startedAt` が無ければ `createdAt`。 */
+function taskStartMs(task) {
+  return toMs(task?.startedAt ?? task?.started_at) || toMs(task?.createdAt ?? task?.created_at)
+}
+
+/** タスクの完了時刻（ms）。未完了は 0。 */
+function taskEndMs(task) {
+  return toMs(task?.completedAt ?? task?.completed_at)
+}
+
+/** タスクが持つ Spec パス（命名ゆれを吸収）。 */
+function taskSpecOf(task) {
+  return task?.specRelPath ?? task?.spec ?? task?.specPath ?? task?.spec_path ?? null
+}
+
+/** タイトル先頭の `[BatchID]`（無ければ null）。 */
+function batchIdOf(task) {
+  const m = /^\s*\[([^\]]{1,32})\]/.exec(String(task?.title ?? ''))
+  return m ? m[1].trim() : null
+}
+
+/**
+ * 重なり合う区間を 1 本にマージする（並列タスクの二重計上を消す）。
+ *
+ * 例: `[[0, 60], [30, 90], [200, 230]]` → `[[0, 90], [200, 230]]`（合計 120 分。
+ * 単純な差分だと 150 分になる）。
+ *
+ * @param {Array<[number, number]>} intervals 区間（ms）
+ * @returns {Array<[number, number]>} マージ済み（開始昇順・負区間は捨てる）
+ */
+export function mergeIntervals(intervals) {
+  const list = (Array.isArray(intervals) ? intervals : [])
+    .map((pair) => [Number(pair?.[0]) || 0, Number(pair?.[1]) || 0])
+    .filter(([s, e]) => e > s && s >= 0)
+    .sort((a, b) => a[0] - b[0])
+  const out = []
+  for (const [s, e] of list) {
+    const last = out[out.length - 1]
+    if (last && s <= last[1]) last[1] = Math.max(last[1], e)
+    else out.push([s, e])
+  }
+  return out
+}
+
+/**
+ * 対象 Spec / Run に属するタスクだけを残す（時間・バッチ計算の入口）。
+ *
+ * 優先順位:
+ *  1. `opts.taskIds`（`pipeline-runs.json` のラン記録）との ID 一致
+ *  2. タスク自身が持つ Spec パスと `opts.spec` の一致
+ *  3. タイトル先頭の `[BatchID]` が `opts.batchIds` に含まれる
+ *
+ * どれも指定されていなければ **絞り込まない**（ボード全体の集計）。Spec を指定して
+ * 1 件も一致しなければ空を返す（別タスクで補完しない）。
+ *
+ * @param {Array<object>} tasks タスク
+ * @param {{spec?: string|null, taskIds?: Array<string>, batchIds?: Array<string>}} [opts] スコープ
+ * @returns {{tasks: Array<object>, scoped: boolean, taskIds: Array<string>, batchIds: Array<string>}} 絞り込み結果
+ */
+export function selectSpecTasks(tasks, opts = {}) {
+  const list = Array.isArray(tasks) ? tasks.filter(Boolean) : []
+  const spec = String(opts.spec ?? '').trim()
+  const taskIds = [...new Set((Array.isArray(opts.taskIds) ? opts.taskIds : []).map((v) => String(v)).filter(Boolean))]
+  const batchIds = [...new Set((Array.isArray(opts.batchIds) ? opts.batchIds : []).map((v) => String(v)).filter(Boolean))]
+  const idSet = new Set(taskIds)
+  const batchSet = new Set(batchIds)
+  if (!spec && !idSet.size && !batchSet.size) {
+    return { tasks: list, scoped: false, taskIds: [], batchIds: [] }
+  }
+  const matched = list.filter((task) => {
+    if (idSet.size && idSet.has(taskIdOf(task))) return true
+    if (spec && sameSpec(taskSpecOf(task), spec)) return true
+    const batch = batchIdOf(task)
+    return Boolean(batch && batchSet.has(batch))
+  })
+  return { tasks: matched, scoped: true, taskIds, batchIds }
+}
+
+/**
+ * `pipeline-runs.json` のラン記録から対象 Spec / ボードのランを選ぶ（最新優先）。
+ *
+ * @param {Array<object>} runs ラン記録
+ * @param {{spec?: string|null, board?: string|null, tasks?: Array<object>}} [opts] 条件
+ * @returns {object|null} ラン（無ければ null）
+ */
+export function pickSpecRun(runs, opts = {}) {
+  const list = (Array.isArray(runs) ? runs : []).filter((r) => r && typeof r === 'object')
+  if (!list.length) return null
+  const spec = String(opts.spec ?? '').trim()
+  const board = String(opts.board ?? '').trim()
+  const onBoard = list.filter((r) => !board || !r.board || String(r.board) === board)
+  const newest = (arr) =>
+    arr.slice().sort((a, b) => (Number(b.createdAt ?? 0) || 0) - (Number(a.createdAt ?? 0) || 0))[0] ?? null
+  if (spec) {
+    const hit = onBoard.filter((r) => sameSpec(r.specRelPath ?? r.spec, spec))
+    if (hit.length) return newest(hit)
+  }
+  const ids = new Set((Array.isArray(opts.tasks) ? opts.tasks : []).map(taskIdOf).filter(Boolean))
+  if (ids.size) {
+    const hit = onBoard.filter((r) => Array.isArray(r.taskIds) && r.taskIds.some((id) => ids.has(String(id))))
+    if (hit.length) return newest(hit)
+  }
+  return null
+}
+
+/**
+ * タスク群から status 件数と所要時間を出す。
+ *
+ * 所要時間は **並列区間をマージした実稼働時間**（`durationMin` = `activeDurationMin`）と
+ * 単純経過時間（`wallDurationMin`）の 2 本立て:
+ *  - 実稼働: 各タスクの `[start, end]` を昇順ソートし、重なり（`a2 <= b1`）をマージした合計
+ *  - 経過: `min(start)` 〜 `max(end)`（参考値）
+ *
+ * 集計窓（`since`）より前に始まった区間は窓の開始へ切り上げ、`durationCapped` を立てる
+ * （「33,000 分」のような数字を出さないための既存の安全弁）。実行中タスクの終端は
+ * `opts.now` が渡されたときだけ `now` で閉じる（渡さないと際限なく伸びるため）。
+ *
+ * @param {Array<object>} tasks タスク（camel / snake 両対応）
+ * @param {{since?: number, now?: number, spec?: string|null, taskIds?: Array<string>, batchIds?: Array<string>}} [opts] 条件
+ * @returns {{
+ *   batchesDone: number, batchesTotal: number, durationMin: number|null,
+ *   activeDurationMin: number|null, wallDurationMin: number|null,
+ *   durationCapped: boolean, intervalCount: number, startMs: number, endMs: number, scoped: boolean
+ * }} 集計
  */
 export function summarizeTasks(tasks, opts = {}) {
-  const list = Array.isArray(tasks) ? tasks : []
   const since = Number(opts.since) || 0
+  const nowMs = Number(opts.now) || 0
+  const scoped = selectSpecTasks(tasks, opts)
+  const list = scoped.tasks
   const done = list.filter((t) => String(t?.status ?? '') === 'done').length
-  const finished = list.filter((t) => {
-    if (String(t?.status ?? '') !== 'done') return false
-    const e = Number(t?.completedAt) || 0
-    return e > 0 && (since <= 0 || e >= since)
-  })
-  let start = null
-  let end = null
+  const intervals = []
   let capped = false
-  for (const t of finished) {
-    const s = Number(t?.startedAt ?? t?.createdAt ?? 0) || 0
-    const e = Number(t?.completedAt) || 0
-    const bounded = since > 0 ? Math.max(s, since) : s
-    if (since > 0 && s > 0 && s < since) capped = true
-    if (bounded > 0 && (start === null || bounded < start)) start = bounded
-    if (e > 0 && (end === null || e > end)) end = e
+  for (const task of list) {
+    const start = taskStartMs(task)
+    const end = taskEndMs(task)
+    let s = 0
+    let e = 0
+    if (start > 0 && end > start) {
+      s = start
+      e = end
+    } else if (start > 0 && end <= 0 && nowMs > start) {
+      // 実行中（completedAt がまだ無い）: now が分かっているときだけ閉じる
+      s = start
+      e = nowMs
+    } else {
+      continue
+    }
+    if (since > 0 && s < since) {
+      capped = true
+      s = since
+    }
+    if (nowMs > 0 && e > nowMs) e = nowMs
+    if (e > s) intervals.push([s, e])
   }
-  const durationMin = start && end && end >= start ? Math.max(1, Math.round((end - start) / 60000)) : null
-  return { batchesDone: done, batchesTotal: list.length, durationMin, durationCapped: capped }
+  const merged = mergeIntervals(intervals)
+  const activeMs = merged.reduce((acc, [s, e]) => acc + (e - s), 0)
+  const toMin = (ms) => (ms > 0 ? Math.max(1, Math.round(ms / 60000)) : null)
+  const durationMin = toMin(activeMs)
+  const first = merged.length ? merged[0][0] : 0
+  const last = merged.length ? merged[merged.length - 1][1] : 0
+  const batchesTotal = list.length || (Array.isArray(opts.batchIds) ? opts.batchIds.length : 0)
+  return {
+    batchesDone: done,
+    batchesTotal,
+    durationMin,
+    activeDurationMin: durationMin,
+    wallDurationMin: toMin(last - first),
+    durationCapped: capped,
+    intervalCount: merged.length,
+    startMs: first,
+    endMs: last,
+    scoped: scoped.scoped,
+  }
+}
+
+/**
+ * `usage.scoped()` の結果から KPI 用の 2 値（API コール数・合計トークン数）を取り出す。
+ *
+ * 合計トークンは `input + output + cacheRead + cacheWrite`（`usage.js` と同じ定義）。
+ * スコープ集計が失敗していれば `null`（＝「—」。0 と区別する）。
+ *
+ * @param {{ok?: boolean, apiCalls?: number, totalTokens?: number, totals?: object}|null} scope スコープ集計
+ * @returns {{apiCalls: number|null, totalTokens: number|null, sessions: number|null}} KPI 値
+ */
+export function usageKpis(scope) {
+  if (!scope) return { apiCalls: null, totalTokens: null, sessions: null }
+  if (scope.ok === false) return { apiCalls: null, totalTokens: null, sessions: null }
+  const totals = scope.totals ?? {}
+  const num = (v) => Math.max(0, Number(v) || 0)
+  const apiCalls = Number.isFinite(Number(scope.apiCalls)) ? num(scope.apiCalls) : num(totals.calls)
+  const totalTokens = Number.isFinite(Number(scope.totalTokens))
+    ? num(scope.totalTokens)
+    : num(totals.input) + num(totals.output) + num(totals.cacheRead) + num(totals.cacheWrite)
+  return { apiCalls, totalTokens, sessions: num(totals.sessions) }
 }
 
 /**
@@ -237,7 +427,10 @@ export function summarizeTasks(tasks, opts = {}) {
  *   label?: string|null,
  *   generatedAt?: number,
  *   hours?: number,
+ *   taskIds?: Array<string>,
+ *   batchIds?: Array<string>,
  *   usage?: {totals?: object, cacheHitRate?: number|null, models?: Array<object>}|null,
+ *   usageScope?: {ok?: boolean, apiCalls?: number, totalTokens?: number, totals?: object, scope?: object}|null,
  *   report?: {status?: string, label?: string|null, markdown?: string, counts?: object|null, at?: number}|null,
  *   tasks?: Array<object>,
  *   ops?: {humanTaps?: number, redlines?: number, typedChars?: number}|null,
@@ -256,7 +449,24 @@ export function buildReceipt(input = {}) {
     redlines: Math.max(0, Number(input.ops?.redlines) || 0),
     typedChars: Math.max(0, Number(input.ops?.typedChars) || 0),
   }
-  const taskSummary = summarizeTasks(input.tasks ?? [], { since: generatedAt - hours * 3600 * 1000 })
+  // Spec / Run スコープに厳密に絞る（別タスクの startedAt〜completedAt を混ぜない）
+  const taskSummary = summarizeTasks(input.tasks ?? [], {
+    since: generatedAt - hours * 3600 * 1000,
+    now: generatedAt,
+    spec: input.spec,
+    taskIds: input.taskIds,
+    batchIds: input.batchIds,
+  })
+  // API コール数・トークン数は usage.js のスコープ集計（セッション群 or 時間窓）から取る
+  const scoped = usageKpis(input.usageScope)
+  const scopedOk = Boolean(input.usageScope && input.usageScope.ok !== false)
+  const fallbackCalls = totals ? Math.max(0, Number(totals.calls) || 0) : null
+  const fallbackTokens = totals
+    ? Math.max(0, Number(totals.input) || 0) +
+      Math.max(0, Number(totals.output) || 0) +
+      Math.max(0, Number(totals.cacheRead) || 0) +
+      Math.max(0, Number(totals.cacheWrite) || 0)
+    : null
   const reportCounts = input.report?.counts && typeof input.report.counts === 'object' ? input.report.counts : null
   const tests = extractTestCounts([
     input.report?.markdown ?? '',
@@ -272,6 +482,16 @@ export function buildReceipt(input = {}) {
     label: input.label ? String(input.label) : null,
     windowHours: hours,
     status: input.report?.status ? String(input.report.status) : null,
+    scope: {
+      // どのタスクが時間・バッチ計算に入ったか（監査用。数字の根拠を追えるようにする）
+      scoped: taskSummary.scoped,
+      taskIds: Array.isArray(input.taskIds) ? input.taskIds.map(String) : [],
+      batchIds: Array.isArray(input.batchIds) ? input.batchIds.map(String) : [],
+      tasks: taskSummary.batchesTotal,
+      intervals: taskSummary.intervalCount,
+      usage: input.usageScope?.scope ?? null,
+      usageScoped: scopedOk,
+    },
     kpi: {
       costUsd: totals ? Math.round((Number(totals.cost) || 0) * 10000) / 10000 : null,
       cacheHitRate: rate,
@@ -291,8 +511,13 @@ export function buildReceipt(input = {}) {
       batchesTotal: reportCounts
         ? Number(reportCounts.total) || taskSummary.batchesTotal
         : taskSummary.batchesTotal || null,
+      // 主指標は「重複区間をマージした実稼働時間」。経過時間は参考値として併記する
       durationMin: taskSummary.durationMin,
+      activeDurationMin: taskSummary.activeDurationMin,
+      wallDurationMin: taskSummary.wallDurationMin,
       durationCapped: taskSummary.durationCapped,
+      apiCalls: scopedOk ? scoped.apiCalls : fallbackCalls,
+      totalTokens: scopedOk ? scoped.totalTokens : fallbackTokens,
       tests: tests.tests,
       pwaChecks: tests.pwaChecks,
     },
@@ -303,11 +528,12 @@ export function buildReceipt(input = {}) {
 /**
  * テレメトリ集計器を作る。
  *
- * @param {object} cfg ブリッジ設定（`reviewDir` / `auditPath`）
+ * @param {object} cfg ブリッジ設定（`reviewDir` / `auditPath` / `stateDb` / `pluginDataDir`）
  * @param {{
- *   usage?: {summary: Function},
+ *   usage?: {summary: Function, scoped?: Function},
  *   reports?: (opts: object) => Array<object>,
  *   tasks?: (board: string) => Array<object>,
+ *   runs?: () => Array<object>,
  *   now?: () => number,
  * }} [deps] 差し替え（テスト用）
  * @returns {{receipt: Function}} 集計器
@@ -316,9 +542,14 @@ export function createTelemetry(cfg = {}, deps = {}) {
   const reviewDir = String(cfg.reviewDir ?? '')
   const auditPath = String(cfg.auditPath ?? '')
   const now = typeof deps.now === 'function' ? deps.now : () => Date.now()
+  const readRunsFn = typeof deps.runs === 'function' ? deps.runs : () => readRuns(runsPathFor(cfg))
 
   /**
    * `GET /api/telemetry/receipt` の本体。ファイル欠損は握りつぶして `missing` に積む。
+   *
+   * Spec が指定されたときは `pipeline-runs.json` のラン（`taskIds` / `batchIds`）で
+   * タスクを絞り、そのセッション群（取れなければ Run の時間窓）で `apiCalls` /
+   * `totalTokens` を `usage.scoped()` から集計する。
    *
    * @param {{board?: string, spec?: string, hours?: number, dbs?: Array<object>}} [opts] 条件
    * @returns {object} Receipt データ
@@ -359,6 +590,50 @@ export function createTelemetry(cfg = {}, deps = {}) {
       missing.push('tasks')
     }
 
+    // ランレコード（Spec スコープの ID 群）→ 対象タスクの絞り込み。
+    // Spec 未指定（ボード全体のレシート）ではランに寄せず、ボード全体をそのまま集計する。
+    let runs = []
+    try {
+      const r = readRunsFn()
+      runs = Array.isArray(r) ? r : []
+    } catch {
+      runs = []
+    }
+    const run = spec ? pickSpecRun(runs, { spec, board, tasks }) : null
+    const taskIds = Array.isArray(run?.taskIds) ? run.taskIds.map(String) : []
+    const batchIds = Array.isArray(run?.batchIds) ? run.batchIds.map(String) : []
+    const scopedTasks = selectSpecTasks(tasks, { spec, taskIds, batchIds }).tasks
+
+    const timing = summarizeTasks(scopedTasks, {
+      since: generatedAt - hours * 3600 * 1000,
+      now: generatedAt,
+    })
+    const sessionIds = [
+      ...new Set(
+        scopedTasks
+          .map((t) => String(t?.sessionId ?? t?.session_id ?? t?.session ?? '').trim())
+          .concat(String(run?.originSessionId ?? '').trim())
+          .filter(Boolean),
+      ),
+    ]
+
+    let usageScope = null
+    if (typeof deps.usage?.scoped === 'function') {
+      try {
+        const r = deps.usage.scoped({
+          sessionIds,
+          // セッションが取れないときは Run の実区間（無ければ集計窓）で安全にフォールバックする
+          sinceMs: timing.startMs || generatedAt - hours * 3600 * 1000,
+          untilMs: timing.endMs || generatedAt,
+          dbs: opts.dbs ?? [],
+        })
+        if (r?.ok) usageScope = r
+        else missing.push('usageScope')
+      } catch {
+        missing.push('usageScope')
+      }
+    }
+
     let ops = { humanTaps: 0, redlines: 0, typedChars: 0 }
     try {
       const file = auditPath || path.join(String(cfg.dataDir ?? ''), 'audit.jsonl')
@@ -375,9 +650,12 @@ export function createTelemetry(cfg = {}, deps = {}) {
       label: report?.label ?? null,
       generatedAt,
       hours,
+      taskIds,
+      batchIds,
       usage,
+      usageScope,
       report,
-      tasks,
+      tasks: scopedTasks,
       ops,
       missing,
     })

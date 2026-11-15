@@ -131,3 +131,34 @@ test('複数プロファイルの state.db を横断合算する', () => {
   assert.ok(both.topSessions.some((s) => s.profile === 'default'))
   assert.ok(both.topSessions.some((s) => s.profile === 'mobile'))
 })
+
+test('scoped はセッション ID 群だけで合算する（時間窓は使わない）', () => {
+  const u = createUsage({ home: '/nonexistent', stateDb: fixture() })
+  const d = u.scoped({ sessionIds: ['s1', 's3'] })
+  assert.equal(d.ok, true)
+  assert.equal(d.scope.sessionIds, 2)
+  assert.equal(d.scope.fallback, false, 'ID が取れていれば窓フォールバックしない')
+  assert.equal(d.totals.sessions, 2)
+  assert.equal(d.apiCalls, 10 + 99, '期間外でも指定されたセッションは数える（Spec の実測値）')
+  assert.equal(d.totalTokens, 1000 + 500 + 9000 + (9999 + 9999 + 9999))
+  assert.ok(Math.abs(d.totals.cost - (0.5 + 9.9)) < 1e-9)
+  assert.equal(d.scope.sinceMs, null)
+})
+
+test('scoped はセッション ID が無ければ Run の時間窓でフォールバックする', () => {
+  const u = createUsage({ home: '/nonexistent', stateDb: fixture() })
+  const now = Date.now()
+  const d = u.scoped({ sessionIds: [], sinceMs: now - 3 * 3600 * 1000, untilMs: now })
+  assert.equal(d.ok, true)
+  assert.equal(d.scope.fallback, true)
+  assert.equal(d.totals.sessions, 2, '48 時間前のセッションは入らない')
+  assert.equal(d.apiCalls, 30)
+  assert.equal(d.totalTokens, 3000 + 1300 + 10000)
+})
+
+test('scoped はスコープ未指定・DB 不在なら ok:false（全体を混ぜない）', () => {
+  const u = createUsage({ home: '/nonexistent', stateDb: fixture() })
+  assert.equal(u.scoped({}).ok, false)
+  assert.equal(u.scoped({ sessionIds: ['s1'], dbs: [{ profile: 'x', path: '/nonexistent/state.db' }] }).ok, false)
+  assert.equal(u.scoped({ sessionIds: ['s1'] }).ok, true, '既定の state.db を使う')
+})

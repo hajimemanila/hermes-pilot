@@ -115,8 +115,11 @@ const review = createReview(cfg, { targets: () => repos.targets() })
 const reviewWatcher = createReviewWatcher(cfg, { review })
 const ops = createOps(cfg, hermes, auth, { kanban })
 const gitinfo = createGitInfo(cfg)
+// 使用量（コスト・トークン・API コール）はテレメトリとパイプライン報告の双方が使う（V7-2）。
+const usage = createUsage(cfg)
 // パイプライン完走レポート（D20 / D21）。Spec ラン／ボードウェーブの収束を監視する。
-const pipelineWatcher = createPipelineWatcher(cfg, { gitinfo })
+// `usage` を渡すと報告に Spec スコープの API コール数・トークン数が入る。
+const pipelineWatcher = createPipelineWatcher(cfg, { gitinfo, usage })
 const discord = createDiscord(cfg)
 const search = createSearch(cfg)
 const transcript = createTranscript(cfg)
@@ -159,7 +162,6 @@ async function listStateDbs() {
   return out
 }
 const capture = createCapture(cfg)
-const usage = createUsage(cfg)
 // Zero-Typing 実行サマリ（完了レシート・SPEC-PILOT-V5 §3.3 ③ / D26③）。
 // usage / 完走レポート / カンバン / audit.jsonl を読むだけで、書き込みはしない。
 const telemetry = createTelemetry(cfg, {

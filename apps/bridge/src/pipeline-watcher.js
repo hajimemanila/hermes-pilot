@@ -3,6 +3,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { readRuns, runsPathFor, writeRuns } from './specs.js'
+import { summarizeTasks } from './telemetry.js'
 
 /**
  * パイプライン完走ウォッチャー（SPEC §3.2 / D20 / D21）。
@@ -225,7 +226,36 @@ function gitLine(git) {
 }
 
 /**
+ * 分を「42 分」「1 時間 5 分」へ整形する（レポート用・0 は null）。
+ * @param {number|null|undefined} min 分
+ * @returns {string|null} 表示文字列
+ */
+export function fmtDurationMin(min) {
+  const n = Number(min)
+  if (!Number.isFinite(n) || n <= 0) return null
+  if (n < 60) return `${Math.round(n)} 分`
+  return `${Math.floor(n / 60)} 時間 ${Math.round(n % 60)} 分`
+}
+
+/**
+ * トークン数を `950` / `480K` / `1.2M` へ整形する（レシート Canvas と同じ規則）。
+ * @param {number|null|undefined} value トークン数
+ * @returns {string|null} 表示文字列
+ */
+export function fmtTokenCount(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n < 0) return null
+  if (n >= 1e6) return `${Math.round((n / 1e6) * 10) / 10}M`
+  if (n >= 1e3) return `${Math.round(n / 1e3)}K`
+  return String(Math.round(n))
+}
+
+/**
  * 統合 Markdown レポートを組み立てる（純関数）。
+ *
+ * 所要時間は `telemetry.js` の `summarizeTasks()` を共有し、並列タスクの重なりを
+ * マージした **実稼働時間**（主指標）と単純経過時間を併記する。`usage` が渡された
+ * ときは Spec / Run スコープの API コール数・トークン数も出力する。
  *
  * @param {{
  *   status: 'done'|'halted',
@@ -236,8 +266,9 @@ function gitLine(git) {
  *   gitMap?: Record<string, object>,
  *   startedAt?: number,
  *   now?: number,
+ *   usage?: {apiCalls?: number|null, totalTokens?: number|null, totals?: object|null, scope?: object|null}|null,
  * }} input 入力
- * @returns {{text: string, markdown: string, followUpPrompt: string, counts: object, issues: Array<object>, nextSteps: string[]}} レポート
+ * @returns {{text: string, markdown: string, followUpPrompt: string, counts: object, issues: Array<object>, nextSteps: string[], timing: object}} レポート
  */
 export function buildPipelineReport({
   status = 'done',
@@ -248,6 +279,7 @@ export function buildPipelineReport({
   gitMap = {},
   startedAt = 0,
   now: nowMs = Date.now(),
+  usage = null,
 } = {}) {
   const counts = countStatuses(tasks)
   const elapsed = elapsedLabel(startedAt, nowMs)
@@ -256,10 +288,27 @@ export function buildPipelineReport({
   const title = String(label || board || specRelPath || 'pipeline')
   const halted = status === 'halted'
 
-  const head = halted
+  // 時間は Spec / Run スコープのタスク区間から（重なりはマージして二重計上しない）
+  const timing = summarizeTasks(tasks, { now: nowMs })
+  const activeLabel = fmtDurationMin(timing.durationMin)
+  const wallLabel = fmtDurationMin(timing.wallDurationMin)
+  const callsLabel = usage && Number.isFinite(Number(usage.apiCalls)) ? Number(usage.apiCalls) : null
+  const tokensLabel = usage && Number.isFinite(Number(usage.totalTokens)) ? Number(usage.totalTokens) : null
+  const usageBits = [
+    callsLabel === null ? null : `🔌 ${callsLabel} API`,
+    tokensLabel === null ? null : `🪙 ${fmtTokenCount(tokensLabel)} tokens`,
+  ].filter(Boolean)
+  const timeBits = [
+    activeLabel ? `⏱ 実稼働 ${activeLabel}` : null,
+    wallLabel ? `経過 ${wallLabel}` : null,
+  ].filter(Boolean)
+  const summaryBits = [...timeBits, ...usageBits]
+
+  const headBase = halted
     ? `### ⚠️ Action Required: ${title} (${counts.done} done · ${counts.blocked} blocked` +
       `${counts.failed ? ` · ${counts.failed} failed` : ''}${elapsed ? ` · ${elapsed}` : ''})`
     : `### 🎉 Pipeline Completed: ${title} (${counts.done}/${counts.total} done${elapsed ? ` · ${elapsed}` : ''})`
+  const head = summaryBits.length ? `${headBase} · ${summaryBits.join(' · ')}` : headBase
 
   const doneLines = []
   for (const t of tasks) {
@@ -275,8 +324,18 @@ export function buildPipelineReport({
 
   const nextLines = nextSteps.map((s) => `- ${s}`)
 
+  const usageLines = [
+    `- 実稼働（重複区間をマージ）: ${activeLabel ?? '—'}`,
+    `- 経過時間: ${wallLabel ?? '—'}`,
+    `- API コール数: ${callsLabel === null ? '—' : String(callsLabel)}`,
+    `- トークン数: ${tokensLabel === null ? '—' : `${fmtTokenCount(tokensLabel)}（入力 ${fmtTokenCount(usage?.totals?.input ?? 0)} · 出力 ${fmtTokenCount(usage?.totals?.output ?? 0)} · キャッシュ読取 ${fmtTokenCount(usage?.totals?.cacheRead ?? 0)}）`}`,
+  ]
+
   const markdown = [
     head,
+    '',
+    '#### ⏱ 所要時間・使用量 / Time & Usage',
+    ...usageLines,
     '',
     '#### ✅ 完了タスク / Completed Tasks',
     ...(doneLines.length ? doneLines : ['- （完了タスクなし）']),
@@ -288,9 +347,10 @@ export function buildPipelineReport({
     ...nextLines,
   ].join('\n')
 
-  const text = halted
+  const textBase = halted
     ? `⚠️ ${title} (${counts.done} done · ${counts.blocked} blocked)`
     : `🎉 ${title} (${counts.done}/${counts.total} done)`
+  const text = summaryBits.length ? `${textBase} · ${summaryBits.join(' · ')}` : textBase
 
   const promptLines = [
     `先ほどのパイプライン「${title}」（board: ${board}${specRelPath ? ` / ${specRelPath}` : ''}）の結果を確認してください。`,
@@ -311,6 +371,17 @@ export function buildPipelineReport({
     },
     issues,
     nextSteps,
+    timing: {
+      activeDurationMin: timing.durationMin,
+      wallDurationMin: timing.wallDurationMin,
+      intervals: timing.intervalCount,
+      durationCapped: timing.durationCapped,
+    },
+    usage: {
+      apiCalls: callsLabel,
+      totalTokens: tokensLabel,
+      scope: usage?.scope ?? null,
+    },
   }
 }
 
@@ -712,6 +783,46 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
     return out
   }
 
+  /**
+   * Spec / Run グループの使用量（API コール数・トークン数）を `usage.js` のスコープ集計で取る。
+   *
+   * セッション ID がタスク・ランから取れればその群のみ、取れなければグループの実区間で
+   * 時間窓フォールバックする（`telemetry.js` のレシートと同じ共通関数を使う）。
+   *
+   * @param {{tasks: Array<object>, run?: object|null}} group グループ
+   * @param {number} nowMs 現在時刻（ms）
+   * @returns {object|null} `usage.scoped()` の結果（未設定・失敗時は null）
+   */
+  function scopedUsage(group, nowMs) {
+    const u = opts.usage
+    if (!u || typeof u.scoped !== 'function') return null
+    try {
+      const sessionIds = [
+        ...new Set(
+          (Array.isArray(group?.tasks) ? group.tasks : [])
+            .map((t) => String(t?.session_id ?? '').trim())
+            .concat(String(group?.run?.originSessionId ?? '').trim())
+            .filter((id) => id && id !== '__latest__'),
+        ),
+      ]
+      const startSec = (Array.isArray(group?.tasks) ? group.tasks : []).reduce((acc, t) => {
+        const v = Number(t?.started_at ?? t?.created_at ?? 0) || 0
+        if (!v) return acc
+        return acc === 0 ? v : Math.min(acc, v)
+      }, 0)
+      const r = u.scoped({
+        sessionIds,
+        sinceMs: startSec * 1000 || nowMs - 24 * 3600 * 1000,
+        untilMs: nowMs,
+        // state.db のパス一覧（usage.js は {profile, path} を受ける）
+        dbs: stateDbs().map((p, i) => ({ profile: i === 0 ? 'default' : `profile${i}`, path: p })),
+      })
+      return r?.ok ? r : null
+    } catch {
+      return null
+    }
+  }
+
   /** 1 ティック分の走査。テストから直接 await できる。 */
   async function tick() {
     ticks += 1
@@ -780,6 +891,7 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
         ? String(g.run?.title ?? specTitleFromFile(g) ?? g.spec)
         : boardLabel(g.board)
       const gitMap = await collectGit(g.tasks)
+      const usageScope = scopedUsage(g, nowMs)
       const report = buildPipelineReport({
         status,
         label,
@@ -787,6 +899,7 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
         specRelPath: g.spec,
         tasks: g.tasks,
         gitMap,
+        usage: usageScope,
         startedAt: g.tasks.reduce((a, t) => {
           const v = Number(t.started_at ?? t.created_at ?? 0) || 0
           return a === 0 ? v : Math.min(a, v || a)
