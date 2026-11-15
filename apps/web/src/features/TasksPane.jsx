@@ -8,7 +8,8 @@ import { UsageSheet } from './UsageSheet.jsx'
 import { MissionReceiptSheet } from './MissionReceiptSheet.jsx'
 import { SpecSeedSheet } from './SpecSeedSheet.jsx'
 import { SpecReadyBanner } from '../components/SpecReadyBanner.jsx'
-import { pickSpecBanner } from '../lib/specSeed.js'
+import { ArchitectJobBar } from '../components/ArchitectJobBar.jsx'
+import { jobPollMs, pickActiveArchitectJob, pickSpecBanner } from '../lib/specSeed.js'
 import { LiveSheet } from './LiveSheet.jsx'
 import { InboxSheet } from './InboxSheet.jsx'
 import { pendingCount } from '../lib/reviewView.js'
@@ -105,6 +106,8 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
   const [architectJobs, setArchitectJobs] = useState(null)
   const [architectFiling, setArchitectFiling] = useState(false)
   const [architectDismissed, setArchitectDismissed] = useState([])
+  // 進行バーで × を押したジョブ（`failed` の再表示を止める。SPEC V6 §3.3 ②）
+  const [architectJobClosed, setArchitectJobClosed] = useState([])
   // ウィジェットからのディープリンク（?open=inbox&task=…）を1回だけ反映
   const [inboxFocus, setInboxFocus] = useState(null)
 
@@ -274,42 +277,44 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
     return () => clearInterval(id)
   }, [loadInbox])
 
-  const refreshAll = useCallback(async () => {
-    const results = await Promise.all([
-      board ? loadTasks(board) : Promise.resolve(true),
-      loadInbox(),
-      refresh ? refresh() : Promise.resolve(true),
-    ])
-    return results[0] !== false
-  }, [board, loadTasks, loadInbox, refresh])
-
   /*
    * Spec Launchpad 用の SPEC 検出（SPEC §5.4）。ボードを変えるたびに 1 回だけ問い合わせる
    * （ファイル走査はサーバ側で安いが、タスク一覧のように 5 秒ごとに叩く必要は無い）。
    * バッチが 1 つも無い SPEC（TOC だけ・別形式）はバーに出さない。
+   *
+   * **切り出してある理由（SPEC V6 §3.3 ③ / D31）**: Seed で新しい SPEC が書かれても、
+   * タブをリロードするまで `🚀 仕様ランチャー` に出ない不整合を無くすため、
+   * ①ボード変更 ②更新ボタン（`refreshAll`）③一括起票の直後 ④`architectJobs` の変化
+   * の 4 か所から同じ関数を呼ぶ。
    */
-  useEffect(() => {
-    let alive = true
-    if (!board) {
+  const loadSpecs = useCallback(async (slug) => {
+    if (!slug) {
       setSpecsInfo(null)
-      return () => {
-        alive = false
-      }
+      return
     }
-    api(`/api/specs?board=${encodeURIComponent(board)}`)
-      .then((d) => {
-        if (!alive) return
-        const list = (Array.isArray(d?.specs) ? d.specs : []).filter((s) => (s.batches ?? []).length > 0)
-        setSpecsInfo(list.length ? { repo: d.repo ?? null, path: d.path ?? null, specs: list } : null)
-        setSpecPath((cur) => (cur && list.some((s) => s.path === cur) ? cur : list[0]?.path ?? null))
-      })
-      .catch(() => {
-        if (alive) setSpecsInfo(null)
-      })
-    return () => {
-      alive = false
+    try {
+      const d = await api(`/api/specs?board=${encodeURIComponent(slug)}`)
+      const list = (Array.isArray(d?.specs) ? d.specs : []).filter((s) => (s.batches ?? []).length > 0)
+      setSpecsInfo(list.length ? { repo: d.repo ?? null, path: d.path ?? null, specs: list } : null)
+      setSpecPath((cur) => (cur && list.some((s) => s.path === cur) ? cur : list[0]?.path ?? null))
+    } catch {
+      setSpecsInfo(null)
     }
-  }, [board])
+  }, [])
+
+  useEffect(() => {
+    loadSpecs(board)
+  }, [board, loadSpecs])
+
+  const refreshAll = useCallback(async () => {
+    const results = await Promise.all([
+      board ? loadTasks(board) : Promise.resolve(true),
+      loadInbox(),
+      loadSpecs(board),
+      refresh ? refresh() : Promise.resolve(true),
+    ])
+    return results[0] !== false
+  }, [board, loadTasks, loadInbox, loadSpecs, refresh])
 
   useEffect(() => {
     if (!board) return
@@ -336,11 +341,46 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
     }
   }, [board])
 
+  /**
+   * 進行バーに出すジョブ（`running` / `awaiting_review` / `awaiting_spec` / `failed` の 1 件）。
+   * `spec_ready` / `launched` は `SpecReadyBanner` が引き継ぐ。
+   */
+  const activeJob = useMemo(
+    () => pickActiveArchitectJob(architectJobs?.jobs ?? [], architectJobClosed),
+    [architectJobs, architectJobClosed],
+  )
+
+  // 状態が変わった瞬間に間隔を切り替える（効果の再生成は status/id だけで足りる）
+  const pollMs = jobPollMs(activeJob)
+
   useEffect(() => {
     loadArchitectJobs()
-    const id = setInterval(() => document.visibilityState === 'visible' && loadArchitectJobs(), 20_000)
+    // 進行中（running / awaiting_spec）だけ 4 秒。人待ち・停止・ジョブ無しは 20 秒（SPEC V6 §3.3 ③）
+    const id = setInterval(
+      () => document.visibilityState === 'visible' && loadArchitectJobs(),
+      pollMs,
+    )
     return () => clearInterval(id)
-  }, [loadArchitectJobs])
+  }, [loadArchitectJobs, pollMs])
+
+  /*
+   * 新 SPEC の即時同期（SPEC V6 §3.3 ③ / D31）。
+   * ブリッジが新しい SPEC を検知したら（`specReady` / `pending` の顔ぶれが変わったら）
+   * SPEC 一覧を取り直す。リロード無しで `🚀 仕様ランチャー` が出る。
+   */
+  const specSyncKey = useMemo(() => {
+    const ready = architectJobs?.specReady ?? []
+    const pending = architectJobs?.pending ?? []
+    return [
+      ...ready.map((r) => `r:${r?.spec}:${r?.batchCount}:${r?.launched ? 1 : 0}`),
+      ...pending.map((p) => `p:${p?.path}:${p?.pendingCount}`),
+    ].join('|')
+  }, [architectJobs])
+
+  useEffect(() => {
+    if (!specSyncKey) return
+    loadSpecs(board)
+  }, [specSyncKey, board, loadSpecs])
 
   /** 出すカードは 1 枚だけ（完成 SPEC 優先・× で閉じたものは再表示しない）。 */
   const specBanner = useMemo(() => {
@@ -374,14 +414,14 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
         } catch {
           /* 演出は本質ではない */
         }
-        await Promise.all([loadArchitectJobs(), loadTasks(board)])
+        await Promise.all([loadArchitectJobs(), loadTasks(board), loadSpecs(board)])
       } catch (e) {
         notify(e?.message ?? t('seed.failed'))
       } finally {
         setArchitectFiling(false)
       }
     },
-    [architectFiling, board, notify, t, loadArchitectJobs, loadTasks],
+    [architectFiling, board, notify, t, loadArchitectJobs, loadTasks, loadSpecs],
   )
 
   /* 稼働中（running / ready / todo）が 0 か。0 に変わった瞬間に完走レポートを取り直す。 */
@@ -832,6 +872,19 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
           <span className="inbox-bar-go">{t('tasks.inboxBarGo')}</span>
         </button>
       ) : null}
+
+      {/* Architect の進行バー（SPEC V6 §3.3 ②）: Seed のあと「今どこか」を画面上部に残す */}
+      <ArchitectJobBar
+        job={activeJob}
+        board={board ?? ''}
+        repo={specsInfo?.repo ?? null}
+        chat={readActiveChatId(globalThis.localStorage) || null}
+        onRetried={async () => {
+          await Promise.all([loadArchitectJobs(), loadSpecs(board)])
+        }}
+        onDismiss={(jobId) => setArchitectJobClosed((prev) => [...prev, jobId])}
+        notify={notify}
+      />
 
       {/* A2B クイック起票カード（SPEC V5 §3.2 D23）: 仕様書ができた瞬間に 1 タップ起票 */}
       <SpecReadyBanner

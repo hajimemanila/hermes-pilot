@@ -11,8 +11,12 @@ import {
   TEMPLATE_IDS,
   buildSeedPayload,
   canSubmit,
+  elapsedParts,
+  jobPollMs,
+  jobRunnerKey,
   jobStatusKey,
   mergeTranscript,
+  pickActiveArchitectJob,
   pickSpecBanner,
   recognitionCtor,
   speechLocale,
@@ -78,11 +82,72 @@ test('テンプレートチップは 3 種（i18n のキーで引く）', () => 
 
 test('ジョブ状態は i18n キーへ写像される', () => {
   assert.equal(jobStatusKey('running'), 'seed.statusRunning')
+  assert.equal(jobStatusKey('awaiting_review'), 'seed.statusAwaitingReview')
   assert.equal(jobStatusKey('awaiting_spec'), 'seed.statusAwaiting')
   assert.equal(jobStatusKey('spec_ready'), 'seed.statusReady')
   assert.equal(jobStatusKey('launched'), 'seed.statusLaunched')
   assert.equal(jobStatusKey('failed'), 'seed.statusFailed')
   assert.equal(jobStatusKey('???'), 'seed.statusUnknown')
+})
+
+test('進行バーに出すジョブは進行中と失敗だけを新しい順に 1 件選ぶ', () => {
+  assert.equal(pickActiveArchitectJob(null), null)
+  assert.equal(pickActiveArchitectJob([]), null)
+
+  // spec_ready / launched は SpecReadyBanner が引き継ぐので進行バーには出さない
+  assert.equal(
+    pickActiveArchitectJob([
+      { id: 'a', status: 'spec_ready', createdAt: 200 },
+      { id: 'b', status: 'launched', createdAt: 300 },
+    ]),
+    null,
+  )
+
+  const jobs = [
+    { id: 'old', status: 'failed', createdAt: 100 },
+    { id: 'run', status: 'running', createdAt: 300 },
+    { id: 'rev', status: 'awaiting_review', createdAt: 200 },
+    { id: 'ready', status: 'spec_ready', createdAt: 400 },
+  ]
+  // 新しい running を優先（古い failed で画面を占有しない）
+  assert.equal(pickActiveArchitectJob(jobs).id, 'run')
+  // 閉じたものは飛ばす
+  assert.equal(pickActiveArchitectJob(jobs, ['run']).id, 'rev')
+  assert.equal(pickActiveArchitectJob(jobs, ['run', 'rev']).id, 'old')
+  assert.equal(pickActiveArchitectJob(jobs, ['run', 'rev', 'old']), null)
+
+  // 同時刻なら failed を先に見せる（止まっているものを隠さない）
+  assert.equal(
+    pickActiveArchitectJob([
+      { id: 'spec', status: 'awaiting_spec', createdAt: 500 },
+      { id: 'bad', status: 'failed', createdAt: 500 },
+    ]).id,
+    'bad',
+  )
+})
+
+test('ポーリングは自律進行の 4 秒／人待ちの 20 秒', () => {
+  assert.equal(jobPollMs({ status: 'running' }), 4000)
+  assert.equal(jobPollMs({ status: 'awaiting_spec' }), 4000)
+  assert.equal(jobPollMs({ status: 'awaiting_review' }), 20000)
+  assert.equal(jobPollMs({ status: 'failed' }), 20000)
+  assert.equal(jobPollMs(null), 20000)
+})
+
+test('ランナー表示は agy からの自動フォールバックを隠さない', () => {
+  assert.equal(jobRunnerKey({ runner: 'hermes' }), 'seed.runnerHermes')
+  assert.equal(jobRunnerKey({ runner: 'antigravity' }), 'seed.runnerAgy')
+  assert.equal(jobRunnerKey({ runner: 'hermes', fallbackFrom: 'antigravity' }), 'seed.runnerFallback')
+  assert.equal(jobRunnerKey(null), 'seed.runnerHermes')
+})
+
+test('経過時間は時・分・秒へ分解される', () => {
+  assert.deepEqual(elapsedParts(0), { h: 0, m: 0, s: 0 })
+  assert.deepEqual(elapsedParts(-5000), { h: 0, m: 0, s: 0 })
+  assert.deepEqual(elapsedParts(42_000), { h: 0, m: 0, s: 42 })
+  assert.deepEqual(elapsedParts(3 * 60_000 + 12_000), { h: 0, m: 3, s: 12 })
+  assert.deepEqual(elapsedParts(3600_000 * 2 + 60_000 * 5 + 9_000), { h: 2, m: 5, s: 9 })
+  assert.deepEqual(elapsedParts(undefined), { h: 0, m: 0, s: 0 })
 })
 
 test('A2B バナーは完成 SPEC を優先し、起票済みは出さない', () => {

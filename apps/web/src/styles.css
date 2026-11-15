@@ -4598,3 +4598,141 @@ html[data-vibe='serotonin'] .spec-receipt-btn {
   height: 44px;
   transform: translate(-50%, -50%);
 }
+
+/* ---------- Architect 進行バー（SPEC-PILOT-V6 §3.3 ② / D28） ----------------
+   `TasksPane` / `ChatPane` の上部、`SpecReadyBanner` の直上に 1 枚だけ出す。
+   既存カードと同じトークン（`--surface` + 左 3px アクセント + 12px 角丸）で、
+   `running` / `awaiting_review` / `failed` を色だけでなく**形**でも区別する
+   （アクセント＝レビュー待ち、危険色＝停止）。390px でも折れずに収まるよう flex-wrap。 */
+.job-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 12px;
+  margin: 0 0 8px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+}
+
+.job-bar.review {
+  border-color: var(--accent);
+  border-left-color: var(--accent);
+  background: var(--accent-soft, var(--surface-2));
+}
+
+.job-bar.failed {
+  border-color: var(--danger-line, var(--line));
+  border-left-color: var(--bad);
+  background: var(--danger-bg);
+}
+
+.job-bar-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.job-bar-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.job-bar-elapsed {
+  flex: none;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.job-bar-runner {
+  flex: none;
+  max-width: 100%;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.job-bar.review .job-bar-runner {
+  border-color: var(--accent);
+  color: var(--accent-2, var(--accent));
+}
+
+.job-bar-sub {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  /* 種の 1 行要約は 2 行で切る（カードが縦に伸びないように） */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.job-bar-error {
+  color: var(--danger-fg, var(--muted));
+}
+
+.job-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+/* 新規のタップ対象は 44px（WCAG 2.5.5・`npm run audit:responsive` が実測する） */
+.job-bar-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--on-accent, #04191c);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.job-bar-btn:disabled {
+  opacity: 0.55;
+}
+
+.job-bar.failed .job-bar-btn {
+  border-color: var(--bad);
+  background: var(--danger-grad, var(--bad));
+  color: #fff;
+}
+
+.job-bar-x {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 18px;
+  line-height: 1;
+}

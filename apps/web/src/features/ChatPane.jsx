@@ -24,7 +24,8 @@ import { shouldSendOnEnter } from '../lib/composerKey.js'
 import { MissionReceiptSheet } from './MissionReceiptSheet.jsx'
 import { SpecSeedSheet } from './SpecSeedSheet.jsx'
 import { SpecReadyBanner } from '../components/SpecReadyBanner.jsx'
-import { pickSpecBanner } from '../lib/specSeed.js'
+import { ArchitectJobBar } from '../components/ArchitectJobBar.jsx'
+import { jobPollMs, pickActiveArchitectJob, pickSpecBanner } from '../lib/specSeed.js'
 import { celebrate } from '../lib/vibe.js'
 import {
   LATEST_REPORT_ID,
@@ -256,6 +257,8 @@ export function ChatPane({
   const [specJobs, setSpecJobs] = useState(null)
   const [specFiling, setSpecFiling] = useState(false)
   const [specDismissed, setSpecDismissed] = useState([])
+  // 進行バーで × を押したジョブ（`failed` の再表示を止める。SPEC V6 §3.3 ②）
+  const [specJobClosed, setSpecJobClosed] = useState([])
   // resume できない会話（カンバン作業ログ等）は読み取り専用で表示する
   const [readonly, setReadonly] = useState(null)
   // いま話しているプロファイル（SPEC-PROFILE-CHAT）。既定は DEFAULT_PROFILE（mobile）
@@ -455,12 +458,21 @@ export function ChatPane({
     }
   }, [seedBoard])
 
+  /** 進行バーに出すジョブ（SPEC V6 §3.3 ②）。`spec_ready` / `launched` はバナーが引き継ぐ。 */
+  const activeJob = useMemo(
+    () => pickActiveArchitectJob(specJobs?.jobs ?? [], specJobClosed),
+    [specJobs, specJobClosed],
+  )
+
+  // 進行中は 4 秒・人待ち／停止は 20 秒（SPEC V6 §3.3 ③）
+  const jobPollInterval = jobPollMs(activeJob)
+
   useEffect(() => {
     if (!active && !seedOpen) return undefined
     loadSpecJobs()
-    const timer = setInterval(loadSpecJobs, 20_000)
+    const timer = setInterval(loadSpecJobs, jobPollInterval)
     return () => clearInterval(timer)
-  }, [active, seedOpen, loadSpecJobs])
+  }, [active, seedOpen, loadSpecJobs, jobPollInterval])
 
   /** 出すカードは 1 枚だけ（完成 SPEC 優先・× で閉じたものは再表示しない）。 */
   const specBanner = useMemo(() => {
@@ -2363,6 +2375,17 @@ export function ChatPane({
           ))}
         </div>
       ) : null}
+
+      {/* Architect の進行バー（SPEC V6 §3.3 ②）: Seed のあと「今どこか」を画面上部に残す */}
+      <ArchitectJobBar
+        job={activeJob}
+        board={seedBoard}
+        repo={repo?.id ?? null}
+        chat={sid ?? activeDrawerSid ?? null}
+        onRetried={() => loadSpecJobs()}
+        onDismiss={(jobId) => setSpecJobClosed((prev) => [...prev, jobId])}
+        notify={notify}
+      />
 
       {/* A2B クイック起票カード（SPEC V5 §3.2 D23）: 仕様書ができた瞬間に 1 タップで起票 */}
       <SpecReadyBanner

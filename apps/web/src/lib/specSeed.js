@@ -83,6 +83,8 @@ export function jobStatusKey(status) {
   switch (status) {
     case 'running':
       return 'seed.statusRunning'
+    case 'awaiting_review':
+      return 'seed.statusAwaitingReview'
     case 'awaiting_spec':
       return 'seed.statusAwaiting'
     case 'spec_ready':
@@ -93,6 +95,78 @@ export function jobStatusKey(status) {
       return 'seed.statusFailed'
     default:
       return 'seed.statusUnknown'
+  }
+}
+
+/** 進行バー（`ArchitectJobBar`）に出す状態（SPEC V6 §3.3 ①）。 */
+export const JOB_ACTIVE_STATUSES = Object.freeze(['running', 'awaiting_review', 'awaiting_spec', 'failed'])
+
+/** 進行中（自律で進む）ジョブのポーリング間隔。 */
+export const JOB_POLL_ACTIVE_MS = 4000
+
+/** 待機中（人待ち・停止）と、ジョブが無いときのポーリング間隔。 */
+export const JOB_POLL_IDLE_MS = 20000
+
+/**
+ * 進行バーに出すジョブを 1 件選ぶ（SPEC V6 §3.3 ①）。
+ *
+ * `spec_ready` / `launched` は既存の `SpecReadyBanner` が引き継ぐので出さない
+ * （二重カードにしない）。新しいジョブを優先し、同時刻なら `failed` を先に見せる
+ * （止まっているものを黙って隠さない）。`×` で閉じたジョブは再表示しない。
+ *
+ * @param {Array<object>} jobs `/api/architect/jobs` の `jobs`
+ * @param {string[]} [dismissedIds] 閉じたジョブの ID
+ * @returns {object|null} ジョブ（無ければ null）
+ */
+export function pickActiveArchitectJob(jobs, dismissedIds = []) {
+  const list = (Array.isArray(jobs) ? jobs : []).filter(
+    (job) => job && JOB_ACTIVE_STATUSES.includes(String(job.status)),
+  )
+  const dismissed = new Set((Array.isArray(dismissedIds) ? dismissedIds : []).map((id) => String(id)))
+  const candidates = list.filter((job) => !dismissed.has(String(job.id)))
+  if (!candidates.length) return null
+  return candidates.sort((a, b) => {
+    const diff = (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0)
+    if (diff) return diff
+    return (a.status === 'failed' ? 0 : 1) - (b.status === 'failed' ? 0 : 1)
+  })[0]
+}
+
+/**
+ * ジョブの状態に応じたポーリング間隔（SPEC V6 §3.3 ③）。
+ *
+ * 自律で進む `running` / `awaiting_spec` だけ 4 秒。`awaiting_review` / `failed` は
+ * 人の操作待ちなので 20 秒のまま（不要な問い合わせを増やさない）。
+ *
+ * @param {object|null} job ジョブ
+ * @returns {number} ミリ秒
+ */
+export function jobPollMs(job) {
+  const status = String(job?.status ?? '')
+  return status === 'running' || status === 'awaiting_spec' ? JOB_POLL_ACTIVE_MS : JOB_POLL_IDLE_MS
+}
+
+/**
+ * ジョブのランナー表示 → i18n キー（`agy` から自動フォールバックしたことを隠さない）。
+ * @param {object} job ジョブ
+ * @returns {string} キー
+ */
+export function jobRunnerKey(job) {
+  if (job?.fallbackFrom === 'antigravity') return 'seed.runnerFallback'
+  return job?.runner === 'antigravity' ? 'seed.runnerAgy' : 'seed.runnerHermes'
+}
+
+/**
+ * 経過時間を「時・分・秒」へ分解する（表示は i18n の `seed.elapsed*`）。
+ * @param {number} ms ミリ秒
+ * @returns {{h: number, m: number, s: number}} 分解結果
+ */
+export function elapsedParts(ms) {
+  const total = Math.max(0, Math.floor((Number(ms) || 0) / 1000))
+  return {
+    h: Math.floor(total / 3600),
+    m: Math.floor((total % 3600) / 60),
+    s: total % 60,
   }
 }
 
