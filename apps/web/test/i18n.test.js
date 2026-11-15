@@ -228,3 +228,47 @@ test('setLang は hm:lang を発火する（スニペットをリロードなし
     setLang('en')
   }
 })
+
+/**
+ * SPEC-PILOT-V7 §3.5 / D37: ターミナル機能を指す「端末」は「ターミナル」、
+ * 「仕様の種」は「仕様策定」へ統一する（物理デバイスの「端末」と英語 `Spec Seed` は維持）。
+ */
+test('日本語表記: ターミナル／仕様策定に統一され、物理デバイスの「端末」は残る（V7 §3.5 / D37）', () => {
+  assert.equal(ja['nav.term'], 'ターミナル')
+  assert.equal(ja['settings.snippetTerm'], 'ターミナル')
+  assert.equal(ja['settings.secAppearance'], '外観・操作', '「外観・端末」はターミナル機能の意味だった')
+  assert.match(ja['settings.audit'], /ターミナル/)
+  assert.match(ja['app.termLoading'], /^ターミナル/)
+  assert.equal(ja['seed.title'], '仕様策定')
+  // 英語は "Spec Seed" を維持（英語 UI のタブは Terminal に統一）
+  assert.equal(en['seed.title'], 'Spec Seed')
+  assert.equal(en['nav.term'], 'Terminal')
+  // 物理デバイスを指す「端末」は変えない（置換しすぎの検出）
+  for (const key of [
+    'review.pickFromDevice',
+    'chat.thisDeviceDefault',
+    'settings.themeSystem',
+    'settings.pairing',
+    'settings.pairingScanHint',
+  ]) {
+    assert.match(ja[key], /端末/, `${key} は物理デバイスの意味なので「端末」のまま`)
+  }
+  // 旧表記「仕様の種」がどこにも残っていない（seed.*・ガイド文言を含む）
+  const stale = Object.entries(ja)
+    .filter(([, v]) => typeof v === 'string' && v.includes('仕様の種'))
+    .map(([k]) => k)
+  assert.deepEqual(stale, [])
+  // ターミナル機能の意味で残った「端末」も無い（残るのは上で列挙した物理デバイスのみ）
+  const deviceKeys = new Set([
+    'review.pickFromDevice',
+    'review.newAnnoHint',
+    'chat.thisDeviceDefault',
+    'settings.themeSystem',
+    'settings.pairing',
+    'settings.pairingScanHint',
+  ])
+  const leftover = Object.entries(ja)
+    .filter(([k, v]) => typeof v === 'string' && v.includes('端末') && !deviceKeys.has(k))
+    .map(([k]) => k)
+  assert.deepEqual(leftover, [])
+})

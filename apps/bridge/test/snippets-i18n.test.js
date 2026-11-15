@@ -21,6 +21,10 @@ test('スニペット: id と hot は言語で変わらず、文面だけが変�
   assert.equal(en.find((s) => s.id === 'summary').label, '📝 Summary')
   assert.equal(ja.find((s) => s.id === 'quick-review').label, '📋 Quick Review起票')
   assert.equal(en.find((s) => s.id === 'quick-review').label, '📋 Quick Review')
+  // SPEC V7 §3.5 / D37: 日本語は「仕様策定」、英語は "Spec Seed" を維持する
+  assert.equal(ja.find((s) => s.id === 'spec-seed').label, '📝 仕様策定')
+  assert.equal(en.find((s) => s.id === 'spec-seed').label, '📝 Spec Seed')
+  assert.equal(ja.some((s) => s.label.includes('仕様の種')), false, '旧表記「仕様の種」が残っている')
 })
 
 test('スニペット: プレースホルダ情報は両言語で保たれる', () => {

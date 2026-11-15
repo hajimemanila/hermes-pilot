@@ -380,6 +380,9 @@ export function createArchitectState(now = Date.now()) {
         fallbackFrom: null,
         fallbackReason: null,
         autoStart: false,
+        // V7 §3.3 ①: 実行方針と破棄フラグ（本番 `publicJob` と同じフィールドを持つ）
+        executionPolicy: 'zero-stop',
+        dismissed: false,
         seed: 'Add a spec markdown preview to the demo shell.',
         lang: 'en',
         chat: DEMO_SESSION,
@@ -663,10 +666,14 @@ export function demoRoute(path) {
   if (p === '/api/specs/content') return { name: 'specs.content', params }
   if (p === '/api/specs/launch') return { name: 'specs.launch', params }
   if (p === '/api/specs/reports') return { name: 'specs.reports', params }
-  // V6 §3.2: Architect（仕様の種 → SPEC）と進行バーの材料
+  // V6 §3.2: Architect（仕様策定 → SPEC）と進行バーの材料
   if (p === '/api/architect/config') return { name: 'architect.config', params }
   if (p === '/api/architect/jobs') return { name: 'architect.jobs', params }
   if (p === '/api/architect/seed') return { name: 'architect.seed', params }
+  // V7 §3.1: 進行バーの ×（ジョブ破棄）。本物と同じ `POST /api/architect/jobs/:id/dismiss`
+  if (parts[1] === 'architect' && parts[2] === 'jobs' && parts[3] && parts[4] === 'dismiss') {
+    return { name: 'architect.jobDismiss', id: decodeURIComponent(parts[3]), params }
+  }
   if (p === '/api/live') return { name: 'live', params }
   if (p === '/api/usage') return { name: 'usage', params }
   if (p === '/api/audit') return { name: 'audit', params }
@@ -971,17 +978,41 @@ export function demoPublicJob(job) {
 }
 
 /**
+ * 実行方針を正規化する（本番 `architect.js` の `normalizeExecutionPolicy` と同じ規則:
+ * 未指定・不正値は `zero-stop`）。
+ * @param {unknown} value 入力
+ * @returns {'zero-stop'|'visual-gate'} 実行方針
+ */
+export function normalizeDemoExecutionPolicy(value) {
+  const text = String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, '-')
+  return text === 'visual-gate' ? 'visual-gate' : 'zero-stop'
+}
+
+/**
+ * 実行方針に対応する SPEC バッチの `Execution Mode` 表記（本番 `executionModeLabel` と同じ）。
+ * @param {unknown} value 実行方針
+ * @returns {'Visual Gate'|'Zero-Stop'} バッチのモード表記
+ */
+export function demoExecutionMode(value) {
+  return normalizeDemoExecutionPolicy(value) === 'visual-gate' ? 'Visual Gate' : 'Zero-Stop'
+}
+
+/**
  * Seed を受けてジョブを 1 件作る（`POST /api/architect/seed` のデモ実装）。
  *
  * 本物は 202 で即返り、背後で SPEC を書く。デモも同じで、`tickMs` ごとに
  * `running -> awaiting_spec -> spec_ready`（`autoStart` なら `launched`）と進める。
  *
- * @param {object} input 種（`seedText` / `runner` / `autoStart` / `lang` / `chat`）
+ * @param {object} input 種（`seedText` / `runner` / `autoStart` / `executionPolicy` / `lang` / `chat`）
  * @returns {object} 作ったジョブ
  */
 export function startDemoArchitectJob(input = {}) {
   const now = Date.now()
   const runner = input.runner === 'antigravity' || input.runner === 'hermes' ? input.runner : state.architect.runner
+  const executionPolicy = normalizeDemoExecutionPolicy(input.executionPolicy)
   const seq = ++state.architect.seq
   const job = {
     id: `j_demo_${seq}`,
@@ -993,6 +1024,9 @@ export function startDemoArchitectJob(input = {}) {
     fallbackFrom: null,
     fallbackReason: null,
     autoStart: Boolean(input.autoStart),
+    // V7 §3.3 ①: 選んだ実行方針（`zero-stop` / `visual-gate`）をジョブに残す
+    executionPolicy,
+    dismissed: false,
     seed: String(input.seedText ?? '').slice(0, 400),
     lang: input.lang === 'en' ? 'en' : 'ja',
     chat: input.chat ? String(input.chat).slice(0, 128) : DEMO_SESSION,
@@ -1028,6 +1062,8 @@ function advanceArchitectJob(id, gen) {
   if (job.status !== 'awaiting_spec') return
   // Seed から生まれた SPEC（V6 §3.3 の「SPEC 検知 → バナー」をデモでも起きるようにする）
   const key = Number(String(job.id).replace(/[^0-9]/g, '')) || 1
+  // バッチの Execution Mode は選んだ実行方針に従う（本番の生成 SPEC と同じ表記）
+  const mode = demoExecutionMode(job.executionPolicy)
   const spec = {
     path: `docs/SPEC-DEMO-SEED-${key}.md`,
     title: `SPEC: Demo seed — ${String(job.seed || 'seeded idea').slice(0, 48)}`,
@@ -1038,14 +1074,14 @@ function advanceArchitectJob(id, gen) {
         id: `SEED${key}-1`,
         title: 'Interview questions',
         objective: 'Ask only what the machine cannot decide.',
-        mode: 'Zero-Stop',
+        mode,
         section: '- 3 questions\n- each option shows both pictures',
       },
       {
         id: `SEED${key}-2`,
         title: 'Implementation and verify',
         objective: 'Ship the change with a receipt.',
-        mode: 'Zero-Stop',
+        mode,
         section: '- `npm run verify`\n- completion report',
       },
     ],
@@ -1236,8 +1272,27 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
       return demoArchitectJobs(route.params.get('board'))
     case 'architect.seed': {
       const job = startDemoArchitectJob(payload)
-      // 本物は 202（ジョブは動き出したが SPEC はまだ無い）
-      return { ok: true, jobId: job.id, status: job.status, runner: job.runner, demo: true }
+      // 本物は 202（ジョブは動き出したが SPEC はまだ無い）。`executionPolicy` を返し、
+      // 画面が「選んだ方針で走っている」ことを表示できるようにする（V7 §3.3 ①）。
+      return {
+        ok: true,
+        jobId: job.id,
+        status: job.status,
+        runner: job.runner,
+        executionPolicy: job.executionPolicy,
+        autoStart: job.autoStart,
+        demo: true,
+      }
+    }
+    // V7 §3.1: ジョブ破棄はサーバー側に永続化する（デモでは一覧から消える）。
+    case 'architect.jobDismiss': {
+      const job = state.architect.jobs.find((j) => j.id === route.id)
+      if (!job) {
+        return { ok: false, code: 'JOB_NOT_FOUND', error: 'job not found', jobId: route.id, demo: true }
+      }
+      job.dismissed = true
+      publish('architect')
+      return { ok: true, jobId: job.id, persisted: true, demo: true }
     }
     case 'specs.launch': {
       const ids = Array.isArray(payload?.batchIds) ? payload.batchIds : []
@@ -1305,7 +1360,7 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
       }
     case 'snippets': {
       // 本物のブリッジと同じ形を返す（`items: []` だと定型チップ帯が空になり、
-      // 「仕様の種」だけが残って見える・実測）。label/text は i18n の辞書に合わせる。
+      // 「仕様策定」だけが残って見える・実測）。label/text は i18n の辞書に合わせる。
       const lang = String(route.params?.get('lang') || 'en').slice(0, 2) === 'ja' ? 'ja' : 'en'
       const set = DEMO_SNIPPETS[lang]
       return {

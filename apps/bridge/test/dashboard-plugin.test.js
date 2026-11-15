@@ -548,6 +548,19 @@ test('index.js / style.css: ヘッダの EN/日本語 切替・セクション�
   }
 })
 
+test('index.js: 日本語表記「端末」→「ターミナル」に統一（SPEC V7 §3.5 / D37）', () => {
+  const js = read('index.js')
+  // ターミナル機能を指す日本語は「ターミナル」（英語は従来どおり Terminal）
+  assert.ok(js.includes('tabTerm: "ターミナル"'), '日本語タブが「端末」のまま')
+  assert.ok(
+    js.includes('snippetsLead: "チャットとターミナルの定型文。Hot にすると PWA のクイックバーに出ます。"'),
+    'スニペットの説明文が旧表記',
+  )
+  assert.ok(js.includes('tabTerm: "Terminal"'), '英語表記が壊れた')
+  assert.equal(js.includes('tabTerm: "端末"'), false)
+  assert.equal(js.includes('チャットと端末の定型文'), false)
+})
+
 test('pilot_dashboard.py: audit は新しい順の構造化 entries を返し、内部で redact する', () => {
   const token = '0123456789abcdef'.repeat(4)
   const script = `

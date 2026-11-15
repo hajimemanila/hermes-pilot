@@ -44,6 +44,10 @@ import {
 } from '../src/demo/frame.js'
 import { EMBED_BOOTSTRAP, inlineAssets, verifyEmbedHtml } from '../../../scripts/build-demo-embed.mjs'
 import { fitScale } from '../src/demo/stage.js'
+import { listSnippets } from '../../bridge/src/snippets.js'
+import { DEMO_BUILTIN, DEMO_SNIPPETS } from '../src/demo/snippets.js'
+import { pickActiveArchitectJob } from '../src/lib/specSeed.js'
+import { KPI_KEYS, receiptKpis } from '../src/lib/receiptCanvas.js'
 
 const here = import.meta.dirname
 const SRC = path.join(here, '..', 'src')
@@ -160,6 +164,12 @@ test('Step 2 -> 4: バッチが done まで進むとサマリと完了レシー�
   assert.ok(receipt.kpi.tests > 0)
   assert.equal(receipt.kpi.batchesDone, receipt.kpi.batchesTotal)
   assert.ok(receipt.kpi.cacheHitRate > 0.9)
+  // V7 §3.2: 8 KPI（コスト・キャッシュ・節約・ゼロタイピング・テスト・所要時間・API コール・トークン）が
+  // デモでも欠けずに埋まる（`—` を出さない）
+  const kpis = receiptKpis(receipt, 'ja')
+  assert.equal(kpis.length, 8)
+  assert.deepEqual(kpis.map((k) => k.key), KPI_KEYS)
+  for (const k of kpis) assert.notEqual(k.value, '—', `kpi.${k.key} が空`)
 })
 
 test('Step 3: 視覚検収の承認でステップ 4 に到達する', async () => {
@@ -224,14 +234,18 @@ test('通常ビルドにデモが混ざらない: api.js は demo/ を import �
   assert.match(apiSrc, /__hmDemoFetch/)
 })
 
-test('demo snippets: 定型チップ帯とツールチップが埋まる形で返す（仕様の種だけにならない）', async () => {
+test('demo snippets: 定型チップ帯とツールチップが埋まる形で返す（仕様策定チップが先頭）', async () => {
   const ja = await demoFetch('/api/snippets?lang=ja')
-  assert.ok(Array.isArray(ja.snippets) && ja.snippets.length >= 6, 'チップが空だと「仕様の種」だけが残る（実測）')
-  assert.equal(ja.snippets[0].id, 'quick-review')
-  assert.match(ja.snippets[0].label, /Quick Review/)
+  assert.ok(Array.isArray(ja.snippets) && ja.snippets.length >= 6, 'チップが空だと「仕様策定」だけが残る（実測）')
+  // V7 §3.5 / D37: 先頭は仕様策定（本番と同じ順序・同じ日本語ラベル）
+  assert.equal(ja.snippets[0].id, 'spec-seed')
+  assert.equal(ja.snippets[0].label, '📝 仕様策定')
+  assert.equal(ja.snippets[0].action, 'seed', '入力欄ではなく仕様策定シートを開く')
+  assert.equal(ja.snippets[1].id, 'quick-review')
+  assert.match(ja.snippets[1].label, /Quick Review/)
   assert.ok(ja.snippets[0].text, 'tooltip（title）用の text が無い')
-  assert.equal(ja.snippets.filter((s) => s.hot).length, 6, 'Hot は 6 件')
-  assert.equal(ja.snippets.filter((s) => s.trigger).length, 2, '意思決定トリガーは 2 件')
+  assert.equal(ja.snippets.filter((s) => s.hot).length, 7, 'Hot は 7 件')
+  assert.equal(ja.snippets.filter((s) => s.trigger).length, 3, '意思決定トリガーは 3 件')
   assert.equal(ja.lang, 'ja')
   assert.equal(ja.hotLimit, 8)
   assert.deepEqual(ja.overrides, {})
@@ -239,8 +253,25 @@ test('demo snippets: 定型チップ帯とツールチップが埋まる形で�
 
   const en = await demoFetch('/api/snippets?lang=en')
   assert.equal(en.lang, 'en')
-  assert.match(en.snippets[0].label, /Quick Review/)
-  assert.notEqual(en.snippets[0].label, ja.snippets[0].label, '言語で切り替わっていない')
+  assert.equal(en.snippets[0].label, '📝 Spec Seed', '英語は "Spec Seed" を維持する')
+  assert.match(en.snippets[1].label, /Quick Review/)
+  assert.notEqual(en.snippets[1].label, ja.snippets[1].label, '言語で切り替わっていない')
+})
+
+test('demo snippets: 本番の組み込み（bridge/src/snippets.js）と 1 文字も違わない', () => {
+  assert.equal(DEMO_BUILTIN.length, 15)
+  for (const lang of ['en', 'ja']) {
+    const prod = listSnippets([], lang)
+    const demo = DEMO_SNIPPETS[lang]
+    assert.deepEqual(demo.map((s) => s.id), prod.map((s) => s.id), `${lang}: id と順序`)
+    for (const p of prod) {
+      const d = demo.find((s) => s.id === p.id)
+      assert.ok(d, `${lang}/${p.id} がデモに無い`)
+      for (const field of ['label', 'text', 'hot', 'trigger', 'action', 'hasPlaceholder', 'hidden', 'custom']) {
+        assert.deepEqual(d[field], p[field], `${lang}/${p.id} の ${field} が本番と違う`)
+      }
+    }
+  }
 })
 
 /* ------------------------------------------------------------------ *
@@ -252,6 +283,11 @@ test('demoRoute は V6 の新規ルートを分類する', () => {
   assert.equal(demoRoute('/api/architect/config').name, 'architect.config')
   assert.equal(demoRoute('/api/architect/jobs?board=mobile').name, 'architect.jobs')
   assert.equal(demoRoute('/api/architect/seed').name, 'architect.seed')
+  // V7 §3.1: 進行バーの ×（ジョブ破棄）
+  const dismissRoute = demoRoute('/api/architect/jobs/j_demo_1/dismiss')
+  assert.equal(dismissRoute.name, 'architect.jobDismiss')
+  assert.equal(dismissRoute.id, 'j_demo_1')
+  assert.equal(demoRoute('/api/architect/jobs').name, 'architect.jobs', '一覧は従来通り')
 
   const detail = demoRoute('/api/boards/mobile/tasks/t_demo_done')
   assert.equal(detail.name, 'board.task')
@@ -334,6 +370,64 @@ test('Architect: 設定の読み書き・ジョブ一覧・Seed の進行がデ�
   const content = await demoFetch(`/api/specs/content?path=${encodeURIComponent(job.completedSpec.path)}`)
   assert.equal(content.ok, true)
   assert.match(content.markdown, /Add a markdown preview/, '種の内容がタイトルに入る')
+})
+
+test('Architect: Seed の実行方針がジョブと生成 SPEC に乗り、破棄がデモでも永続する（V7 §3.1 / §3.3）', async () => {
+  resetDemoState()
+  setDemoTick(1)
+
+  const seed = await demoFetch('/api/architect/seed', {
+    method: 'POST',
+    body: {
+      board: 'mobile',
+      seedText: 'Add a visual gate to the demo',
+      runner: 'hermes',
+      autoStart: false,
+      executionPolicy: 'visual-gate',
+      lang: 'ja',
+    },
+  })
+  assert.equal(seed.ok, true)
+  assert.equal(seed.executionPolicy, 'visual-gate', '選んだ実行方針を 202 で返す')
+
+  // 走っている間は進行バーの候補になる（破棄前）
+  const running = await demoFetch('/api/architect/jobs?board=mobile')
+  assert.equal(pickActiveArchitectJob(running.jobs)?.id, seed.jobId, '新しいジョブが進行バーに出る')
+
+  // 不正値は zero-stop に正規化する（本番 `normalizeExecutionPolicy` と同じ）
+  const fallbackSeed = await demoFetch('/api/architect/seed', {
+    method: 'POST',
+    body: { board: 'mobile', seedText: 'bad policy', runner: 'hermes', executionPolicy: 'nope' },
+  })
+  assert.equal(fallbackSeed.executionPolicy, 'zero-stop')
+
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  const jobs = await demoFetch('/api/architect/jobs?board=mobile')
+  const job = jobs.jobs.find((j) => j.id === seed.jobId)
+  assert.ok(job)
+  assert.equal(job.executionPolicy, 'visual-gate')
+  assert.equal(job.dismissed, false)
+  assert.equal(
+    job.completedSpec.batches.every((b) => b.mode === 'Visual Gate'),
+    true,
+    '生成 SPEC のバッチが方針に追従する（Zero-Stop 固定になっていない）',
+  )
+
+  // ×（破棄）はサーバー側に永続化し、進行バーから消える
+  const dismissed = await demoFetch(`/api/architect/jobs/${seed.jobId}/dismiss`, { method: 'POST' })
+  assert.equal(dismissed.ok, true)
+  assert.equal(dismissed.persisted, true)
+  assert.equal(dismissed.jobId, seed.jobId)
+  const after = await demoFetch('/api/architect/jobs?board=mobile')
+  const gone = after.jobs.find((j) => j.id === seed.jobId)
+  assert.equal(gone.dismissed, true)
+  // 破棄済みは進行バーの候補から外れる（本番と同じ `pickActiveArchitectJob`）
+  assert.equal(pickActiveArchitectJob([{ ...gone, status: 'running' }]), null)
+  assert.notEqual(pickActiveArchitectJob(after.jobs)?.id, seed.jobId)
+
+  const missing = await demoFetch('/api/architect/jobs/j_nope/dismiss', { method: 'POST' })
+  assert.equal(missing.ok, false)
+  assert.equal(missing.code, 'JOB_NOT_FOUND', '無いジョブは 404 相当（本番と同じコード）')
 })
 
 test('タスク詳細と差分: 履歴の詳細カードと差分アコーディオンが埋まる', async () => {

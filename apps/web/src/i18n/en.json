@@ -2,7 +2,7 @@
   "nav.tasks": "Tasks",
   "nav.review": "Review",
   "nav.chat": "Chat",
-  "nav.term": "Term",
+  "nav.term": "Terminal",
   "nav.settings": "Settings",
   "status.gw": "GW",
   "status.workers": "Workers {n}",
