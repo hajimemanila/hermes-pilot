@@ -213,3 +213,166 @@ export const DEMO_SNIPPETS = {
   en: DEMO_BUILTIN.map((s) => toUi(s, 'en')),
   ja: DEMO_BUILTIN.map((s) => toUi(s, 'ja')),
 }
+
+/**
+ * デモの端末タブ用スニペット（本番 `apps/bridge/src/term-snippets.js` の `TABLE` の写し）。
+ *
+ * V10 §3.3 / D47: 本番の `GET /api/snippets/term` と同じ `{id, label, text, hot, run, note}` を
+ * 同じ順で返す（デモでもチップ帯・長押し実行・ツールチップが本番と同じ見た目になる）。
+ * `text` は macOS（launchd・`ai.hermes.pilot`）の既定と同じ綴りに固定してある
+ * （デモは 1 つの環境しか持たないので Capability 分岐を持たない）。
+ *
+ * @type {{id: string, hot?: boolean, run?: boolean, en: [string, string], ja: [string, string], text: string}[]}
+ */
+export const DEMO_TERM_BUILTIN = [
+  // --- Hot 6（バーに出す）----------------------------------------------------
+  {
+    id: 't-pilot-restart',
+    hot: true,
+    run: true,
+    en: ['Restart Pilot', 'Restart Hermes Pilot bridge (4097)'],
+    ja: ['Pilot再起動', 'Hermes Pilot ブリッジ(4097)を再起動'],
+    text: 'launchctl kickstart -k gui/$(id -u)/ai.hermes.pilot',
+  },
+  {
+    id: 't-gw-status',
+    hot: true,
+    run: true,
+    en: ['GW Status', 'Hermes gateway status & PID'],
+    ja: ['GW状態', 'gateway の稼働状況・PID'],
+    text: 'hermes gateway status',
+  },
+  {
+    id: 't-gw-restart',
+    hot: true,
+    run: true,
+    en: ['Restart GW', 'Restart Hermes gateway'],
+    ja: ['GW再起動', 'gateway を再起動'],
+    text: 'hermes gateway restart',
+  },
+  {
+    id: 't-drain-restart',
+    hot: true,
+    run: true,
+    en: ['Clear Drain + GW', 'Remove drain marker & restart GW'],
+    ja: ['解除+GW再起動', 'ドレイン解除＋gateway再起動'],
+    text: 'rm -f ~/.hermes/.drain_request.json && hermes gateway restart',
+  },
+  {
+    id: 't-kanban',
+    hot: true,
+    run: true,
+    en: ['Kanban Active', 'List kanban tasks'],
+    ja: ['カンバン一覧', 'カンバンのタスク一覧'],
+    text: 'hermes kanban list',
+  },
+  {
+    id: 't-gw-log',
+    hot: true,
+    run: true,
+    en: ['GW Log', 'Last 80 lines of gateway.log'],
+    ja: ['GWログ', 'gateway.log の末尾80行'],
+    text: 'tail -n 80 ~/.hermes/logs/gateway.log',
+  },
+  // --- シート（10個）----------------------------------------------------------
+  {
+    id: 't-pilot-status',
+    run: true,
+    en: ['Pilot Status', 'Service status of Hermes Pilot'],
+    ja: ['Pilot状態', 'Hermes Pilot のサービス状態'],
+    text: 'launchctl print gui/$(id -u)/ai.hermes.pilot | head -20',
+  },
+  {
+    id: 't-pair-qr',
+    run: true,
+    en: ['Pairing QR', 'Show pairing URL & QR in terminal'],
+    ja: ['ペアリングQR', 'ペアリングURLとQRを表示'],
+    text: 'npx hermes-pilot qr',
+  },
+  {
+    id: 't-verify',
+    run: true,
+    en: ['Run Verify', 'Run tests, PWA check, and build'],
+    ja: ['Verify実行', 'テスト・PWA検査・ビルドを一括実行'],
+    text: 'npm run verify',
+  },
+  {
+    id: 't-deploy',
+    run: true,
+    en: ['Deploy Web', 'Zero-downtime build & swap dist'],
+    ja: ['Webデプロイ', '無停止ビルド＆dist入れ替え'],
+    text: 'npm run deploy',
+  },
+  {
+    id: 't-drain-clear',
+    run: true,
+    en: ['Clear Drain', 'Remove drain marker only'],
+    ja: ['ドレイン解除', 'ドレインマーカーのみ削除'],
+    text: 'rm -f ~/.hermes/.drain_request.json && echo "drain marker removed"',
+  },
+  {
+    id: 't-list',
+    run: true,
+    en: ['Services', 'List Hermes background services'],
+    ja: ['サービス一覧', 'hermes 系サービス一覧'],
+    text: 'launchctl list | grep -i hermes',
+  },
+  {
+    id: 't-errors',
+    run: true,
+    en: ['Error Log', 'Last 80 lines of errors.log'],
+    ja: ['エラーログ', 'errors.log の末尾80行'],
+    text: 'tail -n 80 ~/.hermes/logs/errors.log',
+  },
+  {
+    id: 't-health',
+    run: true,
+    en: ['Reachability', 'Check HTTP 200 on 9119 & 4097'],
+    ja: ['疎通確認', '9119 と 4097 の HTTP 応答確認'],
+    text:
+      'curl -s -o /dev/null -w "dashboard %{http_code}\\n" http://127.0.0.1:9119/; ' +
+      'curl -s -o /dev/null -w "pilot %{http_code}\\n" http://127.0.0.1:4097/healthz',
+  },
+  {
+    id: 't-port',
+    run: true,
+    en: ['Ports', 'Check listening processes on 9119 & 4097'],
+    ja: ['ポート確認', '9119 と 4097 の LISTEN 確認'],
+    text: 'lsof -nP -iTCP:9119 -sTCP:LISTEN; lsof -nP -iTCP:4097 -sTCP:LISTEN',
+  },
+  {
+    id: 't-git',
+    run: true,
+    en: ['Git State', 'Short status & last 3 commits'],
+    ja: ['git状態', '差分と直近3コミット'],
+    text: 'git status --short && git log --oneline -3',
+  },
+]
+
+/**
+ * 端末スニペットを UI 用の形にする（本番 `allTermSnippets` と同じフィールド）。
+ * @param {object} s 組み込み
+ * @param {'en'|'ja'} lang 言語
+ * @returns {object} `{id, label, text, hot, run, note, hidden, custom}`
+ */
+function termToUi(s, lang) {
+  const [label, note] = lang === 'ja' ? s.ja : s.en
+  return {
+    id: s.id,
+    label,
+    text: s.text,
+    hot: Boolean(s.hot),
+    run: s.run !== false,
+    note,
+    hidden: false,
+    custom: false,
+  }
+}
+
+/**
+ * デモの `GET /api/snippets/term` が返す一覧（本番 `listTermSnippets(caps, lang)` と同じ形）。
+ */
+export const DEMO_TERM_SNIPPETS = {
+  en: DEMO_TERM_BUILTIN.map((s) => termToUi(s, 'en')),
+  ja: DEMO_TERM_BUILTIN.map((s) => termToUi(s, 'ja')),
+}

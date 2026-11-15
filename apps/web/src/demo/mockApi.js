@@ -353,6 +353,12 @@ export function createDemoState(now = Date.now()) {
     architect: createArchitectState(now),
     /** Seed で生まれた SPEC（`demoSpecs` / `/api/specs/content` に出る）。 */
     seededSpecs: [],
+    /**
+     * V10 §3.3 / D47: 1 タップ環境最適化の適用状態。
+     * `pipeline.optimize` で true になり、`pipeline.status` がそのまま返す
+     * （デモで「適用前 → 適用後」を目で見られる）。
+     */
+    pipeline: { optimized: false },
   }
 }
 
@@ -452,7 +458,7 @@ export function demoState() {
   return state
 }
 
-import { DEMO_SNIPPETS } from './snippets.js'
+import { DEMO_SNIPPETS, DEMO_TERM_SNIPPETS } from './snippets.js'
 
 /* ------------------------------------------------------------------ *
  * 画像（外部ファイルゼロ: SVG 文字列 -> data URL）
@@ -677,12 +683,20 @@ export function demoRoute(path) {
   }
   if (p === '/api/live') return { name: 'live', params }
   if (p === '/api/usage') return { name: 'usage', params }
+  // V10 §3.3 / D47: デモでも本番と同じエンドポイントを拾う（画面側にデモ分岐を作らない）
+  if (p === '/api/pipeline/status') return { name: 'pipeline.status', params }
+  if (p === '/api/pipeline/optimize') return { name: 'pipeline.optimize', params }
+  if (p === '/api/auth/pairing') return { name: 'auth.pairing', params }
+  if (p === '/api/logs') return { name: 'logs', params }
+  if (p === '/api/search') return { name: 'search', params }
   if (p === '/api/audit') return { name: 'audit', params }
   if (p === '/api/sessions') return { name: 'sessions', params }
   if (parts[1] === 'sessions' && parts[2] && parts[3] === 'transcript') {
     return { name: 'sessions.transcript', id: decodeURIComponent(parts[2]), params }
   }
-  if (p === '/api/snippets') return { name: 'snippets', params }
+  if (p === '/api/snippets' || p === '/api/snippets/term') {
+    return { name: 'snippets', kind: p.endsWith('/term') ? 'term' : 'chat', params }
+  }
   if (p === '/api/repos') return { name: 'repos', params }
   if (p === '/api/telemetry/receipt') return { name: 'receipt', params }
   if (p.startsWith('/api/auth/')) return { name: 'auth', params }
@@ -817,11 +831,18 @@ function finishPipeline() {
   publish('pipeline')
 }
 
-/** 起票したバッチを `tickMs` 間隔で `ready -> running -> done` に進める。 */
+/**
+ * 起票したバッチを `tickMs` 間隔で `ready -> running -> done` に進める。
+ *
+ * Architect の `[ARCH]` タスク（`assignee === 'architect'`）はツアーのバッチではないので触らない
+ * （触ると Seed のジョブが勝手に done になり、進行バーの材料が消える）。
+ */
 function advanceBatches(gen) {
   // 途中でツアーを最初からやり直したら、古いタイマーは黙って降りる
   if (gen !== state.gen) return
-  const pending = state.tasks.filter((t) => t.status === 'ready' || t.status === 'running')
+  const pending = state.tasks.filter(
+    (t) => (t.status === 'ready' || t.status === 'running') && t.assignee !== 'architect',
+  )
   const next = pending.find((t) => t.status === 'ready') || pending.find((t) => t.status === 'running')
   if (!next) {
     if (state.tasks.some((t) => /^\[DEMO-\d\]/.test(t.title)) && !state.report) finishPipeline()
@@ -1130,6 +1151,13 @@ export function startDemoArchitectJob(input = {}) {
   const runner = input.runner === 'antigravity' || input.runner === 'hermes' ? input.runner : state.architect.runner
   const executionPolicy = normalizeDemoExecutionPolicy(input.executionPolicy)
   const seq = ++state.architect.seq
+  const seedText = String(input.seedText ?? '').slice(0, 400)
+  /*
+   * V10 §3.3 / D47・V9-B1 / D41: Agy Opt-in（antigravity）は**カンバンタスクを作らない**。
+   * `taskId: null` にして、LiveSheet の「📋 タスク」ボタンが出ないことを本番と揃える。
+   * Hermes Native のときだけ `[ARCH] ...` の実行中タスクを 1 件立てる。
+   */
+  const taskId = runner === 'antigravity' ? null : `t_demo_arch_${seq}`
   const job = {
     id: `j_demo_${seq}`,
     board: DEMO_BOARD,
@@ -1143,7 +1171,7 @@ export function startDemoArchitectJob(input = {}) {
     // V7 §3.3 ①: 選んだ実行方針（`zero-stop` / `visual-gate`）をジョブに残す
     executionPolicy,
     dismissed: false,
-    seed: String(input.seedText ?? '').slice(0, 400),
+    seed: seedText,
     lang: input.lang === 'en' ? 'en' : 'ja',
     chat: input.chat ? String(input.chat).slice(0, 128) : DEMO_SESSION,
     createdAt: now,
@@ -1153,9 +1181,27 @@ export function startDemoArchitectJob(input = {}) {
     completedSpec: null,
     launched: null,
     error: null,
-    taskId: `t_demo_arch_${seq}`,
+    // Round 1（設問シート）→ Round 2（SPEC 執筆）の通過フラグ（`advanceArchitectJob` が立てる）
+    sheetPath: null,
+    reviewSeenOnce: false,
+    taskId,
     reviewTaskId: null,
     reviewTitle: null,
+  }
+  if (taskId) {
+    state.tasks.unshift({
+      id: taskId,
+      board: DEMO_BOARD,
+      title: `[ARCH] ${seedText.slice(0, 48)}`,
+      status: 'running',
+      assignee: 'architect',
+      body: seedText,
+      events: [{ kind: 'spawned', at: now }],
+      createdAt: now,
+      startedAt: now,
+      updatedAt: now,
+      priority: 0,
+    })
   }
   state.architect.jobs.unshift(job)
   if (state.architect.jobs.length > 8) state.architect.jobs.length = 8
@@ -1164,20 +1210,40 @@ export function startDemoArchitectJob(input = {}) {
   return job
 }
 
-/** ジョブを 1 段進める（`running -> awaiting_spec -> spec_ready/launched`）。 */
-function advanceArchitectJob(id, gen) {
-  if (gen !== state.gen) return
+/**
+ * ジョブを 1 段進める（V10 §3.3 / D47・本番 `architect` の段階遷移に合わせる）。
+ *
+ * `running` →（Round 1 の設問シート）`awaiting_spec` + `sheetPath` →（Round 2 の SPEC 執筆）
+ * `reviewSeenOnce` → `spec_ready`（`autoStart` なら `launched`）。各段の間は `tickMs`。
+ *
+ * テストから段階を手で進められるよう公開している（タイマーだと速すぎて観測できない）。
+ *
+ * @param {string} id ジョブ ID
+ * @param {number} [gen] ツアー世代（作り直されたら古いタイマーは降りる）
+ * @returns {object|null} 進めた後のジョブ（見つからなければ null）
+ */
+export function advanceArchitectJob(id, gen = state.gen) {
+  if (gen !== state.gen) return null
   const job = state.architect.jobs.find((j) => j.id === id)
-  if (!job) return
-  if (job.status === 'running') {
+  if (!job) return null
+  const key = Number(String(job.id).replace(/[^0-9]/g, '')) || 1
+  // 段 1: 設問シートを作る（`phase` は `sheetPath` から `round1_sheet` になる）
+  if (job.status === 'running' && !job.sheetPath) {
+    job.sheetPath = `sheets/spec-demo-seed-${key}-1.json`
     job.status = 'awaiting_spec'
     publish('architect')
     setTimeout(() => advanceArchitectJob(id, gen), state.tickMs)
-    return
+    return job
   }
-  if (job.status !== 'awaiting_spec') return
-  // Seed から生まれた SPEC（V6 §3.3 の「SPEC 検知 → バナー」をデモでも起きるようにする）
-  const key = Number(String(job.id).replace(/[^0-9]/g, '')) || 1
+  // 段 2: 回答を受けて SPEC を書き始める（`phase` は `round2_spec`）
+  if (job.status === 'awaiting_spec' && !job.reviewSeenOnce) {
+    job.reviewSeenOnce = true
+    publish('architect')
+    setTimeout(() => advanceArchitectJob(id, gen), state.tickMs)
+    return job
+  }
+  if (job.status !== 'awaiting_spec') return job
+  // 段 3: 仕上げ（Seed から生まれた SPEC を公開する）
   // バッチの Execution Mode は選んだ実行方針に従う（本番の生成 SPEC と同じ表記）
   const mode = demoExecutionMode(job.executionPolicy)
   const spec = {
@@ -1215,7 +1281,17 @@ function advanceArchitectJob(id, gen) {
   if (job.autoStart) {
     job.launched = { ok: true, created: [], skipped: [], failed: [], reason: 'demo' }
   }
+  // Hermes Native が立てた `[ARCH]` タスクも SPEC が出来た時点で終わらせる
+  // （残すと `/api/live` の実行中タスクに居座り、進捗詳細の状態も嘘になる）
+  const archTask = job.taskId ? state.tasks.find((t) => t.id === job.taskId) : null
+  if (archTask) {
+    archTask.status = 'done'
+    archTask.updatedAt = Date.now()
+    archTask.result = `SPEC written: ${spec.path}`
+    archTask.events = [...(archTask.events ?? []), { kind: 'done', at: Date.now(), payload: { spec: spec.path } }]
+  }
   publish('architect')
+  return job
 }
 
 /** 起票済みバッチ ID（`[DEMO-1] ...` の先頭から取る。`architect.filedBatchIds` と同じ規則）。 */
@@ -1275,6 +1351,155 @@ export function demoArchitectJobs(board = DEMO_BOARD) {
   }
 }
 
+
+/**
+ * `GET /api/pipeline/status` のデモ応答（本番 `getOptimizeStatus` と同じく「適用済みか」を返す）。
+ *
+ * V10 §3.3 / D47: 未適用なら SOUL 未適用・同梱スキル 3 つのうち 2 つだけ。
+ * `POST /api/pipeline/optimize` の後は SOUL 適用済み＋3 スキル揃い。
+ *
+ * @returns {object} `PipelinePanel` が読む形
+ */
+export function demoPipelineStatus() {
+  const optimized = Boolean(state.pipeline?.optimized)
+  const bundled = ['quick-review', 'annotation', 'spec-architect']
+  return {
+    ok: true,
+    soul: { applied: optimized, path: '~/.hermes/SOUL.md' },
+    hermes: { present: optimized ? bundled.slice() : ['quick-review', 'annotation'] },
+    bundled: { names: bundled },
+    demo: true,
+  }
+}
+
+/**
+ * 擬似 QR の行列（21×21・`'0'`/`'1'`）を作る。
+ *
+ * V10 §3.3 / D47: 本物の QR ではないが、**3 隅のファインダーパターン**と分離帯・
+ * タイミングパターンを持ち、同じ URL（＝同じ入力）なら同じ絵になる決め打ちのデータで埋める。
+ * `PairQr` は行列をそのまま canvas に描くので、これで「QR らしい」見た目になる。
+ *
+ * @param {number} [size] 一辺のモジュール数（既定 21 = QR version 1）
+ * @returns {string[]} 行ごとの `'0'`/`'1'` 文字列
+ */
+export function demoQrRows(size = 21) {
+  const grid = Array.from({ length: size }, () => Array.from({ length: size }, () => 0))
+  const set = (r, c, v) => {
+    if (r >= 0 && c >= 0 && r < size && c < size) grid[r][c] = v ? 1 : 0
+  }
+  // ファインダー（7x7 の枠＋中心 3x3）を 3 隅に置き、外周 1 モジュールを分離帯（白）にする
+  const origins = [
+    [0, 0],
+    [0, size - 7],
+    [size - 7, 0],
+  ]
+  for (const [r0, c0] of origins) {
+    for (let r = -1; r <= 7; r += 1) {
+      for (let c = -1; c <= 7; c += 1) {
+        const inside = r >= 0 && r <= 6 && c >= 0 && c <= 6
+        if (!inside) {
+          set(r0 + r, c0 + c, 0)
+          continue
+        }
+        const ring = r === 0 || r === 6 || c === 0 || c === 6
+        const core = r >= 2 && r <= 4 && c >= 2 && c <= 4
+        set(r0 + r, c0 + c, ring || core)
+      }
+    }
+  }
+  /** 予約領域（ファインダー・分離帯・タイミング行/列）か。 */
+  const reserved = (r, c) => {
+    for (const [r0, c0] of origins) {
+      if (r >= r0 - 1 && r <= r0 + 7 && c >= c0 - 1 && c <= c0 + 7) return true
+    }
+    return r === 6 || c === 6
+  }
+  // データ領域は決め打ちの擬似パターン（線形合同法・同じ並びを毎回作る）
+  let seed = 0x5eed
+  for (let r = 0; r < size; r += 1) {
+    for (let c = 0; c < size; c += 1) {
+      if (reserved(r, c)) continue
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff
+      set(r, c, (seed >> 16) & 1)
+    }
+  }
+  return grid.map((row) => row.join(''))
+}
+
+/**
+ * `GET /api/logs?file=&lines=` のデモ応答（`SettingsPane` の「ログを開く」）。
+ *
+ * @param {string} name ログ名（`gateway` / `errors` 等）
+ * @param {number} lines 末尾何行か
+ * @returns {{ok: true, file: string, text: string, demo: true}} 応答
+ */
+export function demoLogText(name = 'gateway', lines = 200) {
+  const at = new Date(state.now).toISOString()
+  const body = [
+    `${at} INFO  demo: bridge is simulated (no real gateway is running)`,
+    `${at} INFO  demo: /api/live polled by the PWA shell`,
+    `${at} INFO  demo: architect job j_demo_0 is awaiting_review`,
+    `${at} INFO  demo: review t_demo_review -> 3 questions, recommended answers`,
+    `${at} INFO  demo: pipeline watcher idle (nothing to file)`,
+    `${at} INFO  demo: gateway heartbeat ok (0.23.1 simulation)`,
+  ]
+  const n = Math.min(Math.max(Number(lines) || 200, 1), 1000)
+  return { ok: true, file: String(name || 'gateway'), text: body.slice(-n).join('\n'), demo: true }
+}
+
+/**
+ * `GET /api/search?q=` のデモ応答（`SearchSheet` が読む抜粋の一覧）。
+ *
+ * 本番は state.db の FTS5 を引くが、デモは固定の 3 件を `q` で絞るだけ。
+ * 該当が無ければ `hits: []`（画面は「該当なし」を出す）。
+ *
+ * @param {string} q 検索語
+ * @returns {{ok: true, tookMs: number, hits: Array<object>, demo: true}} 応答
+ */
+export function demoSearchHits(q = '') {
+  const base = [
+    {
+      profile: 'default',
+      messageId: 'm_demo_1',
+      sessionId: DEMO_SESSION,
+      snippet: '…the visual gate is waiting for a redline stamp or an approval…',
+      role: 'assistant',
+      at: state.now - 6 * MIN,
+      sessionTitle: 'Demo — A2B pipeline in four steps',
+      source: 'mobile',
+    },
+    {
+      profile: 'default',
+      messageId: 'm_demo_2',
+      sessionId: DEMO_SESSION,
+      snippet: '…file the batches for the demo spec, then run npm run verify…',
+      role: 'user',
+      at: state.now - 9 * MIN,
+      sessionTitle: 'Demo — A2B pipeline in four steps',
+      source: 'mobile',
+    },
+    {
+      profile: 'default',
+      messageId: 'm_demo_3',
+      sessionId: 'demo-review-01',
+      snippet: '…Accept All Recommended answers q1..q3 with the recommended options…',
+      role: 'user',
+      at: state.now - 14 * MIN,
+      sessionTitle: 'Quick Review — three design decisions',
+      source: 'discord',
+    },
+  ]
+  const text = String(q ?? '').trim().toLowerCase()
+  const hits = text
+    ? base.filter(
+        (h) =>
+          h.snippet.toLowerCase().includes(text) ||
+          String(h.sessionTitle ?? '').toLowerCase().includes(text) ||
+          String(h.sessionId ?? '').toLowerCase().includes(text),
+      )
+    : []
+  return { ok: true, tookMs: 4, hits, demo: true }
+}
 
 /**
  * `fetch` の代わり。パスは本物の API と同じ。
@@ -1455,26 +1680,126 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
       return { reports: state.report ? [{ ...state.report }] : [] }
     case 'live': {
       /*
-       * V9 §3.2 / D43: 稼働中の Architect ジョブも返す（本番 `live.snapshot` と同じ形）。
+       * V9 §3.2 / D43 + V10 §3.3 / D47: 本番 `live.snapshot` と同じ形
+       * （`{ok, counts:{turns,tasks,architect}, turns, tasks, architect}`）を返す。
        * `counts.architect` は `running` / `awaiting_spec` だけを数え、一覧には
        * `awaiting_review`（判断待ち）も含める — デモでも LiveSheet の 3 列目が点灯する。
+       * `ok` が無いと LiveSheet が「失敗」表示になる（実測）。
        */
       const at = Date.now()
       const architect = state.architect.jobs
         .filter((j) => !j.dismissed && ['running', 'awaiting_spec', 'awaiting_review'].includes(String(j.status)))
         .map((j) => demoLiveArchitect(j, at))
+      const tasks = state.tasks
+        .filter((t) => t.status === 'running')
+        .map((t, i) => {
+          const startedAt = Number(t.startedAt ?? t.createdAt ?? 0) || at
+          return {
+            id: t.id,
+            board: DEMO_BOARD,
+            boardName: DEMO_BOARD,
+            title: t.title,
+            assignee: t.assignee ?? 'mobile',
+            startedAt,
+            elapsedSec: Math.max(0, Math.round((at - startedAt) / 1000)),
+            workerPid: 42400 + i,
+          }
+        })
+      const architectRunning = architect.filter((j) => ['running', 'awaiting_spec'].includes(String(j.status))).length
+      // 何か動いていればターン 1 本を見せる（Discord / PWA のターンに相当する行）
+      const turns =
+        tasks.length || architectRunning
+          ? [
+              {
+                profile: 'default',
+                sessionId: DEMO_SESSION,
+                title: 'Demo — A2B pipeline in four steps',
+                source: 'mobile',
+                platform: 'pwa',
+                startedAt: at - 40_000,
+                elapsedSec: 40,
+                expiresInSec: 280,
+                lastActivity: 'Running verification suite',
+                lastTool: { name: 'exec', at: at - 4_000 },
+              },
+            ]
+          : []
       return {
-        counts: {
-          turns: state.tasks.filter((t) => t.status === 'running').length,
-          architect: architect.filter((j) => ['running', 'awaiting_spec'].includes(String(j.status))).length,
-        },
-        turns: [],
+        ok: true,
+        counts: { turns: turns.length, tasks: tasks.length, architect: architectRunning },
+        turns,
+        tasks,
         architect,
         demo: true,
       }
     }
-    case 'usage':
-      return { hours: 24, cacheHitRate: 0.994, totalTokens: 1_240_000, cost: 1.08, saved: 12.4, demo: true }
+    case 'usage': {
+      /*
+       * V10 §3.3 / D47: UsageSheet（`UsageSheet.jsx`）が読む形を本番 `usage.summary` と揃える。
+       * `totals` / `models` / `topSessions` が無いとシートが「失敗」表示になる（実測）。
+       */
+      const hours = Number(route.params.get('hours')) || 24
+      const at = Date.now()
+      return {
+        ok: true,
+        hours,
+        cacheHitRate: 0.994,
+        totalTokens: 1_240_000,
+        cost: 1.08,
+        saved: 12.4,
+        totals: {
+          cost: 1.08,
+          input: 1_232_500,
+          output: 7_500,
+          cacheRead: 1_225_100,
+          calls: 42,
+          sessions: 4,
+          messages: 28,
+          tools: 64,
+        },
+        models: [
+          {
+            model: 'deepseek/deepseek-v4.1-flash',
+            calls: 34,
+            input: 1_180_000,
+            output: 6_400,
+            cacheRead: 1_172_000,
+            cost: 0.92,
+          },
+          {
+            model: 'deepseek/deepseek-v4.1-pro',
+            calls: 8,
+            input: 52_500,
+            output: 1_100,
+            cacheRead: 53_100,
+            cost: 0.16,
+          },
+        ],
+        topSessions: [
+          {
+            id: DEMO_SESSION,
+            profile: 'default',
+            title: 'Demo — A2B pipeline in four steps',
+            source: 'mobile',
+            input: 980_000,
+            output: 5_200,
+            at: state.now - 4 * MIN,
+            cost: 0.86,
+          },
+          {
+            id: 'demo-review-01',
+            profile: 'default',
+            title: 'Quick Review — three design decisions',
+            source: 'discord',
+            input: 252_500,
+            output: 2_300,
+            at: state.now - 12 * MIN,
+            cost: 0.22,
+          },
+        ],
+        demo: true,
+      }
+    }
     case 'audit':
       return { lines: ['demo: audit log is generated in memory'] }
     case 'sessions':
@@ -1508,8 +1833,9 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
     case 'snippets': {
       // 本物のブリッジと同じ形を返す（`items: []` だと定型チップ帯が空になり、
       // 「仕様策定」だけが残って見える・実測）。label/text は i18n の辞書に合わせる。
+      // V10 §3.3 / D47: `kind === 'term'`（端末タブ）も本番と同じ構造で返す。
       const lang = String(route.params?.get('lang') || 'en').slice(0, 2) === 'ja' ? 'ja' : 'en'
-      const set = DEMO_SNIPPETS[lang]
+      const set = (route.kind === 'term' ? DEMO_TERM_SNIPPETS : DEMO_SNIPPETS)[lang]
       return {
         snippets: set,
         allSnippets: set,
@@ -1524,6 +1850,51 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
       return { repos: [{ id: 'hermes-pilot-demo', label: 'hermes-pilot (demo)', path: '/demo/hermes-pilot', board: DEMO_BOARD }] }
     case 'receipt':
       return receiptBody()
+    // V10 §3.3 / D47: 1 タップ環境最適化（SOUL.md ＋ 同梱 3 スキル）の状態と適用
+    case 'pipeline.status':
+      return demoPipelineStatus()
+    case 'pipeline.optimize': {
+      // 本番は書き込み（SOUL.md への冪等追記＋スキル配置）。デモはフラグを立てるだけ。
+      const doSoul = payload?.soul !== false
+      const doSkills = payload?.skills !== false
+      if (doSoul && doSkills) state.pipeline.optimized = true
+      publish('pipeline')
+      return {
+        ok: true,
+        soul: { ok: true, applied: doSoul, changed: doSoul },
+        skills: { ok: true, placed: doSkills ? 3 : 0 },
+        status: demoPipelineStatus(),
+        demo: true,
+      }
+    }
+    // V10 §3.3 / D47: ワンタップ QR ペアリング（`SettingsPane` のペアリングシート）
+    case 'auth.pairing': {
+      const targets = [
+        {
+          kind: 'tailscale',
+          label: 'Tailscale HTTPS (demo)',
+          url: 'https://demo.tailnet.ts.net:8444/?token=demo-only',
+        },
+        { kind: 'lan', label: 'LAN (demo)', url: 'http://192.168.1.42:4097/?token=demo-only' },
+      ]
+      return {
+        ok: true,
+        port: 4097,
+        tlsPort: 8444,
+        tailscale: true,
+        dnsName: 'demo.tailnet.ts.net',
+        lanIp: '192.168.1.42',
+        targets,
+        expiresAt: Date.now() + 300_000,
+        qrRows: demoQrRows(),
+        qrMargin: 4,
+        demo: true,
+      }
+    }
+    case 'logs':
+      return demoLogText(route.params.get('file') || 'gateway', Number(route.params.get('lines') || 200))
+    case 'search':
+      return demoSearchHits(route.params.get('q') || '')
     case 'auth':
       return { ok: true, token: null, demo: true }
     case 'gateway':
@@ -1558,12 +1929,134 @@ function rpcResult(method, params) {
 }
 
 /**
+ * 端末タブ（`/ws/term`）の擬似シェル。
+ *
+ * 本番は PTY を中継する（`{t:'in', d}` / `{t:'out', d}` / `{t:'resize'}` の 3 種だけ）。
+ * デモは同じフレームで「読めるが何も起きない」端末を返す（デモから実ホストを触らせない）。
+ *
+ * @param {(payload: object) => void} emit 端末フレームを 1 つ流す関数
+ * @returns {{send: (raw: string) => void}} 端末用の送信関数
+ */
+function termShell(emit) {
+  /** コマンド行 → 擬似標準出力。 */
+  const reply = (line) => {
+    const cmd = String(line ?? '').trim()
+    const head = cmd.split(/\s+/)[0] ?? ''
+    if (!cmd) return ''
+    if (head === 'help') {
+      return [
+        'Demo shell commands (nothing is executed):',
+        '  hermes <status|gateway status|kanban list>',
+        '  npx hermes-pilot <start|qr|service status>',
+        '  npm run <verify|build|build:demo>',
+        '  git <status|log>',
+        '  ls | pwd | whoami | clear | help',
+      ].join('\r\n')
+    }
+    if (head === 'hermes') {
+      const tail = cmd.slice(head.length).trim()
+      if (tail.startsWith('gateway status')) return 'gateway: running (pid 4242, uptime 1h 12m) — demo'
+      if (tail.startsWith('kanban list')) {
+        return [
+          'mobile/t_demo_review   blocked  [DEMO-1] Interactive demo — three design decisions',
+          'mobile/t_demo_done     done     [DEMO-0] Static demo shell builds with npm run build:demo',
+        ].join('\r\n')
+      }
+      if (tail.startsWith('gateway')) return 'gateway: running (demo)'
+      return 'hermes: demo shell — nothing is executed'
+    }
+    if (head === 'npx' && String(cmd).includes('hermes-pilot')) {
+      const tail = cmd.slice(cmd.indexOf('hermes-pilot') + 'hermes-pilot'.length).trim()
+      if (tail.startsWith('qr')) return 'Pairing QR (demo): https://demo.tailnet.ts.net:8444/?token=demo-only'
+      if (tail.startsWith('service')) return 'Hermes Pilot (demo): running on 127.0.0.1:4097'
+      return 'Hermes Pilot (demo) started — http://127.0.0.1:4097'
+    }
+    if (head === 'npm') {
+      if (/\bverify\b/.test(cmd)) return 'verify: 812 tests, 0 fail — build ok — demo (not a real run)'
+      if (/build:demo/.test(cmd)) return 'dist-demo written: google-sites-embed.html (demo)'
+      if (/\bbuild\b/.test(cmd)) return 'vite build (demo) — dist/ written'
+      return 'npm (demo) — nothing is executed'
+    }
+    if (head === 'git') {
+      if (/log/.test(cmd)) return 'd3m0a1b feat(demo): static demo shell builds with npm run build:demo'
+      return 'On branch main\r\nnothing to commit, working tree clean (demo)'
+    }
+    if (head === 'ls') return 'apps  docs  package.json  plugin.json  scripts  skills'
+    if (head === 'pwd') return '/demo/hermes-pilot'
+    if (head === 'whoami') return 'demo'
+    if (head === 'clear') return '\x1b[2J\x1b[H'
+    if (head === 'echo') return cmd.slice(5)
+    return `zsh: command not found: ${head} (demo shell)`
+  }
+  let buffer = ''
+  return {
+    send(raw) {
+      let msg = null
+      try {
+        msg = JSON.parse(raw)
+      } catch {
+        return
+      }
+      if (!msg || msg.t !== 'in') return
+      const data = String(msg.d ?? '')
+      buffer += data
+      if (!/[\r\n]/.test(data)) return
+      const line = buffer.replace(/[\r\n]+$/, '')
+      buffer = ''
+      // 入力のエコー → コマンド出力 → 次のプロンプト（本物の端末と同じ並び）
+      const out = `${data.replace(/\r/g, '')}${reply(line)}\r\n$ `
+      setTimeout(() => emit({ t: 'out', d: out }), 0)
+    },
+  }
+}
+
+/**
  * `openSocket()` のデモ実装。`WebSocket` と同じ形（`readyState` / `send` / `close` / `onopen` 等）で、
  * 接続すると `gateway.ready` を 1 回だけ流す（本物のゲートウェイと同じ合図）。
  *
+ * V10 §3.3 / D47: `path` が `/ws/term` のときは端末プロトコル（`{t:'out', d}`）で応答する。
+ *
+ * @param {string} [path] 接続先（`/ws/chat` 既定）
  * @returns {object} 擬似ソケット
  */
-export function demoSocket() {
+export function demoSocket(path = '/ws/chat') {
+  const isTerm = String(path ?? '').startsWith('/ws/term')
+  if (isTerm) {
+    const sock = {
+      readyState: 0,
+      onopen: null,
+      onmessage: null,
+      onerror: null,
+      onclose: null,
+      send(raw) {
+        shell.send(raw)
+      },
+      close() {
+        sock.readyState = 3
+        sock.onclose?.({})
+      },
+      addEventListener(type, fn) {
+        if (type === 'open') sock.onopen = fn
+        if (type === 'message') sock.onmessage = fn
+        if (type === 'close') sock.onclose = fn
+        if (type === 'error') sock.onerror = fn
+      },
+      removeEventListener() {},
+    }
+    const shell = termShell((payload) => sock.onmessage?.({ data: JSON.stringify(payload) }))
+    // 端末のバナーは `socket.onmessage` を張った後に届ける（張る前に流すと捨てられる）
+    setTimeout(() => {
+      sock.readyState = 1
+      sock.onopen?.({})
+      sock.onmessage?.({
+        data: JSON.stringify({
+          t: 'out',
+          d: '\r\n\x1b[36mHermes Pilot Demo Shell (read-only simulation)\x1b[0m\r\n$ ',
+        }),
+      })
+    }, 0)
+    return sock
+  }
   const sock = {
     readyState: 0,
     onopen: null,

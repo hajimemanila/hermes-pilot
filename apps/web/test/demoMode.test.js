@@ -18,13 +18,16 @@ import {
   DEMO_SPEC_PATH,
   DEMO_SPEC_V4_PATH,
   DEMO_SPEC_V5_PATH,
+  advanceArchitectJob,
   createDemoState,
   demoFetch,
   demoImageFor,
+  demoJobPhase,
   demoRoute,
   demoSocket,
   demoSpecContent,
   demoSpects,
+  demoState,
   emptyProgress,
 
   initialReviewItems,
@@ -537,4 +540,341 @@ test('npm run build:demo は埋め込みビルドを含む（package.json と実
   const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
   assert.match(pkg.scripts['build:demo'], /scripts\/build-demo-embed\.mjs/)
   assert.equal(fs.existsSync(path.join(here, '..', '..', '..', 'scripts', 'build-demo-embed.mjs')), true)
+})
+
+/* ------------------------------------------------------------------ *
+ * V10-B3（SPEC-PILOT-V10 §3.3 / D47）: モック API・WS の V3〜V9 完全パリティ
+ * ------------------------------------------------------------------ */
+
+test('V10-B3: demoRoute は V3〜V9 の未対応エンドポイントを本番と同じ名前で拾う', () => {
+  assert.equal(demoRoute('/api/snippets?lang=ja').kind, 'chat')
+  const term = demoRoute('/api/snippets/term?lang=ja')
+  assert.equal(term.name, 'snippets')
+  assert.equal(term.kind, 'term')
+
+  assert.equal(demoRoute('/api/pipeline/status').name, 'pipeline.status')
+  assert.equal(demoRoute('/api/pipeline/optimize').name, 'pipeline.optimize')
+  assert.equal(demoRoute('/api/auth/pairing').name, 'auth.pairing')
+  assert.equal(demoRoute('/api/logs?file=gateway&lines=200').name, 'logs')
+  assert.equal(demoRoute('/api/logs?file=gateway&lines=200').params.get('file'), 'gateway')
+  const search = demoRoute('/api/search?q=redline&limit=30')
+  assert.equal(search.name, 'search')
+  assert.equal(search.params.get('q'), 'redline')
+  // 既存の catch-all（ログイン・セッション等）は壊さない
+  assert.equal(demoRoute('/api/auth/session').name, 'auth')
+  assert.equal(demoRoute('/api/gateway/restart').name, 'gateway')
+})
+
+test('V10-B3: /api/usage は UsageSheet が読む totals / models / topSessions を返す', async () => {
+  resetDemoState()
+  const d = await demoFetch('/api/usage')
+  assert.equal(d.ok, true, 'ok が無いとシートが「失敗」表示になる')
+  assert.equal(d.hours, 24)
+  assert.equal(d.cacheHitRate, 0.994)
+  assert.deepEqual(Object.keys(d.totals).sort(), [
+    'cacheRead',
+    'calls',
+    'cost',
+    'input',
+    'messages',
+    'output',
+    'sessions',
+    'tools',
+  ])
+  assert.equal(d.totals.cost, 1.08)
+  assert.equal(d.totals.sessions, 4)
+  assert.ok(d.totals.input > d.totals.output, '入力を出力より多く見せる（キャッシュ前提）')
+
+  assert.equal(d.models.length, 2)
+  for (const m of d.models) {
+    assert.equal(typeof m.model, 'string')
+    for (const k of ['calls', 'input', 'output', 'cacheRead', 'cost']) {
+      assert.equal(typeof m[k], 'number', `models[].${k}`)
+    }
+  }
+  assert.equal(d.topSessions.length, 2)
+  for (const s of d.topSessions) {
+    for (const k of ['id', 'profile', 'title', 'source', 'input', 'output', 'at', 'cost']) {
+      assert.ok(s[k] !== undefined && s[k] !== null, `topSessions[].${k}`)
+    }
+    assert.ok(s.at <= Date.now(), 'at は過去（relTime が「未来」と言わない）')
+  }
+  // 期間は URL に従う（本番 `/api/usage?hours=`）
+  const d3 = await demoFetch('/api/usage?hours=72')
+  assert.equal(d3.hours, 72)
+})
+
+test('V10-B3: /api/live は counts{turns,tasks,architect} と整形済みの tasks / turns を返す', async () => {
+  resetDemoState()
+  setDemoTick(50)
+  const idle = await demoFetch('/api/live')
+  assert.equal(idle.ok, true, 'ok が無いと LiveSheet が「失敗」表示になる')
+  assert.deepEqual(Object.keys(idle.counts).sort(), ['architect', 'tasks', 'turns'])
+  assert.deepEqual(idle.tasks, [])
+  assert.deepEqual(idle.turns, [])
+  assert.equal(idle.counts.architect, 0, 'awaiting_review は ⚡ 実行中に数えない（判断待ちの担当）')
+  assert.equal(idle.architect.length, 1, '一覧には review 待ちのジョブが載る')
+
+  // Hermes Native の Seed は実行中タスクを 1 件立てる → LiveSheet の 2 列目とターンが点灯する
+  const seed = await demoFetch('/api/architect/seed', {
+    method: 'POST',
+    body: { board: 'mobile', seedText: 'Live parity', runner: 'hermes', autoStart: false, lang: 'en' },
+  })
+  const live = await demoFetch('/api/live')
+  assert.equal(live.tasks.length, 1)
+  const task = live.tasks[0]
+  assert.equal(task.id, `t_demo_arch_${String(seed.jobId).replace(/[^0-9]/g, '')}`)
+  assert.equal(task.board, 'mobile')
+  assert.equal(task.boardName, 'mobile')
+  assert.equal(task.assignee, 'architect')
+  assert.equal(typeof task.workerPid, 'number')
+  assert.ok(task.elapsedSec >= 0)
+  assert.equal(live.turns.length, 1)
+  assert.equal(live.turns[0].sessionId, 'demo-a2b-01')
+  assert.equal(live.turns[0].platform, 'pwa')
+  assert.ok(live.turns[0].lastTool.name)
+  assert.equal(live.counts.tasks, 1)
+  assert.equal(live.counts.turns, 1)
+  assert.equal(live.counts.architect, 1, 'running の Seed は ⚡ 実行中に数える')
+
+  // 仕上げると実行中タスクもターンも空になる（LiveSheet が「なし」を出す）
+  const jobId = seed.jobId
+  advanceArchitectJob(jobId)
+  advanceArchitectJob(jobId)
+  advanceArchitectJob(jobId)
+  const done = await demoFetch('/api/live')
+  assert.deepEqual(done.tasks, [])
+  assert.deepEqual(done.turns, [])
+  assert.equal(done.counts.architect, 0)
+  await new Promise((resolve) => setTimeout(resolve, 80))
+})
+
+test('V10-B3: /api/snippets/term は端末チップ帯の形（本番 snippetPayload と同一構造）を返す', async () => {
+  resetDemoState()
+  const ja = await demoFetch('/api/snippets/term?lang=ja')
+  assert.deepEqual(Object.keys(ja).sort(), [
+    'allSnippets',
+    'custom',
+    'customMax',
+    'hotLimit',
+    'lang',
+    'overrides',
+    'snippets',
+  ])
+  assert.equal(ja.lang, 'ja')
+  assert.equal(ja.snippets.length, 16, '本番の端末スニペット 16 件と同じ数')
+  assert.equal(ja.snippets.filter((s) => s.hot).length, 6, 'Hot は 6 件（チップ帯の幅に収まる数）')
+  for (const s of ja.snippets) {
+    for (const k of ['id', 'label', 'text', 'hot', 'run', 'note']) {
+      assert.ok(s[k] !== undefined, `snippets[].${k}`)
+    }
+    assert.equal(typeof s.text, 'string')
+    assert.equal(/[^\x00-\x7F]/.test(s.text), false, 'コマンド文字列は ASCII のみ（本番と同じ約束）')
+  }
+  // 長押し実行できるものだけ run: true（破壊的なものは載せない）
+  assert.equal(ja.snippets.every((s) => s.run === true), true)
+  assert.ok(ja.snippets.some((s) => s.label === 'Pilot状態'))
+  const en = await demoFetch('/api/snippets/term?lang=en')
+  assert.ok(en.snippets.some((s) => s.label === 'Run Verify'))
+  assert.notEqual(en.snippets[0].label, ja.snippets[0].label, 'JA/EN が切り替わる')
+  // チャット側の帯は壊さない
+  const chat = await demoFetch('/api/snippets?lang=ja')
+  assert.equal(chat.snippets[0].id, 'spec-seed')
+})
+
+test('V10-B3: pipeline.status → optimize で SOUL 適用＋3 スキルが揃う', async () => {
+  resetDemoState()
+  const before = await demoFetch('/api/pipeline/status')
+  assert.equal(before.ok, true)
+  assert.equal(before.soul.applied, false)
+  assert.deepEqual(before.hermes.present, ['quick-review', 'annotation'])
+  assert.deepEqual(before.bundled.names, ['quick-review', 'annotation', 'spec-architect'])
+
+  const applied = await demoFetch('/api/pipeline/optimize', { method: 'POST', body: {} })
+  assert.equal(applied.ok, true)
+  assert.equal(applied.status.soul.applied, true)
+  assert.deepEqual(applied.status.hermes.present, ['quick-review', 'annotation', 'spec-architect'])
+  assert.equal(applied.status.hermes.present.length, 3)
+
+  // 自己申告ではなく「読み直し」で適用済みが返る（本番 PipelinePanel と同じ確認経路）
+  const after = await demoFetch('/api/pipeline/status')
+  assert.equal(after.soul.applied, true)
+  assert.equal(after.hermes.present.length, 3)
+
+  // ツアーをやり直すと未適用へ戻る
+  resetDemoState()
+  const reset = await demoFetch('/api/pipeline/status')
+  assert.equal(reset.soul.applied, false)
+})
+
+test('V10-B3: /api/auth/pairing は 21×21 の qrRows と targets を返す', async () => {
+  resetDemoState()
+  const d = await demoFetch('/api/auth/pairing')
+  assert.equal(d.ok, true)
+  assert.equal(d.qrRows.length, 21)
+  for (const row of d.qrRows) {
+    assert.equal(row.length, 21, '正方（21 列）')
+    assert.equal(/^[01]+$/.test(row), true, "'0'/ '1' だけ")
+  }
+  // 3 隅のファインダーパターン（7x7 の枠＋中心 3x3）
+  assert.equal(d.qrRows[0].slice(0, 7), '1111111')
+  assert.equal(d.qrRows[0].slice(-7), '1111111')
+  assert.equal(d.qrRows[20].slice(0, 7), '1111111')
+  assert.equal(d.qrRows[1].slice(0, 7), '1000001')
+  assert.equal(d.qrRows[3].slice(0, 7), '1011101')
+  assert.equal(d.qrMargin, 4)
+  assert.equal(d.targets.length, 2)
+  assert.deepEqual(
+    d.targets.map((t) => t.kind),
+    ['tailscale', 'lan'],
+  )
+  for (const t of d.targets) {
+    assert.ok(t.label)
+    assert.match(t.url, /^https?:\/\//)
+    assert.match(t.url, /token=demo-only/)
+  }
+  assert.equal(d.tailscale, true)
+  assert.equal(d.dnsName, 'demo.tailnet.ts.net')
+  assert.ok(d.expiresAt > Date.now(), '有効期限が未来（画面が「あと何分」を出せる）')
+})
+
+test('V10-B3: /api/logs と /api/search は SettingsPane / SearchSheet の形を返す', async () => {
+  resetDemoState()
+  const log = await demoFetch('/api/logs?file=gateway&lines=200')
+  assert.equal(log.ok, true)
+  assert.equal(log.file, 'gateway')
+  assert.equal(typeof log.text, 'string')
+  assert.ok(log.text.split('\n').length >= 3, '数行は返す（空欄だと原因が分からない）')
+
+  const hit = await demoFetch('/api/search?q=redline&limit=30')
+  assert.equal(hit.ok, true)
+  assert.equal(typeof hit.tookMs, 'number')
+  assert.equal(hit.hits.length, 1, 'q で絞る')
+  for (const k of ['profile', 'messageId', 'sessionId', 'snippet', 'role', 'at', 'sessionTitle', 'source']) {
+    assert.ok(hit.hits[0][k] !== undefined, `hits[].${k}`)
+  }
+  assert.match(hit.hits[0].snippet, /redline/)
+  const none = await demoFetch('/api/search?q=zzzz-nothing')
+  assert.deepEqual(none.hits, [])
+  const blank = await demoFetch('/api/search?q=')
+  assert.deepEqual(blank.hits, [], '空クエリは 0 件（本番は 400 を返すが、デモは空で返す）')
+})
+
+test('V10-B3: antigravity の Seed はタスクを作らない（taskId === null）', async () => {
+  resetDemoState()
+  setDemoTick(50)
+  const seed = await demoFetch('/api/architect/seed', {
+    method: 'POST',
+    body: { board: 'mobile', seedText: 'Agy parity', runner: 'antigravity', autoStart: false, lang: 'en' },
+  })
+  const jobs = await demoFetch('/api/architect/jobs?board=mobile')
+  const job = jobs.jobs.find((j) => j.id === seed.jobId)
+  assert.ok(job)
+  assert.equal(job.runner, 'antigravity')
+  assert.equal(job.taskId, null, 'Agy Opt-in はカンバンタスクを作らない（D41）')
+
+  const board = await demoFetch('/api/boards/mobile/tasks')
+  assert.equal(
+    board.tasks.some((t) => /^\[ARCH\]/.test(t.title)),
+    false,
+    'Agy のジョブはボードに現れない',
+  )
+
+  // Hermes Native なら [ARCH] タスクが立ち、進捗詳細から開ける
+  const hermes = await demoFetch('/api/architect/seed', {
+    method: 'POST',
+    body: { board: 'mobile', seedText: 'Hermes parity', runner: 'hermes', autoStart: false, lang: 'en' },
+  })
+  const jobs2 = await demoFetch('/api/architect/jobs?board=mobile')
+  const job2 = jobs2.jobs.find((j) => j.id === hermes.jobId)
+  assert.equal(typeof job2.taskId, 'string')
+  const board2 = await demoFetch('/api/boards/mobile/tasks')
+  const arch = board2.tasks.find((t) => t.id === job2.taskId)
+  assert.ok(arch, '実行中タスクとして一覧に出る')
+  assert.equal(arch.status, 'running')
+  assert.equal(arch.assignee, 'architect')
+  assert.match(arch.title, /^\[ARCH\] Hermes parity/)
+  await new Promise((resolve) => setTimeout(resolve, 80))
+})
+
+test('V10-B3: Architect Seed は round1_sheet → round2_spec → spec_ready と段階で進む', async () => {
+  resetDemoState()
+  setDemoTick(50)
+  const seed = await demoFetch('/api/architect/seed', {
+    method: 'POST',
+    body: { board: 'mobile', seedText: 'Stage walk', runner: 'hermes', autoStart: false, lang: 'en' },
+  })
+  const read = async () => {
+    const list = await demoFetch('/api/architect/jobs?board=mobile')
+    return list.jobs.find((j) => j.id === seed.jobId)
+  }
+  let job = await read()
+  assert.equal(job.status, 'running')
+  assert.equal(job.phase, 'spawning')
+  assert.equal(job.sheetPath, null)
+
+  // 段 1: 設問シートができる（Round 1）
+  job = advanceArchitectJob(seed.jobId)
+  assert.equal(job.status, 'awaiting_spec')
+  assert.match(job.sheetPath, /^sheets\/spec-demo-seed-\d+-1\.json$/)
+  assert.equal(demoJobPhase(job), 'round1_sheet')
+
+  // 段 2: 回答を受けて SPEC を書き始める（Round 2・FS に残る）
+  job = advanceArchitectJob(seed.jobId)
+  assert.equal(job.status, 'awaiting_spec')
+  assert.equal(job.reviewSeenOnce, true)
+  assert.equal(demoJobPhase(job), 'round2_spec')
+  assert.ok(demoState().architect.jobs.find((j) => j.id === seed.jobId).sheetPath)
+
+  // 段 3: 仕上げ
+  job = advanceArchitectJob(seed.jobId)
+  assert.equal(job.status, 'spec_ready')
+  assert.equal(demoJobPhase(job), 'spec_ready')
+  assert.equal(job.completedSpec.batchCount, 2)
+
+  // [ARCH] タスクも一緒に終わる（実行中のまま居座らない）
+  const board = await demoFetch('/api/boards/mobile/tasks')
+  assert.equal(board.tasks.find((t) => t.id === job.taskId).status, 'done')
+  await new Promise((resolve) => setTimeout(resolve, 80))
+})
+
+test('V10-B3: /ws/term の擬似ソケットはバナーと疑似標準出力を返す', async () => {
+  const sock = demoSocket('/ws/term')
+  const frames = []
+  sock.onmessage = (ev) => frames.push(JSON.parse(ev.data))
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 12))
+  await tick()
+  assert.equal(sock.readyState, 1)
+  assert.equal(frames.length, 1)
+  assert.equal(frames[0].t, 'out')
+  assert.match(frames[0].d, /Hermes Pilot Demo Shell \(read-only simulation\)/)
+  assert.match(frames[0].d, /\$ $/)
+
+  // 1 文字ずつ来る入力を溜め、改行で 1 コマンドとして実行する
+  sock.send(JSON.stringify({ t: 'in', d: 'h' }))
+  sock.send(JSON.stringify({ t: 'in', d: 'elp' }))
+  await tick()
+  assert.equal(frames.length, 1, '改行前は何も返さない（本物の端末と同じ）')
+  sock.send(JSON.stringify({ t: 'in', d: '\r' }))
+  await tick()
+  assert.equal(frames.length, 2)
+  assert.match(frames[1].d, /Demo shell commands/)
+  assert.match(frames[1].d, /\$ $/)
+
+  sock.send(JSON.stringify({ t: 'in', d: 'hermes gateway status\r' }))
+  await tick()
+  assert.match(frames[2].d, /gateway: running/)
+
+  sock.send(JSON.stringify({ t: 'in', d: 'nope-command\r' }))
+  await tick()
+  assert.match(frames[3].d, /command not found: nope-command/)
+
+  // resize は端末フレームを増やさない（本番も PTY のサイズ変更だけ）
+  const before = frames.length
+  sock.send(JSON.stringify({ t: 'resize', c: 80, r: 24 }))
+  await tick()
+  assert.equal(frames.length, before)
+
+  sock.close()
+  assert.equal(sock.readyState, 3)
 })
