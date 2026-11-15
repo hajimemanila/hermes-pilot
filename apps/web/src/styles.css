@@ -4736,3 +4736,302 @@ html[data-vibe='serotonin'] .spec-receipt-btn {
   font-size: 18px;
   line-height: 1;
 }
+
+/* ===========================================================================
+ * 仕様書の 3 箇所 MD プレビュー・1 行 SPEC セレクタ・リッチなバッチ詳細
+ * （SPEC-PILOT-V6 §3.4 ②・§3.5 / D29・D30）
+ *
+ * - 上部セレクタは「選択中の 1 行（.pick-item.spec-now）＋タップでアコーディオン」
+ * - 履歴の展開本文は「モード・状態・時刻 → 目的 → 結果 → Git → タスク詳細 → 抜粋」
+ * - 新規のタップ対象は 44px（`npm run audit:responsive` が実測する）
+ * ========================================================================= */
+
+/* ---------- 上部 SPEC セレクタ ---------- */
+.pick-item.spec-now {
+  margin-bottom: 8px;
+}
+
+/* アコーディオンは縦積み（横スクロールにしない）。左の縦線で「今の 1 行の下に開いた」ことを示す */
+.pick-list.spec-accordion {
+  margin: -2px 0 10px;
+  padding-left: 8px;
+  border-left: 2px solid var(--line);
+}
+
+.spec-accordion .pick-item {
+  background: var(--surface-2);
+}
+
+.spec-accordion .pick-item:active {
+  background: var(--surface);
+}
+
+/* ---------- シート上部の「📄 仕様書(MD)をプレビュー」 ---------- */
+.spec-md-row {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+.btn.spec-md-open {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+/* ---------- Launchpad のバッチ 1 行（選択 ＋ 独立の「仕様・Verify ▾」） ---------- */
+.spec-batch {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.spec-batch .list-item {
+  width: 100%;
+}
+
+.link.spec-batch-toggle {
+  align-self: flex-start;
+  min-height: 44px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.spec-batch-detail {
+  margin: 0 0 8px 8px;
+  padding: 2px 10px 8px;
+  border-left: 2px solid var(--line);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- 履歴の展開本文（§3.5 ②） ----------
+   `.pick-item` は横並びの flex。`<details>` の中で本文を縦に積むため、
+   履歴行だけ column + stretch に切り替える（既定のままだと本文が内容幅で
+   横に伸び、390px で右端が切れる・実測）。 */
+details.history-row {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+details.history-row > summary {
+  width: 100%;
+  min-width: 0;
+}
+
+details.history-row > .history-body {
+  width: 100%;
+  min-width: 0;
+}
+
+.history-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.history-state-in,
+.history-when {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.history-label {
+  margin-top: 2px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+}
+
+.history-objective {
+  font-size: 12.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.history-result {
+  max-height: 190px;
+  overflow-y: auto;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-2);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.btn.history-open-task {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 4px;
+  padding: 0 12px;
+  font-size: 12.5px;
+}
+
+.history-sub-details {
+  margin-top: 2px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
+.history-sub-details > summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  font-size: 12px;
+  color: var(--accent-2);
+  cursor: pointer;
+  list-style: none;
+}
+
+.history-sub-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.history-section {
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+/* ---------- 仕様書(MD)プレビューのシート ---------- */
+.spec-md-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.spec-md-path {
+  font-size: 11px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.spec-md-sub {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.spec-md-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.spec-md-actions .btn {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 10px;
+  font-size: 12.5px;
+}
+
+.spec-md-warn {
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: var(--warn);
+}
+
+.spec-md-body {
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.spec-md-error {
+  padding: 8px 10px;
+  border: 1px solid var(--bad, var(--line-strong));
+  border-radius: 10px;
+  background: var(--surface-2);
+  font-size: 12px;
+  color: var(--danger-fg, var(--text));
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Markdown テーブル（仕様書の決定表） ----------
+   390px でも列が崩れないよう、表そのものは横スクロールの枠に閉じ込める
+   （ページ全体の横溢れは作らない）。 */
+.md-table-wrap {
+  max-width: 100%;
+  margin: 6px 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.md-table {
+  /* 列数を `--md-cols`（renderMarkdown が入れる）から取り、1 列 160px を下限にする。
+     390px 幅では枠内スクロールになり、列が細く潰れて縦に伸びるのを防ぐ。 */
+  table-layout: fixed;
+  width: calc(var(--md-cols, 3) * 160px);
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.md-table th,
+.md-table td {
+  padding: 6px 9px;
+  text-align: left;
+  vertical-align: top;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+
+.md-table th {
+  background: var(--surface-2);
+  font-weight: 700;
+}
+
+.md-table tr:last-child td {
+  border-bottom: none;
+}
+
+.md-table th:last-child,
+.md-table td:last-child {
+  border-right: none;
+}
+
+/* ---------- 新着 SPEC バナー（3 箇所のうち ③） ----------
+   幅は viewport ではなく「置かれた箱」で決まる（820px でも 2 ペインの狭い側に
+   入ると 340px 程度になる）。メディアクエリで切り替えず、常に折り返し可能にし、
+   flex-basis で「入らなければ次の行へ」を自然に決める。 */
+.spec-banner {
+  flex-wrap: wrap;
+}
+
+.spec-banner-main {
+  flex: 1 1 220px;
+}
+
+.spec-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1 1 190px;
+  justify-content: flex-end;
+}
+
+.spec-banner-actions .spec-banner-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 10px;
+  white-space: normal;
+  line-height: 1.25;
+}
+
+.spec-banner-btn.ghost {
+  background: transparent;
+  color: var(--accent);
+}

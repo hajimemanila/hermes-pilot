@@ -55,6 +55,37 @@ const ORDERED_RE = /^\s{0,3}(\d{1,9})[.)]\s+(.*)$/
 // 上と同じ理由で検出器が文字列モードのまま迷子になる）。
 const LINK_RE = new RegExp('^\\[([^\\][\\n]*)\\]\\(([^)\\s]+)(?:\\s+"[^"]*")?\\)')
 
+// テーブル（`| a | b |` ＋ `| --- | --- |`）。仕様書（docs/SPEC-*.md）は決定表を多用するため、
+// セルの列が崩れて読めなくならないよう軽量に描画する。区切り行は行頭・行末の `|` を任意にする
+// （GFM 準拠の緩い形）。バッククォートを含まないので正規表現リテラルで書いてよい。
+const TABLE_ROW_RE = /^\s{0,3}\|.*\|\s*$/
+const TABLE_SEP_CELL_RE = /^\s*:?-{2,}:?\s*$/
+
+/**
+ * テーブル 1 行をセル文字列へ分解する（前後の `|` は落とす）。
+ * @param {string} line 1 行
+ * @returns {string[]} セル
+ */
+function splitTableRow(line) {
+  return line
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((c) => c.trim())
+}
+
+/**
+ * 区切り行（`| --- | :---: |`）かどうか。
+ * @param {string} line 判定する行
+ * @returns {boolean} 区切り行なら true
+ */
+function isTableSep(line) {
+  if (!TABLE_ROW_RE.test(line)) return false
+  const cells = splitTableRow(line)
+  return cells.length > 0 && cells.every((c) => TABLE_SEP_CELL_RE.test(c))
+}
+
 /**
  * インライン要素をトークン化する。
  * 優先順: インラインコード（中の `*` や `[` を展開しない） → 太字 → リンク。
@@ -161,6 +192,26 @@ export function parseBlocks(raw) {
       continue
     }
 
+    // テーブル: 行頭 `|` の行 ＋ 次行が区切り行のときだけ表として扱う
+    // （本文中に `a | b` と書いただけの段落を巻き込まない）
+    if (TABLE_ROW_RE.test(line) && isTableSep(lines[i + 1] ?? '')) {
+      const head = splitTableRow(line).map((c) => parseInline(c))
+      const aligns = splitTableRow(lines[i + 1]).map((c) =>
+        c.startsWith(':') && c.endsWith(':') ? 'center' : c.endsWith(':') ? 'right' : c.startsWith(':') ? 'left' : null,
+      )
+      i += 2
+      const rows = []
+      while (i < lines.length && TABLE_ROW_RE.test(lines[i]) && !isTableSep(lines[i])) {
+        const cells = splitTableRow(lines[i])
+        // 列数はヘッダーに合わせる（足りないセルは空、多いセルは落とす＝崩れない）
+        const row = head.map((_, idx) => parseInline(cells[idx] ?? ''))
+        rows.push(row)
+        i += 1
+      }
+      blocks.push({ type: 'table', head, aligns, rows })
+      continue
+    }
+
     if (QUOTE_RE.test(line)) {
       const body = []
       while (i < lines.length) {
@@ -194,6 +245,9 @@ export function parseBlocks(raw) {
         !l.trim() ||
         FENCE_RE.test(l) ||
         HEADING_RE.test(l) ||
+        // 表の開始（行 ＋ 次行が区切り行）だけを段落の終わりにする。
+        // 単なる `|` 入りの行は段落として読む（表にしない・無限ループにしない）
+        (TABLE_ROW_RE.test(l) && isTableSep(lines[i + 1] ?? '')) ||
         QUOTE_RE.test(l) ||
         BULLET_RE.test(l) ||
         ORDERED_RE.test(l)
@@ -201,6 +255,11 @@ export function parseBlocks(raw) {
         break
       }
       para.push(l)
+      i += 1
+    }
+    // 進まないと無限ループになる（上の break が初行で成立した場合の保険）
+    if (!para.length) {
+      para.push(line)
       i += 1
     }
     /** @type {Array<object>} */
@@ -282,6 +341,51 @@ function renderBlock(block, idx, opts) {
   if (block.type === 'heading') {
     const tag = `h${block.level}`
     return React.createElement(tag, { key, className: `md-h${block.level}` }, renderInline(block.children, key))
+  }
+  if (block.type === 'table') {
+    const alignStyle = (idx) => (block.aligns?.[idx] ? { textAlign: block.aligns[idx] } : undefined)
+    return React.createElement(
+      'div',
+      { key, className: 'md-table-wrap' },
+      React.createElement(
+        'table',
+        // 列数は CSS 側で幅の計算に使う（`--md-cols` × 160px を最小幅にして
+        // 狭い画面では枠内スクロール・列は詰めずに読める幅を保つ）
+        { className: 'md-table', style: { '--md-cols': block.head.length } },
+        React.createElement(
+          'thead',
+          null,
+          React.createElement(
+            'tr',
+            null,
+            block.head.map((cell, ci) =>
+              React.createElement(
+                'th',
+                { key: `${key}-h-${ci}`, style: alignStyle(ci) },
+                renderInline(cell, `${key}-h-${ci}`),
+              ),
+            ),
+          ),
+        ),
+        React.createElement(
+          'tbody',
+          null,
+          block.rows.map((row, ri) =>
+            React.createElement(
+              'tr',
+              { key: `${key}-r-${ri}` },
+              row.map((cell, ci) =>
+                React.createElement(
+                  'td',
+                  { key: `${key}-r-${ri}-${ci}`, style: alignStyle(ci) },
+                  renderInline(cell, `${key}-r-${ri}-${ci}`),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    )
   }
   if (block.type === 'quote') {
     return React.createElement(

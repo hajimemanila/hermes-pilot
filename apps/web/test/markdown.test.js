@@ -260,3 +260,44 @@ test('renderInline はインラインコードを md-code にする', () => {
   assert.equal(nodes[1].props.className, 'md-code')
   assert.equal(textOf(nodes[1]), 'b')
 })
+
+test('parseBlocks: テーブルを 1 ブロックにまとめ、セルを分解する', () => {
+  const blocks = parseBlocks('| 論点 | 決定 |\n| --- | :---: |\n| D29 | 1 行表示 |\n| D30 | 3 箇所 |\n')
+  assert.equal(blocks.length, 1)
+  assert.equal(blocks[0].type, 'table')
+  assert.equal(blocks[0].head.length, 2)
+  assert.deepEqual(blocks[0].aligns, [null, 'center'])
+  assert.equal(blocks[0].rows.length, 2)
+  assert.equal(textOf({ type: 'span', props: { children: renderInline(blocks[0].rows[1][0]) } }), 'D30')
+})
+
+test('parseBlocks: 区切り行が無い `|` 行は段落のまま（表にしない）', () => {
+  const blocks = parseBlocks('| a | b |\n| c | d |\n')
+  assert.equal(blocks.length, 1)
+  assert.equal(blocks[0].type, 'paragraph')
+})
+
+test('parseBlocks: テーブルの列数はヘッダーに揃える（崩れない）', () => {
+  const blocks = parseBlocks('| a | b |\n| --- | --- |\n| 1 |\n| 1 | 2 | 3 |\n')
+  assert.equal(blocks[0].rows.length, 2)
+  assert.equal(blocks[0].rows[0].length, 2)
+  assert.equal(textOf({ type: 'span', props: { children: renderInline(blocks[0].rows[0][1]) } }), '')
+})
+
+test('renderMarkdown: テーブルは md-table-wrap 内の table で描画し、HTML は組まない', () => {
+  const el = renderMarkdown('| a | b |\n| --- | --- |\n| <script>x</script> | **2** |\n')
+  const wraps = findAll(el, 'div').filter((p) => p.className === 'md-table-wrap')
+  assert.equal(wraps.length, 1)
+  assert.equal(findAll(el, 'table').length, 1)
+  assert.equal(findAll(el, 'th').length, 2)
+  assert.equal(findAll(el, 'td').length, 2)
+  assert.equal(findAll(el, 'script').length, 0)
+  assert.match(textOf(el), /<script>x<\/script>/)
+  assert.equal(findAll(el, 'strong').length, 1)
+})
+
+test('renderMarkdown: フェンスコード内の `|` はテーブルにしない', () => {
+  const el = renderMarkdown('```\n| a | b |\n| --- | --- |\n```\n')
+  assert.equal(findAll(el, 'table').length, 0)
+  assert.match(textOf(el), /\| a \| b \|/)
+})

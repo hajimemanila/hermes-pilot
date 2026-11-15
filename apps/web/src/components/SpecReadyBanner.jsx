@@ -12,10 +12,11 @@ import { haptic } from '../lib/haptic.js'
  * `Seed` シートで「承認後に自動でバッチを起票」を ON にしていた場合は、ここに来る前に
  * ブリッジが起票済みなので、このカードは自動で消える（`launched` は出さない）。
  *
- * @param {{banner: object, onFile: Function, busy?: boolean, onDismiss?: Function}} props バナーと起票処理
+ * @param {{banner: object, onFile: Function, busy?: boolean, onDismiss?: Function,
+ *          onPreview?: Function}} props バナーと起票処理・仕様書プレビュー（D30 ③）
  * @returns {any|null} カード
  */
-export function SpecReadyBanner({ banner, onFile, busy = false, onDismiss }) {
+export function SpecReadyBanner({ banner, onFile, busy = false, onDismiss, onPreview }) {
   const { t } = useI18n()
   if (!banner) return null
   const ready = banner.kind === 'ready'
@@ -27,17 +28,32 @@ export function SpecReadyBanner({ banner, onFile, busy = false, onDismiss }) {
         </span>
         <span className="spec-banner-sub">{banner.title}</span>
       </div>
-      <button
-        type="button"
-        className="spec-banner-btn"
-        disabled={busy}
-        onClick={() => {
-          haptic('action')
-          onFile?.(banner)
-        }}
-      >
-        {busy ? t('seed.submitting') : `🚀 ${t('seed.bannerAction')}`}
-      </button>
+      {/* 狭幅 390px では主文の下へ折り返す（2 つのボタンを 1 行に詰めない・D30） */}
+      <div className="spec-banner-actions">
+        <button
+          type="button"
+          className="spec-banner-btn"
+          disabled={busy}
+          onClick={() => {
+            haptic('action')
+            onFile?.(banner)
+          }}
+        >
+          {busy ? t('seed.submitting') : `🚀 ${t('seed.bannerAction')}`}
+        </button>
+        {onPreview ? (
+          <button
+            type="button"
+            className="spec-banner-btn ghost"
+            onClick={() => {
+              haptic('tap')
+              onPreview(banner)
+            }}
+          >
+            {`📄 ${t('seed.bannerPreview')}`}
+          </button>
+        ) : null}
+      </div>
       {onDismiss ? (
         <button
           type="button"

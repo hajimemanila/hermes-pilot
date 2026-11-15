@@ -193,6 +193,9 @@ export function pickSpecBanner({ specReady = [], pending = [] } = {}) {
       ids,
       jobId: ready.jobId ?? null,
       autoStart: Boolean(ready.autoStart),
+      // ジョブが属するボード（`GET /api/specs/content` の解決に使う。チャットが
+      // まだボードに紐づいていないときでも正しいリポジトリで仕様書を読める）
+      board: ready.board ?? null,
     }
   }
   const next = (Array.isArray(pending) ? pending : []).find((row) => row && Number(row.pendingCount) > 0)
@@ -205,5 +208,6 @@ export function pickSpecBanner({ specReady = [], pending = [] } = {}) {
     ids: (Array.isArray(next.pending) ? next.pending : []).map((id) => String(id ?? '')).filter(Boolean),
     jobId: null,
     autoStart: false,
+    board: next.board ?? null,
   }
 }

@@ -175,7 +175,14 @@ test('A2B バナーは完成 SPEC を優先し、起票済みは出さない', (
     ids: ['V5-1', 'V5-2', 'V5-3', 'V5-4'],
     jobId: 'j1',
     autoStart: false,
+    board: null,
   })
+
+  // ジョブのボードは仕様書プレビューのリポジトリ解決に使う（V6-4 / D30）
+  const withBoard = pickSpecBanner({
+    specReady: [{ jobId: 'j3', spec: 'docs/SPEC-V6.md', title: 'V6', batchCount: 2, board: 'hermes-pilot' }],
+  })
+  assert.equal(withBoard.board, 'hermes-pilot')
 
   const pendingOnly = pickSpecBanner({
     pending: [{ path: 'docs/SPEC-OLD.md', title: 'old', pendingCount: 2, pending: ['A', 'B'] }],

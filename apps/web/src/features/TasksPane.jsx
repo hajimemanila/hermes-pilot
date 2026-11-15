@@ -8,6 +8,7 @@ import { UsageSheet } from './UsageSheet.jsx'
 import { MissionReceiptSheet } from './MissionReceiptSheet.jsx'
 import { SpecSeedSheet } from './SpecSeedSheet.jsx'
 import { SpecReadyBanner } from '../components/SpecReadyBanner.jsx'
+import { SpecMarkdownSheet } from '../components/SpecMarkdownSheet.jsx'
 import { ArchitectJobBar } from '../components/ArchitectJobBar.jsx'
 import { jobPollMs, pickActiveArchitectJob, pickSpecBanner } from '../lib/specSeed.js'
 import { LiveSheet } from './LiveSheet.jsx'
@@ -51,6 +52,79 @@ function ModePill({ batch, t }) {
   const key = MODE_KEY[batch?.mode]
   if (!key) return null
   return <span className={`spec-mode is-${batch.mode}`}>{t(key)}</span>
+}
+
+/**
+ * 上部の SPEC セレクタ（SPEC-PILOT-V6 §3.5 ① / D29）。
+ *
+ * 既定は**選択中の 1 件だけ**を `.pick-item.spec-now` の 1 行で出す。タップすると
+ * 下に `.pick-list.spec-accordion` が開き、別の SPEC を選ぶと自動で閉じる
+ * （SPEC が増えても一覧が本題のバッチを画面下へ押し流さない）。
+ *
+ * 表示は増えうる一覧なので横スクロールにせず縦積み（UI 統一の規約）。
+ *
+ * @param {{specList: Array<object>, currentSpec: object|null, open: boolean,
+ *          onToggle: Function, onPick: Function, t: Function}} props
+ * @returns {any} セレクタ（1 行 ＋ 任意でアコーディオン）
+ */
+function SpecPicker({ specList, currentSpec, open, onToggle, onPick, t }) {
+  if (!currentSpec) return null
+  const others = (specList ?? []).filter((s) => s.path !== currentSpec.path)
+  const sub = (s) =>
+    [
+      t('tasks.specBatchCount', { n: (s.batches ?? []).length }),
+      s.mtime ? t('tasks.specUpdated', { when: relTime(s.mtime) }) : null,
+    ]
+      .filter(Boolean)
+      .join(' · ')
+  return (
+    <>
+      <button
+        type="button"
+        className="pick-item spec-now"
+        aria-expanded={others.length ? open : undefined}
+        aria-label={t('tasks.specNowAria', { name: currentSpec.title })}
+        onClick={() => {
+          haptic('tap')
+          onToggle()
+        }}
+      >
+        <span className="pick-main">
+          <span className="pick-title">
+            <span aria-hidden="true">📄</span> {currentSpec.title}
+          </span>
+          <span className="pick-sub">{`${sub(currentSpec)} · ${currentSpec.path}`}</span>
+        </span>
+        <span className="pick-meta">
+          {others.length ? t('tasks.specCountOf', { n: specList.length }) : null}
+          {others.length ? <span aria-hidden="true">{open ? '▴' : '▾'}</span> : null}
+        </span>
+      </button>
+      {open && others.length ? (
+        <div className="pick-list spec-accordion">
+          {others.map((s) => (
+            <button
+              key={s.path}
+              type="button"
+              className="pick-item"
+              onClick={() => {
+                haptic('tap')
+                onPick(s)
+              }}
+            >
+              <span className="pick-main">
+                <span className="pick-title">{s.title}</span>
+                <span className="pick-sub">{sub(s)}</span>
+              </span>
+              <span className="pick-meta" aria-hidden="true">
+                ›
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </>
+  )
 }
 
 /**
@@ -101,6 +175,12 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
   const [specBusy, setSpecBusy] = useState(false)
   // 全バッチ完了後に開く履歴（Q3=A）。起票シートとは別のシートにする
   const [specHistoryOpen, setSpecHistoryOpen] = useState(false)
+  // 上部 SPEC セレクタのアコーディオン（SPEC-PILOT-V6 §3.5 ① / D29）。シートを開くたびに閉じる
+  const [specPickerOpen, setSpecPickerOpen] = useState(false)
+  // 仕様書（MD）プレビュー（§3.4 ② / D30）。`{path, title}` を渡して 1 枚のシートを開く
+  const [specMd, setSpecMd] = useState(null)
+  // Launchpad のバッチ 1 行ごとの「仕様・Verify ▾」展開（チェックボックス選択とは独立）
+  const [specBatchOpen, setSpecBatchOpen] = useState([])
   // 🎙️ Spec Seed と A2B クイック起票カード（SPEC-PILOT-V5 §3.2・§3.3 ① / D23・D26①）
   const [seedOpen, setSeedOpen] = useState(false)
   const [architectJobs, setArchitectJobs] = useState(null)
@@ -647,6 +727,8 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
     if (!currentSpec) return
     haptic('tap')
     setSpecSel(defaultSelection())
+    setSpecPickerOpen(false)
+    setSpecBatchOpen([])
     setSpecSheetOpen(true)
   }
 
@@ -654,7 +736,40 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
   const openSpecHistory = () => {
     if (!currentSpec) return
     haptic('tap')
+    setSpecPickerOpen(false)
     setSpecHistoryOpen(true)
+  }
+
+  /**
+   * 上部セレクタで SPEC を切り替える（SPEC-PILOT-V6 §3.5 ①）。
+   *
+   * Launchpad（`forLaunch`）では、**選んだ SPEC のバッチ**で未起票の選択を作り直す。
+   * 旧実装は切替前の `currentSpec` から作った `filedBatchIds` を見ていたため、
+   * 別 SPEC に切り替えても未起票の既定選択が古いままだった（実測バグ）。
+   * ここで `specProgress(next.batches, tasks)` を計算し直してから選ぶ。
+   */
+  const pickSpec = (next, forLaunch = false) => {
+    if (!next) return
+    setSpecPath(next.path)
+    setSpecPickerOpen(false)
+    setSpecBatchOpen([])
+    if (forLaunch) {
+      const prog = specProgress(next.batches ?? [], tasks)
+      setSpecSel((next.batches ?? []).filter((b) => !prog.byId.has(b.id)).map((b) => b.id))
+    }
+  }
+
+  /** 仕様書（MD）プレビューを開く（§3.4 ② / D30。3 箇所の入口から同じシート）。 */
+  const openSpecMd = (spec) => {
+    const p = typeof spec === 'string' ? spec : spec?.path
+    if (!p) return
+    haptic('tap')
+    setSpecMd({
+      path: p,
+      title: typeof spec === 'string' ? null : (spec?.title ?? null),
+      // バナー由来はジョブのボード（別ボードの仕様書でも正しいリポジトリで読む）
+      board: typeof spec === 'string' ? null : (spec?.board ?? null),
+    })
   }
 
   /**
@@ -892,6 +1007,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
         busy={architectFiling}
         onFile={fileSpecBatches}
         onDismiss={(b) => setArchitectDismissed((prev) => [...prev, b.path])}
+        onPreview={(b) => openSpecMd({ path: b.path, title: b.title })}
       />
 
       {/* 🎙️ Spec Seed（SPEC V5 §3.3 ① D26①）: 仕様ランチャーの隣から 1 タップで種を撒く */}
@@ -1060,69 +1176,67 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
 
       {specSheetOpen && currentSpec ? (
         <Sheet title={t('tasks.specSheetTitle')} onClose={() => !specBusy && setSpecSheetOpen(false)}>
-          {specList.length > 1 ? (
-            /* 仕様の選択は増えうる一覧なので縦リスト（Q1=B / Q2=A）。行＝タイトル＋バッチ数＋更新日時 */
-            <div className="pick-list" style={{ marginBottom: 8 }}>
-              {specList.map((s) => {
-                const sel = s.path === currentSpec.path
-                return (
-                  <button
-                    key={s.path}
-                    className={`pick-item${sel ? ' on' : ''}`}
-                    onClick={() => {
-                      haptic('tap')
-                      setSpecPath(s.path)
-                      setSpecSel(s.batches.filter((b) => !filedBatchIds.has(b.id)).map((b) => b.id))
-                    }}
-                  >
-                    <span className="pick-main">
-                      <span className="pick-title">{s.title}</span>
-                      <span className="pick-sub">
-                        {[
-                          t('tasks.specBatchCount', { n: s.batches.length }),
-                          s.mtime ? t('tasks.specUpdated', { when: relTime(s.mtime) }) : null,
-                        ]
-                          .filter(Boolean)
-                          .join(' · ')}
-                      </span>
-                    </span>
-                    <span className="pick-meta">{sel ? '✓' : ''}</span>
-                  </button>
-                )
-              })}
-            </div>
-          ) : null}
-          <div className="row-sub mono" style={{ padding: '0 2px 8px' }}>
-            {currentSpec.path}
+          {/* 上部は「選択中 1 件のみ・タップでアコーディオン」（SPEC-PILOT-V6 §3.5 ① / D29） */}
+          <SpecPicker
+            specList={specList}
+            currentSpec={currentSpec}
+            open={specPickerOpen}
+            onToggle={() => setSpecPickerOpen((v) => !v)}
+            onPick={(s) => pickSpec(s, true)}
+            t={t}
+          />
+          {/* 仕様書そのものを読む（§3.4 ② / D30 ①）。シートの上部に常設 */}
+          <div className="spec-md-row">
+            <button type="button" className="btn spec-md-open" onClick={() => openSpecMd(currentSpec)}>
+              {`📄 ${t('tasks.specMdPreview')}`}
+            </button>
           </div>
           <div className="list">
             {currentSpec.batches.map((b) => {
               const filed = filedBatchIds.has(b.id)
               const taken = openBatchIds.has(b.id)
               const sel = specSel.includes(b.id)
+              const open = specBatchOpen.includes(b.id)
               return (
-                <button
-                  key={b.id}
-                  className={`list-item${sel ? ' on' : ''}`}
-                  onClick={() => {
-                    haptic('tap')
-                    setSpecSel((cur) => (cur.includes(b.id) ? cur.filter((x) => x !== b.id) : [...cur, b.id]))
-                  }}
-                >
-                  <span className="spec-check" aria-hidden="true">
-                    {sel ? '☑' : '☐'}
-                  </span>
-                  <span style={{ flex: '1 1 auto', minWidth: 0 }}>
-                    <span className="row-title">
-                      [{b.id}] {b.title}
+                /* 行の本体＝チェックボックス選択（1 タップ）／下の「仕様・Verify ▾」は独立（D29） */
+                <div className={`spec-batch${sel ? ' on' : ''}`} key={b.id}>
+                  <button
+                    type="button"
+                    className={`list-item${sel ? ' on' : ''}`}
+                    onClick={() => {
+                      haptic('tap')
+                      setSpecSel((cur) => (cur.includes(b.id) ? cur.filter((x) => x !== b.id) : [...cur, b.id]))
+                    }}
+                  >
+                    <span className="spec-check" aria-hidden="true">
+                      {sel ? '☑' : '☐'}
                     </span>
-                    <ModePill batch={b} t={t} />
-                    {b.objective ? <span className="row-sub">{b.objective.slice(0, 140)}</span> : null}
-                  </span>
-                  {filed ? (
-                    <span className="spec-taken">{t(taken ? 'tasks.specAlready' : 'tasks.specFiledDone')}</span>
+                    <span style={{ flex: '1 1 auto', minWidth: 0 }}>
+                      <span className="row-title">
+                        [{b.id}] {b.title}
+                      </span>
+                      <ModePill batch={b} t={t} />
+                      {b.objective ? <span className="row-sub">{b.objective.slice(0, 140)}</span> : null}
+                    </span>
+                    {filed ? (
+                      <span className="spec-taken">{t(taken ? 'tasks.specAlready' : 'tasks.specFiledDone')}</span>
+                    ) : null}
+                  </button>
+                  <button
+                    type="button"
+                    className="link spec-batch-toggle"
+                    aria-expanded={open}
+                    onClick={() => {
+                      haptic('tap')
+                      setSpecBatchOpen((cur) => (cur.includes(b.id) ? cur.filter((x) => x !== b.id) : [...cur, b.id]))
+                    }}
+                  >
+                    {t('tasks.specDetailToggle')} {open ? '▴' : '▾'}
+                  </button>
+                  {open ? (
+                    <div className="spec-batch-detail">{renderMarkdown(b.section || b.title || '')}</div>
                   ) : null}
-                </button>
+                </div>
               )
             })}
           </div>
@@ -1157,41 +1271,22 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
       {/* 全バッチ完了後の履歴（Q3=A）。行＝バッチ＋完了バッジ＋完了時刻。増えうる一覧なので縦リスト */}
       {specHistoryOpen && currentSpec ? (
         <Sheet title={t('tasks.specHistoryTitle')} onClose={() => setSpecHistoryOpen(false)}>
-          {/* 仕様の切り替えは縦リスト（1 行 1 仕様）。履歴でも同じ操作系にする（Q1=B） */}
-          {specList.length > 1 ? (
-            <div className="pick-list" style={{ marginBottom: 8 }}>
-              {specList.map((sp) => {
-                const sel = sp.path === currentSpec.path
-                return (
-                  <button
-                    key={sp.path}
-                    className={`pick-item${sel ? ' on' : ''}`}
-                    onClick={() => {
-                      haptic('tap')
-                      setSpecPath(sp.path)
-                    }}
-                  >
-                    <span className="pick-main">
-                      <span className="pick-title">{sp.title}</span>
-                      <span className="pick-sub">
-                        {[
-                          t('tasks.specBatchCount', { n: sp.batches.length }),
-                          sp.mtime ? t('tasks.specUpdated', { when: relTime(sp.mtime) }) : null,
-                        ]
-                          .filter(Boolean)
-                          .join(' · ')}
-                      </span>
-                    </span>
-                    <span className="pick-meta">{sel ? '✓' : ''}</span>
-                  </button>
-                )
-              })}
-            </div>
-          ) : null}
-          <div className="row-sub mono" style={{ padding: '0 2px 8px' }}>
-            {currentSpec.path}
+          {/* 上部は Launchpad と同じ「選択中 1 件・タップでアコーディオン」に統一（§3.5 ①） */}
+          <SpecPicker
+            specList={specList}
+            currentSpec={currentSpec}
+            open={specPickerOpen}
+            onToggle={() => setSpecPickerOpen((v) => !v)}
+            onPick={(s) => pickSpec(s, false)}
+            t={t}
+          />
+          {/* 仕様書そのものを読む（§3.4 ② / D30 ②）。履歴でもシート上部に常設 */}
+          <div className="spec-md-row">
+            <button type="button" className="btn spec-md-open" onClick={() => openSpecMd(currentSpec)}>
+              {`📄 ${t('tasks.specMdPreview')}`}
+            </button>
           </div>
-          {/* 1 行 1 バッチ。タップで展開して Execution Mode と日時を読む（実機: 全部展開は読みにくい） */}
+          {/* 1 行 1 バッチ。タップで展開して目的・結果・Git・抜粋まで読む（§3.5 ② / D29） */}
           <div className="pick-list">
             {currentSpec.batches.map((b) => {
               const task = specProg.byId.get(b.id) ?? null
@@ -1201,6 +1296,13 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
                   ? t(STATUS_KEY[task.status])
                   : task.status
                 : t('tasks.specNotFiled')
+              const when = done
+                ? task?.completedAt
+                  ? relTime(task.completedAt)
+                  : null
+                : task?.startedAt
+                  ? t('tasks.specStartedAt', { when: relTime(task.startedAt) })
+                  : null
               return (
                 <details key={b.id} className="pick-item history-row">
                   <summary className="history-summary">
@@ -1212,10 +1314,46 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
                     <Icon name="chevron" size={14} />
                   </summary>
                   <div className="history-body">
-                    <ModePill batch={b} t={t} />
-                    <span className="pick-sub">
-                      {[stateText, task?.completedAt ? relTime(task.completedAt) : null].filter(Boolean).join(' · ')}
-                    </span>
+                    <div className="history-head">
+                      <ModePill batch={b} t={t} />
+                      <span className="history-state-in">{stateText}</span>
+                      {when ? <span className="history-when">{when}</span> : null}
+                    </div>
+                    {b.objective ? (
+                      <>
+                        <div className="history-label">{t('tasks.specObjective')}</div>
+                        <div className="history-objective">{b.objective}</div>
+                      </>
+                    ) : null}
+                    {task?.result ? (
+                      <>
+                        <div className="history-label">{t('tasks.specResult')}</div>
+                        <div className="history-result">{task.result}</div>
+                      </>
+                    ) : null}
+                    {task?.git?.head ? (
+                      <div className="git-badge">
+                        <span className="git-sha">{task.git.head}</span>
+                        {task.git.subject ? <span className="git-subject">{task.git.subject}</span> : null}
+                      </div>
+                    ) : null}
+                    {task ? (
+                      <button
+                        type="button"
+                        className="btn history-open-task"
+                        onClick={() => {
+                          haptic('action')
+                          setSpecHistoryOpen(false)
+                          openTask(task)
+                        }}
+                      >
+                        {`🔍 ${t('tasks.specOpenTask')}`}
+                      </button>
+                    ) : null}
+                    <details className="history-sub-details">
+                      <summary>{t('tasks.specSection')}</summary>
+                      <div className="history-section">{renderMarkdown(b.section || b.title || '')}</div>
+                    </details>
                   </div>
                 </details>
               )
@@ -1238,6 +1376,17 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
             {t('tasks.specHistoryNote')}
           </div>
         </Sheet>
+      ) : null}
+
+      {/* 仕様書(MD)プレビュー（§3.4 ② / D30）。Launchpad・履歴・バナーから同じ 1 枚を開く */}
+      {specMd ? (
+        <SpecMarkdownSheet
+          board={specMd.board ?? board}
+          repo={specsInfo?.repo ?? null}
+          path={specMd.path}
+          title={specMd.title}
+          onClose={() => setSpecMd(null)}
+        />
       ) : null}
 
       <div className="list-head">

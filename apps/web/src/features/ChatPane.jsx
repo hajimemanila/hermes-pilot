@@ -24,6 +24,7 @@ import { shouldSendOnEnter } from '../lib/composerKey.js'
 import { MissionReceiptSheet } from './MissionReceiptSheet.jsx'
 import { SpecSeedSheet } from './SpecSeedSheet.jsx'
 import { SpecReadyBanner } from '../components/SpecReadyBanner.jsx'
+import { SpecMarkdownSheet } from '../components/SpecMarkdownSheet.jsx'
 import { ArchitectJobBar } from '../components/ArchitectJobBar.jsx'
 import { jobPollMs, pickActiveArchitectJob, pickSpecBanner } from '../lib/specSeed.js'
 import { celebrate } from '../lib/vibe.js'
@@ -257,6 +258,8 @@ export function ChatPane({
   const [specJobs, setSpecJobs] = useState(null)
   const [specFiling, setSpecFiling] = useState(false)
   const [specDismissed, setSpecDismissed] = useState([])
+  // 仕様書(MD)プレビュー（SPEC-PILOT-V6 §3.4 ② / D30 ③）。バナーから 1 タップで開く
+  const [specMd, setSpecMd] = useState(null)
   // 進行バーで × を押したジョブ（`failed` の再表示を止める。SPEC V6 §3.3 ②）
   const [specJobClosed, setSpecJobClosed] = useState([])
   // resume できない会話（カンバン作業ログ等）は読み取り専用で表示する
@@ -2393,7 +2396,19 @@ export function ChatPane({
         busy={specFiling}
         onFile={fileSpecBatches}
         onDismiss={(b) => setSpecDismissed((prev) => [...prev, b.path])}
+        onPreview={(b) => setSpecMd({ path: b.path, title: b.title, board: b.board ?? null })}
       />
+
+      {/* 仕様書(MD)プレビュー（SPEC-PILOT-V6 §3.4 ② / D30）。バナーと同じ 1 枚をここでも開く */}
+      {specMd ? (
+        <SpecMarkdownSheet
+          board={specMd.board ?? seedBoard}
+          repo={repo?.id ?? null}
+          path={specMd.path}
+          title={specMd.title}
+          onClose={() => setSpecMd(null)}
+        />
+      ) : null}
 
       {hotSnippets.length || !readonly ? (
         <div className="action-bar">
