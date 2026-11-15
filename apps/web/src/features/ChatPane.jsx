@@ -2031,328 +2031,332 @@ export function ChatPane({
         </div>
       ) : null}
 
-      <div
-        className="chat-scroll"
-        ref={listRef}
-        onScroll={() => {
-          const el = listRef.current
-          if (!el) return
-          const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80
-          stickRef.current = near
-          setAtBottom(near)
-        }}
-      >
-        {!blocks.length && (loadingChat || connState === 'connecting') ? (
-          <Loader label={connState === 'connecting' ? t('chat.connecting') : t('chat.loadingChat')} />
-        ) : !blocks.length ? (
-          <div className="empty">
-            <div>{t('chat.sendToStart')}</div>
-            {recentSessions(sessions, profile, 2).length ? (
-              <div className="empty-recent" aria-label={t('chat.recentAria')}>
-                <div className="empty-recent-head">{t('chat.recentHead')}</div>
-                {recentSessions(sessions, profile, 2).map((x) => (
+      {/* 「↓ 最新へ」ピルをスクロール領域の下端に留める箱（spec-chat-jump-pos Q1=A）。
+          .chat-scroll の伸長はこの箱が持ち、ピルはこの箱の下端 8px を基準に置く。 */}
+      <div className="chat-body">
+        <div
+          className="chat-scroll"
+          ref={listRef}
+          onScroll={() => {
+            const el = listRef.current
+            if (!el) return
+            const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+            stickRef.current = near
+            setAtBottom(near)
+          }}
+        >
+          {!blocks.length && (loadingChat || connState === 'connecting') ? (
+            <Loader label={connState === 'connecting' ? t('chat.connecting') : t('chat.loadingChat')} />
+          ) : !blocks.length ? (
+            <div className="empty">
+              <div>{t('chat.sendToStart')}</div>
+              {recentSessions(sessions, profile, 2).length ? (
+                <div className="empty-recent" aria-label={t('chat.recentAria')}>
+                  <div className="empty-recent-head">{t('chat.recentHead')}</div>
+                  {recentSessions(sessions, profile, 2).map((x) => (
+                    <button
+                      key={x.id}
+                      type="button"
+                      className="empty-recent-row"
+                      title={x.title || x.id}
+                      onClick={async () => {
+                        const ok = await resumeInto(sockRef.current?.rpc, x.id, x.profile || profile)
+                        if (ok?.ok) setStoredSid(x.id)
+                      }}
+                    >
+                      <span className="empty-recent-title">{x.title || x.id}</span>
+                      <span className="empty-recent-when">
+                        {relTime(toEpochMs(x.updated_at ?? x.started_at))}
+                      </span>
+                      <span className="empty-recent-mark" aria-hidden="true">
+                        ›
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          {transcriptMeta?.hasMore && transcriptMeta?.oldestId ? (
+            <button
+              type="button"
+              className="chat-older"
+              disabled={transcriptMeta.loadingMore}
+              onClick={() => {
+                haptic('tap')
+                loadOlderTranscript()
+              }}
+            >
+              {transcriptMeta.loadingMore ? t('chat.loadingOlder') : t('chat.loadOlder')}
+            </button>
+          ) : null}
+          {timeline.map((item) => {
+            if (item.kind === 'report') {
+              const r = item.report
+              if (isPipelineReport(r)) {
+                // 統合レポートはリッチカード（§3.3 ②）。既定は最新 1 件だけ展開する。
+                const ri = reports.findIndex((x) => x.key === r.key)
+                const isNewest = ri === reports.length - 1
+                const isOpen = r.key in reportOpen ? Boolean(reportOpen[r.key]) : isNewest
+                return (
+                  <PipelineReportCard
+                    key={r.key}
+                    report={r}
+                    open={isOpen}
+                    onToggle={() => {
+                      haptic('tap')
+                      setReportOpen((prev) => ({ ...prev, [r.key]: !isOpen }))
+                    }}
+                    onDiscuss={() => discussReport(r)}
+                    onReceipt={() => openReportReceipt(r)}
+                    onOpenBoard={() => openReportBoard(r)}
+                    onCopyCode={copyCode}
+                  />
+                )
+              }
+              return (
+                <div key={r.key} className="msg report" title={fmtDateTime(r.at)}>
+                  <span className="report-body">🖊 {r.text}</span>
                   <button
-                    key={x.id}
                     type="button"
-                    className="empty-recent-row"
-                    title={x.title || x.id}
-                    onClick={async () => {
-                      const ok = await resumeInto(sockRef.current?.rpc, x.id, x.profile || profile)
-                      if (ok?.ok) setStoredSid(x.id)
+                    className="report-link"
+                    onClick={() => {
+                      haptic('tap')
+                      window.dispatchEvent(
+                        new CustomEvent('hm:open-review', {
+                          detail: { taskId: r.taskId, label: r.label },
+                        }),
+                      )
                     }}
                   >
-                    <span className="empty-recent-title">{x.title || x.id}</span>
-                    <span className="empty-recent-when">
-                      {relTime(toEpochMs(x.updated_at ?? x.started_at))}
-                    </span>
-                    <span className="empty-recent-mark" aria-hidden="true">
-                      ›
-                    </span>
+                    {t('chat.reviewAndAnnotate')}
                   </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-        {transcriptMeta?.hasMore && transcriptMeta?.oldestId ? (
-          <button
-            type="button"
-            className="chat-older"
-            disabled={transcriptMeta.loadingMore}
-            onClick={() => {
-              haptic('tap')
-              loadOlderTranscript()
-            }}
-          >
-            {transcriptMeta.loadingMore ? t('chat.loadingOlder') : t('chat.loadOlder')}
-          </button>
-        ) : null}
-        {timeline.map((item) => {
-          if (item.kind === 'report') {
-            const r = item.report
-            if (isPipelineReport(r)) {
-              // 統合レポートはリッチカード（§3.3 ②）。既定は最新 1 件だけ展開する。
-              const ri = reports.findIndex((x) => x.key === r.key)
-              const isNewest = ri === reports.length - 1
-              const isOpen = r.key in reportOpen ? Boolean(reportOpen[r.key]) : isNewest
-              return (
-                <PipelineReportCard
-                  key={r.key}
-                  report={r}
-                  open={isOpen}
-                  onToggle={() => {
-                    haptic('tap')
-                    setReportOpen((prev) => ({ ...prev, [r.key]: !isOpen }))
-                  }}
-                  onDiscuss={() => discussReport(r)}
-                  onReceipt={() => openReportReceipt(r)}
-                  onOpenBoard={() => openReportBoard(r)}
-                  onCopyCode={copyCode}
-                />
+                </div>
               )
             }
-            return (
-              <div key={r.key} className="msg report" title={fmtDateTime(r.at)}>
-                <span className="report-body">🖊 {r.text}</span>
-                <button
-                  type="button"
-                  className="report-link"
-                  onClick={() => {
-                    haptic('tap')
-                    window.dispatchEvent(
-                      new CustomEvent('hm:open-review', {
-                        detail: { taskId: r.taskId, label: r.label },
-                      }),
-                    )
-                  }}
-                >
-                  {t('chat.reviewAndAnnotate')}
-                </button>
-              </div>
-            )
-          }
-          const b = item.block
-          const i = item.index
-          // 配列添字だと履歴を先頭に足したとき開閉状態（expandedTools）がズレる。
-          // mid が無いブロックは実体ごとに採番した key を使い、衝突（= 幽霊 DOM）を防ぐ。
-          let blockKey = b.mid != null && b.mid !== '' ? `mid-${b.mid}` : blockKeysRef.current.get(b)
-          if (!blockKey) {
-            blockKeySeqRef.current += 1
-            blockKey = `at-${b.at || i}-${blockKeySeqRef.current}`
-            blockKeysRef.current.set(b, blockKey)
-          }
-          return b.role === 'user' ? (
-            <div
-              key={blockKey}
-              data-mid={b.mid}
-              className={`msg user${readonly?.focusId && b.mid === readonly.focusId ? ' hit' : ''}`}
-            >
-              <div className="bubble">
-                {b.images?.length ? (
-                  <div className="bubble-imgs">
-                    {b.images.map((img, k) =>
-                      img.url ? (
-                        <span className="bubble-img" key={k}>
-                          <img src={img.url} alt={img.name ?? t('chat.attachedImage')} />
-                        </span>
-                      ) : null,
-                    )}
-                  </div>
-                ) : null}
-                {b.files?.length ? (
-                  <div className="bubble-files">
-                    {b.files.map((f, k) => (
-                      <span className="file-chip" key={k}>
-                        📎 {f.name}
-                        {f.bytes ? <span className="file-size">{fmtBytes(f.bytes)}</span> : null}
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
-                {b.text}
-              </div>
-            </div>
-          ) : b.role === 'assistant' ? (
-            <div
-              key={blockKey}
-              data-mid={b.mid}
-              className={`msg bot${readonly?.focusId && b.mid === readonly.focusId ? ' hit' : ''}`}
-            >
-              <div className="bubble">
-                {b.tools?.length ? (
-                  <details className="msg-tools">
-                    <summary>{t('chat.toolsRan', { count: b.tools.length })}</summary>
-                    <ToolRows
-                      rows={b.tools}
-                      prefix={blockKey}
-                      expandedMap={expandedTools}
-                      onToggle={toggleToolExpand}
-                    />
-                  </details>
-                ) : null}
-                {b.text ? (
-                  <MarkdownBody text={b.text} onCopyCode={copyCode} copyLabel={t('chat.copy')} />
-                ) : b.open ? (
-                  <span className="dots">…</span>
-                ) : (
-                  ''
-                )}
-              </div>
-            </div>
-          ) : (
-            <div key={blockKey} className="msg notice">
-              {b.text}
-            </div>
-          )
-        })}
-        {isWorking ? (
-          <div className="thinking thinking-card" role="status">
-            {(() => {
-              const started = runStartedAt || activeLiveTurn?.startedAt
-              const sec = started ? Math.max(0, Math.floor((nowTick - started) / 1000)) : 0
-              const mm = String(Math.floor(sec / 60)).padStart(2, '0')
-              const ss = String(sec % 60).padStart(2, '0')
-              const liveFallbackRows =
-                !progress.length && activeLiveTurn?.lastTool?.name
-                  ? [{ id: 'live-last', name: activeLiveTurn.lastTool.name, detail: activeLiveTurn.lastActivity || '', full: activeLiveTurn.lastActivity || '', done: false }]
-                  : []
-              const rowsToShow = progress.length ? progress : liveFallbackRows
-              const thinkingLines = thinking ? thinking.trim().split('\n') : []
-              const thinkingShown = thinkingExpanded ? thinking.trim() : thinkingLines.slice(-3).join('\n')
-              return (
-                <>
-                  <div className="working-head">
-                    <span className="working-dot" aria-hidden="true" />
-                    <b className="working-shimmer">Working… {mm}:{ss}</b>
-                    <span className="working-meta">
-                      {progress.length
-                        ? t('chat.toolProgress', { n: progress.length })
-                        : activeLiveTurn?.lastTool?.name
-                          ? t('chat.lastTool', { name: activeLiveTurn.lastTool.name })
-                          : t('chat.thinking')}
-                    </span>
-                  </div>
-                  {rowsToShow.length ? (
-                    <ToolRows
-                      rows={rowsToShow}
-                      prefix="live"
-                      expandedMap={expandedTools}
-                      onToggle={toggleToolExpand}
-                    />
-                  ) : null}
-                  {thinkingShown ? (
-                    <div
-                      className={`thinking-text${thinkingExpanded ? ' expanded' : ''}`}
-                      onClick={() => setThinkingExpanded((v) => !v)}
-                    >
-                      {thinkingShown}
+            const b = item.block
+            const i = item.index
+            // 配列添字だと履歴を先頭に足したとき開閉状態（expandedTools）がズレる。
+            // mid が無いブロックは実体ごとに採番した key を使い、衝突（= 幽霊 DOM）を防ぐ。
+            let blockKey = b.mid != null && b.mid !== '' ? `mid-${b.mid}` : blockKeysRef.current.get(b)
+            if (!blockKey) {
+              blockKeySeqRef.current += 1
+              blockKey = `at-${b.at || i}-${blockKeySeqRef.current}`
+              blockKeysRef.current.set(b, blockKey)
+            }
+            return b.role === 'user' ? (
+              <div
+                key={blockKey}
+                data-mid={b.mid}
+                className={`msg user${readonly?.focusId && b.mid === readonly.focusId ? ' hit' : ''}`}
+              >
+                <div className="bubble">
+                  {b.images?.length ? (
+                    <div className="bubble-imgs">
+                      {b.images.map((img, k) =>
+                        img.url ? (
+                          <span className="bubble-img" key={k}>
+                            <img src={img.url} alt={img.name ?? t('chat.attachedImage')} />
+                          </span>
+                        ) : null,
+                      )}
                     </div>
                   ) : null}
-                </>
-              )
-            })()}
-          </div>
-        ) : null}
-        {linkedReview ? (
-          isWaiting(linkedReview) ? (
-            <div className="chat-live-card warn" role="status">
-              <div className="chat-live-head">
-                <span className="chat-live-title">
-                  {t('chat.reviewLabel', { title: linkedReview.review?.title || linkedReview.title })}
-                </span>
-                <button
-                  type="button"
-                  className="chat-report-btn primary"
-                  onClick={() => {
-                    haptic('tap')
-                    window.dispatchEvent(
-                      new CustomEvent('hm:open-review', {
-                        detail: { taskId: linkedReview.id, label: linkedReview.review?.label },
-                      }),
-                    )
-                  }}
-                >
-                  {t('chat.openInReview')}
-                </button>
+                  {b.files?.length ? (
+                    <div className="bubble-files">
+                      {b.files.map((f, k) => (
+                        <span className="file-chip" key={k}>
+                          📎 {f.name}
+                          {f.bytes ? <span className="file-size">{fmtBytes(f.bytes)}</span> : null}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  {b.text}
+                </div>
               </div>
-              <div className="chat-live-sub">
-                {t('chat.linkedWaiting')}
+            ) : b.role === 'assistant' ? (
+              <div
+                key={blockKey}
+                data-mid={b.mid}
+                className={`msg bot${readonly?.focusId && b.mid === readonly.focusId ? ' hit' : ''}`}
+              >
+                <div className="bubble">
+                  {b.tools?.length ? (
+                    <details className="msg-tools">
+                      <summary>{t('chat.toolsRan', { count: b.tools.length })}</summary>
+                      <ToolRows
+                        rows={b.tools}
+                        prefix={blockKey}
+                        expandedMap={expandedTools}
+                        onToggle={toggleToolExpand}
+                      />
+                    </details>
+                  ) : null}
+                  {b.text ? (
+                    <MarkdownBody text={b.text} onCopyCode={copyCode} copyLabel={t('chat.copy')} />
+                  ) : b.open ? (
+                    <span className="dots">…</span>
+                  ) : (
+                    ''
+                  )}
+                </div>
               </div>
-            </div>
-          ) : (
-            <div className="chat-live-card running" role="status">
-              <div className="chat-live-head">
-                <span className="working-dot" aria-hidden="true" />
-                <b className="working-shimmer">
-                  {linkedReview.status === 'running' ? t('chat.workerRunning') : t('chat.workerQueued')}
-                </b>
-                <button
-                  type="button"
-                  className="chat-report-btn"
-                  onClick={() => {
-                    haptic('tap')
-                    window.dispatchEvent(
-                      new CustomEvent('hm:open-review', {
-                        detail: { taskId: linkedReview.id, label: linkedReview.review?.label },
-                      }),
-                    )
-                  }}
-                >
-                  {t('chat.watchProgress')}
-                </button>
+            ) : (
+              <div key={blockKey} className="msg notice">
+                {b.text}
               </div>
-              <div className="chat-live-sub">{linkedReview.review?.title || linkedReview.title}</div>
+            )
+          })}
+          {isWorking ? (
+            <div className="thinking thinking-card" role="status">
               {(() => {
-                const steps = (workerFeed?.feed?.messages || [])
-                  .filter((m) => m.role !== 'user')
-                  .slice(-4)
-                if (!steps.length) return null
+                const started = runStartedAt || activeLiveTurn?.startedAt
+                const sec = started ? Math.max(0, Math.floor((nowTick - started) / 1000)) : 0
+                const mm = String(Math.floor(sec / 60)).padStart(2, '0')
+                const ss = String(sec % 60).padStart(2, '0')
+                const liveFallbackRows =
+                  !progress.length && activeLiveTurn?.lastTool?.name
+                    ? [{ id: 'live-last', name: activeLiveTurn.lastTool.name, detail: activeLiveTurn.lastActivity || '', full: activeLiveTurn.lastActivity || '', done: false }]
+                    : []
+                const rowsToShow = progress.length ? progress : liveFallbackRows
+                const thinkingLines = thinking ? thinking.trim().split('\n') : []
+                const thinkingShown = thinkingExpanded ? thinking.trim() : thinkingLines.slice(-3).join('\n')
                 return (
-                  <ToolRows
-                    rows={steps.map((m, idx) => {
-                      const raw = String(m.text || '').replace(/\s+/g, ' ').trim()
-                      return {
-                        id: String(m.id ?? idx),
-                        name: m.role === 'tool' ? m.toolName || 'tool' : 'agent',
-                        detail: shortenPath(raw, 56),
-                        full: raw.slice(0, 300),
-                        done: idx < steps.length - 1,
-                      }
-                    })}
-                    prefix={`worker-${linkedReview.id}`}
-                    expandedMap={expandedTools}
-                    onToggle={toggleToolExpand}
-                  />
+                  <>
+                    <div className="working-head">
+                      <span className="working-dot" aria-hidden="true" />
+                      <b className="working-shimmer">Working… {mm}:{ss}</b>
+                      <span className="working-meta">
+                        {progress.length
+                          ? t('chat.toolProgress', { n: progress.length })
+                          : activeLiveTurn?.lastTool?.name
+                            ? t('chat.lastTool', { name: activeLiveTurn.lastTool.name })
+                            : t('chat.thinking')}
+                      </span>
+                    </div>
+                    {rowsToShow.length ? (
+                      <ToolRows
+                        rows={rowsToShow}
+                        prefix="live"
+                        expandedMap={expandedTools}
+                        onToggle={toggleToolExpand}
+                      />
+                    ) : null}
+                    {thinkingShown ? (
+                      <div
+                        className={`thinking-text${thinkingExpanded ? ' expanded' : ''}`}
+                        onClick={() => setThinkingExpanded((v) => !v)}
+                      >
+                        {thinkingShown}
+                      </div>
+                    ) : null}
+                  </>
                 )
               })()}
             </div>
-          )
-        ) : null}
-        {usage ? (
-          <div className="usage">
-            in {usage.input ?? 0} / out {usage.output ?? 0}
-            {usage.cache_read ? ` / cache ${usage.cache_read}` : ''}
-          </div>
+          ) : null}
+          {linkedReview ? (
+            isWaiting(linkedReview) ? (
+              <div className="chat-live-card warn" role="status">
+                <div className="chat-live-head">
+                  <span className="chat-live-title">
+                    {t('chat.reviewLabel', { title: linkedReview.review?.title || linkedReview.title })}
+                  </span>
+                  <button
+                    type="button"
+                    className="chat-report-btn primary"
+                    onClick={() => {
+                      haptic('tap')
+                      window.dispatchEvent(
+                        new CustomEvent('hm:open-review', {
+                          detail: { taskId: linkedReview.id, label: linkedReview.review?.label },
+                        }),
+                      )
+                    }}
+                  >
+                    {t('chat.openInReview')}
+                  </button>
+                </div>
+                <div className="chat-live-sub">
+                  {t('chat.linkedWaiting')}
+                </div>
+              </div>
+            ) : (
+              <div className="chat-live-card running" role="status">
+                <div className="chat-live-head">
+                  <span className="working-dot" aria-hidden="true" />
+                  <b className="working-shimmer">
+                    {linkedReview.status === 'running' ? t('chat.workerRunning') : t('chat.workerQueued')}
+                  </b>
+                  <button
+                    type="button"
+                    className="chat-report-btn"
+                    onClick={() => {
+                      haptic('tap')
+                      window.dispatchEvent(
+                        new CustomEvent('hm:open-review', {
+                          detail: { taskId: linkedReview.id, label: linkedReview.review?.label },
+                        }),
+                      )
+                    }}
+                  >
+                    {t('chat.watchProgress')}
+                  </button>
+                </div>
+                <div className="chat-live-sub">{linkedReview.review?.title || linkedReview.title}</div>
+                {(() => {
+                  const steps = (workerFeed?.feed?.messages || [])
+                    .filter((m) => m.role !== 'user')
+                    .slice(-4)
+                  if (!steps.length) return null
+                  return (
+                    <ToolRows
+                      rows={steps.map((m, idx) => {
+                        const raw = String(m.text || '').replace(/\s+/g, ' ').trim()
+                        return {
+                          id: String(m.id ?? idx),
+                          name: m.role === 'tool' ? m.toolName || 'tool' : 'agent',
+                          detail: shortenPath(raw, 56),
+                          full: raw.slice(0, 300),
+                          done: idx < steps.length - 1,
+                        }
+                      })}
+                      prefix={`worker-${linkedReview.id}`}
+                      expandedMap={expandedTools}
+                      onToggle={toggleToolExpand}
+                    />
+                  )
+                })()}
+              </div>
+            )
+          ) : null}
+          {usage ? (
+            <div className="usage">
+              in {usage.input ?? 0} / out {usage.output ?? 0}
+              {usage.cache_read ? ` / cache ${usage.cache_read}` : ''}
+            </div>
+          ) : null}
+        </div>
+
+        {!atBottom && timeline.length > 0 ? (
+          <button
+            type="button"
+            className={`chat-jump-bottom${isWorking || linkedReview ? ' active' : ''}`}
+            onClick={() => {
+              haptic('tap')
+              const el = listRef.current
+              if (el) {
+                el.scrollTop = el.scrollHeight
+                stickRef.current = true
+                setAtBottom(true)
+              }
+            }}
+          >
+            {isWorking || linkedReview ? t('chat.jumpLatest') : t('chat.jumpBottomPlain')}
+          </button>
         ) : null}
       </div>
-
-      {!atBottom && timeline.length > 0 ? (
-        <button
-          type="button"
-          className={`chat-jump-bottom${isWorking || linkedReview ? ' active' : ''}`}
-          onClick={() => {
-            haptic('tap')
-            const el = listRef.current
-            if (el) {
-              el.scrollTop = el.scrollHeight
-              stickRef.current = true
-              setAtBottom(true)
-            }
-          }}
-        >
-          {isWorking || linkedReview ? t('chat.jumpLatest') : t('chat.jumpBottomPlain')}
-        </button>
-      ) : null}
 
       {attached.length ? (
         <div className="attach-rail">

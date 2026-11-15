@@ -1189,6 +1189,17 @@ label.row-sub {
   color: var(--muted);
 }
 
+/* スクロール領域を 1 枚の箱にして、「↓ 最新へ」ピルをその下端基準で置けるようにする
+   （spec-chat-jump-pos Q1=A）。下端に何が積まれても（チップ帯・入力欄の伸長・添付レール・
+   バナー）ピルはスクロール領域の最下部に留まる。伸長（flex/min-height）は箱側が持つ。 */
+.chat-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .chat-scroll {
   flex: 1;
   min-height: 0;
@@ -1578,11 +1589,13 @@ ol.md-list {
   line-height: 1.45;
 }
 
-/* 上へスクロールしている時の「↓ 最新へ」ピル */
+/* 上へスクロールしている時の「↓ 最新へ」ピル。
+   `.chat-body` の中に居るので、bottom はスクロール領域の下端からの距離になる
+   （spec-chat-jump-pos Q2=A: 見た目の縁は 8px 内側）。 */
 .chat-jump-bottom {
   position: absolute;
   right: 12px;
-  bottom: 68px;
+  bottom: 8px;
   z-index: 15;
   padding: 6px 12px;
   border-radius: 999px;
@@ -1593,6 +1606,18 @@ ol.md-list {
   font-weight: 600;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
   cursor: pointer;
+}
+
+/* 見た目は 26px 前後のまま、当たり判定だけ 44px に広げる（spec-chat-jump-pos Q3=A）。
+   スクロール中に片手で押しても外さない。 */
+.chat-jump-bottom::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 100%;
+  height: 44px;
+  transform: translate(-50%, -50%);
 }
 
 .chat-jump-bottom.active {
