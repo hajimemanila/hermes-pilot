@@ -23,7 +23,12 @@ export default defineConfig({
     outDir: path.resolve(import.meta.dirname, 'dist'),
     emptyOutDir: true,
     sourcemap: false,
-    ...(DEMO ? { rollupOptions: { output: { inlineDynamicImports: true } } } : {}),
+    // デモは全モジュールを 1 チャンクへ畳む仕様（上の inlineDynamicImports）なので、
+    // 既定の 500 kB 警告は構造上必ず出る。デモのときだけ上限を上げて「警告ゼロ」を保つ。
+    // 本番ビルドは既定のまま（本当の肥大化は警告として残す）。
+    ...(DEMO
+      ? { rollupOptions: { output: { inlineDynamicImports: true } }, chunkSizeWarningLimit: 1200 }
+      : {}),
   },
   server: {
     port: 4098,
