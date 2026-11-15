@@ -155,6 +155,82 @@ export function rewriteBoardWorkdir(hermesHome, { oldWorkdir, newWorkdir }) {
   return out
 }
 
+/** 旧外部 cron（Pilot の reviewWatcher / pipelineWatcher と二重通知になる）の名前（D44）。 */
+export const LEGACY_CRON_NAMES = ['mobile-akapen-watch', 'mobile-review-watch']
+
+/** cron ストアの候補パス（現行 `cron/jobs.json` と互換の `cron.json`）。 */
+export function cronStorePaths(hermesHome) {
+  return [path.join(hermesHome, 'cron', 'jobs.json'), path.join(hermesHome, 'cron.json')]
+}
+
+/** ジョブ 1 件が旧 cron かを、名前系フィールドの部分一致で判定する。 */
+export function isLegacyCronEntry(job, names = LEGACY_CRON_NAMES) {
+  if (!job || typeof job !== 'object') return false
+  for (const key of ['name', 'id', 'script', 'prompt', 'label', 'title']) {
+    const v = job[key]
+    if (typeof v === 'string' && names.some((n) => v.includes(n))) return true
+  }
+  return false
+}
+
+/**
+ * `~/.hermes/cron/jobs.json`（`{ jobs: [...], updated_at }` 形式・配列形式の両方）と
+ * 互換パス `~/.hermes/cron.json` から旧 cron エントリを検出して除去する（D44）。
+ *
+ * 方針:
+ *  - **冪等**: 既に無ければ何も書かない（2 回流しても mtime 以外変わらない）
+ *  - **非破壊**: 一致しないジョブ・`updated_at` 等のトップレベル構造はそのまま残す
+ *  - **原子的**: 同一ディレクトリの tmp に書いてから `rename` する（ticker が半端な JSON を読まない）
+ *  - `dryRun: true` では検出だけ行い、ファイルを触らない
+ *
+ * @param {string} hermesHome
+ * @param {{dryRun?: boolean, names?: string[]}} [opts]
+ * @returns {{hermesHome: string, removed: number, names: string[], files: object[], scanned: number, errors: object[]}}
+ */
+export function cleanupLegacyCrons(hermesHome, { dryRun = false, names = LEGACY_CRON_NAMES } = {}) {
+  const resolved = path.resolve(String(hermesHome).replace(/^~/, os.homedir()))
+  const result = { hermesHome: resolved, removed: 0, names: [], files: [], scanned: 0, errors: [] }
+
+  for (const file of cronStorePaths(resolved)) {
+    if (!fs.existsSync(file)) continue
+    let parsed
+    try {
+      parsed = JSON.parse(fs.readFileSync(file, 'utf8'))
+    } catch (err) {
+      // 壊れた JSON は触らない（消すより残す方が安全）
+      result.errors.push({ file, error: String(err?.message ?? err) })
+      continue
+    }
+
+    const isArray = Array.isArray(parsed)
+    const jobs = isArray ? parsed : parsed?.jobs
+    if (!Array.isArray(jobs)) {
+      result.files.push({ file, removed: 0, names: [] })
+      continue
+    }
+
+    const kept = []
+    const dropped = []
+    for (const job of jobs) (isLegacyCronEntry(job, names) ? dropped : kept).push(job)
+    result.scanned += jobs.length
+    const droppedNames = dropped.map((j) => String(j?.name ?? j?.id ?? 'unknown'))
+    result.files.push({ file, removed: dropped.length, names: droppedNames })
+    if (!dropped.length) continue
+
+    result.removed += dropped.length
+    result.names.push(...droppedNames)
+    if (dryRun) continue
+
+    const next = isArray ? kept : { ...parsed, jobs: kept }
+    const tmp = `${file}.tmp-${process.pid}-${Date.now()}`
+    fs.writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
+    fs.renameSync(tmp, file)
+    result.files[result.files.length - 1].written = true
+  }
+
+  return result
+}
+
 /**
  * 移行本体。
  *
@@ -181,10 +257,15 @@ export function migrate(opts = {}) {
     existing: { sheets: 0, shots: 0, library: 0 },
     kanban: [],
     boards: [],
+    crons: { hermesHome: hermesHome, removed: 0, names: [], files: [], scanned: 0, errors: [] },
     skipped: [],
   }
 
-  if (opts.dryRun) return report
+  if (opts.dryRun) {
+    // dryRun でも「何が消えるか」だけは返す（ファイルは触らない）
+    report.crons = cleanupLegacyCrons(hermesHome, { dryRun: true })
+    return report
+  }
 
   // 1) シート・画像の物理コピー（mtime 保持）
   for (const [key, sub] of [
@@ -233,15 +314,19 @@ export function migrate(opts = {}) {
     newWorkdir: reviewDir,
   })
 
+  // 6) 旧外部 cron（mobile-akapen-watch / mobile-review-watch）の除去（D44）
+  report.crons = cleanupLegacyCrons(hermesHome)
+
   return report
 }
 
 /** レポートを 1 画面に整形する（stdout 用）。 */
-export function formatReport(r, { tagOld = TAG_OLD, tagNew = TAG_NEW } = {}) {
+export function formatReport(r, { tagOld = TAG_OLD, tagNew = TAG_NEW, dryRun = false } = {}) {
   const lines = []
   lines.push('=== hermes-pilot migration ===')
   lines.push(`from: ${r.srcRoot}`)
   lines.push(`to:   ${r.pluginDataDir}`)
+  lines.push(`home: ${r.hermesHome}${dryRun ? '（dry run: 何も書き換えていません）' : ''}`)
   lines.push('')
   lines.push(`sheets : 新規 ${r.copied.sheets} / 既存 ${r.existing.sheets}`)
   lines.push(`shots  : 新規 ${r.copied.shots} / 既存 ${r.existing.shots}`)
@@ -259,18 +344,30 @@ export function formatReport(r, { tagOld = TAG_OLD, tagNew = TAG_NEW } = {}) {
     lines.push(`board の default_workdir 更新: ${r.boards.length} 件`)
     for (const b of r.boards) lines.push(`  * ${b}`)
   }
+  const crons = r.crons ?? { removed: 0, names: [], files: [], scanned: 0, errors: [] }
+  lines.push('')
+  if (crons.removed) {
+    lines.push(`旧 cron のクリーンアップ: ${crons.removed} 件を削除（${crons.names.join(', ')}）`)
+    for (const f of crons.files ?? []) if (f.removed) lines.push(`  * ${f.file}: ${f.removed} 件`)
+  } else if ((crons.errors ?? []).length) {
+    lines.push(`旧 cron のクリーンアップ: 0 件（読み取り失敗 ${crons.errors.length} 件・未変更）`)
+  } else {
+    lines.push('旧 cron のクリーンアップ: 0 件（mobile-akapen-watch / mobile-review-watch は既に無い）')
+  }
   lines.push('')
   lines.push('旧ディレクトリは削除していません（物理コピーのみ）。')
   return lines.join('\n')
 }
 
-// CLI（`npm run migrate:pilot` / `node scripts/migrate-to-hermes-pilot.mjs`）
+// CLI（`npm run migrate:pilot` / `node scripts/migrate-to-hermes-pilot.mjs [--dry-run]`）
 const invokedDirectly =
   process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))
 if (invokedDirectly) {
+  // `HERMES_HOME` が環境にあると `HOME` を変えても実ストアを見る。何も壊さず下見したい時は --dry-run。
+  const dryRun = process.argv.includes('--dry-run') || process.argv.includes('-n')
   try {
-    const report = migrate()
-    console.log(formatReport(report))
+    const report = migrate({ dryRun })
+    console.log(formatReport(report, { dryRun }))
   } catch (err) {
     console.error(`[migrate] 失敗: ${err?.stack ?? err}`)
     process.exit(1)

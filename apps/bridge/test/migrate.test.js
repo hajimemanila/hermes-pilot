@@ -10,6 +10,9 @@ import {
   rewriteKanbanTag,
   formatReport,
   resolveHermesHome,
+  cleanupLegacyCrons,
+  cronStorePaths,
+  isLegacyCronEntry,
 } from '../../../scripts/migrate-to-hermes-pilot.mjs'
 
 /** 旧環境（akapen / plugin-data/akapen / mobile-pwa / kanban）を一時ディレクトリに作る。 */
@@ -220,4 +223,158 @@ test('migrate は HERMES_HOME がプロファイルを指していても profile
   // kanban.db も本物（profiles の外）を見つける
   assert.equal(report.kanban.length, 1)
   assert.equal(report.kanban[0].updated, 2)
+})
+
+// ── D44: 旧外部 cron の自動クリーンアップ ───────────────────────────────
+
+/** cron/jobs.json を一時 hermesHome に作り、{jobs, updated_at} を返す。 */
+function tempCronStore(jobs, { arrayForm = false, extra = {} } = {}) {
+  const hermesHome = fs.mkdtempSync(path.join(os.tmpdir(), 'migrate-cron-'))
+  const [file] = cronStorePaths(hermesHome)
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const body = arrayForm ? jobs : { jobs, updated_at: '2026-11-15T00:00:00+08:00', ...extra }
+  fs.writeFileSync(file, `${JSON.stringify(body, null, 2)}\n`, 'utf8')
+  return { hermesHome, file }
+}
+
+test('cleanupLegacyCrons は旧 akapen/review watch だけを消し、他の cron とトップレベル構造を保つ', () => {
+  const store = tempCronStore(
+    [
+      { id: 'c1', name: 'mobile-akapen-watch', prompt: '赤ペンの完了を Discord へ' },
+      { id: 'c2', name: 'mobile-review-watch', script: 'review-watch.sh' },
+      { id: 'c3', name: 'kanban-reap', script: 'kanban-reap.sh' },
+      { id: 'c4', name: 'morning-brief', prompt: '朝のブリーフ' },
+    ],
+    { extra: { version: 3 } },
+  )
+
+  const res = cleanupLegacyCrons(store.hermesHome)
+  assert.equal(res.removed, 2)
+  assert.deepEqual(res.names, ['mobile-akapen-watch', 'mobile-review-watch'])
+  assert.equal(res.errors.length, 0)
+
+  const saved = JSON.parse(fs.readFileSync(store.file, 'utf8'))
+  assert.deepEqual(
+    saved.jobs.map((j) => j.id),
+    ['c3', 'c4'],
+    '一致しないジョブは保持する',
+  )
+  assert.equal(saved.updated_at, '2026-11-15T00:00:00+08:00', 'トップレベルの updated_at を保つ')
+  assert.equal(saved.version, 3, '未知のトップレベルキーも保つ')
+  // 元ファイルだけが残る（tmp が残らない＝原子的書き込み）
+  assert.deepEqual(fs.readdirSync(path.dirname(store.file)).sort(), ['jobs.json'])
+})
+
+test('cleanupLegacyCrons は配列形式の cron ストアにも効く', () => {
+  const store = tempCronStore(
+    [{ name: 'mobile-akapen-watch' }, { name: 'keep-me' }],
+    { arrayForm: true },
+  )
+  const res = cleanupLegacyCrons(store.hermesHome)
+  assert.equal(res.removed, 1)
+  const saved = JSON.parse(fs.readFileSync(store.file, 'utf8'))
+  assert.ok(Array.isArray(saved), '配列形式を保つ')
+  assert.deepEqual(
+    saved.map((j) => j.name),
+    ['keep-me'],
+  )
+})
+
+test('cleanupLegacyCrons は name 以外（script / prompt / label / id）でも旧 cron を検出する', () => {
+  assert.equal(isLegacyCronEntry({ script: '/opt/mobile-akapen-watch.sh' }), true)
+  assert.equal(isLegacyCronEntry({ prompt: 'mobile-review-watch を回す' }), true)
+  assert.equal(isLegacyCronEntry({ label: 'mobile-akapen-watch' }), true)
+  assert.equal(isLegacyCronEntry({ id: 'mobile-review-watch-2' }), true)
+  assert.equal(isLegacyCronEntry({ name: 'kanban-reap', script: 'kanban-reap.sh' }), false)
+  assert.equal(isLegacyCronEntry({}), false)
+  assert.equal(isLegacyCronEntry(null), false)
+})
+
+test('cleanupLegacyCrons は cron ストアが無い環境で無害に空結果を返す', () => {
+  const hermesHome = fs.mkdtempSync(path.join(os.tmpdir(), 'migrate-nocron-'))
+  const res = cleanupLegacyCrons(hermesHome)
+  assert.equal(res.removed, 0)
+  assert.deepEqual(res.names, [])
+  assert.deepEqual(res.files, [])
+  assert.equal(res.errors.length, 0)
+})
+
+test('cleanupLegacyCrons は dryRun でファイルを書き換えない', () => {
+  const store = tempCronStore([{ name: 'mobile-akapen-watch' }, { name: 'keep-me' }])
+  const before = fs.readFileSync(store.file, 'utf8')
+  const stamp = fs.statSync(store.file).mtimeMs
+
+  const res = cleanupLegacyCrons(store.hermesHome, { dryRun: true })
+  assert.equal(res.removed, 1, '何が消えるかは返す')
+  assert.deepEqual(res.names, ['mobile-akapen-watch'])
+  assert.equal(fs.readFileSync(store.file, 'utf8'), before, '本文は変わらない')
+  assert.equal(fs.statSync(store.file).mtimeMs, stamp, '書き込みもしない')
+})
+
+test('cleanupLegacyCrons は冪等（2 回目は 0 件で書き込まない）', () => {
+  const store = tempCronStore([{ name: 'mobile-akapen-watch' }, { name: 'keep-me' }])
+  assert.equal(cleanupLegacyCrons(store.hermesHome).removed, 1)
+  const stamp = fs.statSync(store.file).mtimeMs
+  const second = cleanupLegacyCrons(store.hermesHome)
+  assert.equal(second.removed, 0)
+  assert.equal(fs.statSync(store.file).mtimeMs, stamp, '対象が無ければ書かない')
+})
+
+test('cleanupLegacyCrons は壊れた JSON を消さずに errors へ積む', () => {
+  const hermesHome = fs.mkdtempSync(path.join(os.tmpdir(), 'migrate-badcron-'))
+  const [file] = cronStorePaths(hermesHome)
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, '{ this is not json', 'utf8')
+  const res = cleanupLegacyCrons(hermesHome)
+  assert.equal(res.removed, 0)
+  assert.equal(res.errors.length, 1)
+  assert.equal(fs.readFileSync(file, 'utf8'), '{ this is not json')
+})
+
+test('migrate は旧 cron を片付け、レポートに削除件数を出す', () => {
+  const env = tempLegacy()
+  const [file] = cronStorePaths(env.hermesHome)
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(
+    file,
+    `${JSON.stringify(
+      {
+        jobs: [
+          { id: 'c1', name: 'mobile-akapen-watch' },
+          { id: 'c2', name: 'kanban-reap' },
+        ],
+        updated_at: '2026-11-15T00:00:00+08:00',
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  )
+
+  const report = migrate({ home: env.home, hermesHome: env.hermesHome })
+  assert.equal(report.crons.removed, 1)
+  assert.deepEqual(report.crons.names, ['mobile-akapen-watch'])
+  const saved = JSON.parse(fs.readFileSync(file, 'utf8'))
+  assert.deepEqual(saved.jobs.map((j) => j.id), ['c2'])
+  assert.match(formatReport(report), /旧 cron のクリーンアップ: 1 件を削除（mobile-akapen-watch）/)
+})
+
+test('migrate の dryRun は旧 cron を検出するだけで消さない', () => {
+  const env = tempLegacy()
+  const [file] = cronStorePaths(env.hermesHome)
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const before = `${JSON.stringify({ jobs: [{ name: 'mobile-review-watch' }] }, null, 2)}\n`
+  fs.writeFileSync(file, before, 'utf8')
+
+  const report = migrate({ home: env.home, hermesHome: env.hermesHome, dryRun: true })
+  assert.equal(report.crons.removed, 1)
+  assert.equal(fs.readFileSync(file, 'utf8'), before, 'dryRun では書かない')
+})
+
+test('旧環境が無いときのレポートはクリーンアップ 0 件を明示する', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'migrate-nocron-report-'))
+  const hermesHome = path.join(home, '.hermes')
+  fs.mkdirSync(hermesHome, { recursive: true })
+  const text = formatReport(migrate({ home, hermesHome }))
+  assert.match(text, /旧 cron のクリーンアップ: 0 件/)
 })
