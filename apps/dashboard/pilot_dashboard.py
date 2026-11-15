@@ -521,7 +521,6 @@ def local_capabilities(
     tailscale_app = home / "Applications" / "Tailscale.app" / "Contents" / "MacOS" / "Tailscale"
     has_tailscale = bool(which("tailscale")) or Path("/Applications/Tailscale.app/Contents/MacOS/Tailscale").exists() or tailscale_app.exists()
     has_hermes = bool(which("hermes")) or (home / ".hermes" / "hermes-agent" / ".hermes" / "bin" / "hermes").exists()
-    has_agy = bool(which("agy"))
     key = service_key()
     unit = SERVICE_UNITS[key] if key else None
     return {
@@ -529,8 +528,6 @@ def local_capabilities(
         "serviceManager": SERVICE_MANAGERS[key] if key else "none",
         "hasTailscale": has_tailscale,
         "hasHermesCli": has_hermes,
-        # Opt-in の Architect ランナー（実行ファイルの存在だけ。認証ファイルは見ない）
-        "hasAgyCli": has_agy,
         "pilotServiceUnit": unit,
     }
 
@@ -1076,8 +1073,8 @@ def build_pipeline(
         "ok": True,
         "source": "bridge",
         "board": board or None,
+        # ランナーは Hermes Native 固定（外部 CLI の子プロセス起動は行わない）
         "runner": "hermes",
-        "hasAgyCli": False,
         "pipeline": None,
         "jobs": [],
         "pending": [],
@@ -1085,10 +1082,8 @@ def build_pipeline(
     }
 
     try:
-        config = request(base, "/api/architect/config", token, method="GET")
-        if isinstance(config, Mapping) and config.get("ok"):
-            payload["runner"] = "antigravity" if config.get("runner") == "antigravity" else "hermes"
-            payload["hasAgyCli"] = bool(config.get("hasAgyCli"))
+        # GET はブリッジの生死判定だけに使う（ランナー切替は廃止済み）
+        request(base, "/api/architect/config", token, method="GET")
     except BridgeUnavailable as exc:
         payload["source"] = "offline"
         payload["notice"] = str(exc)
@@ -1148,9 +1143,9 @@ def pipeline_action(
 ) -> dict[str, Any]:
     """``POST /pipeline`` — ``{action: "optimize"} | {action: "setRunner", runner}``.
 
-    Both run **on the bridge**, so the audit trail records them. An unknown
-    runner, or ``antigravity`` on a machine without ``agy``, is rejected by the
-    bridge and passed back verbatim — the tab never invents success.
+    Both run **on the bridge**, so the audit trail records them. The runner is
+    fixed to ``hermes`` (Hermes Native); anything else is rejected here and by
+    the bridge, and passed back verbatim — the tab never invents success.
     """
     paths = paths or resolve_paths()
     request = request or bridge_request
@@ -1170,8 +1165,8 @@ def pipeline_action(
 
     if action == "setRunner":
         runner = str(body.get("runner") or "").strip()
-        if runner not in ("hermes", "antigravity"):
-            return {"ok": False, "code": "invalid_runner", "error": "runner must be hermes or antigravity"}
+        if runner != "hermes":
+            return {"ok": False, "code": "invalid_runner", "error": "runner must be hermes"}
         try:
             answer = request(base, "/api/architect/config", token, method="PUT", body={"runner": runner})
         except BridgeUnavailable as exc:

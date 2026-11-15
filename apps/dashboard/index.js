@@ -127,9 +127,8 @@
       pipelineLead: "Who drafts the spec, and the one-tap A2B optimization (SOUL.md + skills).",
       pipelineRunner: "Architect runner",
       pipelineHermes: "Hermes Native",
-      pipelineAgy: "Antigravity (agy)",
-      pipelineAgyOk: "Opt-in available — the official agy CLI runs as a subprocess; no token access.",
-      pipelineAgyMissing: "agy CLI not found on this machine — Hermes Native only.",
+      pipelineHermesFixed:
+        "Fixed to Hermes Native — specs come from docs/SPEC-*.md files, so no external AI CLI is ever spawned.",
       pipelineSoul: "SOUL.md",
       pipelineSkills: "Skills",
       pipelineApplied: "applied",
@@ -261,9 +260,8 @@
       pipelineLead: "仕様書を誰が書くか、そして 1 タップの A2B 最適化（SOUL.md ＋ スキル）。",
       pipelineRunner: "Architect のランナー",
       pipelineHermes: "Hermes Native",
-      pipelineAgy: "Antigravity (agy)",
-      pipelineAgyOk: "Opt-in 可能 — 公式 agy CLI を子プロセス起動します。トークンには触れません。",
-      pipelineAgyMissing: "このマシンに agy CLI がありません — Hermes Native のみ。",
+      pipelineHermesFixed:
+        "Hermes Native に固定 — 仕様書は docs/SPEC-*.md のファイル経由で受け取るため、外部 AI CLI は起動しません。",
       pipelineSoul: "SOUL.md",
       pipelineSkills: "スキル",
       pipelineApplied: "適用済み",
@@ -616,8 +614,6 @@
         });
     }
 
-    var runner = (data && data.runner) || "hermes";
-    var hasAgy = Boolean(data && data.hasAgyCli);
     var pipeline = data && data.pipeline;
     var soulApplied = Boolean(pipeline && pipeline.soul && pipeline.soul.applied);
     var skillsPresent = pipeline && pipeline.hermes && Array.isArray(pipeline.hermes.present) ? pipeline.hermes.present.length : 0;
@@ -630,39 +626,8 @@
       err ? h("p", { className: "hp-error" }, err) : null,
       note ? h("p", { className: "hp-hint" }, note) : null,
       data && data.notice ? h("p", { className: "hp-hint" }, data.notice) : null,
-      h(Chip, { label: t.pipelineRunner, value: runner === "antigravity" ? t.pipelineAgy : t.pipelineHermes }),
-      h(
-        "div",
-        { className: "hp-actions" },
-        h(
-          "button",
-          {
-            type: "button",
-            className: "hp-btn hp-btn-sm" + (runner === "hermes" ? " hp-btn-primary" : ""),
-            "aria-pressed": runner === "hermes",
-            disabled: busy,
-            onClick: function () {
-              act({ action: "setRunner", runner: "hermes" });
-            }
-          },
-          t.pipelineHermes
-        ),
-        h(
-          "button",
-          {
-            type: "button",
-            className: "hp-btn hp-btn-sm" + (runner === "antigravity" ? " hp-btn-primary" : ""),
-            "aria-pressed": runner === "antigravity",
-            disabled: busy || !hasAgy,
-            title: hasAgy ? t.pipelineAgyOk : t.pipelineAgyMissing,
-            onClick: function () {
-              act({ action: "setRunner", runner: "antigravity" });
-            }
-          },
-          t.pipelineAgy
-        )
-      ),
-      h("p", { className: "hp-hint" }, hasAgy ? t.pipelineAgyOk : t.pipelineAgyMissing),
+      h(Chip, { label: t.pipelineRunner, value: t.pipelineHermes }),
+      h("p", { className: "hp-hint" }, t.pipelineHermesFixed),
       h(
         "div",
         { className: "hp-kv" },

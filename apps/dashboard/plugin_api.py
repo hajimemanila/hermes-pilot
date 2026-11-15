@@ -200,7 +200,7 @@ def get_pipeline(board: Optional[str] = Query(None)) -> Any:
 
 @router.post("/pipeline")
 def post_pipeline(payload: Optional[dict] = Body(default=None)) -> Any:
-    """``optimize``（SOUL.md ＋ スキル配置）または ``setRunner``（hermes / antigravity）。"""
+    """``optimize``（SOUL.md ＋ スキル配置）または ``setRunner``（hermes 固定 / Hermes Native）。"""
     try:
         result = logic.pipeline_action(payload=payload)
     except Exception as exc:

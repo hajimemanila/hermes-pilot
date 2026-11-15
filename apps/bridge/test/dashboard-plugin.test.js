@@ -657,8 +657,8 @@ def fake(base, path, tok, *, method="GET", body=None, timeout=4.0):
     seen.append((path, method, body))
     if path == "/api/architect/config":
         if method == "PUT":
-            return {"ok": True, "runner": body.get("runner"), "hasAgyCli": True}
-        return {"ok": True, "runner": "antigravity", "hasAgyCli": True}
+            return {"ok": True, "runner": body.get("runner")}
+        return {"ok": True, "runner": "hermes"}
     if path == "/api/pipeline/status":
         return {"ok": True, "soul": {"applied": True, "backups": 1},
                 "hermes": {"present": ["quick-review", "annotation", "spec-architect"], "missing": []},
@@ -673,7 +673,8 @@ def fake(base, path, tok, *, method="GET", body=None, timeout=4.0):
     raise AssertionError(path)
 
 data = m.build_pipeline(paths, board="hermes-pilot", request=fake)
-set_runner = m.pipeline_action(paths, {"action": "setRunner", "runner": "antigravity"}, request=fake)
+set_runner = m.pipeline_action(paths, {"action": "setRunner", "runner": "hermes"}, request=fake)
+old_runner = m.pipeline_action(paths, {"action": "setRunner", "runner": "antigravity"}, request=fake)
 bad_runner = m.pipeline_action(paths, {"action": "setRunner", "runner": "gpt"}, request=fake)
 bad_action = m.pipeline_action(paths, {"action": "nope"}, request=fake)
 opt = m.pipeline_action(paths, {"action": "optimize"}, request=fake)
@@ -683,7 +684,7 @@ def down(base, path, tok, *, method="GET", body=None, timeout=4.0):
 
 offline = m.build_pipeline(paths, request=down)
 print(json.dumps({
-  "runner": data["runner"], "hasAgy": data["hasAgyCli"],
+  "runner": data["runner"], "agyKey": "hasAgyCli" in data,
   "soul": data["pipeline"]["soul"]["applied"],
   "skills": len(data["pipeline"]["hermes"]["present"]),
   "jobs": len(data["jobs"]), "pending": data["pending"][0]["pendingCount"],
@@ -691,13 +692,13 @@ print(json.dumps({
   "boardQuery": [p for p, meth, b in seen if p.startswith("/api/architect/jobs")],
   "tokenLeak": token in json.dumps(data),
   "setRunner": set_runner.get("ok"), "setRunnerMethod": [m2 for p, m2, b in seen if p == "/api/architect/config"],
-  "badRunner": bad_runner.get("code"), "badAction": bad_action.get("code"),
+  "oldRunner": old_runner.get("code"), "badRunner": bad_runner.get("code"), "badAction": bad_action.get("code"),
   "optimizeOk": opt.get("ok"), "optimizeAction": opt.get("action"),
   "offline": [offline["source"], offline["ok"], offline["runner"]],
 }))`
   const out = runPython(script)
-  assert.equal(out.runner, 'antigravity')
-  assert.equal(out.hasAgy, true)
+  assert.equal(out.runner, 'hermes', 'ランナーは Hermes Native 固定')
+  assert.equal(out.agyKey, false, 'hasAgyCli は /pipeline の payload から消えている')
   assert.equal(out.soul, true, 'SOUL.md の適用状態をそのまま返す')
   assert.equal(out.skills, 3)
   assert.equal(out.jobs, 1)
@@ -707,6 +708,7 @@ print(json.dumps({
   assert.equal(out.tokenLeak, false, '64 文字トークンは返さない')
   assert.equal(out.setRunner, true)
   assert.ok(out.setRunnerMethod.includes('PUT'), 'ランナー変更は PUT で送る')
+  assert.equal(out.oldRunner, 'invalid_runner', 'hermes 以外のランナーは受け付けない')
   assert.equal(out.badRunner, 'invalid_runner')
   assert.equal(out.badAction, 'invalid_action')
   assert.equal(out.optimizeOk, true)
