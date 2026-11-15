@@ -12,6 +12,7 @@ import {
 } from '../lib/annotationStamps.js'
 import { readActiveChatId } from '../lib/chatReports.js'
 import { haptic } from '../lib/haptic.js'
+import { readSnippetBars, subscribeSnippetBars } from '../lib/snippetBars.js'
 import { useI18n } from '../i18n/index.js'
 
 /**
@@ -60,6 +61,9 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
   const [approving, setApproving] = useState(false)
   // スタンプは 1 行の横スクロール＋「＋」ドロワー（チャットの定型チップと同じ作法）
   const [stampSheet, setStampSheet] = useState(false)
+  // 帯の表示トグル（SPEC-PILOT-V7 §3.4 / V7-4）。隠してもツール列のスタンプボタンから開ける
+  const [bars, setBars] = useState(() => readSnippetBars())
+  useEffect(() => subscribeSnippetBars(setBars), [])
   // 幅が広いとき（タブレット横・2 ペインの詳細）は操作列を右へ寄せ、画像に高さを全部渡す
   const [wide, setWide] = useState(false)
   const [closing, setClosing] = useState(false)
@@ -381,7 +385,9 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
         </div>
 
         <div className="ak-anno-side">
-          {/* 1 タップ指示スタンプ: チャットの定型チップと同じ「1 行 + ＋ ドロワー」 */}
+          {/* 1 タップ指示スタンプ: チャットの定型チップと同じ「1 行 + ＋ ドロワー」。
+              設定タブで非表示にしたときはツール列のスタンプボタンから開く（§3.4） */}
+          {bars.annotation ? (
           <div className="ak-anno-bar">
             <span className="ak-anno-bar-title">{t('annot.stampsTitle')}</span>
             <div className="ak-anno-stamps-scroll" role="group" aria-label={t('annot.stampsAria')}>
@@ -413,6 +419,7 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
               ＋
             </button>
           </div>
+          ) : null}
 
           {error ? <div className="ak-error ak-anno-error">{error}</div> : null}
 
@@ -446,6 +453,22 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
             >
               <span aria-hidden="true">↩</span>
             </button>
+            {/* スタンプ帯を隠したときの入口（SPEC-PILOT-V7 §3.4）。帯があるときは出さない */}
+            {!bars.annotation ? (
+              <button
+                type="button"
+                className="ak-anno-tool"
+                onClick={() => {
+                  haptic('tap')
+                  setStampSheet(true)
+                }}
+                disabled={!ready || busy}
+                aria-label={t('annot.stampTool')}
+                title={t('annot.stampTool')}
+              >
+                <span aria-hidden="true">🏷️</span>
+              </button>
+            ) : null}
             <input
               className="ak-anno-note"
               value={note}

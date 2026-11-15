@@ -21,6 +21,7 @@ import { isWaiting } from '../lib/reviewView.js'
 import { api } from '../api.js'
 import { composerHeight } from '../lib/composerSize.js'
 import { shouldSendOnEnter } from '../lib/composerKey.js'
+import { readSnippetBars, subscribeSnippetBars } from '../lib/snippetBars.js'
 import { MissionReceiptSheet } from './MissionReceiptSheet.jsx'
 import { SpecSeedSheet } from './SpecSeedSheet.jsx'
 import { SpecReadyBanner } from '../components/SpecReadyBanner.jsx'
@@ -295,6 +296,9 @@ export function ChatPane({
   const [snippets, setSnippets] = useState([])
   const [snippetSheet, setSnippetSheet] = useState(false)
   const pressRef = useRef({})
+  // 帯の表示トグル（SPEC-PILOT-V7 §3.4 / V7-4）。設定タブの切替にイベントでその場で追従する
+  const [bars, setBars] = useState(() => readSnippetBars())
+  useEffect(() => subscribeSnippetBars(setBars), [])
 
   const sidRef = useRef(null)
   const storedRef = useRef(null)
@@ -2415,7 +2419,9 @@ export function ChatPane({
         />
       ) : null}
 
-      {hotSnippets.length || !readonly ? (
+      {/* 定型チップ帯（設定タブで非表示にできる・SPEC-PILOT-V7 §3.4）。隠したときは
+          入力欄の ＋ →「定型文」から同じスニペット一覧を開ける */}
+      {bars.chat && (hotSnippets.length || !readonly) ? (
         <div className="action-bar">
           <div className="chips-scroll">
             {hotSnippets.map((s) => (
@@ -2588,6 +2594,22 @@ export function ChatPane({
               </span>
               <Icon name="chevron" />
             </button>
+            {/* 定型チップ帯を隠したときの入口（SPEC-PILOT-V7 §3.4）。帯があるときは出さない */}
+            {!bars.chat ? (
+              <button
+                className="list-item"
+                onClick={() => {
+                  setAttachSheet(false)
+                  setSnippetSheet(true)
+                }}
+              >
+                <span style={{ flex: 1 }}>
+                  <span className="row-title">{t('chat.snippetsFromPlus')}</span>
+                  <span className="row-sub" style={{ display: 'block' }}>{t('chat.snippetsFromPlusSub')}</span>
+                </span>
+                <Icon name="chevron" />
+              </button>
+            ) : null}
           </div>
           <div className="row-sub" style={{ padding: '12px 6px 18px', lineHeight: 1.7 }}>
             {t('chat.attachNote')}

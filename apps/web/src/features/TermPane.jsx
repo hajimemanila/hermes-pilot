@@ -5,6 +5,7 @@ import '@xterm/xterm/css/xterm.css'
 import { api, openSocket } from '../api.js'
 import { Icon, Sheet } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
+import { readSnippetBars, subscribeSnippetBars } from '../lib/snippetBars.js'
 import { useI18n } from '../i18n/index.js'
 
 /**
@@ -27,6 +28,9 @@ export function TermPane({ notify }) {
   const [snippets, setSnippets] = useState([])
   const [sheet, setSheet] = useState(false)
   const pressRef = useRef({})
+  // 帯の表示トグル（SPEC-PILOT-V7 §3.4 / V7-4）。隠してもヘッダの定型ボタン（term.snippets）で開ける
+  const [bars, setBars] = useState(() => readSnippetBars())
+  useEffect(() => subscribeSnippetBars(setBars), [])
 
   useEffect(() => {
     const term = new Terminal({
@@ -142,7 +146,7 @@ export function TermPane({ notify }) {
       }
     }, 80)
     return () => clearTimeout(fitTimer)
-  }, [snippets.length])
+  }, [snippets.length, bars.term])
 
   /** 端末へ送る（exec=true で「現在の行を消して Enter まで」）。 */
   const sendToPty = useCallback(
@@ -186,7 +190,7 @@ export function TermPane({ notify }) {
         </button>
       </div>
 
-      {hot.length ? (
+      {bars.term && hot.length ? (
         <div className="action-bar">
           <div className="chips-scroll">
             {hot.map((s) => (

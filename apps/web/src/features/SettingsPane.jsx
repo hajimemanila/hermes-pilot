@@ -7,6 +7,7 @@ import { haptic, isHapticEnabled, setHapticEnabled } from '../lib/haptic.js'
 import { getActiveVibe, onVibeChange, setVibe } from '../lib/vibe.js'
 import { isSoundEnabled, playSound, setSoundEnabled } from '../lib/soundFx.js'
 import { foldAudit } from '../lib/auditFold.js'
+import { readSnippetBars, setSnippetBar } from '../lib/snippetBars.js'
 import { useI18n } from '../i18n/index.js'
 import { LANGS } from '../i18n/lang.js'
 import { useTheme } from '../lib/useTheme.js'
@@ -48,6 +49,16 @@ const THEME_CHOICES = [
 const VIBE_CHOICES = [
   { value: 'dopamine', key: 'settings.vibeDopamine' },
   { value: 'serotonin', key: 'settings.vibeSerotonin' },
+]
+
+/**
+ * 帯の表示トグル（SPEC-PILOT-V7 §3.4 / V7-4）。
+ * チャット / 赤入れ / ターミナルの 3 箇所を個別に隠せる（既定は全 ON）。
+ */
+const BAR_CHOICES = [
+  { id: 'chat', key: 'settings.barChat' },
+  { id: 'annotation', key: 'settings.barAnnotation' },
+  { id: 'term', key: 'settings.barTerm' },
 ]
 
 /**
@@ -422,6 +433,8 @@ export function SettingsPane({ overview, notify, refresh }) {
   // Vibe Mode と効果音（SPEC-PILOT-V5 §3.1 / D24）。切替はその場で `<html data-vibe>` に効く
   const [vibeMode, setVibeMode] = useState(() => getActiveVibe())
   const [soundOn, setSoundOn] = useState(() => isSoundEnabled())
+  // 帯の表示トグル（SPEC-PILOT-V7 §3.4 / V7-4）。既定は全 ON、切替は保存＋即時反映
+  const [bars, setBars] = useState(() => readSnippetBars())
   useEffect(() => onVibeChange(setVibeMode), [])
 
   // リポジトリ（自動スキャン先・追加・非表示）。SPEC §5.1
@@ -674,6 +687,33 @@ export function SettingsPane({ overview, notify, refresh }) {
             <span className="hm-switch-knob" />
           </button>
         </div>
+
+        {/* 帯の表示（SPEC-PILOT-V7 §3.4 / V7-4）。隠しても機能は各画面の入口から使える */}
+        <div className="list-head">
+          <span>{t('settings.bars')}</span>
+        </div>
+        {BAR_CHOICES.map((b) => (
+          <div key={b.id} className="kv" style={{ alignItems: 'center', marginTop: 8 }}>
+            <span>{t(b.key)}</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={bars[b.id] !== false}
+              aria-label={t(b.key)}
+              data-bar={b.id}
+              className={`hm-switch${bars[b.id] !== false ? ' on' : ''}`}
+              onClick={() => {
+                haptic('tap')
+                setBars(setSnippetBar(b.id, bars[b.id] === false))
+              }}
+            >
+              <span className="hm-switch-knob" />
+            </button>
+          </div>
+        ))}
+        <p className="row-sub" style={{ marginTop: 8, marginBottom: 0, lineHeight: 1.6 }}>
+          {t('settings.barsHint')}
+        </p>
       </section>
 
       {/* 2. ペアリング */}
