@@ -123,6 +123,64 @@ function tempBoard() {
   return { root, workdir }
 }
 
+/**
+ * `.json` だけを持つレビューの一時ボード（`.html` 不在）。
+ *
+ * 2 件入れる: `mode=sheet` × `sheet=...html`（`.json` だけ置く＝実機のデグレ形）と、
+ * `mode=standard` × `sheet=...json`（JSON ファーストの新形）。
+ */
+function tempJsonOnlyBoard() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-json-'))
+  const boardDir = path.join(root, 'kanban', 'boards', 'mobile')
+  fs.mkdirSync(boardDir, { recursive: true })
+  const workdir = path.join(root, 'work')
+  fs.mkdirSync(path.join(workdir, 'sheets'), { recursive: true })
+  fs.writeFileSync(path.join(boardDir, 'board.json'), JSON.stringify({ slug: 'mobile', default_workdir: workdir }))
+  const db = new DatabaseSync(path.join(boardDir, 'kanban.db'))
+  db.exec(`CREATE TABLE tasks (
+    id TEXT PRIMARY KEY, title TEXT, body TEXT, status TEXT NOT NULL, assignee TEXT,
+    priority INTEGER DEFAULT 0, created_at INTEGER, started_at INTEGER, completed_at INTEGER, result TEXT,
+    last_heartbeat_at INTEGER)`)
+  const insert = db.prepare('INSERT INTO tasks (id,title,body,status,assignee,created_at) VALUES (?,?,?,?,?,?)')
+  const now = Math.floor(Date.now() / 1000)
+  insert.run(
+    't_sheetjson',
+    'HTML 無しシート',
+    '本文\n[review] label=json-only round=1 mode=sheet sheet=sheets/json-only-1.html\n',
+    'blocked',
+    'mobile',
+    now,
+  )
+  insert.run(
+    't_stdjson',
+    'JSON シート',
+    '本文\n[review] label=json-native round=1 mode=standard sheet=sheets/json-native-1.json\n',
+    'blocked',
+    'mobile',
+    now,
+  )
+  db.close()
+  const payload = {
+    title: '危険な <script>alert(1)</script> タイトル',
+    topic: 'A & B の比較 "quoted" it\'s',
+    questions: [
+      {
+        id: 'q1',
+        text: 'どれにする？ <b>強調</b>',
+        options: [
+          { id: 'A', label: 'A & B <b>太字</b>', detail: '推奨案です', recommended: true },
+          { id: 'B', label: 'it\'s "quoted"' },
+        ],
+      },
+      { id: 'q2', text: '2 問目', options: [{ id: 'A', label: '非推奨です' }] },
+    ],
+  }
+  for (const name of ['json-only-1.json', 'json-native-1.json']) {
+    fs.writeFileSync(path.join(workdir, 'sheets', name), JSON.stringify(payload))
+  }
+  return { root, workdir }
+}
+
 test('list / sheetHtml / sheetData は workdir 配下を解決する', () => {
   const { root, workdir } = tempBoard()
   const api = createReview({ kanbanRoot: path.join(root, 'kanban') })
@@ -139,6 +197,45 @@ test('list / sheetHtml / sheetData は workdir 配下を解決する', () => {
   assert.equal(data.ok, true)
   assert.equal(data.data.questions[0].id, 'q1')
   assert.equal(path.resolve(api.workdir()), path.resolve(workdir))
+})
+
+test('list は .json だけでも exists: true、sheetHtml は .json からエスケープ済み HTML を生成する', () => {
+  const { root } = tempJsonOnlyBoard()
+  const api = createReview({ kanbanRoot: path.join(root, 'kanban') })
+  const items = api.list()
+  assert.equal(items.length, 2)
+  for (const it of items) {
+    assert.equal(it.review.exists, true, '.html が無くても .json があれば存在として扱う')
+    assert.equal(it.review.questions, 2, '設問数は .json から読む')
+    assert.equal(it.review.title, '危険な <script>alert(1)</script> タイトル', 'title はデータのまま返す（HTML 化は表示側）')
+  }
+
+  // ① mode=sheet で .html 不在（実機で起票されていた形）
+  const sheetMode = api.sheetHtml('t_sheetjson')
+  assert.equal(sheetMode.ok, true)
+  assert.equal(sheetMode.generated, true, '.html 不在なので動的生成')
+  assert.match(sheetMode.html, /^<!DOCTYPE html>/)
+  assert.match(sheetMode.html, /<meta charset="utf-8">/, '単体タブで開くので UTF-8 を明示')
+
+  // ② mode=standard で sheet が .json を指す（生 JSON を返さない）
+  const standard = api.sheetHtml('t_stdjson')
+  assert.equal(standard.ok, true)
+  assert.equal(standard.generated, true)
+  assert.doesNotMatch(standard.html, /^\s*\{/, '生の JSON をそのまま返さない')
+
+  for (const r of [sheetMode, standard]) {
+    // XSS 対策: JSON 由来の文字列はタグとして解釈されない
+    assert.ok(!r.html.includes('<script>alert(1)</script>'), 'title のタグを生で出さない')
+    assert.ok(r.html.includes('&lt;script&gt;alert(1)&lt;/script&gt;'), 'title は実体参照にする')
+    assert.ok(r.html.includes('A &amp; B &lt;b&gt;太字&lt;/b&gt;'), '選択肢ラベルのタグと & をエスケープ')
+    assert.ok(r.html.includes('&quot;quoted&quot;'), 'ダブルクォートをエスケープ')
+    assert.ok(r.html.includes('it&#39;s'), 'シングルクォートをエスケープ')
+    assert.ok(r.html.includes('A &amp; B の比較'), 'topic もエスケープする')
+    // 推奨バッジは推奨の 1 件だけ（「非推奨」は推奨にしない）
+    assert.equal((r.html.match(/<span class="rec-badge">推奨<\/span>/g) || []).length, 1)
+    // 回答はアプリのドロワー（StandardForm）で行うので、生成 HTML に送信欄は置かない
+    assert.ok(!r.html.includes('id="out"'))
+  }
 })
 
 test('answer は保存して comment + unblock を呼び、二重投稿を弾く', async () => {

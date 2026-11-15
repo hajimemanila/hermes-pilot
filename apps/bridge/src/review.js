@@ -200,6 +200,147 @@ export function toReplyText(label, answers, global, questions = [], lang = 'ja')
 }
 
 /**
+ * HTML のテキストとして安全な文字列にする（`&` `<` `>` `"` `'`）。
+ *
+ * JSON シート（外部から来る `title` / 設問文 / 選択肢）を HTML に埋め込む前に必ず通す。
+ * `&` を最初に置換しないと二重エスケープになるので順序は固定。
+ *
+ * @param {unknown} value 任意の値
+ * @returns {string} エスケープ済み文字列
+ */
+export function escapeHtmlText(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+/**
+ * 選択肢が推奨か（生成 HTML のバッジ用）。
+ *
+ * シートを作る側は `recommended: true` を付けるが、既存資産にはラベルに「推奨」と
+ * 書いただけのものがある。否定（「非推奨」「not recommended」）を先に落とす。
+ *
+ * @param {{id?: string, label?: string, detail?: string, recommended?: boolean|string}} option 選択肢
+ * @returns {boolean} 推奨か
+ */
+function isRecommendedDataOption(option) {
+  if (option?.recommended === true || option?.recommended === 'true') return true
+  const text = `${option?.label ?? ''} ${option?.detail ?? ''}`
+  if (/非推奨|not\s+recommended/i.test(text)) return false
+  return /推奨|recommend/i.test(text)
+}
+
+/**
+ * `sheet.json` からスタンドアロンな閲覧用 HTML を組み立てる（SPEC-PILOT-V8 §3.1 / D38）。
+ *
+ * 手書き `.html` が無いシートでも「シート全体を開く ↗」を成立させるためのフォールバック。
+ * 回答はアプリのドロワー（`<StandardForm>`）で行う前提なので、ここは**閲覧ビュー**にして
+ * 送信フォームは置かない（`.json` だけで完結する JSON ファースト運用の受け皿）。
+ *
+ * @param {object} data `sheet.json`（`{title, topic, questions:[{id,text,options}]}`）
+ * @param {{label?: string, round?: number|string, target?: string}} [ak] レビュー行の情報
+ * @returns {string} `<!DOCTYPE html>` で始まる完全な HTML
+ */
+export function renderSheetHtmlFromData(data, ak = {}) {
+  const esc = escapeHtmlText
+  const title = esc(data?.title ?? ak?.title ?? ak?.label ?? 'Review')
+  const label = esc(ak?.label ?? data?.label ?? '')
+  const topic = esc(data?.topic ?? '')
+  const round = Number(ak?.round ?? data?.round ?? 1) || 1
+  const target = esc(ak?.target ?? '')
+  const questions = Array.isArray(data?.questions) ? data.questions : []
+
+  const sections = questions.map((q, i) => {
+    const qtext = esc(q?.text ?? q?.question ?? '')
+    const options = Array.isArray(q?.options) ? q.options : []
+    const items = options.map((o) => {
+      const rec = isRecommendedDataOption(o)
+      const detail = esc(o?.detail ?? o?.note ?? '')
+      return [
+        `        <li class="opt${rec ? ' rec' : ''}">`,
+        `          <span class="oid">${esc(o?.id ?? '')}</span>`,
+        `          <span class="olabel">${esc(o?.label ?? '')}${rec ? '<span class="rec-badge">推奨</span>' : ''}</span>`,
+        detail ? `          <span class="odetail">${detail}</span>` : '',
+        '        </li>',
+      ]
+        .filter(Boolean)
+        .join('\n')
+    })
+    return [
+      '      <section class="q">',
+      `        <h3>Q${i + 1}. ${qtext}</h3>`,
+      items.length ? `        <ul class="opts">\n${items.join('\n')}\n        </ul>` : '',
+      '      </section>',
+    ]
+      .filter(Boolean)
+      .join('\n')
+  })
+
+  const meta = [
+    label ? `<span class="meta-label">${label}</span>` : '',
+    `<span class="meta-round">r${esc(round)}</span>`,
+    target ? `<span class="meta-target">${target}</span>` : '',
+  ]
+    .filter(Boolean)
+    .join('')
+
+  return `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title}</title>
+<style>
+  :root{color-scheme:light dark}
+  *{box-sizing:border-box}
+  body{margin:0;padding:16px 14px 40px;font:15px/1.7 -apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;
+    background:#f6f6f4;color:#1c1c1e}
+  main{max-width:720px;margin:0 auto}
+  h1{font-size:19px;line-height:1.45;margin:0 0 6px}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;font-size:12px;color:#5c5c66;margin:0 0 14px}
+  .meta span{padding:2px 8px;border-radius:999px;background:#e8e8e4}
+  .note{font-size:13px;line-height:1.6;color:#3a3a40;background:#fff;border:1px solid #dedcd4;
+    border-radius:12px;padding:10px 12px;margin:0 0 18px}
+  .topic{font-size:14px;line-height:1.7;white-space:pre-wrap;background:#fff;border:1px solid #dedcd4;
+    border-radius:12px;padding:12px;margin:0 0 18px}
+  .q{background:#fff;border:1px solid #dedcd4;border-radius:14px;padding:14px;margin:0 0 14px}
+  .q h3{font-size:15px;line-height:1.6;margin:0 0 10px}
+  .opts{list-style:none;margin:0;padding:0}
+  .opt{display:flex;flex-wrap:wrap;gap:6px 10px;padding:9px 10px;border-radius:10px;border:1px solid #e6e4dc}
+  .opt + .opt{margin-top:8px}
+  .opt.rec{border-color:#1f9d63;background:#f2fbf6}
+  .oid{min-width:1.4em;font-weight:700}
+  .olabel{font-weight:600}
+  .odetail{flex-basis:100%;font-size:13px;color:#5c5c66}
+  .rec-badge{margin-left:8px;font-size:11px;font-weight:700;color:#0b5f45;background:#d6f5e6;
+    border-radius:999px;padding:1px 7px;vertical-align:1px}
+  .empty{font-size:14px;color:#5c5c66}
+  @media (prefers-color-scheme:dark){
+    body{background:#131315;color:#f2f2f4}
+    .meta{color:#a0a0aa} .meta span{background:#242428}
+    .q,.note,.topic{background:#1c1c1f;border-color:#2e2e33}
+    .opt{border-color:#2e2e33} .opt.rec{border-color:#2f9d6b;background:#152b21}
+    .odetail{color:#a0a0aa} .note{color:#d8d8de}
+  }
+</style>
+</head>
+<body>
+<main id="akForm">
+  <h1>${title}</h1>
+  <div class="meta">${meta}</div>
+  <p class="note">このシートは <code>sheet.json</code> から自動生成した閲覧ビューです。回答はアプリのレビュータブ（簡易回答フォーム）から送ってください。</p>
+${topic ? `  <div class="topic">${topic}</div>` : ''}
+${sections.length ? sections.join('\n') : '  <p class="empty">設問がありません。</p>'}
+</main>
+</body>
+</html>
+`
+}
+
+/**
  * シート HTML に「回答をアプリへ送る」小さなブリッジを注入する（保存物は書き換えない）。
  *
  * アプリ内で開いたときだけ、設問見出し (Q1…) をマーカーで装飾する（レビュー注釈の指摘）。
@@ -601,7 +742,7 @@ export function createReview(cfg, opts = {}) {
           mode: ak.mode ?? 'standard',
           round: Number(ak.round ?? 1),
           sheet: ak.sheet ?? null,
-          exists: Boolean(sheetAbs),
+          exists: Boolean(sheetAbs || dataAbs),
           title: sheet?.title ?? null,
           topic: sheet?.topic ?? null,
           questions: Array.isArray(sheet?.questions) ? sheet.questions.length : 0,
@@ -612,15 +753,25 @@ export function createReview(cfg, opts = {}) {
     return out
   }
 
-  /** シート HTML（認可は呼び出し側）。 */
+  /**
+   * シート HTML（認可は呼び出し側）。
+   *
+   * `.html` があればそれをそのまま返す（後方互換）。無い（または `.json` を指している）
+   * ときは同じ場所の `.json` から閲覧用 HTML を動的生成して返す — JSON ファーストで
+   * 起票されたシートでも「シート全体を開く ↗」が常に動くようにするため（D38）。
+   */
   function sheetHtml(id) {
     const b = bodyOf(id)
     if (!b) return { ok: false, code: 'NOT_FOUND' }
     const ak = parseReviewLine(b.body)
     if (!ak?.sheet) return { ok: false, code: 'NO_SHEET' }
     const abs = resolveInside(ak.sheet)
-    if (!abs) return { ok: false, code: 'SHEET_MISSING' }
-    return { ok: true, html: fs.readFileSync(abs, 'utf8'), path: abs }
+    const isJson = Boolean(abs && /\.json$/i.test(abs))
+    if (abs && !isJson) return { ok: true, html: fs.readFileSync(abs, 'utf8'), path: abs }
+    const dataAbs = isJson ? abs : resolveInside(sheetPaths(ak.sheet).dataRel)
+    const data = dataAbs ? readJsonIfExists(dataAbs) : null
+    if (!data) return { ok: false, code: 'SHEET_MISSING' }
+    return { ok: true, html: renderSheetHtmlFromData(data, ak), path: dataAbs, generated: true }
   }
 
   /** シートの構造化データ（PWA のネイティブフォーム用）。 */

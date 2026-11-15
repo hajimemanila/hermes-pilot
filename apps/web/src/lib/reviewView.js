@@ -251,6 +251,36 @@ export function repoLabel(repo) {
 }
 
 /**
+ * 設問 JSON（`/api/review/:id/data`）を取りに行くか。
+ *
+ * ドロワー統合フォーム（`<StandardForm>`）・⚡ 推奨案で一括承認・完了後の回答履歴は
+ * すべて `sheet.json` を材料にするので、注釈モード以外は必ず取る。
+ *
+ * 以前は `openItem` が `ak.mode !== 'standard'` で早期リターンしていたため、
+ * `mode=sheet` で起票されたタスク（実体は `.json` を持つ）で `data === null` のまま
+ * 生の `<IframeForm>` に落ちていた（SPEC-PILOT-V8 §3.1 / D38）。
+ *
+ * @param {object|null} review `item.review`（`{mode, sheet, ...}`）
+ * @returns {boolean} 取得するか（`mode === 'annotation'` のときだけ false）
+ */
+export function shouldFetchSheetData(review) {
+  return review?.mode !== 'annotation'
+}
+
+/**
+ * 一覧行に生の `mode` バッジを出すか。
+ *
+ * `standard`（構造化 JSON）と `sheet`（HTML シート）は既定の表示形式なので、
+ * 行に `sheet` と出しても人は何も判断できない。注釈など特殊モードだけ出す。
+ *
+ * @param {string|null|undefined} mode `review.mode`
+ * @returns {boolean} 出すか
+ */
+export function shouldShowModeChip(mode) {
+  return Boolean(mode) && mode !== 'standard' && mode !== 'sheet'
+}
+
+/**
  * 推奨の印。`recommended: true` のほか、**ラベルに推奨の語を含む選択肢**も推奨として扱う。
  *
  * シートを作る側（akapen スキル）は `recommended: true` を付けるが、既存の資産には

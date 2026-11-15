@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { setLang } from '../src/i18n/lang.js'
-import { answerRows, appBadgeCount, capturedLabel, DONE_LIMIT, doneHint, extractRecommendedAnswers, groupItems, isAnswered, isRecommendedOption, isWaiting, navBadgeState, nextWaiting, pendingCount, repoLabel, runningCount, thumbCaption, unseenNotices, waitingCount } from '../src/lib/reviewView.js'
+import { answerRows, appBadgeCount, capturedLabel, DONE_LIMIT, doneHint, extractRecommendedAnswers, groupItems, isAnswered, isRecommendedOption, isWaiting, navBadgeState, nextWaiting, pendingCount, repoLabel, runningCount, shouldFetchSheetData, shouldShowModeChip, thumbCaption, unseenNotices, waitingCount } from '../src/lib/reviewView.js'
 
 /** レビュー待ち（blocked + label）。 */
 const waitingItem = (id) => ({ id, status: 'blocked', review: { label: 'review-view-01', round: 1 } })
@@ -266,4 +266,21 @@ test('appBadgeCount は壊れた入力で NaN を出さない', () => {
   assert.equal(appBadgeCount({ reviewWaiting: null, inboxPending: undefined }), 0)
   assert.equal(appBadgeCount({ reviewWaiting: '3', inboxPending: 'x' }), 3, '数値文字列は読む')
   assert.equal(appBadgeCount({ reviewWaiting: -5, inboxPending: 2 }), 2)
+})
+
+test('shouldFetchSheetData: 注釈以外は設問 JSON を取りに行く（mode=sheet のデグレ防止）', () => {
+  assert.equal(shouldFetchSheetData({ mode: 'sheet', sheet: 'sheets/a-1.json' }), true, 'mode=sheet でも取る（D38 の本体）')
+  assert.equal(shouldFetchSheetData({ mode: 'standard' }), true)
+  assert.equal(shouldFetchSheetData({ label: 'x' }), true, 'mode 未指定は取る（既定の構造化シート）')
+  assert.equal(shouldFetchSheetData({ mode: 'annotation', image: 'shots/a.png' }), false, '注釈は設問 JSON を持たない')
+  assert.equal(shouldFetchSheetData(null), true, '壊れた入力でも落ちない（openItem のエラー処理に任せる）')
+})
+
+test('shouldShowModeChip: 既定の表示形式（standard / sheet）はバッジを出さない', () => {
+  assert.equal(shouldShowModeChip('sheet'), false, '`sheet` バッジは人に何も伝えないので出さない')
+  assert.equal(shouldShowModeChip('standard'), false)
+  assert.equal(shouldShowModeChip('annotation'), true, '特殊モードだけ出す')
+  assert.equal(shouldShowModeChip(''), false)
+  assert.equal(shouldShowModeChip(null), false)
+  assert.equal(shouldShowModeChip(undefined), false)
 })

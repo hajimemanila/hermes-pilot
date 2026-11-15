@@ -7,7 +7,7 @@ import { haptic } from '../lib/haptic.js'
 import { celebrate } from '../lib/vibe.js'
 import { readActiveChatId } from '../lib/chatReports.js'
 import { AnnotationEditor } from './AnnotationEditor.jsx'
-import { answerRows, capturedLabel, DONE_LIMIT, doneHint, extractRecommendedAnswers, groupItems, isWaiting, nextWaiting, repoLabel, thumbCaption } from '../lib/reviewView.js'
+import { answerRows, capturedLabel, DONE_LIMIT, doneHint, extractRecommendedAnswers, groupItems, isWaiting, nextWaiting, repoLabel, shouldFetchSheetData, shouldShowModeChip, thumbCaption } from '../lib/reviewView.js'
 import { parsePastedReply } from '../lib/reviewPaste.js'
 import { t } from '../i18n/lang.js'
 import { useI18n } from '../i18n/index.js'
@@ -106,7 +106,7 @@ function ItemRow({ item, onOpen }) {
           <span className="ak-label">{ak.label || item.id}</span>
           {ak.round ? <span>r{ak.round}</span> : null}
           {ak.questions ? <span>{t('review.questionsCount', { n: ak.questions })}</span> : null}
-          {ak.mode && ak.mode !== 'standard' ? <span>{ak.mode}</span> : null}
+          {shouldShowModeChip(ak.mode) ? <span>{ak.mode}</span> : null}
           <span>{age}</span>
         </div>
         {progressText(item) ? <div className="ak-row-phase">{progressText(item)}</div> : null}
@@ -844,6 +844,8 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
   const [data, setData] = useState(null)
   const [answer, setAnswer] = useState(null)
   const [dataError, setDataError] = useState(null)
+  // `.json` 取得中（取れていない間に <IframeForm> を出さないためのフラグ）
+  const [dataLoading, setDataLoading] = useState(false)
   const [closeNote, setCloseNote] = useState('')
   const [showAllDone, setShowAllDone] = useState(false)
   // 一括承認（⚡）の送信中フラグと「全件完了」バナー（SPEC §5.1）
@@ -902,10 +904,14 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
     setAnswer(null)
     setDataError(null)
     setCloseNote('')
+    setDataLoading(false)
     const ak = item.review || {}
-    if (ak.mode && ak.mode !== 'standard') return
+    // 注釈モードだけは設問 JSON を持たない（赤を描く画面）。それ以外は
+    // `mode=sheet` / `mode=standard` / 未指定のどれでも取る（D38）。
+    if (!shouldFetchSheetData(ak)) return
     // 進行中・完了も読むだけ開く（bridge の answer() はレビュー待ち以外を 409 で拒否する）。
     // 完了した項目は「レビュー回答（履歴）」を出すため sheet.json と answer.json を取る。
+    setDataLoading(true)
     try {
       const r = await api(`/api/review/${item.id}/data`)
       setData(r.data)
@@ -913,6 +919,9 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
     } catch (e) {
       // レビュー待ちなら理由を出す。読むだけの項目はシートが無いこともあるので黙る
       if (isWaiting(item)) setDataError(e?.message || t('review.sheetMissing'))
+    } finally {
+      // 取得中に <IframeForm> へフォールバックさせない（生の HTML が一瞬出るチラつき）
+      setDataLoading(false)
     }
   }, [])
 
@@ -944,6 +953,7 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
     setData(null)
     setAnswer(null)
     setDataError(null)
+    setDataLoading(false)
   }
 
   /**
@@ -1079,10 +1089,14 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
             {dataError ? <div className="ak-error">{t('review.openSheetDirectly', { error: dataError })}</div> : null}
             {data?.questions?.length ? (
               <StandardForm item={open} data={data} onSubmitted={(r) => handleSubmitted(open.id, r)} />
+            ) : dataLoading ? (
+              <Loader label={t('common.loading')} />
             ) : (
               <IframeForm item={open} onSubmitted={(r) => handleSubmitted(open.id, r)} />
             )}
           </>
+        ) : dataLoading && !data ? (
+          <Loader label={t('common.loading')} />
         ) : (
           <ReadOnlyDetail
             item={open}
