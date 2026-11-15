@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { ApiError } from './api-errors.js'
+import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'
 
 /**
  * Spec Launchpad — `docs/SPEC-*.md` を検出し、バッチ見出しをカンバンへ一括起票する。
@@ -351,6 +352,65 @@ export function resolveSpecPath(repoPath, relPath) {
   return abs
 }
 
+/** 本文取得の上限（256KB）。超えた分は切り詰め、`truncated: true` で知らせる。 */
+export const SPEC_CONTENT_MAX = 256 * 1024
+
+/** 本文として読める拡張子（`.md` のみ）。 */
+const MARKDOWN_RE = /\.md$/i
+
+/**
+ * 1 枚の SPEC の全文を読む（リポジトリ境界内・`.md` のみ・256KB 上限）。
+ *
+ * パスの検証は `resolveSpecPath` に任せる（`../` や絶対パスは 400）。
+ * 上限で切り詰めたときは `truncated: true` を立て、`markdown` は 256KB までに収める
+ * （UTF-8 の途中で切れた 1 文字は落とす＝壊れた文字を混ぜない）。
+ *
+ * @param {string} repoPath リポジトリの絶対パス
+ * @param {string} specRelPath リポジトリからの相対パス（`docs/SPEC-….md`）
+ * @returns {{ok: true, path: string, title: string, mtime: number, batchCount: number, truncated: boolean, markdown: string, bytes: number}} 本文
+ * @throws {ApiError} 不正パス（400）／非 `.md`（400）／未検出・読めない（404）
+ */
+export function readSpecContent(repoPath, specRelPath) {
+  const rel = String(specRelPath ?? '').trim().split(path.sep).join('/')
+  const abs = resolveSpecPath(repoPath, rel)
+  if (!MARKDOWN_RE.test(abs)) throw new ApiError('SPEC_NOT_MARKDOWN', { path: rel }, 400)
+
+  let st
+  try {
+    st = fs.statSync(abs)
+  } catch {
+    throw new ApiError('SPEC_READ_FAILED', { path: rel }, 404)
+  }
+  if (typeof st?.isFile === 'function' && !st.isFile()) {
+    throw new ApiError('SPEC_READ_FAILED', { path: rel }, 404)
+  }
+
+  let buf
+  try {
+    buf = fs.readFileSync(abs)
+  } catch {
+    throw new ApiError('SPEC_READ_FAILED', { path: rel }, 404)
+  }
+
+  const truncated = buf.length > SPEC_CONTENT_MAX
+  let markdown = (truncated ? buf.subarray(0, SPEC_CONTENT_MAX) : buf).toString('utf8')
+  // 上限で切れた位置が UTF-8 の途中だと U+FFFD が末尾に残る。1 文字だけ落とす。
+  if (truncated && markdown.endsWith('\uFFFD')) markdown = markdown.slice(0, -1)
+
+  const parsed = parseSpec(markdown)
+  return {
+    ok: true,
+    path: rel,
+    title: parsed.title || path.basename(abs).replace(/\.md$/i, ''),
+    mtime: Number(st?.mtimeMs ?? st?.mtime ?? 0),
+    batchCount: parsed.batches.length,
+    truncated,
+    markdown,
+    // 実際に返した本文のバイト数（PWA が「切り詰め」を出せるように）
+    bytes: Buffer.byteLength(markdown, 'utf8'),
+  }
+}
+
 /**
  * 起票元チャット ID をサニタイズする（書式に合わなければ空＝`Chat:` 行を書かない）。
  *
@@ -481,9 +541,9 @@ function defaultRunner(cfg = {}, runner) {
   return (args) =>
     new Promise((resolve) => {
       execFile(
-        cfg.hermesBin ?? 'hermes',
+        cfg.hermesBin ?? resolveHermesBin(),
         args,
-        { timeout: 30_000, maxBuffer: 2_000_000, env: { ...process.env } },
+        { timeout: 30_000, maxBuffer: 2_000_000, env: { ...process.env, PATH: buildAugmentedPath() } },
         (err, stdout, stderr) => {
           resolve({ code: err ? (err.code ?? 1) : 0, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') })
         },
@@ -522,7 +582,7 @@ export function parseCreatedTask(stdout) {
  *   recordRun?: (run: object) => void,
  *   now?: () => number,
  * }} [deps] 差し替え（テスト用）
- * @returns {{listSpecs: Function, launchSpec: Function, resolveSpecPath: Function}} 操作
+ * @returns {{listSpecs: Function, launchSpec: Function, resolveSpecPath: Function, readSpecContent: Function}} 操作
  */
 export function createSpecs(cfg = {}, deps = {}) {
   const run = defaultRunner(cfg, deps.runner)
@@ -670,5 +730,5 @@ export function createSpecs(cfg = {}, deps = {}) {
     }
   }
 
-  return { listSpecs: scan, launchSpec, resolveSpecPath }
+  return { listSpecs: scan, launchSpec, resolveSpecPath, readSpecContent }
 }

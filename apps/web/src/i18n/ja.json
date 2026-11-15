@@ -448,6 +448,7 @@
   "err.SPEC_READ_FAILED": "spec を読めません: {path}",
   "err.SPEC_BATCH_HEADING_MISSING": "バッチ見出し（### Batch <ID>: <Title>）が見つかりません",
   "err.SPEC_BATCH_NOT_FOUND": "選択したバッチが spec にありません",
+  "err.SPEC_NOT_MARKDOWN": "プレビューできるのは Markdown（.md）の spec だけです: {path}",
   "err.NO_SHEET": "このタスクにはシートがありません",
   "err.SHEET_MISSING": "シートが見つかりません",
   "err.DATA_MISSING": "sheet.json がありません",

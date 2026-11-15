@@ -31,7 +31,7 @@ import { createTelemetry } from './telemetry.js'
 import { createLive } from './live.js'
 import { createInbox } from './inbox.js'
 import { createRepos, normalizePath } from './repos.js'
-import { createSpecs, listSpecs } from './specs.js'
+import { createSpecs, listSpecs, readSpecContent } from './specs.js'
 import { createArchitect, sanitizeRunner } from './architect.js'
 import {
   DEFAULT_SKILLS_SRC,
@@ -599,6 +599,19 @@ async function handleApi(req, res, url) {
         board: target.board,
         specs: specs.listSpecs(target.path),
       })
+    }
+    // GET /api/specs/content?board=<slug>&repo=<id>&path=<rel>
+    //   … 1 枚の SPEC の全文（リポジトリ境界内・`.md` のみ・256KB 上限）
+    //   不正パス（`../` 等）は 400、未検出は 404（`readSpecContent` の ApiError を外側が拾う）
+    if (b === 'content' && req.method === 'GET') {
+      const target = resolveSpecRepo({
+        repoId: url.searchParams.get('repo'),
+        boardSlug: url.searchParams.get('board'),
+      })
+      if (!target) return sendError(res, 404, 'NOT_FOUND', { resource: 'repo' })
+      const content = readSpecContent(target.path, url.searchParams.get('path'))
+      auth.audit({ kind: 'specs.content', repo: target.repo, path: content.path, bytes: content.bytes })
+      return sendJson(res, 200, { ...content, repo: target.repo, label: target.label, board: target.board })
     }
     // GET /api/specs/reports?board=<slug>&limit=<n>  … 直近のパイプライン完走レポート（D20 / D21）
     if (b === 'reports' && req.method === 'GET') {

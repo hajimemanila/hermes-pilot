@@ -68,6 +68,7 @@ export const ERROR_MESSAGES = {
   SPEC_READ_FAILED: 'Could not read the spec: {path}',
   SPEC_BATCH_HEADING_MISSING: 'No batch heading (### Batch <ID>: <Title>) was found',
   SPEC_BATCH_NOT_FOUND: 'The selected batch is not in the spec',
+  SPEC_NOT_MARKDOWN: 'Only Markdown (.md) specs can be previewed: {path}',
 
   // --- review / sheet / approval（review.js） ---
   NO_SHEET: 'This task has no sheet',

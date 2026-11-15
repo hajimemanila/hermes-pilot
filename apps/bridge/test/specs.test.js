@@ -14,6 +14,7 @@ import {
   BATCH_ID_RE,
   BODY_MAX,
   CONTRACT_HEADER,
+  SPEC_CONTENT_MAX,
   buildTaskBody,
   buildTaskTitle,
   createSpecs,
@@ -25,6 +26,7 @@ import {
   parseSpec,
   pruneRuns,
   readRuns,
+  readSpecContent,
   resolveSpecPath,
   runsPathFor,
   sanitizeSpecChat,
@@ -585,6 +587,117 @@ test('launchSpec は mode 付きバッチの本文へ契約を入れて起票す
     assert.ok(bodyArg.includes('Mode: zero-stop'))
     assert.ok(bodyArg.includes(CONTRACT_HEADER))
     assert.equal(calls[0][calls[0].indexOf('--board') + 1], 'mobile')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+// --- readSpecContent（SPEC §V6-2: GET /api/specs/content） ------------------
+
+test('readSpecContent は title / mtime / batchCount / markdown を返す', () => {
+  const root = tempDir()
+  try {
+    writeFile(root, 'docs/SPEC-READ.md', SPEC)
+    const r = readSpecContent(root, 'docs/SPEC-READ.md')
+    assert.equal(r.ok, true)
+    assert.equal(r.path, 'docs/SPEC-READ.md')
+    assert.equal(r.title, 'SPEC: Demo (SPEC-DEMO)')
+    assert.equal(r.batchCount, 2)
+    assert.equal(r.truncated, false)
+    assert.equal(r.markdown, SPEC, '全文をそのまま返す')
+    assert.equal(r.bytes, Buffer.byteLength(SPEC, 'utf8'))
+    assert.ok(r.mtime > 0, 'mtime は epoch ms')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('readSpecContent は `../` でリポジトリの外を指すパスを 400 で拒否する', () => {
+  const root = tempDir()
+  try {
+    writeFile(root, 'docs/SPEC-A.md', SPEC)
+    writeFile(path.dirname(root), 'SECRET.md', '# secret\n')
+    for (const bad of ['../SECRET.md', '../../etc/passwd', 'docs/../../SECRET.md']) {
+      assert.throws(
+        () => readSpecContent(root, bad),
+        (e) => e.code === 'SPEC_PATH_OUTSIDE' && e.statusCode === 400,
+        bad,
+      )
+    }
+    // 絶対パス・空も 400
+    assert.throws(() => readSpecContent(root, '/etc/passwd'), (e) => e.code === 'SPEC_PATH_NOT_RELATIVE')
+    assert.throws(() => readSpecContent(root, ''), (e) => e.code === 'SPEC_PATH_REQUIRED')
+  } finally {
+    fs.rmSync(path.join(path.dirname(root), 'SECRET.md'), { force: true })
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('readSpecContent は非 `.md` を 400（SPEC_NOT_MARKDOWN）で拒否する', () => {
+  const root = tempDir()
+  try {
+    writeFile(root, 'docs/notes.txt', 'plain text\n')
+    writeFile(root, 'docs/SPEC.md.bak', SPEC)
+    for (const bad of ['docs/notes.txt', 'docs/SPEC.md.bak']) {
+      assert.throws(
+        () => readSpecContent(root, bad),
+        (e) => e.code === 'SPEC_NOT_MARKDOWN' && e.statusCode === 400,
+        bad,
+      )
+    }
+    // 大文字の拡張子は許可する
+    writeFile(root, 'docs/SPEC-UPPER.MD', SPEC)
+    assert.equal(readSpecContent(root, 'docs/SPEC-UPPER.MD').ok, true)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('readSpecContent は未検出を 404（SPEC_READ_FAILED）で返す', () => {
+  const root = tempDir()
+  try {
+    assert.throws(
+      () => readSpecContent(root, 'docs/SPEC-NOPE.md'),
+      (e) => e.code === 'SPEC_READ_FAILED' && e.statusCode === 404,
+    )
+    // ディレクトリ（`.md` で終わる名前）も 404
+    fs.mkdirSync(path.join(root, 'docs', 'SPEC-DIR.md'), { recursive: true })
+    assert.throws(
+      () => readSpecContent(root, 'docs/SPEC-DIR.md'),
+      (e) => e.code === 'SPEC_READ_FAILED' && e.statusCode === 404,
+    )
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('readSpecContent は 256KB を超える本文を切り詰めて truncated を立てる', () => {
+  const root = tempDir()
+  try {
+    // 1 行 100 バイト × 3000 行 ≒ 300KB（ASCII なので境界は安全）
+    const line = `${'x'.repeat(99)}\n`
+    writeFile(root, 'docs/SPEC-BIG.md', `# SPEC: Big\n\n${line.repeat(3000)}\n### B1: one\n\nbody\n`)
+    const r = readSpecContent(root, 'docs/SPEC-BIG.md')
+    assert.equal(r.truncated, true)
+    assert.ok(r.bytes <= SPEC_CONTENT_MAX, `bytes=${r.bytes} は上限以内`)
+    assert.ok(Buffer.byteLength(r.markdown, 'utf8') <= SPEC_CONTENT_MAX)
+    assert.equal(r.title, 'SPEC: Big')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('readSpecContent は UTF-8 の途中で切れた文字を末尾に残さない', () => {
+  const root = tempDir()
+  try {
+    // 3 バイト文字（あ）で埋めて、上限が文字の途中に落ちるようにする
+    const body = 'あ'.repeat(Math.ceil((SPEC_CONTENT_MAX + 10) / 3))
+    writeFile(root, 'docs/SPEC-UTF8.md', `# SPEC: UTF8\n\n${body}\n`)
+    const r = readSpecContent(root, 'docs/SPEC-UTF8.md')
+    assert.equal(r.truncated, true)
+    assert.ok(!r.markdown.includes('\uFFFD'), '壊れた文字（U+FFFD）を含まない')
+    assert.ok(Buffer.byteLength(r.markdown, 'utf8') <= SPEC_CONTENT_MAX)
+    assert.equal(r.bytes, Buffer.byteLength(r.markdown, 'utf8'))
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }

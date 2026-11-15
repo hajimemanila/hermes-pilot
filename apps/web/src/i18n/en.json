@@ -448,6 +448,7 @@
   "err.SPEC_READ_FAILED": "Could not read the spec: {path}",
   "err.SPEC_BATCH_HEADING_MISSING": "No batch heading (### Batch <ID>: <Title>) was found",
   "err.SPEC_BATCH_NOT_FOUND": "The selected batch is not in the spec",
+  "err.SPEC_NOT_MARKDOWN": "Only Markdown (.md) specs can be previewed: {path}",
   "err.NO_SHEET": "This task has no sheet",
   "err.SHEET_MISSING": "Sheet not found",
   "err.DATA_MISSING": "sheet.json is missing",
