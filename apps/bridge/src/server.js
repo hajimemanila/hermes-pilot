@@ -789,9 +789,12 @@ async function handleApi(req, res, url) {
 
     if (b === 'jobs' && !c && req.method === 'GET') {
       const board = String(url.searchParams.get('board') ?? '').trim()
+      // D42: 既定はアクティブジョブをボード横断で返す。`?strictBoard=1` で V7 互換の厳密一致。
+      const strictBoard = ['1', 'true', 'yes'].includes(String(url.searchParams.get('strictBoard') ?? '').trim().toLowerCase())
       const target = resolveSpecRepo({ repoId: url.searchParams.get('repo'), boardSlug: board || null })
       const snapshot = await architect.jobs({
         board,
+        strictBoard,
         ...(target?.path ? { include: { repoPath: target.path, board: target.board ?? board } } : {}),
       })
       return sendJson(res, 200, snapshot)
@@ -1137,7 +1140,16 @@ async function handleApi(req, res, url) {
     if (!readAllowed('live', cfg.rate.maxReads ?? 240, cfg.rate.windowMs)) {
       return sendError(res, 429, 'RATE_LIMITED')
     }
-    const r = live.snapshot({ dbs: await listStateDbs() })
+    // Architect（仕様策定）は カンバンタスクを持たない Agy Opt-in ジョブも含めて
+    // ボード横断で拾う（SPEC-PILOT-V9 §3.2）。取れなくても /api/live は返す。
+    let archJobs = []
+    try {
+      const archSnap = await architect.jobs({ strictBoard: false })
+      archJobs = Array.isArray(archSnap?.jobs) ? archSnap.jobs : []
+    } catch {
+      archJobs = []
+    }
+    const r = live.snapshot({ dbs: await listStateDbs(), architect: archJobs })
     // Discord 由来のターンにはスレッドリンクを添える
     for (const t of r.turns) {
       const link = discord.forSession(t.sessionId)

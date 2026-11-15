@@ -20,29 +20,37 @@ import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 import {
+  ACTIVE_JOB_STATUSES,
+  ARCHITECT_PHASES,
   BOARD_RE,
+  DEFAULT_REVIEW_BOARD,
   DISMISSED_MAX,
   EXECUTION_POLICIES,
   RUNNER_LABELS,
   SPEC_LAUNCH_KIND,
   SPEC_READY_KIND,
+  STALLED_AFTER_MS,
   TERMINAL_TASK_STATUSES,
   buildArchitectTaskBody,
   buildArchitectTaskTitle,
   buildKanbanCreateArgs,
   buildSeedPrompt,
+  computePhase,
   createArchitect,
   createCliRunner,
   executionModeLabel,
   filedBatchIds,
   findJobReviewTask,
   findJobSpec,
+  findRecentSheet,
+  isJobStalled,
   makeJobId,
   normalizeExecutionPolicy,
   normalizeSeed,
   pendingSpecs,
   publicJob,
   queueStateOf,
+  reviewBoardsFor,
   runnerLabel,
   sanitizeRunner,
 } from '../src/architect.js'
@@ -474,7 +482,7 @@ test('createCliRunner の hermes は kanban create で [ARCH] タスクを起票
   }
 })
 
-test('agy が非0終了したら同一ジョブ内で自動フォールバックする（fallbackFrom/taskId）', async () => {
+test('agy が非0終了しても自動でカンバン起票せず failed で止まる（D41）', async () => {
   const repo = makeRepo()
   const calls = []
   const arch = createArchitect(
@@ -491,19 +499,34 @@ test('agy が非0終了したら同一ジョブ内で自動フォールバック
 
   assert.equal((await arch.seed(seedInput(repo, { runner: 'antigravity' }))).ok, true)
   await settle()
-  const snapshot = await arch.jobs({ board: 'demo' })
-  const job = snapshot.jobs[0]
-  assert.deepEqual(calls, ['antigravity', 'hermes'], 'fail したら同じジョブ内でカンバン起票へ切り替える')
-  assert.equal(job.status, 'awaiting_spec', '停止せず進行を継続する')
-  assert.equal(job.runner, 'hermes')
-  assert.equal(job.runnerLabel, 'Hermes Native')
-  assert.equal(job.requestedRunner, 'antigravity')
-  assert.equal(job.fallbackFrom, 'antigravity')
-  assert.match(job.fallbackReason, /^exit-1/)
-  assert.equal(job.taskId, 't_arch1')
+  const job = (await arch.jobs({ board: 'demo' })).jobs[0]
+  assert.deepEqual(calls, ['antigravity'], 'Hermes Agent を裏で二重に起動しない（重複 [ARCH] 起票の根絶）')
+  assert.equal(job.status, 'failed', '失敗は失敗として残す（黙って継続しない）')
+  assert.match(job.error, /unknown flag/)
+  assert.equal(job.runner, 'antigravity', 'ランナーは Agy のまま（切替は人の明示操作だけ）')
+  assert.equal(job.taskId, null, '[ARCH] カンバンタスクを作らない')
+  assert.equal(job.fallbackFrom, null)
+  assert.equal(job.fallbackReason, null)
+  assert.equal(job.phase, 'failed')
 })
 
-test('agy が 0 終了でも SPEC も Review タスクも無ければフォールバックする（空振り）', async () => {
+test('agy の失敗理由は 600 字以内で failed に残る（D41）', async () => {
+  const repo = makeRepo()
+  const arch = createArchitect(
+    { reviewDir: path.join(repo, 'review') },
+    {
+      hasAgyCli: () => true,
+      runner: async () => ({ code: 3, stdout: '', stderr: `agy: ${'x'.repeat(2000)}` }),
+    },
+  )
+  await arch.seed(seedInput(repo, { runner: 'antigravity' }))
+  await settle()
+  const job = (await arch.jobs({ board: 'demo' })).jobs[0]
+  assert.equal(job.status, 'failed')
+  assert.equal(job.error.length, 600)
+})
+
+test('agy が exit 0 で成果物が無くてもカンバン起票せず awaiting_spec で待つ（D41）', async () => {
   const repo = makeRepo()
   const calls = []
   const arch = createArchitect(
@@ -512,7 +535,6 @@ test('agy が 0 終了でも SPEC も Review タスクも無ければフォー�
       hasAgyCli: () => true,
       runner: async (args) => {
         calls.push(args.runnerId)
-        if (args.runnerId === 'antigravity') return { code: 0, stdout: '', stderr: '' }
         return { code: 0, stdout: '', stderr: '' }
       },
     },
@@ -520,12 +542,15 @@ test('agy が 0 終了でも SPEC も Review タスクも無ければフォー�
   await arch.seed(seedInput(repo, { runner: 'antigravity' }))
   await settle()
   const job = (await arch.jobs({ board: 'demo' })).jobs[0]
-  assert.deepEqual(calls, ['antigravity', 'hermes'])
-  assert.match(job.fallbackReason, /^no-output/)
-  assert.equal(job.fallbackFrom, 'antigravity')
+  assert.deepEqual(calls, ['antigravity'], '空振りでもカンバンへ落とさない')
+  assert.equal(job.status, 'awaiting_spec', 'GUI 側が非同期で書き終えるのを待つ')
+  assert.equal(job.runner, 'antigravity')
+  assert.equal(job.taskId, null)
+  assert.equal(job.fallbackFrom, null)
+  assert.equal(job.phase, 'spawning')
 })
 
-test('agy が 0 終了で SPEC を書いていればフォールバックしない', async () => {
+test('agy が 0 終了で SPEC を書いていればフォールバックせず spec_ready になる', async () => {
   const repo = makeRepo()
   const calls = []
   const arch = createArchitect(
@@ -545,26 +570,37 @@ test('agy が 0 終了で SPEC を書いていればフォールバックしな�
   assert.deepEqual(calls, ['antigravity'])
   assert.equal(job.fallbackFrom, null)
   assert.equal(job.status, 'spec_ready')
+  assert.equal(job.phase, 'spec_ready')
 })
 
-test('フォールバック先のカンバン起票も失敗したときだけ failed にする', async () => {
+test('agy が 0 終了で review/sheets に JSON シートを書いていれば中間シートとして検知する（D42）', async () => {
   const repo = makeRepo()
+  const reviewDir = path.join(repo, 'review')
+  const sheets = path.join(reviewDir, 'sheets')
+  fs.mkdirSync(sheets, { recursive: true })
+  const clock = 1_700_000_000_000
   const arch = createArchitect(
-    { reviewDir: path.join(repo, 'review') },
+    { reviewDir },
     {
+      now: () => clock,
       hasAgyCli: () => true,
-      runner: async (args) =>
-        args.runnerId === 'antigravity'
-          ? { code: 3, stdout: '', stderr: 'agy: not authenticated' }
-          : { code: 1, stdout: '', stderr: 'kanban: board not found' },
+      readTasks: () => [],
+      runner: async (args) => {
+        if (args.runnerId === 'antigravity') {
+          fs.writeFileSync(path.join(sheets, 'spec-notify-1.json'), '{"mode":"standard"}')
+        }
+        return { code: 0, stdout: '', stderr: '' }
+      },
     },
   )
   await arch.seed(seedInput(repo, { runner: 'antigravity' }))
   await settle()
   const job = (await arch.jobs({ board: 'demo' })).jobs[0]
-  assert.equal(job.status, 'failed')
-  assert.match(job.error, /board not found/)
-  assert.equal(job.fallbackFrom, 'antigravity')
+  assert.equal(job.status, 'awaiting_spec', 'カンバンへフォールバックしない')
+  assert.equal(job.runner, 'antigravity')
+  assert.equal(job.taskId, null)
+  assert.equal(job.sheetPath, 'sheets/spec-notify-1.json', '中間シートのパスを返す')
+  assert.equal(job.phase, 'round1_sheet')
 })
 
 test('jobsFor は blocked の [review] タスクを awaiting_review として返す（D28）', async () => {
@@ -932,3 +968,185 @@ test('executionPolicy は zero-stop 既定で正規化され、プロンプト�
   assert.equal(publicJob({ id: 'x', board: 'demo', status: 'running' }).executionPolicy, 'zero-stop')
 })
 
+
+// ---------------------------------------------------------------------------
+// SPEC V9 D41 / D42 — Agy Opt-in の重複起票防止とボード横断 Review・フェーズ検知
+// ---------------------------------------------------------------------------
+
+test('reviewBoardsFor は [job.board, mobile] を重複除去して返す（D42）', () => {
+  assert.equal(DEFAULT_REVIEW_BOARD, 'mobile')
+  assert.deepEqual(reviewBoardsFor('hermes-pilot'), ['hermes-pilot', 'mobile'])
+  assert.deepEqual(reviewBoardsFor('mobile'), ['mobile'], '重複させない')
+  assert.deepEqual(reviewBoardsFor('  demo  '), ['demo', 'mobile'])
+  assert.deepEqual(reviewBoardsFor(''), ['mobile'])
+  assert.deepEqual(reviewBoardsFor(undefined), ['mobile'])
+  assert.deepEqual(ACTIVE_JOB_STATUSES, ['running', 'awaiting_spec', 'awaiting_review', 'failed'])
+})
+
+test('computePhase は status / reviewSeenOnce / sheetPath から phase を決める（D42）', () => {
+  assert.deepEqual(ARCHITECT_PHASES, [
+    'spawning',
+    'round1_sheet',
+    'awaiting_review',
+    'round2_spec',
+    'spec_ready',
+    'launched',
+    'failed',
+  ])
+  assert.equal(computePhase({ status: 'running' }), 'spawning')
+  assert.equal(computePhase({ status: 'awaiting_spec' }), 'spawning')
+  assert.equal(computePhase({ status: 'awaiting_spec', sheetPath: 'sheets/spec-a-1.json' }), 'round1_sheet')
+  assert.equal(
+    computePhase({ status: 'awaiting_review', sheetPath: 'sheets/spec-a-1.json' }),
+    'awaiting_review',
+    '回答待ちはシート有無より優先',
+  )
+  assert.equal(computePhase({ status: 'awaiting_spec', reviewSeenOnce: true, sheetPath: 'x' }), 'round2_spec')
+  assert.equal(computePhase({ status: 'spec_ready' }), 'spec_ready')
+  assert.equal(computePhase({ status: 'launched' }), 'launched')
+  assert.equal(computePhase({ status: 'failed' }), 'failed')
+  assert.equal(computePhase(null), 'spawning')
+})
+
+test('isJobStalled は 3 分無進展の running / awaiting_spec だけを停滞とみなす（D42）', () => {
+  assert.equal(STALLED_AFTER_MS, 180_000)
+  const base = { status: 'awaiting_spec', startedAt: 1_000_000 }
+  assert.equal(isJobStalled(base, 1_000_000 + 179_999), false, '3 分未満はまだ待つ')
+  assert.equal(isJobStalled(base, 1_000_000 + 180_000), true)
+  assert.equal(isJobStalled({ ...base, status: 'running' }, 1_000_000 + 200_000), true)
+  assert.equal(isJobStalled({ ...base, queueState: 'queued' }, 1_000_000 + 900_000), false, '着火待ちは停滞ではない')
+  for (const status of ['awaiting_review', 'spec_ready', 'launched', 'failed', 'done', 'archived']) {
+    assert.equal(isJobStalled({ ...base, status }, 1_000_000 + 900_000), false, `${status} は停滞にしない`)
+  }
+  assert.equal(isJobStalled({ status: 'awaiting_spec', createdAt: 1_000_000 }, 1_000_000 + 200_000), true, 'startedAt が無ければ createdAt')
+  assert.equal(isJobStalled({ status: 'awaiting_spec' }, 1_000_000 + 900_000), false, '時刻が無ければ判定しない')
+})
+
+test('findRecentSheet は review/sheets の新しい spec-*.json だけを返す（D42）', () => {
+  const repo = makeRepo()
+  const reviewDir = path.join(repo, 'review')
+  const sheets = path.join(reviewDir, 'sheets')
+  fs.mkdirSync(sheets, { recursive: true })
+  const startedAt = 1_700_000_000_000
+  const write = (name, mtimeMs) => {
+    const file = path.join(sheets, name)
+    fs.writeFileSync(file, '{}')
+    fs.utimesSync(file, mtimeMs / 1000, mtimeMs / 1000)
+  }
+  write('spec-old-1.json', startedAt - 60_000)
+  assert.equal(findRecentSheet(reviewDir, { startedAt }), null, '猶予より古いシートは拾わない')
+  write('spec-new-1.json', startedAt + 1_000)
+  write('spec-newer-2.json', startedAt + 2_000)
+  write('notes.json', startedAt + 3_000, 'spec- 以外は対象外')
+  write('spec-new-1.html', startedAt + 4_000, 'HTML シートは対象外')
+  assert.equal(findRecentSheet(reviewDir, { startedAt }), 'sheets/spec-newer-2.json')
+  assert.equal(findRecentSheet(reviewDir, { startedAt: startedAt + 3_000 }), 'sheets/spec-newer-2.json')
+  assert.equal(findRecentSheet(reviewDir, { startedAt: startedAt + 10_000 }), null)
+  assert.equal(findRecentSheet(null, { startedAt }), null, 'reviewDir 未指定は安全に null')
+  assert.equal(findRecentSheet(path.join(repo, 'nope'), { startedAt }), null, 'ディレクトリ不在も無害')
+})
+
+test('別ボード（hermes-pilot）で撒いた種でも mobile ボードの [review] を awaiting_review として拾う（D42）', async () => {
+  const repo = makeRepo()
+  const clock = 1_700_000_000_000
+  /** @type {Record<string, Array<object>>} */
+  const boards = {
+    'hermes-pilot': [{ id: 't_arch', title: '[ARCH] 通知まとめ', status: 'running', createdAt: clock }],
+    mobile: [],
+  }
+  const arch = createArchitect(
+    { reviewDir: path.join(repo, 'review') },
+    {
+      now: () => clock,
+      readTasks: (slug) => boards[slug] ?? [],
+      runner: async () => ({ code: 0, stdout: '{"id":"t_arch"}', stderr: '' }),
+    },
+  )
+
+  await arch.seed(seedInput(repo, { board: 'hermes-pilot' }))
+  await settle()
+  let job = (await arch.jobs({ board: 'hermes-pilot' })).jobs[0]
+  assert.equal(job.status, 'awaiting_spec')
+  assert.equal(job.reviewBoard, null)
+
+  // Quick Review は既定で mobile ボードへ撒かれる
+  boards.mobile = [{ id: 't_rev', title: '[review] 通知まとめ: 決定 3 件', status: 'blocked', createdAt: clock + 1_000 }]
+  job = (await arch.jobs({ board: 'hermes-pilot' })).jobs[0]
+  assert.equal(job.status, 'awaiting_review', 'his board だけ見ていると取りこぼす')
+  assert.equal(job.reviewTaskId, 't_rev')
+  assert.equal(job.reviewBoard, 'mobile', 'どのボードで拾ったかを返す')
+  assert.equal(job.phase, 'awaiting_review')
+
+  // 回答が返って blocked が解けたら Round 2（SPEC 執筆中）へ
+  boards.mobile = [{ id: 't_rev', title: '[review] 通知まとめ: 決定 3 件', status: 'ready', createdAt: clock + 1_000 }]
+  job = (await arch.jobs({ board: 'hermes-pilot' })).jobs[0]
+  assert.equal(job.status, 'awaiting_spec')
+  assert.equal(job.reviewTaskId, null)
+  assert.equal(job.reviewBoard, null)
+  assert.equal(job.phase, 'round2_spec', '一度 Review を通過したら Round 2 として見せる')
+})
+
+test('jobsFor は既定でボード横断のアクティブジョブを返し、strictBoard で従来どおり絞る（D42）', async () => {
+  const repo = makeRepo()
+  const clock = 1_700_000_000_000
+  const arch = createArchitect(
+    {},
+    {
+      now: () => clock,
+      readTasks: () => [],
+      runner: async () => ({ code: 0, stdout: '', stderr: '' }),
+    },
+  )
+
+  await arch.seed(seedInput(repo, { board: 'other', seedText: '別ボードの種' }))
+  await settle()
+
+  const across = await arch.jobs({ board: 'demo' })
+  assert.equal(across.jobs.length, 1, '別ボードで動いているジョブも進行バーに出す')
+  assert.equal(across.jobs[0].board, 'other')
+
+  const strict = await arch.jobs({ board: 'demo', strictBoard: true })
+  assert.equal(strict.jobs.length, 0, 'strictBoard は従来の厳密一致')
+
+  // 別リポジトリでもアクティブなら返す
+  const otherRepo = makeRepo()
+  await arch.seed(seedInput(otherRepo, { board: 'other', repoPath: otherRepo }))
+  await settle()
+  assert.equal((await arch.jobs({ board: 'demo' })).jobs.length, 2)
+  assert.equal((await arch.jobs({ board: 'demo', repoPath: repo })).jobs.length, 2, 'アクティブはリポジトリを跨いで返す')
+
+  // 破棄したジョブはボード横断でも返さない
+  const first = (await arch.jobs({ board: 'demo' })).jobs[0]
+  arch.dismiss(first.id)
+  assert.equal((await arch.jobs({ board: 'demo' })).jobs.length, 1)
+})
+
+test('publicJob は phase / stalled / sheetPath / reviewBoard を返す（D42）', () => {
+  const job = publicJob(
+    {
+      id: 'arch-1',
+      board: 'demo',
+      status: 'awaiting_spec',
+      runner: 'antigravity',
+      startedAt: 1_000_000,
+      reviewSeenOnce: true,
+      reviewBoard: 'mobile',
+      sheetPath: 'sheets/spec-a-1.json',
+      seedText: '通知まとめ',
+      repoPath: '/secret/path',
+    },
+    { at: 1_000_000 + 200_000 },
+  )
+  assert.equal(job.phase, 'round2_spec')
+  assert.equal(job.stalled, true, 'Agy Opt-in は 3 分で停滞警告')
+  assert.equal(job.sheetPath, 'sheets/spec-a-1.json')
+  assert.equal(job.reviewBoard, 'mobile')
+  assert.equal(job.repoPath, undefined, '機密は引き続き落とす')
+
+  // 3 分未満は stalled=false（既定の publicJob 呼び出しでも壊れない）
+  const fresh = publicJob({ id: 'arch-2', board: 'demo', status: 'running', startedAt: 1_000_000 }, { at: 1_000_010 })
+  assert.equal(fresh.stalled, false)
+  assert.equal(fresh.phase, 'spawning')
+  assert.equal(fresh.sheetPath, null)
+  assert.equal(fresh.reviewBoard, null)
+})

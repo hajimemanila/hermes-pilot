@@ -28,6 +28,20 @@
  *
  * `running`（CLI 実行中）→ `awaiting_spec`（CLI 正常終了・SPEC 待ち）→ `spec_ready`（完成検知）
  * → `launched`（autoStart で起票済み）/ `failed`（CLI 異常終了）
+ *
+ * ## Agy Opt-in の責務分離（SPEC V9 D41）
+ *
+ * `antigravity` の終了時（`exit 0` の空振り・非 0 終了とも）に**自動で**
+ * `fallbackToKanban()` を呼ばない。カンバン `[ARCH]` タスクを裏で起票すると
+ * GUI の Antigravity と Hermes Agent が二重稼働し、どちらが成果物を書いたか追えなくなる。
+ * `exit 0` は `awaiting_spec`（`runner: 'antigravity'` / `mode: 'cli'`）で成果物を待ち、
+ * 非 0 終了は `failed` に理由を残す。Hermes Native への切替は UI の明示操作だけ（D43）。
+ *
+ * ## ボード横断の Review 検知とフェーズ（SPEC V9 D42）
+ *
+ * `[review]` は `job.board` に加えて `mobile` ボードも走査する（`reviewBoardsFor`）。
+ * `review/sheets/spec-*.json` の中間シートを `sheetPath` として観測し、
+ * `phase`（`spawning`〜`failed`）と `stalled`（3 分無進展）を `publicJob()` で返す。
  */
 
 import fs from 'node:fs'
@@ -57,6 +71,31 @@ export const DEFAULT_EXECUTION_POLICY = 'zero-stop'
 
 /** 親 `[ARCH]` タスクがこの状態になったらジョブは終端（進行バーに残さない）。 */
 export const TERMINAL_TASK_STATUSES = ['done', 'archived']
+
+/**
+ * Quick Review（`[review]`）が撒かれる既定ボード（SPEC V9 D42）。
+ *
+ * 種は `hermes-pilot` などリポジトリ固有ボードで撒かれても、Round 1 のシートは `mobile` に届く。
+ * 走査対象を `[job.board, DEFAULT_REVIEW_BOARD]` に広げないと `awaiting_review` を取りこぼす。
+ */
+export const DEFAULT_REVIEW_BOARD = 'mobile'
+
+/** 進行バーに残す「アクティブ」状態（ボード横断で返す対象。`failed` も人が気づくまで残す）。 */
+export const ACTIVE_JOB_STATUSES = ['running', 'awaiting_spec', 'awaiting_review', 'failed']
+
+/** `publicJob().phase` が返すフェーズ（SPEC V9 D42）。 */
+export const ARCHITECT_PHASES = [
+  'spawning',
+  'round1_sheet',
+  'awaiting_review',
+  'round2_spec',
+  'spec_ready',
+  'launched',
+  'failed',
+]
+
+/** 進展が無いままこの時間を超えたら `stalled`（3 分。SPEC V9 D42/D43）。 */
+export const STALLED_AFTER_MS = 180_000
 /** 破棄したジョブ ID を保持する上限（古いものから落とす）。 */
 export const DISMISSED_MAX = 500
 
@@ -452,11 +491,98 @@ export function queueStateOf(taskStatus) {
 }
 
 /**
+ * `[review]` を探すボード（`[job.board, 'mobile']`・重複除去・空文字除外）。SPEC V9 D42。
+ * @param {unknown} jobBoard ジョブのボード
+ * @returns {string[]} 走査するボード（先頭がジョブ自身のボード）
+ */
+export function reviewBoardsFor(jobBoard) {
+  const own = String(jobBoard ?? '').trim()
+  return [...new Set([own, DEFAULT_REVIEW_BOARD].filter(Boolean))]
+}
+
+/**
+ * `reviewDir/sheets/` の中で「このジョブが書いた」Round 1 シートを 1 枚選ぶ（SPEC V9 D42）。
+ *
+ * `spec-<slug>-1.json` のような JSON シートだけを見る（HTML は対象外）。
+ * `mtime >= job.startedAt - 猶予` の最新 1 枚を `sheets/<name>` の相対パスで返す。
+ *
+ * @param {string|null|undefined} reviewDir レビューディレクトリ（`sheets/` の親）
+ * @param {{startedAt?: number}} job ジョブ
+ * @param {{slackMs?: number}} [opts] 猶予（秒ズレ対策）
+ * @returns {string|null} 相対パス（無ければ null）
+ */
+export function findRecentSheet(reviewDir, job, { slackMs = SPEC_MTIME_SLACK_MS } = {}) {
+  const dir = reviewDir ? path.join(String(reviewDir), 'sheets') : ''
+  if (!dir) return null
+  let entries = []
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return null // ディレクトリが無い環境では無害に null
+  }
+  const since = Number(job?.startedAt ?? 0) - Number(slackMs)
+  let best = null
+  for (const entry of entries) {
+    if (!entry?.isFile?.()) continue
+    const name = String(entry.name ?? '')
+    if (!/^spec-.+\.json$/i.test(name)) continue
+    let mtime = 0
+    try {
+      mtime = Number(fs.statSync(path.join(dir, name)).mtimeMs)
+    } catch {
+      continue
+    }
+    if (mtime < since) continue
+    if (!best || mtime > best.mtime) best = { name, mtime }
+  }
+  return best ? `sheets/${best.name}` : null
+}
+
+/**
+ * ジョブの現在フェーズ（SPEC V9 D42）。`publicJob().phase` の実体。
+ * @param {object} job ジョブ
+ * @returns {'spawning'|'round1_sheet'|'awaiting_review'|'round2_spec'|'spec_ready'|'launched'|'failed'} フェーズ
+ */
+export function computePhase(job) {
+  const status = String(job?.status ?? '').trim()
+  if (status === 'failed') return 'failed'
+  if (status === 'launched') return 'launched'
+  if (status === 'spec_ready') return 'spec_ready'
+  if (status === 'awaiting_review') return 'awaiting_review'
+  // 一度 Review を通過して回答後に `awaiting_spec` へ戻った = Round 2（SPEC 執筆中）
+  if (job?.reviewSeenOnce) return 'round2_spec'
+  if (job?.sheetPath) return 'round1_sheet'
+  return 'spawning'
+}
+
+/**
+ * ジョブが停滞しているか（SPEC V9 D42）。
+ *
+ * Agy Opt-in はカンバンタスクを持たないので `queueState` では「待ち」を説明できない。
+ * `running` / `awaiting_spec` のまま `STALLED_AFTER_MS` を超えたら停滞とみなす
+ * （`queued` は人が着火待ちなので対象外）。
+ *
+ * @param {object} job ジョブ
+ * @param {number} [at] 現在時刻（ミリ秒）
+ * @returns {boolean} 停滞なら true
+ */
+export function isJobStalled(job, at = Date.now()) {
+  const status = String(job?.status ?? '').trim()
+  if (!['running', 'awaiting_spec'].includes(status)) return false
+  if (String(job?.queueState ?? '').trim() === 'queued') return false
+  const since = Number(job?.startedAt ?? job?.createdAt ?? 0)
+  if (!Number.isFinite(since) || since <= 0) return false
+  const elapsed = Number(at) - since
+  return Number.isFinite(elapsed) && elapsed >= STALLED_AFTER_MS
+}
+
+/**
  * 保存するジョブの形（機密を持たない。種は先頭 400 字だけ）。
  * @param {object} job 内部ジョブ
+ * @param {{at?: number}} [opts] 現在時刻（`stalled` の算出に使う）
  * @returns {object} 公開用
  */
-export function publicJob(job) {
+export function publicJob(job, { at = Date.now() } = {}) {
   return {
     id: job.id,
     board: job.board,
@@ -474,6 +600,10 @@ export function publicJob(job) {
     dismissed: Boolean(job.dismissed),
     reviewTaskId: job.reviewTaskId ?? null,
     reviewTitle: job.reviewTitle ?? null,
+    reviewBoard: job.reviewBoard ?? null,
+    phase: computePhase(job),
+    stalled: isJobStalled(job, at),
+    sheetPath: job.sheetPath ?? null,
     autoStart: Boolean(job.autoStart),
     seed: String(job.seedText ?? '').slice(0, 400),
     lang: job.lang,
@@ -693,12 +823,9 @@ export function createArchitect(cfg = {}, deps = {}) {
         const code = typeof res?.code === 'number' ? res.code : 0
         const taskId = res?.taskId ?? parseCreatedTask(res?.stdout)?.id ?? null
         if (code !== 0) {
+          // D41: 失敗しても自動でカンバン起票へ切り替えない（Hermes Agent との二重稼働を根絶）。
+          // Hermes Native への切替は UI の明示操作（🔄 Hermes Native で再試行）だけ。
           const reason = String(res?.stderr || res?.stdout || `runner exited with ${code}`).trim()
-          // agy の失敗は「停止」ではなくカンバン起票への自動フォールバックで救う（D28）
-          if (runnerId === 'antigravity') {
-            await fallbackToKanban(job, `exit-${code}: ${reason}`)
-            return
-          }
           job.status = 'failed'
           job.error = reason.slice(0, 600)
           return
@@ -708,12 +835,13 @@ export function createArchitect(cfg = {}, deps = {}) {
           job.status = 'awaiting_spec'
           return
         }
-        // agy が 0 で終わっても成果物（SPEC / Review タスク）が無いなら IDE ランチャー等の空振り。
-        if (hasArtifacts(job)) {
-          job.status = 'awaiting_spec'
-          return
-        }
-        await fallbackToKanban(job, 'no-output: agy exited 0 without a SPEC or [review] task')
+        // D41: agy が exit 0 で返る（macOS の IDE ランチャーは成果物を書く前に返る）。
+        // 成果物があれば SPEC/Review 検知へ、無くてもカンバン起票はせず awaiting_spec で待つ。
+        // `hasArtifacts` は「いま検知できる成果物があるか」を記録するだけで、起票はしない。
+        job.awaitingArtifacts = !hasArtifacts(job)
+        job.status = 'awaiting_spec'
+        job.runner = 'antigravity'
+        job.mode = 'cli'
       })
       .catch((e) => {
         job.finishedAt = now()
@@ -732,53 +860,11 @@ export function createArchitect(cfg = {}, deps = {}) {
   }
 
   /**
-   * agy 失敗・無生成時の自動フォールバック（同一ジョブ内で Hermes カンバン Architect へ）。
+   * ジョブの成果物（新 SPEC / 待機中 Review タスク / 中間シート）が出ているか。
    *
-   * 起票自体が失敗したときだけ `failed` にする（ジョブを無音で止めない）。
+   * D42: `[review]` は `job.board` だけでなく `mobile` ボードにも撒かれるので両方を見る。
    * @param {object} job ジョブ
-   * @param {string} reason 短い理由（英語コード＋抜粋）
-   * @returns {Promise<boolean>} 起票できたら true
-   */
-  async function fallbackToKanban(job, reason) {
-    job.fallbackFrom = job.fallbackFrom ?? (job.runner === 'antigravity' ? 'antigravity' : null)
-    job.fallbackReason = String(reason ?? '').slice(0, 200)
-    try {
-      const res = await runner({
-        runnerId: 'hermes',
-        prompt: job.prompt,
-        repoPath: job.repoPath,
-        board: job.board,
-        seedText: job.seedText,
-        jobId: job.id,
-        executionPolicy: job.executionPolicy,
-      })
-      const code = typeof res?.code === 'number' ? res.code : 0
-      const taskId = res?.taskId ?? parseCreatedTask(res?.stdout)?.id ?? null
-      if (code !== 0) {
-        job.status = 'failed'
-        job.error = String(res?.stderr || res?.stdout || `kanban fallback exited with ${code}`)
-          .trim()
-          .slice(0, 600)
-        return false
-      }
-      job.runner = 'hermes'
-      job.mode = 'kanban'
-      job.taskId = taskId
-      job.status = 'awaiting_spec'
-      job.error = null
-      job.finishedAt = now()
-      return true
-    } catch (e) {
-      job.status = 'failed'
-      job.error = String(e?.message ?? e).slice(0, 600)
-      return false
-    }
-  }
-
-  /**
-   * ジョブの成果物（新 SPEC / 待機中 Review タスク）が出ているか。
-   * @param {object} job ジョブ
-   * @returns {boolean} どちらかあれば true
+   * @returns {boolean} どれかあれば true
    */
   function hasArtifacts(job) {
     try {
@@ -786,8 +872,15 @@ export function createArchitect(cfg = {}, deps = {}) {
     } catch {
       /* 走査に失敗しても判定は続ける */
     }
+    for (const slug of reviewBoardsFor(job.board)) {
+      try {
+        if (findJobReviewTask(job, readTasks(slug) ?? [])) return true
+      } catch {
+        /* 同上 */
+      }
+    }
     try {
-      if (findJobReviewTask(job, readTasks(job.board) ?? [])) return true
+      if (findRecentSheet(cfg.reviewDir, job)) return true
     } catch {
       /* 同上 */
     }
@@ -806,15 +899,26 @@ export function createArchitect(cfg = {}, deps = {}) {
 
   /**
    * ジョブの進み具合と、完成 SPEC・未起票 SPEC を返す。
-   * @param {{board?: string, repoPath?: string, include?: {repoPath?: string, board?: string}, includeDismissed?: boolean}} [query] 絞り込み
+   * @param {{board?: string, repoPath?: string, include?: {repoPath?: string, board?: string}, includeDismissed?: boolean, strictBoard?: boolean}} [query] 絞り込み
    *   `include` はジョブが 1 つも無いボードでも「未起票 SPEC」を数えるための追加走査先
    *   `includeDismissed` は破棄済みジョブも返す（監査・テスト用。既定は除外）
+   *   `strictBoard` は選択中ボードと完全一致するジョブだけに絞る（V7 互換。既定はボード横断）
    * @returns {Promise<object>} `{ok, board, runner, capabilities, jobs, specReady, pending}`
    */
   async function jobsFor(query = {}) {
     const board = String(query.board ?? '').trim()
+    const at = now()
+    // D42: 既定は「アクティブで未破棄なジョブ」をボード・リポジトリ横断で返す。
+    // 別ボードで撒いた種でも進行バーが消えないようにするため（`strictBoard: true` で V7 互換）。
     const mine = [...jobs.values()]
-      .filter((j) => (!board || j.board === board) && (!query.repoPath || j.repoPath === query.repoPath))
+      .filter((j) => {
+        const sameBoard = !board || j.board === board
+        const sameRepo = !query.repoPath || j.repoPath === query.repoPath
+        if (query.strictBoard === true) return sameBoard && sameRepo
+        if (sameBoard && sameRepo) return true
+        if (query.includeDismissed) return true
+        return !isDismissed(j) && !isTerminal(j) && ACTIVE_JOB_STATUSES.includes(String(j.status ?? '').trim())
+      })
       .sort((a, b) => b.createdAt - a.createdAt)
 
     // リポジトリごとに 1 回だけ SPEC を走査する
@@ -880,6 +984,20 @@ export function createArchitect(cfg = {}, deps = {}) {
       return tasksByBoard.get(key)
     }
 
+    // D42: Round 1 の中間シート（review/sheets/spec-*.json）を観測する（phase / sheetPath の材料）。
+    // 早期フェーズのジョブだけ見る（毎ポーリングで全ジョブ分の readdir をしない）。
+    if (cfg.reviewDir) {
+      for (const job of mine) {
+        if (job.sheetPath) continue
+        if (!['running', 'awaiting_spec', 'awaiting_review'].includes(job.status)) continue
+        try {
+          job.sheetPath = findRecentSheet(cfg.reviewDir, job)
+        } catch {
+          job.sheetPath = null
+        }
+      }
+    }
+
     for (const job of mine) {
       if (!['running', 'awaiting_spec', 'awaiting_review'].includes(job.status)) continue
       const tasks = tasksOf(job.board)
@@ -893,6 +1011,7 @@ export function createArchitect(cfg = {}, deps = {}) {
         job.queueState = null
         job.reviewTaskId = null
         job.reviewTitle = null
+        job.reviewBoard = null
         job.finishedAt = job.finishedAt ?? now()
         continue
       }
@@ -902,16 +1021,28 @@ export function createArchitect(cfg = {}, deps = {}) {
         continue
       }
       if (job.spec) continue // 完成 SPEC を検知済み（spec_ready / launched）
-      const review = findJobReviewTask(job, tasks)
+      // D42: `[review]` は job.board に加えて `mobile` ボードも探す（他ボード起点の種まき対策）
+      let review = null
+      for (const slug of reviewBoardsFor(job.board)) {
+        const found = findJobReviewTask(job, tasksOf(slug))
+        if (found) {
+          review = { ...found, board: slug }
+          break
+        }
+      }
       if (review) {
         job.status = 'awaiting_review'
         job.reviewTaskId = review.taskId
         job.reviewTitle = review.title
+        job.reviewBoard = review.board
+        // 一度でも回答待ちを観測した = 以降は Round 2（SPEC 執筆中）として扱う
+        job.reviewSeenOnce = true
         continue
       }
       // 回答が返ってレビューが blocked でなくなったら「仕様書執筆中」へ戻す
       job.reviewTaskId = null
       job.reviewTitle = null
+      job.reviewBoard = null
       if (job.status === 'awaiting_review') job.status = 'awaiting_spec'
     }
 
@@ -1022,7 +1153,7 @@ export function createArchitect(cfg = {}, deps = {}) {
       board: board || null,
       runner: getConfig().runner,
       capabilities: { hasAgyCli: Boolean(hasAgyCli()) },
-      jobs: visible.map(publicJob),
+      jobs: visible.map((job) => publicJob(job, { at })),
       specReady,
       pending,
     }
