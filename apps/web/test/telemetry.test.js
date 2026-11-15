@@ -41,6 +41,16 @@ test('runningTotal は実行中タスクとターンを足し、負や不明は 
   assert.equal(runningTotal({ tasksRunning: 'x', turns: 4 }), 4)
 })
 
+test('runningTotal は Architect（仕様策定）ジョブも合算する（D43 / カンバンタスクを持たない agy ジョブ）', () => {
+  assert.equal(runningTotal({ tasksRunning: 1, turns: 1, architectRunning: 2 }), 4)
+  // 既存の 2 引数呼び出しは完全互換（第 3 項は 0 扱い）
+  assert.equal(runningTotal({ tasksRunning: 1, turns: 1 }), 2)
+  // agy ジョブだけが動いているときも ⚡ が出る
+  assert.equal(runningTotal({ architectRunning: 1 }), 1)
+  assert.equal(runningTotal({ tasksRunning: -1, turns: 1, architectRunning: -2 }), 1)
+  assert.equal(runningTotal({ architectRunning: 'x' }), 0)
+})
+
 test('gwState は 接続と GW 本体の両方を見る', () => {
   assert.equal(gwState({ conn: 'ok', bridge: { ok: true } }), 'ok')
   assert.equal(gwState({ conn: 'ok', bridge: null }), 'ok', 'overview 未取得でも接続していれば正常')

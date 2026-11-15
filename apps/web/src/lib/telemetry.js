@@ -44,15 +44,19 @@ export function latestToolName(turns) {
 }
 
 /**
- * 稼働中の合計（実行中タスク ＋ 実行中ターン）。
+ * 稼働中の合計（実行中タスク ＋ 実行中ターン ＋ 実行中の Architect ジョブ）。
  *
- * @param {{tasksRunning?: unknown, turns?: unknown}} input 入力
+ * Architect（仕様策定）は カンバンタスクを持たない `agy` ジョブもあるので、
+ * `/api/live` の `counts.architect` を第 3 項として足す（SPEC-PILOT-V9 §3.2 / D43）。
+ *
+ * @param {{tasksRunning?: unknown, turns?: unknown, architectRunning?: unknown}} input 入力
  * @returns {number} 件数
  */
-export function runningTotal({ tasksRunning = 0, turns = 0 } = {}) {
+export function runningTotal({ tasksRunning = 0, turns = 0, architectRunning = 0 } = {}) {
   const a = Number(tasksRunning) || 0
   const b = Number(turns) || 0
-  return Math.max(0, a) + Math.max(0, b)
+  const c = Number(architectRunning) || 0
+  return Math.max(0, a) + Math.max(0, b) + Math.max(0, c)
 }
 
 /**

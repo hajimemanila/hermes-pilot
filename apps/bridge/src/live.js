@@ -21,7 +21,74 @@ export function platformOf(holder) {
 /** リース期限の猶予（秒）。更新が数秒遅れても「終わった」と誤判定しない。 */
 const LEASE_GRACE_SEC = 60
 
-export function createLive(cfg, kanban) {
+/**
+ * Architect（仕様策定）ジョブのうち **LiveSheet の一覧に載せる** 状態。
+ *
+ * `awaiting_review`（赤ペン待ち）は 🔔 判断待ちピルが受け持つので件数には数えないが、
+ * 「いま何が動いているか」を見る場所としては一覧に出す（SPEC-PILOT-V9 §3.2）。
+ */
+export const ARCHITECT_LIST_STATUSES = ['running', 'awaiting_spec', 'awaiting_review']
+
+/** `counts.architect`（⚡ 実行中）に数える状態。 */
+export const ARCHITECT_RUNNING_STATUSES = ['running', 'awaiting_spec']
+
+/**
+ * 停滞とみなす経過（3分）。`architect.js` の `STALLED_AFTER_MS` と同値で、
+ * あちらが `stalled` を返すようになったらそちらを優先する（この値はその手前の保険）。
+ */
+export const ARCHITECT_STALLED_MS = 180_000
+
+/**
+ * ジョブの状態 → フェーズの控えめな写像。
+ *
+ * 正規のフェーズ算出は `architect.js#computePhase`（V9-B1）が持ち、`job.phase` があれば
+ * そちらをそのまま使う。ここは B1 未適用でも `phase` が空にならないためのフォールバック。
+ *
+ * @param {string} status ジョブ状態
+ * @returns {string} フェーズ名
+ */
+export function phaseOfStatus(status) {
+  const s = String(status ?? '')
+  if (['awaiting_review', 'spec_ready', 'launched', 'failed'].includes(s)) return s
+  return 'spawning'
+}
+
+/**
+ * Architect ジョブを LiveSheet 用に整形する（機密は持たない）。
+ *
+ * @param {object} job `architect.jobs()` の 1 件（`publicJob` の形）
+ * @param {number} [at] 現在時刻
+ * @returns {object} LiveSheet 用
+ */
+export function shapeArchitectJob(job, at = Date.now()) {
+  const status = String(job?.status ?? '')
+  const started = Number(job?.startedAt ?? job?.createdAt ?? 0) || 0
+  // 停滞判定は architect.js が持つ。無い場合だけ 3 分ルールをここで当てる（SPEC V9 §3.1 と同じ条件）。
+  const stalled =
+    typeof job?.stalled === 'boolean'
+      ? job.stalled
+      : ARCHITECT_RUNNING_STATUSES.includes(status) &&
+        job?.queueState !== 'queued' &&
+        started > 0 &&
+        at - started >= ARCHITECT_STALLED_MS
+  return {
+    id: job?.id ?? null,
+    board: job?.board ?? null,
+    runner: job?.runner ?? null,
+    runnerLabel: job?.runnerLabel ?? job?.runner ?? null,
+    status,
+    phase: typeof job?.phase === 'string' && job.phase ? job.phase : phaseOfStatus(status),
+    stalled,
+    taskId: job?.taskId ?? null,
+    reviewTaskId: job?.reviewTaskId ?? null,
+    reviewBoard: job?.reviewBoard ?? null,
+    seed: String(job?.seed ?? '').slice(0, 200),
+    startedAt: started || null,
+    elapsedSec: started ? Math.max(0, Math.round((at - started) / 1000)) : null,
+  }
+}
+
+export function createLive(cfg, kanban, deps = {}) {
   const dbPath = cfg.stateDb ?? path.join(cfg.home ?? '', '.hermes', 'state.db')
 
   /**
@@ -92,9 +159,9 @@ export function createLive(cfg, kanban) {
    * @param {{dbs?: Array<{profile: string, path: string}>}} [opts] 条件
    * @returns {object} スナップショット
    */
-  function snapshot(opts = {}) {
+  function baseSnapshot(opts = {}) {
     const at = Date.now()
-    const out = { ok: true, at, turns: [], tasks: [], counts: { turns: 0, tasks: 0 } }
+    const out = { ok: true, at, turns: [], tasks: [], architect: [], counts: { turns: 0, tasks: 0, architect: 0 } }
 
     // 実行中タスク（ボード横断）
     try {
@@ -146,6 +213,72 @@ export function createLive(cfg, kanban) {
     out.turns = turns
     out.counts.turns = turns.length
     return out
+  }
+
+  /**
+   * アクティブな Architect ジョブを一覧と件数へ落とし込む。
+   *
+   * - 一覧（`out.architect`）: `running` / `awaiting_spec` / `awaiting_review` で未破棄のもの
+   * - 件数（`out.counts.architect`）: そのうち `running` / `awaiting_spec` だけ
+   *   （`awaiting_review` は 🔔 判断待ちピルが数えるので二重計上しない）
+   *
+   * @param {object} out スナップショット
+   * @param {Array<object>|unknown} raw `architect.jobs()` の `jobs`
+   * @returns {object} 同じ `out`
+   */
+  function withArchitect(out, raw) {
+    const at = Number(out.at) || Date.now()
+    const list = Array.isArray(raw) ? raw : []
+    const jobs = []
+    for (const job of list) {
+      if (!job || job.dismissed) continue
+      if (!ARCHITECT_LIST_STATUSES.includes(String(job.status ?? ''))) continue
+      jobs.push(shapeArchitectJob(job, at))
+    }
+    jobs.sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))
+    out.architect = jobs
+    out.counts = {
+      ...(out.counts ?? {}),
+      architect: jobs.filter((j) => ARCHITECT_RUNNING_STATUSES.includes(j.status)).length,
+    }
+    return out
+  }
+
+  /**
+   * Architect ジョブの供給元を決める（`opts.architect` → `opts.architectJobs` → `deps.architectJobs`）。
+   * @param {object} opts snapshot 引数
+   * @returns {Array<object>|Promise<Array<object>>|Function|null} 一覧・Promise・関数
+   */
+  function architectSource(opts) {
+    const given = opts.architect !== undefined ? opts.architect : opts.architectJobs
+    if (given !== undefined) return given
+    return typeof deps.architectJobs === 'function' ? deps.architectJobs : null
+  }
+
+  /**
+   * いま動いているもの（ターン・タスク・Architect ジョブ）。
+   *
+   * Architect の一覧を **配列**で渡せば同期に、**Promise** で渡せば同じ結果を `await` で返す
+   * （`server.js` は `await architect.jobs()` の結果を配列で渡す・SPEC V9 §3.2）。
+   *
+   * @param {{dbs?: Array<{profile: string, path: string}>, architect?: unknown, architectJobs?: unknown}} [opts] 条件
+   * @returns {object|Promise<object>} スナップショット（Promise を渡したときだけ Promise）
+   */
+  function snapshot(opts = {}) {
+    let source = null
+    try {
+      source = architectSource(opts)
+      if (typeof source === 'function') source = source()
+    } catch {
+      source = []
+    }
+    if (source && typeof source.then === 'function') {
+      const base = baseSnapshot(opts)
+      return Promise.resolve(source)
+        .then((list) => withArchitect(base, list))
+        .catch(() => withArchitect(base, []))
+    }
+    return withArchitect(baseSnapshot(opts), source)
   }
 
   return { snapshot }

@@ -168,6 +168,9 @@ export function App() {
   const [otherChatUnread, setOtherChatUnread] = useState(0)
   const [liveTurns, setLiveTurns] = useState(0)
   const [liveTurnsList, setLiveTurnsList] = useState([])
+  // 稼働中の Architect（仕様策定）ジョブ数。カンバンタスクを持たない `agy` ジョブも
+  // ⚡ 実行中 に数えるため `/api/live` の `counts.architect` を購読する（SPEC V9 §3.2 / D43）。
+  const [liveArchitect, setLiveArchitect] = useState(0)
   const [reviewItems, setReviewItems] = useState([])
   const [chatStreaming, setChatStreaming] = useState(false)
   const [reviewFocus, setReviewFocus] = useState(null)
@@ -321,12 +324,27 @@ export function App() {
       setTab('tasks')
       setFocusBoard({ board: e.detail?.board ?? null, nonce: Date.now() })
     }
+    // どの画面からでも 1 タップで「いま何が動いているか」（LiveSheet）を開ける逃げ道。
+    // ArchitectJobBar / LiveSheet 自身 / デモの導線が同じイベントを使う（SPEC V9 §3.2）。
+    const onOpenLive = () => setLiveOpen(true)
+    // 特定のタスクを開きたい（LiveSheet の「📋 タスク」）。ボード切替は済ませ、
+    // タスク詳細を開くのは TasksPane 側（V9-B3）が受ける。
+    const onOpenTask = (e) => {
+      setTab('tasks')
+      setFocusBoard({
+        board: e.detail?.board ?? null,
+        taskId: e.detail?.taskId ?? e.detail?.id ?? null,
+        nonce: Date.now(),
+      })
+    }
     window.addEventListener('hm:chat-unread', onOtherUnread)
     window.addEventListener('hm:chat-streaming', onChatStreaming)
     window.addEventListener('hm:open-review', onOpenReview)
     window.addEventListener('hm:open-session', onOpenSession)
     window.addEventListener('hm:discuss-pipeline', onDiscussPipeline)
     window.addEventListener('hm:open-board', onOpenBoard)
+    window.addEventListener('hm:open-live', onOpenLive)
+    window.addEventListener('hm:open-task', onOpenTask)
     return () => {
       window.removeEventListener('hm:chat-unread', onOtherUnread)
       window.removeEventListener('hm:chat-streaming', onChatStreaming)
@@ -334,6 +352,8 @@ export function App() {
       window.removeEventListener('hm:open-session', onOpenSession)
       window.removeEventListener('hm:discuss-pipeline', onDiscussPipeline)
       window.removeEventListener('hm:open-board', onOpenBoard)
+      window.removeEventListener('hm:open-live', onOpenLive)
+      window.removeEventListener('hm:open-task', onOpenTask)
     }
   }, [])
 
@@ -634,6 +654,7 @@ export function App() {
         if (!alive) return
         setLiveTurns(Number(d?.counts?.turns ?? 0))
         setLiveTurnsList(Array.isArray(d?.turns) ? d.turns : [])
+        setLiveArchitect(Number(d?.counts?.architect ?? 0))
       } catch {
         /* 補助情報 */
       }
@@ -642,10 +663,13 @@ export function App() {
       if (!alive) return
       setLiveTurns(Number(e.detail?.turns ?? 0))
       if (Array.isArray(e.detail?.items)) setLiveTurnsList(e.detail.items)
+      if (e.detail?.architect !== undefined) setLiveArchitect(Number(e.detail.architect) || 0)
     }
     sync()
+    // タスクタブでも止めない: TasksPane の `hm:live-turns` はターン数しか運ばないので、
+    // ここを省くと「タスクタブにいる間だけ Architect が ⚡ に数えられない」穴が空く（実測）。
     const id = setInterval(() => {
-      if (document.visibilityState === 'visible' && tabRef.current !== 'tasks') sync()
+      if (document.visibilityState === 'visible') sync()
     }, 15000)
     window.addEventListener('hm:live-turns', onTurns)
     const offSync = registerSyncer(sync)
@@ -682,7 +706,7 @@ export function App() {
   // 計器盤の値（純関数で組み立てる。lib/telemetry.js）
   const gw = gwState({ conn, bridge: overview?.bridge ?? null })
   const waitingTotal = reviewWaiting + inboxPending
-  const running = runningTotal({ tasksRunning: overview?.runningTasks, turns: liveTurns })
+  const running = runningTotal({ tasksRunning: overview?.runningTasks, turns: liveTurns, architectRunning: liveArchitect })
   const lastTool = latestToolName(liveTurnsList)
   const cachePct = cachePercent(usageData?.cacheHitRate)
 
@@ -886,7 +910,7 @@ export function App() {
           // （報告カードはタスクタブに出るのにナビに何も出ていなかった・実機）
           const tasksBadge = inboxPending + pipelineUnseen
           const badge = item.id === 'review' ? reviewWaiting : item.id === 'tasks' ? tasksBadge : 0
-          const tasksRunning = (Number(overview?.runningTasks) || 0) + liveTurns
+          const tasksRunning = (Number(overview?.runningTasks) || 0) + liveTurns + liveArchitect
           // レビュータブは「判断待ち（数字） > 未読の完了（緑の点） > 反映中（青の点）」の順で 1 つだけ出す。
           // タスクタブは「承認待ち（数字） > 稼働中（青の点）」、チャットタブは「未読完了（緑の点） > 応答中（青の点）」。
           const state =
