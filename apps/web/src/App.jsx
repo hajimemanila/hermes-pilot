@@ -757,7 +757,7 @@ export function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <span className="brand">Hermes<b>Pilot</b></span>
+        <span className="brand">Hermes <b>Pilot</b></span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <button
             className="icon-btn"

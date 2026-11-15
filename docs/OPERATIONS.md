@@ -1127,6 +1127,30 @@ WebAPK インストール基盤（Google Play Services 側）** にある。
 
 実測: `--dir` 30 項目合格、`--url` 32 項目合格、`--self-test` 3 項目合格、`npm test` 81 pass。
 
+### アイコン v6（コンパス）/ 2026-11-16 — アート画像を正本にする
+
+これまでアイコンは `scripts/make-icons.py` が H グリフをコードで描いていた。デザイン差し替えにあたり
+**正本を画像 1 枚**（`docs/icon-proposal-2-maskable.png`・1024×1024）にし、`scripts/make-icons-from-art.py` が
+同じ絵から 5 サイズ＋`favicon.ico` を作る形に変えた（favicon と PNG の見た目がずれない）。
+
+- 元画像は「外周まで不透明・背景 `#06161a` 単色ベタ・図柄半径 0.216」で、白枠の再発条件を最初から満たしている
+- `any` は図柄を大きく見せるため中心を 0.76 でクロップ（半径 0.287 < 安全域 0.40）、`maskable` はクロップなし
+- `icon-v6.svg`（favicon）は**同じ PNG を data URI で埋めている**。ベクターに描き直すと針の丸みが落ちて
+  PNG と見た目がずれるため（P1 のとおり、ホーム画面のアイコンの実体が favicon になる経路がある）
+- 旧 `-v5` は削除（古い manifest を掴んだ端末は 404 になり、取り直しが起きる）。SW の `CACHE` は `v4`
+- アプリ名も **Hermes Pilot** に統一: `<title>`（旧 "Hermes Mobile" のままだった）/ `short_name`（旧 "Pilot"、
+  ランチャーの表示名になる）/ `application-name` / `apple-mobile-web-app-title` / トップバーの表記
+  （`Hermes Pilot`。以前は空白なしで `HermesPilot` と出ていた）
+
+実測:
+```
+npm run check:pwa  -> 34/34 合格（icon-v6 5件 + SVG / 外周透明画素0 / 単色 / 図柄半径 0.217・0.287）
+check-pwa-icons.py -> 問題あり 0 件 / 全 5 件（alpha_min 255 / corner (6,22,26,255) / white 0）
+npm test -> 808 pass / 0 fail 、npm run verify -> exit 0
+390x844: title=🐴 Hermes Pilot / brand=Hermes Pilot / apple-touch=icon-180-v6.png / icon=icon-v6.svg
+```
+
+
 ### 追記9: ボードチップの並び順と選択の保持（2026-10-23）
 
 **並び順**: 旧実装は「current ボード → 非アーカイブ → 実行中 → 名前順」で、規則が見えなかった。
