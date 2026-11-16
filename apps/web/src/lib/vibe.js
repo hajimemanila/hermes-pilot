@@ -369,16 +369,16 @@ export function dispatchFx(detail) {
   const w = safeWin(detail?.target)
   try {
     if (typeof w?.dispatchEvent !== 'function' || typeof globalThis.CustomEvent !== 'function') return false
-    w.dispatchEvent(
-      new globalThis.CustomEvent(FX_EVENT, {
-        detail: {
-          kind: detail.kind,
-          combo: Number(detail.combo) || 0,
-          x: Number.isFinite(detail.x) ? detail.x : null,
-          y: Number.isFinite(detail.y) ? detail.y : null,
-        },
-      }),
-    )
+    const fxDetail = {
+      kind: detail.kind,
+      combo: Number(detail.combo) || 0,
+      x: Number.isFinite(detail.x) ? detail.x : null,
+      y: Number.isFinite(detail.y) ? detail.y : null,
+    }
+    if (Number.isFinite(detail.width)) fxDetail.width = detail.width
+    if (Number.isFinite(detail.height)) fxDetail.height = detail.height
+    if (typeof detail.sfx === 'string' && detail.sfx) fxDetail.sfx = detail.sfx
+    w.dispatchEvent(new globalThis.CustomEvent(FX_EVENT, { detail: fxDetail }))
     return true
   } catch {
     return false
@@ -418,7 +418,16 @@ export function celebrateAction(kind, opts = {}) {
     result.haptic = plan
   }
 
-  result.fx = dispatchFx({ kind, combo, x: opts.x, y: opts.y, target: opts.target })
+  result.fx = dispatchFx({
+    kind,
+    combo,
+    x: opts.x,
+    y: opts.y,
+    width: opts.width,
+    height: opts.height,
+    sfx: opts.sfx,
+    target: opts.target,
+  })
 
   if (typeof opts.soundFn === 'function') {
     result.sound = Boolean(opts.soundFn(kind, { combo }))
@@ -440,11 +449,28 @@ export function celebrate(kind, extras = {}) {
   const storage = extras.storage ?? safeStorage()
   const combo = COMBO_KINDS.includes(kind) ? comboTracker.bump(kind) : comboTracker.combo
   const withSound = combo > 1 && COMBO_KINDS.includes(kind) ? 'combo' : kind
+  let { x, y, width, height } = extras
+  if (!Number.isFinite(x) && !Number.isFinite(y)) {
+    try {
+      const rect = globalThis.document?.activeElement?.getBoundingClientRect?.()
+      if (rect && rect.width > 0 && rect.height > 0) {
+        x = Math.round(rect.left + rect.width / 2)
+        y = Math.round(rect.top + rect.height / 2)
+        width = Math.round(rect.width)
+        height = Math.round(rect.height)
+      }
+    } catch {
+      /* テスト環境等では座標なし */
+    }
+  }
   return celebrateAction(kind, {
     vibe,
     combo,
-    x: extras.x,
-    y: extras.y,
+    x,
+    y,
+    width,
+    height,
+    sfx: extras.sfx,
     hapticFn: (k) => haptic(k, undefined, storage),
     vibrateFn: (p) => hapticPattern(p, undefined, storage),
     soundFn: (k, o) => {

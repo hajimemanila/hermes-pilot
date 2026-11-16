@@ -23,7 +23,7 @@ import { LiveSheet } from './features/LiveSheet.jsx'
 import { Icon, Loader } from './components/Ui.jsx'
 import { FxLayer } from './components/FxLayer.jsx'
 import { haptic } from './lib/haptic.js'
-import { initVibe } from './lib/vibe.js'
+import { celebrate, getActiveVibe, initVibe } from './lib/vibe.js'
 import { useI18n } from './i18n/index.js'
 import { t as tGlobal } from './i18n/lang.js'
 import { initTheme } from './lib/theme.js'
@@ -757,7 +757,21 @@ export function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <span className="brand">Hermes <b>Pilot</b></span>
+        <span
+          className="brand"
+          onDoubleClick={(e) => {
+            if (getActiveVibe() !== 'dopamine') return
+            const rect = e.currentTarget.getBoundingClientRect()
+            celebrate('allClear', {
+              x: Math.round(rect.left + rect.width / 2),
+              y: Math.round(rect.bottom + 8),
+              width: Math.round(rect.width),
+              height: Math.round(rect.height),
+            })
+          }}
+        >
+          Hermes <b>Pilot</b>
+        </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <button
             className="icon-btn"

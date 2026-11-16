@@ -698,6 +698,7 @@ function NewAnnotationSheet({ onCreated, onClose, notify, initialTarget = '' }) 
   const [repoOnly, setRepoOnly] = useState(Boolean(initialTarget))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  const [targetOpen, setTargetOpen] = useState(false)
   const fileRef = React.useRef(null)
 
   useEffect(() => {
@@ -760,20 +761,67 @@ function NewAnnotationSheet({ onCreated, onClose, notify, initialTarget = '' }) 
   return (
     <Sheet title={t('review.newAnnoTitle')} onClose={onClose}>
       <div className="ak-new">
+        <div className="list-head">{t('review.sourceDevice')}</div>
         <button className="btn primary" type="button" disabled={busy} onClick={() => fileRef.current?.click()}>
           {t('review.pickFromDevice')}
         </button>
         <input ref={fileRef} type="file" accept="image/*" hidden onChange={onPick} />
-        <label className="ak-new-target-row">
-          <span>{t('review.target')}</span>
-          <select className="ak-new-target" value={target} onChange={(e) => setTarget(e.target.value)}>
-            {targets.map((tg) => (
-              <option key={tg.path} value={tg.path}>
-                {t('review.targetOption', { label: tg.label, id: tg.id })}
-              </option>
-            ))}
-          </select>
-        </label>
+        {targets.length ? (
+          <>
+            <div className="list-head" style={{ marginTop: 4 }}>{t('review.target')}</div>
+            <button
+              type="button"
+              className="pick-item spec-now"
+              aria-expanded={targets.length > 1 ? targetOpen : undefined}
+              onClick={() => {
+                if (targets.length <= 1) return
+                haptic('tap')
+                setTargetOpen((v) => !v)
+              }}
+            >
+              <span className="pick-main">
+                <span className="pick-title">
+                  {selectedTarget
+                    ? t('review.targetOption', { label: selectedTarget.label, id: selectedTarget.id })
+                    : t('review.target')}
+                </span>
+                <span className="pick-sub">{t('review.target')}</span>
+              </span>
+              <span className="pick-meta">
+                {targets.length > 1 ? `${targets.length}` : null}
+                {targets.length > 1 ? <span aria-hidden="true">{targetOpen ? '▴' : '▾'}</span> : null}
+              </span>
+            </button>
+            {targetOpen && targets.length > 1 ? (
+              <div className="pick-list spec-accordion" role="listbox" aria-label={t('review.target')}>
+                {targets
+                  .filter((tg) => tg.path !== target)
+                  .map((tg) => (
+                    <button
+                      key={tg.path}
+                      type="button"
+                      className="pick-item"
+                      onClick={() => {
+                        haptic('tap')
+                        setTarget(tg.path)
+                        setTargetOpen(false)
+                      }}
+                    >
+                      <span className="pick-main">
+                        <span className="pick-title">
+                          {t('review.targetOption', { label: tg.label, id: tg.id })}
+                        </span>
+                      </span>
+                      <span className="pick-meta" aria-hidden="true">
+                        ›
+                      </span>
+                    </button>
+                  ))}
+              </div>
+            ) : null}
+          </>
+        ) : null}
+        <div className="list-head" style={{ marginTop: 4 }}>{t('review.sourceLibrary')}</div>
         {selectedTarget && items?.length ? (
           <div className="chips" style={{ padding: 0 }}>
             <button

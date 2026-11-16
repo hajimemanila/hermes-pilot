@@ -1292,22 +1292,27 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
 
       {specSheetOpen && currentSpec ? (
         <Sheet title={t('tasks.specSheetTitle')} onClose={() => !specBusy && setSpecSheetOpen(false)}>
-          {/* 上部は「選択中 1 件のみ・タップでアコーディオン」（SPEC-PILOT-V6 §3.5 ① / D29） */}
-          <SpecPicker
-            specList={specList}
-            currentSpec={currentSpec}
-            open={specPickerOpen}
-            onToggle={() => setSpecPickerOpen((v) => !v)}
-            onPick={(s) => pickSpec(s, true)}
-            t={t}
-          />
-          {/* 仕様書そのものを読む（§3.4 ② / D30 ①）。シートの上部に常設 */}
-          <div className="spec-md-row">
-            <button type="button" className="btn spec-md-open" onClick={() => openSpecMd(currentSpec)}>
-              {`📄 ${t('tasks.specMdPreview')}`}
-            </button>
+          {/* 上部は親スコープ枠（選択中 SPEC ＋ プレビュー操作）として子のバッチ一覧と階層を分ける */}
+          <div className={`spec-context-box${specPickerOpen ? ' is-open' : ''}`}>
+            <SpecPicker
+              specList={specList}
+              currentSpec={currentSpec}
+              open={specPickerOpen}
+              onToggle={() => setSpecPickerOpen((v) => !v)}
+              onPick={(s) => pickSpec(s, true)}
+              t={t}
+            />
+            <div className="spec-md-row">
+              <button type="button" className="btn spec-md-open" onClick={() => openSpecMd(currentSpec)}>
+                {`📄 ${t('tasks.specMdPreview')}`}
+              </button>
+            </div>
           </div>
-          <div className="list">
+          <div className="spec-children-section">
+            <div className="list-head spec-children-head">
+              {t('tasks.specBatchesHead', { n: currentSpec.batches.length })}
+            </div>
+            <div className="list">
             {currentSpec.batches.map((b) => {
               const filed = filedBatchIds.has(b.id)
               const taken = openBatchIds.has(b.id)
@@ -1381,29 +1386,35 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
           <div className="row-sub" style={{ padding: '8px 4px', lineHeight: 1.6 }}>
             {t('tasks.specNote')}
           </div>
+          </div>
         </Sheet>
       ) : null}
 
       {/* 全バッチ完了後の履歴（Q3=A）。行＝バッチ＋完了バッジ＋完了時刻。増えうる一覧なので縦リスト */}
       {specHistoryOpen && currentSpec ? (
         <Sheet title={t('tasks.specHistoryTitle')} onClose={() => setSpecHistoryOpen(false)}>
-          {/* 上部は Launchpad と同じ「選択中 1 件・タップでアコーディオン」に統一（§3.5 ①） */}
-          <SpecPicker
-            specList={specList}
-            currentSpec={currentSpec}
-            open={specPickerOpen}
-            onToggle={() => setSpecPickerOpen((v) => !v)}
-            onPick={(s) => pickSpec(s, false)}
-            t={t}
-          />
-          {/* 仕様書そのものを読む（§3.4 ② / D30 ②）。履歴でもシート上部に常設 */}
-          <div className="spec-md-row">
-            <button type="button" className="btn spec-md-open" onClick={() => openSpecMd(currentSpec)}>
-              {`📄 ${t('tasks.specMdPreview')}`}
-            </button>
+          {/* 上部は親スコープ枠（SPEC 選択 ＋ プレビュー操作）として子のバッチ履歴と階層を分ける */}
+          <div className={`spec-context-box${specPickerOpen ? ' is-open' : ''}`}>
+            <SpecPicker
+              specList={specList}
+              currentSpec={currentSpec}
+              open={specPickerOpen}
+              onToggle={() => setSpecPickerOpen((v) => !v)}
+              onPick={(s) => pickSpec(s, false)}
+              t={t}
+            />
+            <div className="spec-md-row">
+              <button type="button" className="btn spec-md-open" onClick={() => openSpecMd(currentSpec)}>
+                {`📄 ${t('tasks.specMdPreview')}`}
+              </button>
+            </div>
           </div>
-          {/* 1 行 1 バッチ。タップで展開して目的・結果・Git・抜粋まで読む（§3.5 ② / D29） */}
-          <div className="pick-list">
+          <div className="spec-children-section">
+            <div className="list-head spec-children-head">
+              {t('tasks.specBatchesHead', { n: currentSpec.batches.length })}
+            </div>
+            {/* 1 行 1 バッチ。タップで展開して目的・結果・Git・抜粋まで読む（§3.5 ② / D29） */}
+            <div className="pick-list">
             {currentSpec.batches.map((b) => {
               const task = specProg.byId.get(b.id) ?? null
               const done = task && (task.status === 'done' || task.status === 'archived')
@@ -1490,6 +1501,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
           )}
           <div className="row-sub" style={{ padding: '8px 4px', lineHeight: 1.6 }}>
             {t('tasks.specHistoryNote')}
+          </div>
           </div>
         </Sheet>
       ) : null}

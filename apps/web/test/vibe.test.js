@@ -274,6 +274,29 @@ test('celebrateAction: 座標が無いイベントでも落ちない（x/y は n
   assert.deepEqual(bursts[0].detail, { kind: 'approve', combo: 0, x: null, y: null })
 })
 
+test('celebrateAction: 任意オプション width / height / sfx を detail へ引き継ぐ', () => {
+  const bursts = []
+  celebrateAction('fastTrack', {
+    vibe: 'dopamine',
+    x: 100,
+    y: 200,
+    width: 140,
+    height: 44,
+    sfx: 'ドン!',
+    target: { dispatchEvent: (e) => bursts.push(e) },
+  })
+  assert.equal(bursts.length, 1)
+  assert.deepEqual(bursts[0].detail, {
+    kind: 'fastTrack',
+    combo: 0,
+    x: 100,
+    y: 200,
+    width: 140,
+    height: 44,
+    sfx: 'ドン!',
+  })
+})
+
 test('hapticPattern: 多段バイブは hm.haptic=0 で止まり、未対応環境でも落ちない', () => {
   const calls = []
   const nav = { vibrate: (p) => calls.push(p) > 0 }

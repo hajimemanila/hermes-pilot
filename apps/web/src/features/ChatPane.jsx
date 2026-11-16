@@ -935,6 +935,18 @@ export function ChatPane({
     )
   }, [reviewItems, currentIds, repo])
   const isWorking = Boolean(streaming || activeLiveTurn)
+  const wasWorkingRef = useRef(false)
+  const [justSettled, setJustSettled] = useState(false)
+  useEffect(() => {
+    if (wasWorkingRef.current && !isWorking) {
+      setJustSettled(true)
+      const id = setTimeout(() => setJustSettled(false), 240)
+      wasWorkingRef.current = isWorking
+      return () => clearTimeout(id)
+    }
+    wasWorkingRef.current = isWorking
+    return undefined
+  }, [isWorking])
   /*
    * 統合レポート（`kind: 'pipeline'`）は「宛先の会話」に加えて、リポジトリが一致する
    * `'__latest__'` 宛の報告も合流させる（§3.2 ② / §3.3 ①）。読み取り専用の閲覧中は
@@ -2120,7 +2132,7 @@ export function ChatPane({
               {transcriptMeta.loadingMore ? t('chat.loadingOlder') : t('chat.loadOlder')}
             </button>
           ) : null}
-          {timeline.map((item) => {
+          {timeline.map((item, itemIdx) => {
             if (item.kind === 'report') {
               const r = item.report
               if (isPipelineReport(r)) {
@@ -2211,7 +2223,7 @@ export function ChatPane({
                 data-mid={b.mid}
                 className={`msg bot${readonly?.focusId && b.mid === readonly.focusId ? ' hit' : ''}`}
               >
-                <div className="bubble">
+                <div className={`bubble${justSettled && itemIdx === timeline.length - 1 ? ' vibe-settle-flash' : ''}`}>
                   {b.tools?.length ? (
                     <details className="msg-tools">
                       <summary>{t('chat.toolsRan', { count: b.tools.length })}</summary>
@@ -2238,54 +2250,51 @@ export function ChatPane({
               </div>
             )
           })}
-          {isWorking ? (
-            <div className="thinking thinking-card" role="status">
-              {(() => {
-                const started = runStartedAt || activeLiveTurn?.startedAt
-                const sec = started ? Math.max(0, Math.floor((nowTick - started) / 1000)) : 0
-                const mm = String(Math.floor(sec / 60)).padStart(2, '0')
-                const ss = String(sec % 60).padStart(2, '0')
-                const liveFallbackRows =
-                  !progress.length && activeLiveTurn?.lastTool?.name
-                    ? [{ id: 'live-last', name: activeLiveTurn.lastTool.name, detail: activeLiveTurn.lastActivity || '', full: activeLiveTurn.lastActivity || '', done: false }]
-                    : []
-                const rowsToShow = progress.length ? progress : liveFallbackRows
-                const thinkingLines = thinking ? thinking.trim().split('\n') : []
-                const thinkingShown = thinkingExpanded ? thinking.trim() : thinkingLines.slice(-3).join('\n')
-                return (
-                  <>
-                    <div className="working-head">
-                      <span className="working-dot" aria-hidden="true" />
-                      <b className="working-shimmer">Working… {mm}:{ss}</b>
-                      <span className="working-meta">
-                        {progress.length
-                          ? t('chat.toolProgress', { n: progress.length })
-                          : activeLiveTurn?.lastTool?.name
-                            ? t('chat.lastTool', { name: activeLiveTurn.lastTool.name })
-                            : t('chat.thinking')}
-                      </span>
-                    </div>
-                    {rowsToShow.length ? (
-                      <ToolRows
-                        rows={rowsToShow}
-                        prefix="live"
-                        expandedMap={expandedTools}
-                        onToggle={toggleToolExpand}
-                      />
-                    ) : null}
-                    {thinkingShown ? (
-                      <div
-                        className={`thinking-text${thinkingExpanded ? ' expanded' : ''}`}
-                        onClick={() => setThinkingExpanded((v) => !v)}
-                      >
-                        {thinkingShown}
-                      </div>
-                    ) : null}
-                  </>
-                )
-              })()}
-            </div>
-          ) : null}
+          {isWorking ? (() => {
+            const started = runStartedAt || activeLiveTurn?.startedAt
+            const sec = started ? Math.max(0, Math.floor((nowTick - started) / 1000)) : 0
+            const mm = String(Math.floor(sec / 60)).padStart(2, '0')
+            const ss = String(sec % 60).padStart(2, '0')
+            const liveFallbackRows =
+              !progress.length && activeLiveTurn?.lastTool?.name
+                ? [{ id: 'live-last', name: activeLiveTurn.lastTool.name, detail: activeLiveTurn.lastActivity || '', full: activeLiveTurn.lastActivity || '', done: false }]
+                : []
+            const rowsToShow = progress.length ? progress : liveFallbackRows
+            const thinkingLines = thinking ? thinking.trim().split('\n') : []
+            const thinkingShown = thinkingExpanded ? thinking.trim() : thinkingLines.slice(-3).join('\n')
+            return (
+              <div className="thinking thinking-card" data-heat={sec >= 30 ? 'high' : 'normal'} role="status">
+                <div className="working-head">
+                  <span className="working-dot" aria-hidden="true" />
+                  <b className="working-shimmer">Working… {mm}:{ss}</b>
+                  <span className="working-meta">
+                    {progress.length
+                      ? t('chat.toolProgress', { n: progress.length })
+                      : activeLiveTurn?.lastTool?.name
+                        ? t('chat.lastTool', { name: activeLiveTurn.lastTool.name })
+                        : t('chat.thinking')}
+                  </span>
+                </div>
+                {rowsToShow.length ? (
+                  <ToolRows
+                    rows={rowsToShow}
+                    prefix="live"
+                    expandedMap={expandedTools}
+                    onToggle={toggleToolExpand}
+                  />
+                ) : null}
+                {thinkingShown ? (
+                  <div
+                    className={`thinking-text${thinkingExpanded ? ' expanded' : ''}`}
+                    onClick={() => setThinkingExpanded((v) => !v)}
+                  >
+                    {thinkingShown}
+                  </div>
+                ) : null}
+                <span className="working-edge-bar" aria-hidden="true" />
+              </div>
+            )
+          })() : null}
           {linkedReview ? (
             isWaiting(linkedReview) ? (
               <div className="chat-live-card warn" role="status">
@@ -2313,7 +2322,7 @@ export function ChatPane({
                 </div>
               </div>
             ) : (
-              <div className="chat-live-card running" role="status">
+              <div className="chat-live-card running" data-heat={linkedReview.status === 'running' ? 'high' : 'normal'} role="status">
                 <div className="chat-live-head">
                   <span className="working-dot" aria-hidden="true" />
                   <b className="working-shimmer">
@@ -2358,6 +2367,7 @@ export function ChatPane({
                     />
                   )
                 })()}
+                <span className="working-edge-bar" aria-hidden="true" />
               </div>
             )
           ) : null}

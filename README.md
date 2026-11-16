@@ -139,9 +139,11 @@ Every one of them is reachable from the phone and from the standard dashboard.
 
 ## Comfort and one-tap setup
 
-- **Vibe mode** — `⚡ Dopamine ⇄ 🧘 Serotonin` in Settings changes how loud the app is (motion, colour, the
-  receipt canvas title), not what it does. Haptics and sound are separate toggles and **survive a Vibe
-  switch**, so turning the volume down never silently disables the buzz you rely on.
+- **Vibe mode** — `⚡ Dopamine ⇄ 🧘 Serotonin` in Settings changes how loud the app is (HUD bevels,
+  chat bubble glow, topbar/badge pulses, `sakuga-vfx`-inspired spring & canvas bursts with EN/JA
+  onomatopoeia, `Working…` aurora borders, and the receipt canvas title), not what it does. Haptics and
+  sound are separate toggles and **survive a Vibe switch**, so turning the volume down never silently
+  disables the buzz you rely on.
 - **Snippet band toggle** — the chip band above the chat composer, the annotation toolbar and the terminal
   keys can each be collapsed. The choice is per band and remembered, so a small phone keeps the composer and
   the keyboard from fighting for the same 390 px.

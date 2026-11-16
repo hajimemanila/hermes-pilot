@@ -3950,6 +3950,15 @@ ol.md-list {
   display: none;
 }
 
+.fx-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  display: block;
+}
+
 .fx-burst {
   position: absolute;
   width: 0;
@@ -4067,45 +4076,736 @@ ol.md-list {
   }
 }
 
-/* Vibe セグメント（設定タブ）。選択中だけ色を変える */
-html[data-vibe='dopamine'] .chip.vibe-chip.on {
-  border-color: rgba(251, 191, 36, 0.6);
-  background: rgba(251, 191, 36, 0.14);
-  color: #ffe9b3;
-}
-
+/* Vibe セグメント（Serotonin 選択時）。Dopamine 側は下の統合トークン層で管理する */
 html[data-vibe='serotonin'] .chip.vibe-chip.on {
   border-color: var(--accent);
   background: var(--rec-bg);
   color: var(--rec-fg);
 }
 
-/* Dopamine: 一括承認ボタンの微細なパルス発光（押したくなるが眩しくない） */
+/* Dopamine: 一括承認・オールクリアの特別パルス（重複を避けつつ発光を定義） */
 html[data-vibe='dopamine'] .btn.fast-track {
-  border-color: rgba(251, 191, 36, 0.5);
-  background: linear-gradient(180deg, rgba(45, 212, 191, 0.22), rgba(251, 191, 36, 0.16));
+  border-color: var(--vibe-border-gold);
+  background: var(--vibe-chip-on-bg);
+  color: var(--vibe-chip-on-fg);
   animation: vibe-pulse 2600ms ease-in-out infinite;
 }
 
 html[data-vibe='dopamine'] .ak-allclear {
-  border-color: rgba(251, 191, 36, 0.5);
-  background: linear-gradient(140deg, rgba(251, 191, 36, 0.16), rgba(45, 212, 191, 0.14));
+  border-color: var(--vibe-border-gold);
+  background: var(--vibe-chip-on-bg);
 }
 
 @keyframes vibe-pulse {
   0%,
   100% {
-    box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.16), 0 6px 18px rgba(45, 212, 191, 0.1);
+    box-shadow: inset 0 1px 0 var(--vibe-hi), 0 3px 0 var(--vibe-bevel), 0 0 12px rgba(251, 191, 36, 0.16);
   }
   50% {
-    box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.4), 0 8px 26px rgba(45, 212, 191, 0.22);
+    box-shadow: inset 0 1px 0 var(--vibe-hi), 0 3px 0 var(--vibe-bevel), 0 0 22px rgba(251, 191, 36, 0.34);
+  }
+}
+
+/* Dopamine: 稼働中（Working…）カードの回転オーラ・スイープ・エッジライン */
+@property --vibe-orbit {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.working-edge-bar {
+  display: none;
+}
+
+html[data-vibe='dopamine'] .thinking-card,
+html[data-vibe='dopamine'] .chat-live-card.running {
+  --vibe-glow-a: rgba(34, 211, 238, 0.92);
+  --vibe-glow-b: rgba(167, 139, 250, 0.72);
+  --vibe-glow-shadow: rgba(34, 211, 238, 0.24);
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  /* 左 3px のベタ帯と回転ボーダーが二重衝突して段差に見えるのを防ぎつつ横幅を 1px も変えない（3+11 -> 1+13） */
+  border-left-width: 1px;
+  padding-left: 13px;
+  animation: vibe-working-glow 2.8s ease-in-out infinite;
+}
+
+html[data-vibe='dopamine'] .thinking-card[data-heat='high'],
+html[data-vibe='dopamine'] .chat-live-card.running[data-heat='high'] {
+  --vibe-glow-a: rgba(34, 211, 238, 0.95);
+  --vibe-glow-b: rgba(251, 191, 36, 0.92);
+  --vibe-glow-shadow: rgba(251, 191, 36, 0.28);
+}
+
+html[data-vibe='dopamine'] .thinking-card::before,
+html[data-vibe='dopamine'] .chat-live-card.running::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  pointer-events: none;
+  z-index: 2;
+  background: conic-gradient(
+    from var(--vibe-orbit),
+    transparent 0deg,
+    var(--vibe-glow-a) 72deg,
+    var(--vibe-glow-b) 144deg,
+    transparent 216deg,
+    transparent 360deg
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  animation: vibe-orbit-spin 4.5s linear infinite;
+}
+
+html[data-vibe='dopamine'] .thinking-card::after,
+html[data-vibe='dopamine'] .chat-live-card.running::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: linear-gradient(
+    115deg,
+    transparent 20%,
+    rgba(94, 234, 212, 0.08) 48%,
+    rgba(251, 191, 36, 0.06) 54%,
+    transparent 80%
+  );
+  transform: translateX(-120%);
+  animation: vibe-surface-sweep 2.8s ease-in-out infinite;
+}
+
+html[data-vibe='dopamine'] .thinking-card > *,
+html[data-vibe='dopamine'] .chat-live-card.running > * {
+  position: relative;
+  z-index: 1;
+}
+
+html[data-vibe='dopamine'] .working-edge-bar {
+  display: block;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  pointer-events: none;
+  z-index: 2;
+  overflow: hidden;
+  background: rgba(45, 212, 191, 0.1);
+}
+
+html[data-vibe='dopamine'] .working-edge-bar::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 44%;
+  background: linear-gradient(90deg, transparent 0%, var(--vibe-glow-a) 68%, #fff7e0 100%);
+  box-shadow: 0 0 8px var(--vibe-glow-b);
+  transform: translateX(-100%);
+  animation: vibe-edge-run 1.7s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+html[data-vibe='dopamine'] .vibe-settle-flash {
+  animation: vibe-settle-flash 220ms ease-out;
+}
+
+@keyframes vibe-orbit-spin {
+  to {
+    --vibe-orbit: 360deg;
+  }
+}
+
+@keyframes vibe-working-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent, 0 4px 14px rgba(45, 212, 191, 0.08);
+  }
+  50% {
+    box-shadow: 0 0 0 0 transparent, 0 6px 18px var(--vibe-glow-shadow);
+  }
+}
+
+@keyframes vibe-surface-sweep {
+  0% {
+    transform: translateX(-120%);
+  }
+  65%,
+  100% {
+    transform: translateX(130%);
+  }
+}
+
+@keyframes vibe-edge-run {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+@keyframes vibe-settle-flash {
+  0% {
+    box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.65), 0 0 18px rgba(251, 191, 36, 0.32);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent, 0 0 0 transparent;
+  }
+}
+
+/* ===========================================================================
+ * Dopamine 統合ビジュアル層（Dark / Light 両対応・トークン一元管理）
+ *
+ * Serotonin は現行 V4/V5 のフラットな外観を一切変更しない。
+ * Dopamine は「3D タクタイルベベル・グラデーション面・HUD アクセント」で明確なメリハリを出す。
+ * ========================================================================= */
+html[data-vibe='dopamine'] {
+  --vibe-border: rgba(34, 211, 238, 0.48);
+  --vibe-border-gold: rgba(251, 191, 36, 0.78);
+  --vibe-hi: rgba(255, 255, 255, 0.16);
+  --vibe-bevel: #072834;
+  --vibe-bevel-primary: #064e48;
+  --vibe-btn-bg: linear-gradient(180deg, rgba(20, 74, 92, 0.95), rgba(11, 42, 56, 0.98));
+  --vibe-primary-bg: linear-gradient(135deg, #22d3ee 0%, #2dd4bf 55%, #34d399 100%);
+  --vibe-primary-fg: #032022;
+  --vibe-chip-on-bg: linear-gradient(135deg, rgba(34, 211, 238, 0.26), rgba(167, 139, 250, 0.18) 52%, rgba(251, 191, 36, 0.24));
+  --vibe-chip-on-fg: #fff4cc;
+  --vibe-card-bg: linear-gradient(160deg, rgba(20, 62, 78, 0.78), rgba(10, 32, 44, 0.95) 65%, rgba(24, 28, 54, 0.78));
+  --vibe-card-shadow: 0 8px 22px rgba(0, 0, 0, 0.34), 0 0 16px rgba(34, 211, 238, 0.11);
+  --vibe-glow: 0 0 18px rgba(34, 211, 238, 0.38);
+  --vibe-badge-ring: rgba(6, 22, 26, 0.96);
+  --vibe-topbar-grad: linear-gradient(110deg, rgba(34, 211, 238, 0.16) 0%, rgba(167, 139, 250, 0.12) 38%, rgba(251, 191, 36, 0.12) 72%, rgba(45, 212, 191, 0.14) 100%);
+  --vibe-topbar-line: var(--accent);
+}
+
+html[data-vibe='dopamine'][data-theme='light'] {
+  --vibe-border: rgba(13, 148, 136, 0.42);
+  --vibe-border-gold: rgba(217, 119, 6, 0.68);
+  --vibe-hi: rgba(255, 255, 255, 0.92);
+  --vibe-bevel: rgba(15, 76, 82, 0.24);
+  --vibe-bevel-primary: rgba(15, 95, 88, 0.5);
+  --vibe-btn-bg: linear-gradient(180deg, #ffffff 0%, #e0f4f7 100%);
+  --vibe-primary-bg: linear-gradient(135deg, #06b6d4 0%, #0d9488 60%, #10b981 100%);
+  --vibe-primary-fg: #ffffff;
+  --vibe-chip-on-bg: linear-gradient(135deg, rgba(6, 182, 212, 0.18), rgba(124, 58, 237, 0.12) 52%, rgba(245, 158, 11, 0.24));
+  --vibe-chip-on-fg: #78350f;
+  --vibe-card-bg: linear-gradient(160deg, #ffffff 0%, #edf9fb 65%, #f5f3ff 100%);
+  --vibe-card-shadow: 0 6px 18px rgba(6, 182, 212, 0.13), 0 2px 5px rgba(15, 36, 42, 0.06);
+  --vibe-glow: 0 4px 16px rgba(6, 182, 212, 0.3);
+  --vibe-badge-ring: rgba(255, 255, 255, 0.96);
+  --vibe-topbar-grad: linear-gradient(110deg, rgba(6, 182, 212, 0.14) 0%, rgba(124, 58, 237, 0.09) 38%, rgba(245, 158, 11, 0.12) 72%, rgba(13, 148, 136, 0.12) 100%);
+  --vibe-topbar-line: #06b6d4;
+}
+
+/* コンボ熱量連動（20秒窓の連続操作でトップバーがヒートアップ） */
+html[data-vibe='dopamine'][data-combo='2'] {
+  --vibe-topbar-line: #fbbf24;
+}
+
+html[data-vibe='dopamine'][data-combo='3'] {
+  --vibe-topbar-line: #c084fc;
+}
+
+/* 1. UI Controls の Squash & Stretch バネ変形（transform のみでレイアウト非破壊） */
+html[data-vibe='dopamine'] .btn:not(:disabled),
+html[data-vibe='dopamine'] .chip:not(:disabled),
+html[data-vibe='dopamine'] .hm-switch:not(:disabled),
+html[data-vibe='dopamine'] .report-card-btn:not(:disabled),
+html[data-vibe='dopamine'] .composer .plus:not(:disabled),
+html[data-vibe='dopamine'] .composer .send:not(:disabled),
+html[data-vibe='dopamine'] .chat-report-btn:not(:disabled),
+html[data-vibe='dopamine'] .pill-btn:not(:disabled),
+html[data-vibe='dopamine'] .ak-btn:not(:disabled),
+html[data-vibe='dopamine'] .ak-empty-btn:not(:disabled),
+html[data-vibe='dopamine'] .ak-thumb-btn:not(:disabled),
+html[data-vibe='dopamine'] .ak-anno-preview-btn:not(:disabled),
+html[data-vibe='dopamine'] .icon-btn:not(:disabled),
+html[data-vibe='dopamine'] .prof-chip:not(:disabled),
+html[data-vibe='dopamine'] .snippet-chip:not(:disabled),
+html[data-vibe='dopamine'] .settings-nav-chip:not(:disabled),
+html[data-vibe='dopamine'] .pick-item:not(:disabled),
+html[data-vibe='dopamine'] button.t-pill:not(:disabled),
+html[data-vibe='dopamine'] .nav-item:not(:disabled) {
+  transition: transform 70ms ease-out, box-shadow 120ms ease, filter 120ms ease;
+  transform-origin: center center;
+}
+
+html[data-vibe='dopamine'] .btn:not(:disabled):active,
+html[data-vibe='dopamine'] .btn.fast-track:not(:disabled):active,
+html[data-vibe='dopamine'] .chip:not(:disabled):active,
+html[data-vibe='dopamine'] .hm-switch:not(:disabled):active,
+html[data-vibe='dopamine'] .report-card-btn:not(:disabled):active,
+html[data-vibe='dopamine'] .composer .plus:not(:disabled):active,
+html[data-vibe='dopamine'] .composer .send:not(:disabled):active,
+html[data-vibe='dopamine'] .chat-report-btn:not(:disabled):active,
+html[data-vibe='dopamine'] .pill-btn:not(:disabled):active,
+html[data-vibe='dopamine'] .ak-btn:not(:disabled):active,
+html[data-vibe='dopamine'] .ak-empty-btn:not(:disabled):active,
+html[data-vibe='dopamine'] .ak-thumb-btn:not(:disabled):active,
+html[data-vibe='dopamine'] .ak-anno-preview-btn:not(:disabled):active,
+html[data-vibe='dopamine'] .icon-btn:not(:disabled):active,
+html[data-vibe='dopamine'] .prof-chip:not(:disabled):active,
+html[data-vibe='dopamine'] .snippet-chip:not(:disabled):active,
+html[data-vibe='dopamine'] .settings-nav-chip:not(:disabled):active,
+html[data-vibe='dopamine'] .pick-item:not(:disabled):active,
+html[data-vibe='dopamine'] button.t-pill:not(:disabled):active,
+html[data-vibe='dopamine'] .nav-item:not(:disabled):active {
+  transform: translateY(2px) scale(1.08, 0.86);
+}
+
+html[data-vibe='dopamine'] .fx-sakuga-pop {
+  animation: sakuga-spring 320ms cubic-bezier(0.22, 1.35, 0.36, 1);
+}
+
+html[data-vibe='dopamine'] .btn.primary.fx-sakuga-pop,
+html[data-vibe='dopamine'] .btn.fast-track.fx-sakuga-pop,
+html[data-vibe='dopamine'] .ak-empty-btn.fx-sakuga-pop,
+html[data-vibe='dopamine'] .ak-new-btn.fx-sakuga-pop,
+html[data-vibe='dopamine'] .report-card-btn.primary.fx-sakuga-pop,
+html[data-vibe='dopamine'] .composer .send.fx-sakuga-pop,
+html[data-vibe='dopamine'] .chat-report-btn.primary.fx-sakuga-pop,
+html[data-vibe='dopamine'] .hm-switch.fx-sakuga-pop {
+  animation: sakuga-spring-flash 320ms cubic-bezier(0.22, 1.35, 0.36, 1);
+}
+
+html[data-vibe='dopamine'] .hm-switch-knob {
+  transition: transform 240ms cubic-bezier(0.34, 1.56, 0.64, 1), background-color 160ms ease, box-shadow 160ms ease;
+}
+
+@keyframes sakuga-spring {
+  0% {
+    transform: translateY(2px) scale(1.08, 0.86);
+  }
+  38% {
+    transform: translateY(-1px) scale(0.91, 1.12);
+  }
+  68% {
+    transform: scale(1.04, 0.96);
+  }
+  86% {
+    transform: scale(0.99, 1.01);
+  }
+  100% {
+    transform: scale(1, 1);
+  }
+}
+
+@keyframes sakuga-spring-flash {
+  0% {
+    transform: translateY(2px) scale(1.08, 0.86);
+    filter: brightness(1.36);
+  }
+  22% {
+    filter: brightness(1.18);
+  }
+  38% {
+    transform: translateY(-1px) scale(0.91, 1.12);
+    filter: brightness(1);
+  }
+  68% {
+    transform: scale(1.04, 0.96);
+  }
+  86% {
+    transform: scale(0.99, 1.01);
+  }
+  100% {
+    transform: scale(1, 1);
+  }
+}
+
+/* 2. ヘッダ & GW ステータス・計器盤ピル・ドット/バッジ明滅 */
+html[data-vibe='dopamine'] .topbar {
+  border-bottom-color: var(--vibe-border);
+  background: var(--vibe-topbar-grad), var(--glass);
+  background-size: 220% 100%, 100% 100%;
+  box-shadow: inset 0 2px 0 var(--vibe-topbar-line), 0 4px 16px rgba(15, 36, 42, 0.08);
+  animation: vibe-topbar-drift 11s ease-in-out infinite;
+  transition: box-shadow 260ms ease;
+}
+
+html[data-vibe='dopamine'] .brand {
+  cursor: pointer;
+  user-select: none;
+}
+
+html[data-vibe='dopamine'] .brand b {
+  background: linear-gradient(90deg, var(--accent-2) 0%, #22d3ee 28%, var(--glint) 46%, #fbbf24 56%, var(--accent-2) 78%, var(--accent-2) 100%);
+  background-size: 260% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 10px rgba(34, 211, 238, 0.35));
+  animation: vibe-brand-shimmer 5.5s ease-in-out infinite;
+}
+
+/* 役割別 3 段階リズム: 接続(3.6s 心拍) / 実行中(1.6s ソナー) / 判断待ち(2.4s ビーコン) */
+html[data-vibe='dopamine'] .conn.ok {
+  display: inline-block;
+  text-shadow: 0 0 8px var(--good);
+  animation: vibe-dot-breathe 3.6s ease-in-out infinite;
+}
+
+html[data-vibe='dopamine'] .t-pill.gw .t-dot.ok {
+  animation: vibe-dot-ripple 3.6s ease-in-out infinite;
+}
+
+html[data-vibe='dopamine'] .t-dot.live,
+html[data-vibe='dopamine'] .live-dot,
+html[data-vibe='dopamine'] .nav-dot.running {
+  animation: vibe-sonar-pulse 1.6s ease-out infinite;
+}
+
+html[data-vibe='dopamine'] .nav-dot.done {
+  animation: vibe-dot-breathe 3.2s ease-in-out infinite;
+}
+
+html[data-vibe='dopamine'] .nav-badge,
+html[data-vibe='dopamine'] .drawer-btn-badge {
+  animation: vibe-beacon-pulse 2.4s ease-in-out infinite;
+}
+
+html[data-vibe='dopamine'] .t-pill {
+  border-color: var(--vibe-border);
+  box-shadow: inset 0 1px 0 var(--vibe-hi), 0 2px 0 var(--vibe-bevel);
+}
+
+html[data-vibe='dopamine'] .t-pill.gw {
+  border-color: var(--good-line);
+  background: var(--good-bg);
+  box-shadow: inset 0 1px 0 var(--vibe-hi), 0 2px 0 var(--vibe-bevel), 0 0 10px rgba(52, 211, 153, 0.18);
+}
+
+html[data-vibe='dopamine'] .t-pill.gw .t-dot.ok {
+  box-shadow: 0 0 8px var(--good);
+}
+
+html[data-vibe='dopamine'] .t-pill.gw.offline,
+html[data-vibe='dopamine'] .t-pill.gw.error {
+  box-shadow: inset 0 1px 0 var(--vibe-hi), 0 2px 0 var(--vibe-bevel), 0 0 12px rgba(248, 113, 113, 0.3);
+}
+
+html[data-vibe='dopamine'] .t-pill.run {
+  background: var(--vibe-chip-on-bg);
+  border-color: var(--accent);
+  box-shadow: inset 0 1px 0 var(--vibe-hi), 0 2px 0 var(--vibe-bevel), 0 0 12px rgba(45, 212, 191, 0.24);
+}
+
+html[data-vibe='dopamine'] .t-pill.warn {
+  box-shadow: inset 0 1px 0 var(--vibe-hi), 0 2px 0 var(--vibe-bevel), 0 0 12px rgba(245, 158, 11, 0.35);
+}
+
+html[data-vibe='dopamine'] .t-pill.gem {
+  border-color: var(--vibe-border-gold);
+  background: var(--vibe-chip-on-bg);
+  color: var(--vibe-chip-on-fg);
+  box-shadow: inset 0 1px 0 var(--vibe-hi), 0 2px 0 var(--vibe-bevel);
+}
+
+/* 3. ボタン・チップ・トグル・アイコンボタン（全タブ・ドロワー共通で立体ベベル） */
+html[data-vibe='dopamine'] .btn:not(.primary):not(.fast-track):not(:disabled),
+html[data-vibe='dopamine'] .pill-btn:not(:disabled),
+html[data-vibe='dopamine'] .chat-report-btn:not(.primary):not(:disabled),
+html[data-vibe='dopamine'] .report-card-btn:not(.primary):not(:disabled),
+html[data-vibe='dopamine'] .settings-nav-chip:not(:disabled),
+html[data-vibe='dopamine'] .composer .plus:not(:disabled),
+html[data-vibe='dopamine'] .chip:not(.on):not(:disabled),
+html[data-vibe='dopamine'] .prof-chip:not(.on):not(:disabled),
+html[data-vibe='dopamine'] .snippet-chip:not(.trigger):not(.add):not(:disabled) {
+  background: var(--vibe-btn-bg);
+  border-color: var(--vibe-border);
+  box-shadow: inset 0 1px 0 var(--vibe-hi), 0 3px 0 var(--vibe-bevel);
+}
+
+html[data-vibe='dopamine'] .btn.ak-new-btn:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--vibe-chip-on-bg);
+  color: var(--text);
+  box-shadow: inset 0 1px 0 var(--vibe-hi), 0 3px 0 var(--vibe-bevel), 0 0 12px rgba(45, 212, 191, 0.2);
+}
+
+html[data-vibe='dopamine'] .drawer-actions .drawer-mark-read:not(:disabled) {
+  border-color: var(--good-line);
+  background: linear-gradient(180deg, rgba(52, 211, 153, 0.2), rgba(16, 185, 129, 0.1));
+  color: var(--good-fg);
+  box-shadow: inset 0 1px 0 var(--vibe-hi), 0 3px 0 var(--vibe-bevel);
+}
+
+html[data-vibe='dopamine'] .btn.primary:not(:disabled),
+html[data-vibe='dopamine'] .ak-empty-btn:not(:disabled),
+html[data-vibe='dopamine'] .report-card-btn.primary:not(:disabled),
+html[data-vibe='dopamine'] .chat-report-btn.primary:not(:disabled),
+html[data-vibe='dopamine'] .composer .send:not(:disabled) {
+  background: var(--vibe-primary-bg);
+  color: var(--vibe-primary-fg);
+  border-color: var(--vibe-border);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 3px 0 var(--vibe-bevel-primary), var(--vibe-glow);
+}
+
+html[data-vibe='dopamine'] .composer .send:not(.stop):not(:disabled) {
+  animation: vibe-send-ready 240ms cubic-bezier(0.22, 1.35, 0.36, 1);
+}
+
+html[data-vibe='dopamine'] .composer:focus-within {
+  box-shadow: inset 0 2px 0 var(--vibe-border);
+}
+
+html[data-vibe='dopamine'] .composer textarea:focus {
+  border-color: var(--vibe-border-gold);
+  box-shadow: 0 0 0 1px var(--vibe-border), 0 0 14px rgba(34, 211, 238, 0.22);
+}
+
+html[data-vibe='dopamine'] .chip.on,
+html[data-vibe='dopamine'] .prof-chip.on,
+html[data-vibe='dopamine'] .snippet-chip.trigger {
+  border-color: var(--vibe-border-gold);
+  background: var(--vibe-chip-on-bg);
+  color: var(--vibe-chip-on-fg);
+  box-shadow: inset 0 1px 0 var(--vibe-hi), 0 3px 0 var(--vibe-bevel), 0 0 10px rgba(45, 212, 191, 0.16);
+}
+
+/* .icon-btn と .snippet-chip.add は外枠 44px を透明に保ち、面（::before）に枠線＋立体ベベルを塗る */
+html[data-vibe='dopamine'] .icon-btn::before,
+html[data-vibe='dopamine'] .snippet-chip.add::before {
+  background: var(--vibe-btn-bg);
+  border: 1px solid var(--vibe-border);
+  box-shadow: inset 0 1px 0 var(--vibe-hi), 0 2px 0 var(--vibe-bevel);
+}
+
+html[data-vibe='dopamine'] .hm-switch {
+  border-color: var(--vibe-border);
+  box-shadow: inset 0 1px 3px rgba(15, 36, 42, 0.18);
+}
+
+html[data-vibe='dopamine'] .hm-switch.on {
+  border-color: var(--accent);
+  background: var(--vibe-chip-on-bg);
+  box-shadow: inset 0 1px 0 var(--vibe-hi), 0 0 12px rgba(45, 212, 191, 0.25);
+}
+
+html[data-vibe='dopamine'] .hm-switch.on .hm-switch-knob {
+  box-shadow: 0 0 10px rgba(45, 212, 191, 0.75), 0 0 2px #fff;
+}
+
+/* 4. カード・トースト・シート・ナビ */
+html[data-vibe='dopamine'] .card,
+html[data-vibe='dopamine'] .settings-card,
+html[data-vibe='dopamine'] .chat-live-card,
+html[data-vibe='dopamine'] .spec-bar,
+html[data-vibe='dopamine'] .ak-empty-card,
+html[data-vibe='dopamine'] .ak-thumb,
+html[data-vibe='dopamine'] .pick-item,
+html[data-vibe='dopamine'] .spec-context-box {
+  background: var(--vibe-card-bg);
+  border-color: var(--vibe-border);
+  box-shadow: inset 0 1px 0 var(--vibe-hi), var(--vibe-card-shadow);
+}
+
+/* チャットバブルのグロー背景効果（Dark / Light 両対応・Geometry-Zero） */
+html[data-vibe='dopamine'] .msg.user .bubble {
+  background: radial-gradient(circle at 88% 15%, rgba(251, 191, 36, 0.16), transparent 52%), var(--user-bubble);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24), inset 0 0 0 1px rgba(94, 234, 212, 0.36), var(--vibe-glow);
+}
+
+html[data-vibe='dopamine'] .msg.bot .bubble {
+  background: radial-gradient(circle at 12% 10%, rgba(45, 212, 191, 0.14), transparent 58%), var(--vibe-card-bg);
+  border-color: var(--vibe-border);
+  box-shadow: inset 0 1px 0 var(--vibe-hi), var(--vibe-card-shadow), 0 0 16px rgba(45, 212, 191, 0.1);
+}
+
+html[data-vibe='dopamine'] .spec-bar {
+  background: linear-gradient(90deg, rgba(45, 212, 191, 0.14), transparent 55%), var(--vibe-card-bg);
+}
+
+html[data-vibe='dopamine'] .chat-live-card.warn {
+  border-color: var(--vibe-border-gold);
+  background: linear-gradient(90deg, rgba(251, 191, 36, 0.16), rgba(251, 191, 36, 0.04) 65%), var(--vibe-card-bg);
+  box-shadow: inset 0 1px 0 var(--vibe-hi), 0 0 14px rgba(251, 191, 36, 0.16);
+}
+
+html[data-vibe='dopamine'] .msg.report-card,
+html[data-vibe='dopamine'] .pipeline-summary-card {
+  border-color: var(--vibe-border-gold);
+  background: linear-gradient(145deg, rgba(45, 212, 191, 0.08), rgba(251, 191, 36, 0.08)), var(--vibe-card-bg);
+  box-shadow: inset 0 1px 0 var(--vibe-hi), var(--vibe-card-shadow);
+}
+
+html[data-vibe='dopamine'] .toast {
+  border-color: var(--vibe-border-gold);
+  box-shadow: inset 0 1px 0 var(--vibe-hi), var(--vibe-glow), 0 12px 30px rgba(15, 36, 42, 0.24);
+}
+
+html[data-vibe='dopamine'] .sheet {
+  border-top-color: var(--accent);
+  box-shadow: inset 0 1px 0 var(--vibe-hi), 0 -8px 28px rgba(45, 212, 191, 0.14);
+}
+
+html[data-vibe='dopamine'] .nav {
+  border-top-color: var(--vibe-border);
+  box-shadow: inset 0 1px 0 rgba(45, 212, 191, 0.22);
+}
+
+html[data-vibe='dopamine'] .nav-item.on {
+  position: relative;
+}
+
+html[data-vibe='dopamine'] .nav-item.on::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 22px;
+  height: 2.5px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #22d3ee, #fbbf24);
+  box-shadow: 0 0 8px rgba(34, 211, 238, 0.7);
+}
+
+html[data-vibe='dopamine'] .nav-item.on .nav-icon {
+  filter: drop-shadow(0 0 8px rgba(34, 211, 238, 0.65));
+}
+
+html[data-vibe='dopamine'] .nav-badge {
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.55), 0 0 0 2px var(--vibe-badge-ring);
+}
+
+html[data-vibe='dopamine'] .nav-dot.running {
+  box-shadow: 0 0 8px rgba(34, 211, 238, 0.85), 0 0 0 2px var(--vibe-badge-ring);
+}
+
+html[data-vibe='dopamine'] .chat-jump-bottom.active {
+  border-color: var(--vibe-border);
+  box-shadow: var(--vibe-glow), 0 4px 12px rgba(0, 0, 0, 0.25);
+  animation: vibe-jump-bob 2s ease-in-out infinite;
+}
+
+/* 空状態（All Clear / 待機カード）の 6 秒周期ホログラム光沢スイープ */
+html[data-vibe='dopamine'] .ak-allclear,
+html[data-vibe='dopamine'] .ak-empty-card {
+  position: relative;
+  overflow: hidden;
+}
+
+html[data-vibe='dopamine'] .ak-allclear::after,
+html[data-vibe='dopamine'] .ak-empty-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(115deg, transparent 30%, rgba(255, 255, 255, 0.14) 48%, rgba(251, 191, 36, 0.1) 54%, transparent 72%);
+  transform: translateX(-130%);
+  animation: vibe-holo-sweep 6s ease-in-out infinite;
+}
+
+@keyframes vibe-topbar-drift {
+  0%,
+  100% {
+    background-position: 0% 50%, 0 0;
+  }
+  50% {
+    background-position: 100% 50%, 0 0;
+  }
+}
+
+@keyframes vibe-brand-shimmer {
+  0%,
+  72%,
+  100% {
+    background-position: 100% 0;
+  }
+  28% {
+    background-position: 0% 0;
+  }
+}
+
+@keyframes vibe-dot-breathe {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.65;
+    transform: scale(0.9);
+  }
+}
+
+@keyframes vibe-dot-ripple {
+  0%,
+  100% {
+    box-shadow: 0 0 6px var(--good), 0 0 0 0 rgba(52, 211, 153, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 10px var(--good), 0 0 0 4px rgba(52, 211, 153, 0);
+  }
+}
+
+@keyframes vibe-sonar-pulse {
+  0% {
+    box-shadow: 0 0 6px var(--accent), 0 0 0 0 rgba(34, 211, 238, 0.6);
+  }
+  70% {
+    box-shadow: 0 0 10px var(--accent), 0 0 0 6px rgba(34, 211, 238, 0);
+  }
+  100% {
+    box-shadow: 0 0 6px var(--accent), 0 0 0 0 rgba(34, 211, 238, 0);
+  }
+}
+
+@keyframes vibe-beacon-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.07);
+  }
+}
+
+@keyframes vibe-send-ready {
+  0% {
+    transform: scale(0.84);
+  }
+  55% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes vibe-jump-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(3px);
+  }
+}
+
+@keyframes vibe-holo-sweep {
+  0%,
+  75% {
+    transform: translateX(-130%);
+  }
+  100% {
+    transform: translateX(130%);
   }
 }
 
 /* Serotonin: 現行 V4 と完全同等（演出・パルスを出さない） */
 html[data-vibe='serotonin'] .fx-layer,
 html[data-vibe='serotonin'] .fx-combo-pill,
-html[data-vibe='serotonin'] .fx-allclear-card {
+html[data-vibe='serotonin'] .fx-allclear-card,
+html[data-vibe='serotonin'] .working-edge-bar {
   display: none;
 }
 
@@ -4114,8 +4814,61 @@ html[data-vibe='serotonin'] .fx-allclear-card {
   .fx-particle,
   .fx-combo-pill,
   .fx-allclear-card,
-  html[data-vibe='dopamine'] .btn.fast-track {
+  html[data-vibe='dopamine'] .btn.fast-track,
+  html[data-vibe='dopamine'] .thinking-card,
+  html[data-vibe='dopamine'] .thinking-card::before,
+  html[data-vibe='dopamine'] .thinking-card::after,
+  html[data-vibe='dopamine'] .chat-live-card.running,
+  html[data-vibe='dopamine'] .chat-live-card.running::before,
+  html[data-vibe='dopamine'] .chat-live-card.running::after,
+  html[data-vibe='dopamine'] .working-edge-bar::before,
+  html[data-vibe='dopamine'] .vibe-settle-flash,
+  html[data-vibe='dopamine'] .fx-sakuga-pop,
+  html[data-vibe='dopamine'] .btn.primary.fx-sakuga-pop,
+  html[data-vibe='dopamine'] .btn.fast-track.fx-sakuga-pop,
+  html[data-vibe='dopamine'] .ak-empty-btn.fx-sakuga-pop,
+  html[data-vibe='dopamine'] .ak-new-btn.fx-sakuga-pop,
+  html[data-vibe='dopamine'] .report-card-btn.primary.fx-sakuga-pop,
+  html[data-vibe='dopamine'] .composer .send.fx-sakuga-pop,
+  html[data-vibe='dopamine'] .chat-report-btn.primary.fx-sakuga-pop,
+  html[data-vibe='dopamine'] .hm-switch.fx-sakuga-pop,
+  html[data-vibe='dopamine'] .topbar,
+  html[data-vibe='dopamine'] .brand b,
+  html[data-vibe='dopamine'] .conn.ok,
+  html[data-vibe='dopamine'] .t-pill.gw .t-dot.ok,
+  html[data-vibe='dopamine'] .t-dot.live,
+  html[data-vibe='dopamine'] .live-dot,
+  html[data-vibe='dopamine'] .nav-dot.running,
+  html[data-vibe='dopamine'] .nav-dot.done,
+  html[data-vibe='dopamine'] .nav-badge,
+  html[data-vibe='dopamine'] .drawer-btn-badge,
+  html[data-vibe='dopamine'] .composer .send:not(.stop):not(:disabled),
+  html[data-vibe='dopamine'] .chat-jump-bottom.active,
+  html[data-vibe='dopamine'] .ak-allclear::after,
+  html[data-vibe='dopamine'] .ak-empty-card::after {
     animation: none;
+  }
+  html[data-vibe='dopamine'] .btn:not(:disabled):active,
+  html[data-vibe='dopamine'] .btn.fast-track:not(:disabled):active,
+  html[data-vibe='dopamine'] .chip:not(:disabled):active,
+  html[data-vibe='dopamine'] .hm-switch:not(:disabled):active,
+  html[data-vibe='dopamine'] .report-card-btn:not(:disabled):active,
+  html[data-vibe='dopamine'] .composer .plus:not(:disabled):active,
+  html[data-vibe='dopamine'] .composer .send:not(:disabled):active,
+  html[data-vibe='dopamine'] .chat-report-btn:not(:disabled):active,
+  html[data-vibe='dopamine'] .pill-btn:not(:disabled):active,
+  html[data-vibe='dopamine'] .ak-btn:not(:disabled):active,
+  html[data-vibe='dopamine'] .ak-empty-btn:not(:disabled):active,
+  html[data-vibe='dopamine'] .ak-thumb-btn:not(:disabled):active,
+  html[data-vibe='dopamine'] .ak-anno-preview-btn:not(:disabled):active,
+  html[data-vibe='dopamine'] .icon-btn:not(:disabled):active,
+  html[data-vibe='dopamine'] .prof-chip:not(:disabled):active,
+  html[data-vibe='dopamine'] .snippet-chip:not(:disabled):active,
+  html[data-vibe='dopamine'] .settings-nav-chip:not(:disabled):active,
+  html[data-vibe='dopamine'] .pick-item:not(:disabled):active,
+  html[data-vibe='dopamine'] button.t-pill:not(:disabled):active,
+  html[data-vibe='dopamine'] .nav-item:not(:disabled):active {
+    transform: none;
   }
 }
 
@@ -4919,16 +5672,45 @@ html[data-vibe='serotonin'] .spec-receipt-btn {
  * - 新規のタップ対象は 44px（`npm run audit:responsive` が実測する）
  * ========================================================================= */
 
-/* ---------- 上部 SPEC セレクタ ---------- */
+/* ---------- 上部 SPEC セレクタ（親スコープ枠 ＋ 凹みアコーディオン ＋ 子セクション） ---------- */
+.spec-context-box {
+  padding: 8px;
+  border-radius: 14px;
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--accent);
+  background: var(--overlay);
+  margin-bottom: 10px;
+}
+
+.spec-context-box .pick-item.spec-now {
+  margin-bottom: 0;
+}
+
+.spec-context-box .spec-md-row {
+  justify-content: flex-end;
+  margin: 8px 0 0;
+}
+
+.spec-context-box .btn.spec-md-open {
+  width: auto;
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
 .pick-item.spec-now {
   margin-bottom: 8px;
 }
 
-/* アコーディオンは縦積み（横スクロールにしない）。左の縦線で「今の 1 行の下に開いた」ことを示す */
+/* アコーディオンは縦積みの一時トレイ。凹み背景＋上下枠で親と子を切り離す */
 .pick-list.spec-accordion {
-  margin: -2px 0 10px;
-  padding-left: 8px;
-  border-left: 2px solid var(--line);
+  margin: 6px 0 2px;
+  padding: 6px;
+  border: 1px solid var(--line-strong);
+  border-left: 2px solid var(--accent);
+  border-radius: 12px;
+  background: var(--bg-2);
+  max-height: 220px;
+  overflow-y: auto;
 }
 
 .spec-accordion .pick-item {
@@ -4937,6 +5719,21 @@ html[data-vibe='serotonin'] .spec-receipt-btn {
 
 .spec-accordion .pick-item:active {
   background: var(--surface);
+}
+
+.spec-children-section {
+  transition: opacity 150ms ease;
+}
+
+.spec-context-box.is-open + .spec-children-section {
+  opacity: 0.42;
+}
+
+.spec-children-head {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  margin-top: 2px;
+  margin-bottom: 8px;
 }
 
 /* ---------- シート上部の「📄 仕様書(MD)をプレビュー」 ---------- */
