@@ -308,6 +308,8 @@
   "fx.sfx.launch": "ゴゴゴ…",
   "fx.sfx.allClear": "ドドン!",
   "fx.sfx.toggle": "カチッ",
+  "fx.sfx.tapImpact": "ポン!",
+  "fx.sfx.send": "シュッ!",
   "settings.diagRunning": "診断中…",
   "settings.diagRun": "PWA 診断を実行",
   "settings.installPromptAccepted": "インストールを開始しました",

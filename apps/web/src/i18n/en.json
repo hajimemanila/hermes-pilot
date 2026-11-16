@@ -308,6 +308,8 @@
   "fx.sfx.launch": "GO!",
   "fx.sfx.allClear": "BOOM!",
   "fx.sfx.toggle": "CLICK!",
+  "fx.sfx.tapImpact": "POP!",
+  "fx.sfx.send": "ZIP!",
   "settings.diagRunning": "Diagnosing…",
   "settings.diagRun": "Run PWA diagnostics",
   "settings.installPromptAccepted": "Install started",

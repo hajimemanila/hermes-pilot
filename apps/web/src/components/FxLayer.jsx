@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { COMBO_WINDOW_MS, FX_EVENT, REDUCED_MOTION_QUERY, getActiveVibe, onVibeChange } from '../lib/vibe.js'
+import { haptic } from '../lib/haptic.js'
 import { useI18n } from '../i18n/index.js'
 
 /**
@@ -345,6 +346,13 @@ export function FxLayer() {
       if (!isReducedMotion() && document.visibilityState !== 'hidden') {
         const sfxKey = SFX_KEY_BY_KIND[kind]
         const sfxText = detail.sfx || (sfxKey ? tRef.current(sfxKey) : null)
+        const now = performance.now()
+        // 直前に click で出した tapImpact の擬音が残っていれば、celebrate の強い擬音へ譲る
+        if (sfxText) {
+          for (const fx of canvasEffectsRef.current) {
+            if (fx.fromClick && now - fx.start < 120) fx.sfxText = null
+          }
+        }
         const burst = createSakugaBurst({
           kind,
           x: detail.x,
@@ -377,6 +385,17 @@ export function FxLayer() {
     return () => window.removeEventListener(FX_EVENT, onBurst)
   }, [])
 
+  // 全ボタン・トグルでのハプティック同期発火（Serotonin でも基本ハプティックは維持）
+  useEffect(() => {
+    const onTapHaptic = (e) => {
+      const el = e.target?.closest?.(SAKUGA_TARGET_SELECTOR)
+      if (!el || el.disabled) return
+      haptic('tap')
+    }
+    document.addEventListener('click', onTapHaptic, { passive: true, capture: true })
+    return () => document.removeEventListener('click', onTapHaptic, { capture: true })
+  }, [])
+
   // Dopamine 時のみ、UI Controls クリック後にバネ戻り＋即座の作画フィードバックを出す
   useEffect(() => {
     if (vibe !== 'dopamine' || isReducedMotion()) return undefined
@@ -394,14 +413,21 @@ export function FxLayer() {
         const rect = el.getBoundingClientRect()
         if (rect.width > 0 && rect.height > 0) {
           const isSwitch = el.classList.contains('hm-switch')
+          const isSend = el.classList.contains('send')
           const isPrimary =
             el.classList.contains('primary') ||
             el.classList.contains('fast-track') ||
             el.classList.contains('ak-empty-btn') ||
             el.classList.contains('ak-new-btn') ||
-            el.classList.contains('send')
+            isSend
           const kind = isSwitch ? 'toggle' : isPrimary ? 'tapImpact' : 'tap'
-          const sfxText = isSwitch ? tRef.current('fx.sfx.toggle') : null
+          const sfxText = isSwitch
+            ? tRef.current('fx.sfx.toggle')
+            : isSend
+              ? tRef.current('fx.sfx.send')
+              : isPrimary
+                ? tRef.current('fx.sfx.tapImpact')
+                : null
           const burst = createSakugaBurst({
             kind,
             x: rect.left + rect.width / 2,
@@ -410,6 +436,7 @@ export function FxLayer() {
             height: rect.height,
             sfxText,
           })
+          burst.fromClick = true
           canvasEffectsRef.current = [...canvasEffectsRef.current, burst].slice(-MAX_CANVAS_BURSTS)
           startCanvasLoop()
         }

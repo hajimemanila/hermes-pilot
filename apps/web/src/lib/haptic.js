@@ -8,9 +8,9 @@
 export const HAPTIC_KEY = 'hm.haptic'
 
 export const HAPTIC_PATTERNS = {
-  tap: 6,
-  action: 10,
-  heavy: 20,
+  tap: 16,
+  action: 22,
+  heavy: 32,
   success: [8, 35, 10],
   error: [14, 35, 14],
 }
