@@ -387,7 +387,7 @@ p{color:#7fa6a3;font-size:12px;margin:10px 0 0}</style>
 <form method="get" action="/auth"><h1>Hermes Pilot</h1>
 <input name="t" placeholder="アプリトークン" autocomplete="off" autocapitalize="off" spellcheck="false">
 <button>入る</button>
-<p>トークンは <code>~/.hermes/plugin-data/hermes-pilot/token</code> またはブリッジの起動ログにあります。</p></form>`
+<p>トークンは <code>~/.hermes/plugin-data/hermes-pilot/token</code>（トークンファイル）を確認してください。</p></form>`
 
 /**
  * 静的配信。`dist` が無い／ビルド途中なら直前の正常ビルド（`dist.prev`）で配る。
@@ -1680,7 +1680,8 @@ server.on('error', (err) => {
 server.listen(cfg.port, cfg.host, async () => {
   console.log(`[bridge] Hermes Pilot: http://${cfg.host}:${cfg.port}`)
   console.log(`[bridge] 上流: ${cfg.hermesBase}`)
-  console.log(`[bridge] 管理画面: http://${cfg.host}:${cfg.port}/auth?t=${auth.token}`)
+  console.log(`[bridge] トークンファイル: ${cfg.tokenPath}`)
+  console.log(`[bridge] 管理画面: http://${cfg.host}:${cfg.port}/auth`)
   // 内蔵ウォッチャー（D7）。初回はベースライン確立のみで過去分は通知しない。
   try {
     reviewWatcher.start()
