@@ -3,20 +3,22 @@
  * 旧環境（`~/Projects/akapen` / `~/.hermes/plugin-data/akapen` / `~/.hermes/mobile-pwa`）から
  * `~/.hermes/plugin-data/hermes-pilot/` への物理移行（D6 / SPEC §4.4）。
  *
- * 方針:
+ * 方針（D55）:
  *  - **物理コピーのみ**。旧ディレクトリは削除しない（既存データを壊さない）
  *  - **冪等**: `fs.cpSync(..., { force: false })` は既にあるファイルを上書きしない。2 回流しても増えない
  *  - 画像の `mtime` を保つ（`preserveTimestamps: true`。一覧の撮影日時順ソートが壊れない）
- *  - `kanban.db` を書き換える前に **必ず** `kanban.db.bak-<timestamp>` を取る
+ *  - **Hermes の state を直接書き換えない**: `kanban.db` は read-write で開かない（`[akapen]` タグは
+ *    `apps/bridge/src/review.js` が後方互換で読むので置換自体が不要）。cron は
+ *    `hermes cron list` → `hermes cron remove <id>` の公式 CLI だけを通す。
  *
- * 使い方: `npm run migrate:pilot`（`hermes-pilot init` からも呼ぶ）
+ * 使い方: `npm run migrate:pilot`（`hermes-pilot migrate` と明示 `init --yes` から呼ぶ）
  */
 
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { DatabaseSync } from 'node:sqlite'
 
 const TAG_OLD = '[akapen]'
 const TAG_NEW = '[review]'
@@ -77,7 +79,12 @@ export function resolveHermesHome(raw, home = os.homedir()) {
   return abs
 }
 
-/** 監視対象の kanban.db（ルート＋各ボード）。 */
+/**
+ * 監視対象の `kanban.db`（ルート＋各ボード）。
+ *
+ * **存在確認だけ**で、DB は開かない（D55: `[akapen]` タグの置換は廃止。`review.js` が
+ * `[akapen]` / `[review]` の両方を読むため書き換える必要が無い）。レポート用の一覧を返す。
+ */
 export function findKanbanDbs(hermesHome) {
   const out = []
   const root = path.join(hermesHome, 'kanban.db')
@@ -95,35 +102,6 @@ export function findKanbanDbs(hermesHome) {
     if (fs.existsSync(p)) out.push(p)
   }
   return out
-}
-
-/**
- * kanban.db のタグ置換。バックアップ → 置換の順で、置換対象が無ければ何もしない。
- * @returns {{db: string, backup: string|null, updated: number}}
- */
-export function rewriteKanbanTag(dbPath, { tagOld = TAG_OLD, tagNew = TAG_NEW, now = Date.now } = {}) {
-  const db = new DatabaseSync(dbPath)
-  let updated = 0
-  let backup = null
-  try {
-    const row = db.prepare('SELECT COUNT(*) AS n FROM tasks WHERE COALESCE(body, ?) LIKE ?').get('', `%${tagOld}%`)
-    const matches = Number(row?.n ?? 0)
-    if (matches > 0) {
-      // 書換前に必ずバックアップ（失敗したら置換しない）
-      backup = `${dbPath}.bak-${new Date(now()).toISOString().replace(/[-:]/g, '').replace(/\..*$/, '')}`
-      fs.copyFileSync(dbPath, backup)
-      const stmt = db.prepare('UPDATE tasks SET body = replace(body, ?, ?) WHERE body LIKE ?')
-      const res = stmt.run(tagOld, tagNew, `%${tagOld}%`)
-      updated = Number(res?.changes ?? 0)
-    }
-  } finally {
-    try {
-      db.close()
-    } catch {
-      /* noop */
-    }
-  }
-  return { db: dbPath, backup, updated }
 }
 
 /** `boards/mobile/board.json` の `default_workdir` を新パスへ（旧パスを指している時だけ）。 */
@@ -158,11 +136,6 @@ export function rewriteBoardWorkdir(hermesHome, { oldWorkdir, newWorkdir }) {
 /** 旧外部 cron（Pilot の reviewWatcher / pipelineWatcher と二重通知になる）の名前（D44）。 */
 export const LEGACY_CRON_NAMES = ['mobile-akapen-watch', 'mobile-review-watch']
 
-/** cron ストアの候補パス（現行 `cron/jobs.json` と互換の `cron.json`）。 */
-export function cronStorePaths(hermesHome) {
-  return [path.join(hermesHome, 'cron', 'jobs.json'), path.join(hermesHome, 'cron.json')]
-}
-
 /** ジョブ 1 件が旧 cron かを、名前系フィールドの部分一致で判定する。 */
 export function isLegacyCronEntry(job, names = LEGACY_CRON_NAMES) {
   if (!job || typeof job !== 'object') return false
@@ -174,67 +147,177 @@ export function isLegacyCronEntry(job, names = LEGACY_CRON_NAMES) {
 }
 
 /**
- * `~/.hermes/cron/jobs.json`（`{ jobs: [...], updated_at }` 形式・配列形式の両方）と
- * 互換パス `~/.hermes/cron.json` から旧 cron エントリを検出して除去する（D44）。
+ * `hermes cron list` の 1 行目（`  <id> [active]`）を拾うための正規表現。
+ * ANSI カラーは `stripAnsi()` で落としてから当てる。
+ */
+const CRON_JOB_HEAD_RE = /^\s{0,6}([A-Za-z0-9_.:-]+)\s+\[(active|paused|disabled|completed)\]\s*$/
+const CRON_NAME_RE = /^\s+Name:\s*(.+?)\s*$/
+const ANSI_RE = /\x1b\[[0-9;]*m/g
+
+/** ANSI カラーコードを落とす。 */
+export function stripAnsi(text) {
+  return String(text ?? '').replace(ANSI_RE, '')
+}
+
+/**
+ * `hermes cron list` のテキスト出力を `[{id, name, text}]` にする。
+ *
+ * 出力形式（`hermes_cli/cron.py` の `cron_list`）:
+ * ```text
+ *   ┌───┐
+ *   │       Scheduled Jobs (profile: default)  │
+ *   └───┘
+ *
+ *   7cad0b034fff [active]
+ *     Name:       kanban-reap
+ *     Schedule:   *／30 * * * *
+ * ```
+ * ジョブの無い環境は `No scheduled jobs in profile '…'` だけなので空配列になる。
+ *
+ * @param {string} text `hermes cron list` の stdout
+ * @returns {{id: string, name: string, text: string}[]}
+ */
+export function parseCronList(text) {
+  const jobs = []
+  let cur = null
+  for (const line of stripAnsi(text).split(/\r?\n/)) {
+    const head = line.match(CRON_JOB_HEAD_RE)
+    if (head) {
+      cur = { id: head[1], name: '', text: line.trim() }
+      jobs.push(cur)
+      continue
+    }
+    if (!cur) continue
+    const name = line.match(CRON_NAME_RE)
+    if (name) {
+      cur.name = name[1]
+      continue
+    }
+    if (line.trim()) cur.text += `\n${line.trim()}`
+  }
+  return jobs
+}
+
+/**
+ * `hermes` CLI を 1 回呼ぶ既定ランナー（テストでは DI で差し替える）。
+ * @param {string} cmd
+ * @param {string[]} args
+ * @param {{env?: object}} [opts]
+ * @returns {{status: number|null, stdout: string, stderr: string, error: string|null}}
+ */
+export function defaultCronRunner(cmd, args, { env = process.env } = {}) {
+  try {
+    const r = spawnSync(cmd, args, { encoding: 'utf8', env })
+    return {
+      status: r.status,
+      stdout: r.stdout ?? '',
+      stderr: r.stderr ?? '',
+      error: r.error ? String(r.error.message ?? r.error) : null,
+    }
+  } catch (err) {
+    return { status: null, stdout: '', stderr: '', error: String(err?.message ?? err) }
+  }
+}
+
+/**
+ * 旧外部 cron（`mobile-akapen-watch` / `mobile-review-watch`）を **公式 CLI 経由で** 削除する（D44 / D55）。
  *
  * 方針:
- *  - **冪等**: 既に無ければ何も書かない（2 回流しても mtime 以外変わらない）
- *  - **非破壊**: 一致しないジョブ・`updated_at` 等のトップレベル構造はそのまま残す
- *  - **原子的**: 同一ディレクトリの tmp に書いてから `rename` する（ticker が半端な JSON を読まない）
- *  - `dryRun: true` では検出だけ行い、ファイルを触らない
+ *  - `~/.hermes/cron/jobs.json` などの **state ファイルは一切読まない・書かない**。`hermes cron list` の
+ *    テキスト出力から ID を抽出し、`hermes cron remove <id>` を呼ぶ（スキーマ変更に自動追従する）
+ *  - **冪等**: 既に無ければ CLI を 1 回呼ぶだけで終わる
+ *  - `dryRun: true` では検出だけ行い、`cron remove` を呼ばない
+ *  - 失敗は握りつぶさず `errors` に積む（1 件失敗しても残りは続行）
  *
- * @param {string} hermesHome
- * @param {{dryRun?: boolean, names?: string[]}} [opts]
- * @returns {{hermesHome: string, removed: number, names: string[], files: object[], scanned: number, errors: object[]}}
+ * @param {string} hermesHome 互換のため受け取るが、判定には使わない（レポートに残すだけ）
+ * @param {object} [opts]
+ * @param {boolean} [opts.dryRun] 検出だけ行う
+ * @param {string[]} [opts.names] 旧 cron 名
+ * @param {(cmd: string, args: string[], o?: object) => {status: number|null, stdout: string, stderr: string, error: string|null}} [opts.runner] CLI ランナー（テスト用 DI）
+ * @param {string} [opts.hermesBin] `hermes` 実行ファイル（既定は PATH の `hermes`）
+ * @param {object} [opts.env] ランナーに渡す環境変数
+ * @returns {{hermesHome: string, via: string, detected: number, removed: number, names: string[], ids: string[], scanned: number, errors: object[], dryRun: boolean}}
  */
-export function cleanupLegacyCrons(hermesHome, { dryRun = false, names = LEGACY_CRON_NAMES } = {}) {
+export function cleanupLegacyCrons(
+  hermesHome,
+  {
+    dryRun = false,
+    names = LEGACY_CRON_NAMES,
+    runner = null,
+    hermesBin = process.env.HERMES_PILOT_HERMES_BIN || 'hermes',
+    env = process.env,
+  } = {},
+) {
   const resolved = path.resolve(String(hermesHome).replace(/^~/, os.homedir()))
-  const result = { hermesHome: resolved, removed: 0, names: [], files: [], scanned: 0, errors: [] }
-
-  for (const file of cronStorePaths(resolved)) {
-    if (!fs.existsSync(file)) continue
-    let parsed
-    try {
-      parsed = JSON.parse(fs.readFileSync(file, 'utf8'))
-    } catch (err) {
-      // 壊れた JSON は触らない（消すより残す方が安全）
-      result.errors.push({ file, error: String(err?.message ?? err) })
-      continue
-    }
-
-    const isArray = Array.isArray(parsed)
-    const jobs = isArray ? parsed : parsed?.jobs
-    if (!Array.isArray(jobs)) {
-      result.files.push({ file, removed: 0, names: [] })
-      continue
-    }
-
-    const kept = []
-    const dropped = []
-    for (const job of jobs) (isLegacyCronEntry(job, names) ? dropped : kept).push(job)
-    result.scanned += jobs.length
-    const droppedNames = dropped.map((j) => String(j?.name ?? j?.id ?? 'unknown'))
-    result.files.push({ file, removed: dropped.length, names: droppedNames })
-    if (!dropped.length) continue
-
-    result.removed += dropped.length
-    result.names.push(...droppedNames)
-    if (dryRun) continue
-
-    const next = isArray ? kept : { ...parsed, jobs: kept }
-    const tmp = `${file}.tmp-${process.pid}-${Date.now()}`
-    fs.writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
-    fs.renameSync(tmp, file)
-    result.files[result.files.length - 1].written = true
+  const result = {
+    hermesHome: resolved,
+    via: `${hermesBin} cron`,
+    detected: 0,
+    removed: 0,
+    names: [],
+    ids: [],
+    scanned: 0,
+    errors: [],
+    dryRun: Boolean(dryRun),
   }
 
+  // テストから DI を忘れたまま本物の `hermes cron remove` が走ると実環境の cron が消える。
+  // node:test 配下（NODE_TEST_CONTEXT）ではランナー未指定を「実行しない」に倒す。
+  const run = runner ?? (process.env.NODE_TEST_CONTEXT ? null : defaultCronRunner)
+  if (!run) {
+    result.errors.push({
+      cmd: `${hermesBin} cron list`,
+      error: 'refusing to run the hermes CLI inside node:test without an injected runner',
+      stderr: '',
+    })
+    return result
+  }
+
+  const listed = run(hermesBin, ['cron', 'list'], { env })
+  if (!listed || listed.error || listed.status !== 0) {
+    result.errors.push({
+      cmd: `${hermesBin} cron list`,
+      error: String(listed?.error ?? `exit ${listed?.status}`),
+      stderr: String(listed?.stderr ?? '').trim().slice(0, 400),
+    })
+    return result
+  }
+
+  const jobs = parseCronList(listed.stdout)
+  result.scanned = jobs.length
+  const legacy = jobs.filter((job) => isLegacyCronEntry({ id: job.id, name: job.name }, names))
+  result.detected = legacy.length
+  if (!legacy.length) return result
+
+  const label = (job) => job.name || job.id
+  if (dryRun) {
+    result.names = legacy.map(label)
+    result.ids = legacy.map((job) => job.id)
+    return result
+  }
+
+  for (const job of legacy) {
+    const r = runner(hermesBin, ['cron', 'remove', job.id], { env })
+    if (r && !r.error && r.status === 0) {
+      result.removed += 1
+      result.names.push(label(job))
+      result.ids.push(job.id)
+      continue
+    }
+    result.errors.push({
+      cmd: `${hermesBin} cron remove ${job.id}`,
+      error: String(r?.error ?? `exit ${r?.status}`),
+      stderr: String(r?.stderr ?? '').trim().slice(0, 400),
+    })
+  }
   return result
 }
 
 /**
  * 移行本体。
  *
- * @param {{home?: string, hermesHome?: string, pluginDataDir?: string, srcRoot?: string, dryRun?: boolean}} [opts]
+ * @param {{home?: string, hermesHome?: string, pluginDataDir?: string, srcRoot?: string, dryRun?: boolean,
+ *   runner?: Function, hermesBin?: string, env?: object}} [opts]
  * @returns {object} レポート
  */
 export function migrate(opts = {}) {
@@ -257,13 +340,33 @@ export function migrate(opts = {}) {
     existing: { sheets: 0, shots: 0, library: 0 },
     kanban: [],
     boards: [],
-    crons: { hermesHome: hermesHome, removed: 0, names: [], files: [], scanned: 0, errors: [] },
+    crons: {
+      hermesHome: hermesHome,
+      via: 'hermes cron',
+      detected: 0,
+      removed: 0,
+      names: [],
+      ids: [],
+      scanned: 0,
+      errors: [],
+      dryRun: Boolean(opts.dryRun),
+    },
     skipped: [],
   }
 
+  const cronOpts = {
+    dryRun: Boolean(opts.dryRun),
+    runner: opts.runner,
+    hermesBin: opts.hermesBin,
+    // `hermes cron` は HERMES_HOME のプロファイルのストアを見る。移行対象の Hermes home を明示して
+    // 「別プロファイルの cron を消す / 消すべきものが見えない」を取り違えないようにする。
+    env: opts.env ?? { ...process.env, HERMES_HOME: hermesHome },
+  }
+
   if (opts.dryRun) {
-    // dryRun でも「何が消えるか」だけは返す（ファイルは触らない）
-    report.crons = cleanupLegacyCrons(hermesHome, { dryRun: true })
+    // dryRun でも「何が消えるか」だけは返す（ファイルも cron ストアも触らない）
+    report.kanban = findKanbanDbs(hermesHome).map((db) => ({ db, updated: 0, written: false }))
+    report.crons = cleanupLegacyCrons(hermesHome, cronOpts)
     return report
   }
 
@@ -299,14 +402,8 @@ export function migrate(opts = {}) {
     report.copied.session += r.copied
   }
 
-  // 4) kanban.db のタグ置換（バックアップ → 置換）
-  for (const dbPath of findKanbanDbs(hermesHome)) {
-    try {
-      report.kanban.push(rewriteKanbanTag(dbPath, { now: opts.now }))
-    } catch (err) {
-      report.kanban.push({ db: dbPath, backup: null, updated: 0, error: String(err?.message ?? err) })
-    }
-  }
+  // 4) kanban.db は **存在確認だけ**（D55: 直接 read-write しない。[akapen] は review.js が後方互換で読む）
+  report.kanban = findKanbanDbs(hermesHome).map((db) => ({ db, updated: 0, written: false }))
 
   // 5) ボードの default_workdir を新パスへ
   report.boards = rewriteBoardWorkdir(hermesHome, {
@@ -314,8 +411,8 @@ export function migrate(opts = {}) {
     newWorkdir: reviewDir,
   })
 
-  // 6) 旧外部 cron（mobile-akapen-watch / mobile-review-watch）の除去（D44）
-  report.crons = cleanupLegacyCrons(hermesHome)
+  // 6) 旧外部 cron（mobile-akapen-watch / mobile-review-watch）を公式 CLI で除去（D44 / D55）
+  report.crons = cleanupLegacyCrons(hermesHome, cronOpts)
 
   return report
 }
@@ -333,27 +430,27 @@ export function formatReport(r, { tagOld = TAG_OLD, tagNew = TAG_NEW, dryRun = f
   lines.push(`library: 新規 ${r.copied.library} / 既存 ${r.existing.library}`)
   lines.push(`review/*.jsonl + task-chats: 新規 ${r.copied.reviewFiles}`)
   lines.push(`token/snippets/audit: 新規 ${r.copied.session}`)
-  const totalUpdated = r.kanban.reduce((n, k) => n + Number(k.updated ?? 0), 0)
   lines.push('')
-  lines.push(`kanban.db: ${r.kanban.length} 個を確認 / ${tagOld} → ${tagNew} を ${totalUpdated} 件更新`)
-  for (const k of r.kanban) {
-    if (k.error) lines.push(`  ! ${k.db}: ${k.error}`)
-    else if (k.updated) lines.push(`  * ${k.db}: ${k.updated} 件（bak: ${path.basename(k.backup)}）`)
-  }
+  lines.push(
+    `kanban.db: ${r.kanban.length} 個を確認 / ${tagOld} → ${tagNew} の書換は廃止（review.js が両タグを読みます・DB は開きません）`,
+  )
+  for (const k of r.kanban) lines.push(`  * ${k.db}`)
   if (r.boards.length) {
     lines.push(`board の default_workdir 更新: ${r.boards.length} 件`)
     for (const b of r.boards) lines.push(`  * ${b}`)
   }
-  const crons = r.crons ?? { removed: 0, names: [], files: [], scanned: 0, errors: [] }
+  const crons = r.crons ?? { detected: 0, removed: 0, names: [], scanned: 0, errors: [], dryRun: false }
+  const cronErrs = crons.errors ?? []
   lines.push('')
   if (crons.removed) {
-    lines.push(`旧 cron のクリーンアップ: ${crons.removed} 件を削除（${crons.names.join(', ')}）`)
-    for (const f of crons.files ?? []) if (f.removed) lines.push(`  * ${f.file}: ${f.removed} 件`)
-  } else if ((crons.errors ?? []).length) {
-    lines.push(`旧 cron のクリーンアップ: 0 件（読み取り失敗 ${crons.errors.length} 件・未変更）`)
-  } else {
+    lines.push(`旧 cron のクリーンアップ: ${crons.removed} 件を削除（${crons.via ?? 'hermes cron remove'}: ${crons.names.join(', ')}）`)
+  } else if (crons.detected) {
+    lines.push(`旧 cron のクリーンアップ: ${crons.detected} 件を検出（dry run のため未削除: ${crons.names.join(', ')}）`)
+  } else if (!cronErrs.length) {
     lines.push('旧 cron のクリーンアップ: 0 件（mobile-akapen-watch / mobile-review-watch は既に無い）')
   }
+  for (const e of cronErrs.slice(0, 3)) lines.push(`  ! ${e.cmd}: ${e.error}${e.stderr ? ` (${e.stderr.split('\n')[0]})` : ''}`)
+  if (cronErrs.length > 3) lines.push(`  ! …他 ${cronErrs.length - 3} 件`)
   lines.push('')
   lines.push('旧ディレクトリは削除していません（物理コピーのみ）。')
   return lines.join('\n')

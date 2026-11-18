@@ -21,6 +21,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import crypto from 'node:crypto'
+import readline from 'node:readline'
 import { execFileSync } from 'node:child_process'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -155,9 +156,10 @@ export function helpText() {
     'hermes-pilot — control your Hermes Agent from your phone or tablet',
     '',
     'Usage:',
-    '  hermes-pilot init [--force] [--target-dir <plugin dir>]',
+    '  hermes-pilot init [--force] [--target-dir <plugin dir>] [--yes]',
     '                                           First-run setup: data dirs, token, skills, dashboard tab, pairing QR',
     '                                           --target-dir: where `hermes plugins install` unpacked this repo',
+    '                                           --yes: migrate legacy akapen/mobile-pwa data without asking',
     '  hermes-pilot start [--port 4097] [--host 127.0.0.1] [--tls-port 8444]',
     '                                           Build the UI if needed and run the bridge',
     '  hermes-pilot qr [--port 4097] [--tls-port 8444] [--png <path>]',
@@ -423,7 +425,51 @@ function printPairing({ token, port, tlsPort = null, dnsName = null, svg = false
 }
 
 /**
- * 旧環境が残っているか（自動 migrate の判定）。
+ * 旧環境があるときに `init` がどう振る舞うかを決める（D55: 無言の自動移行をやめる）。
+ *
+ * - 旧環境が無い → `skip`
+ * - `--yes` → `migrate`（明示同意とみなす）
+ * - TTY → `ask`（`y/N`。既定は N）
+ * - 非 TTY かつ `--yes` 無し（cron / CI / パイプ） → `manual`（移行せずコマンドを案内）
+ *
+ * @param {{hasLegacy?: boolean, yes?: boolean, isTTY?: boolean}} [opts]
+ * @returns {'skip'|'migrate'|'ask'|'manual'}
+ */
+export function migrationDecision({ hasLegacy = false, yes = false, isTTY = false } = {}) {
+  if (!hasLegacy) return 'skip'
+  if (yes) return 'migrate'
+  return isTTY ? 'ask' : 'manual'
+}
+
+/**
+ * TTY で `y/N` を聞く（既定 N。Enter だけなら移行しない）。
+ * @param {object} [opts]
+ * @param {NodeJS.ReadableStream} [opts.input]
+ * @param {NodeJS.WritableStream} [opts.output]
+ * @param {string} [opts.question]
+ * @returns {Promise<boolean>} 移行するなら true
+ */
+export function askMigrate({ input = process.stdin, output = process.stdout, question } = {}) {
+  const q =
+    question ??
+    '旧環境（akapen / mobile-pwa）が見つかりました。今すぐ移行しますか? / Migrate legacy data now? [y/N]: '
+  const rl = readline.createInterface({ input, output })
+  return new Promise((resolve) => {
+    let answered = false
+    rl.question(q, (answer) => {
+      answered = true
+      rl.close()
+      resolve(/^y(es)?$/i.test(String(answer).trim()))
+    })
+    // Ctrl-D / EOF は「いいえ」として扱う（無言で移行しない）
+    rl.on('close', () => {
+      if (!answered) resolve(false)
+    })
+  })
+}
+
+/**
+ * 旧環境が残っているか（`init` の移行判定）。
  * @param {object} p `resolvePaths()` の結果
  * @returns {boolean} 残っていれば true
  */
@@ -545,9 +591,16 @@ export function installDashboardPlugin(p, { force = false, targetDir = null } = 
  * @param {number|null} [opts.tlsPort] TLS ポート
  * @param {boolean} [opts.force] ダッシュボード・プラグインを上書きする
  * @param {string|null} [opts.targetDir] ダッシュボード・プラグインの配置先（`hermes plugins install` の展開先）
- * @returns {{created: boolean, migrated: boolean, skills: string[], dashboard: object}} 結果
+ * @param {boolean} [opts.yes] 旧環境の移行を確認なしで実行する（`--yes` / D55）
+ * @param {() => Promise<boolean>} [opts.confirm] 移行確認関数（テスト用 DI。既定は `askMigrate`）
+ * @param {boolean|null} [opts.isTTY] TTY 判定の上書き（テスト用。既定は stdin+stdout の TTY）
+ * @returns {{created: boolean, migrated: boolean, migration: string, skills: string[], dashboard: object}} 結果
  */
-export async function runInit(p, port, { tlsPort = null, force = false, targetDir = null } = {}) {
+export async function runInit(
+  p,
+  port,
+  { tlsPort = null, force = false, targetDir = null, yes = false, confirm = null, isTTY = null } = {},
+) {
   fs.mkdirSync(p.dataDir, { recursive: true, mode: 0o700 })
   for (const sub of ['sheets', 'shots', 'library']) {
     fs.mkdirSync(path.join(p.reviewDir, sub), { recursive: true })
@@ -558,12 +611,30 @@ export async function runInit(p, port, { tlsPort = null, force = false, targetDi
   }
   const { created } = ensureToken(p.tokenPath)
 
+  // D55: 旧環境の移行は **明示同意**（`--yes` / TTY での y / `migrate` サブコマンド）でのみ実行する。
+  // 無言の自動移行は Hermes state を勝手に書き換えるので廃止した。
+  const tty = isTTY === null ? Boolean(process.stdin.isTTY && process.stdout.isTTY) : Boolean(isTTY)
+  const decision = migrationDecision({ hasLegacy: hasLegacyEnv(p), yes, isTTY: tty })
   let migrated = false
-  if (hasLegacyEnv(p)) {
-    const { migrate, formatReport } = await loadMigrate()
-    const report = migrate({ home: p.home, hermesHome: p.hermesHome, pluginDataDir: p.pluginDataDir })
-    out('旧環境が見つかったので移行しました / Migrated legacy data:', '', formatReport(report))
-    migrated = true
+  let migration = decision
+  if (decision === 'migrate' || decision === 'ask') {
+    const proceed = decision === 'migrate' ? true : await (confirm ?? askMigrate)()
+    if (proceed) {
+      const { migrate, formatReport } = await loadMigrate()
+      const report = migrate({ home: p.home, hermesHome: p.hermesHome, pluginDataDir: p.pluginDataDir })
+      out('旧環境が見つかったので移行しました / Migrated legacy data:', '', formatReport(report))
+      migrated = true
+      migration = 'migrate'
+    } else {
+      migration = 'manual'
+    }
+  }
+  if (migration === 'manual') {
+    out(
+      '旧環境（akapen / mobile-pwa）はまだ残っていますが、移行していません / legacy data found; not migrated',
+      '  → 移行するには: node bin/hermes-pilot.mjs migrate',
+      '    （確認を省略する場合は init --yes）',
+    )
   }
 
   const installed = []
@@ -586,7 +657,7 @@ export async function runInit(p, port, { tlsPort = null, force = false, targetDi
     `  データ / data : ${p.dataDir}`,
     `  トークン / token: ${p.tokenPath}${created ? '（新規作成 0600）' : '（既存）'}`,
     `  スキル / skills: ${installed.length ? installed.join(', ') : '（既に配置済み）'}`,
-    `  移行 / migrate: ${migrated ? '実行' : '不要'}`,
+    `  移行 / migrate: ${migrated ? '実行' : migration === 'manual' ? '未実行（migrate サブコマンドで実行）' : '不要'}`,
   )
   if (dashboard.selfHosted) {
     // リポジトリルート自体がプラグインディレクトリ（`hermes plugins install` 直後の形）。
@@ -605,7 +676,7 @@ export async function runInit(p, port, { tlsPort = null, force = false, targetDi
     )
   }
   printPairing({ token: mintPairCode(p.dataDir), port, tlsPort, pngPath: path.join(p.dataDir, 'pair-qr.png') })
-  return { created, migrated, skills: installed, dashboard }
+  return { created, migrated, migration, skills: installed, dashboard }
 }
 
 // migrate モジュールは CLI 実行時にだけ遅延ロードする（テストの import を軽くする）
@@ -838,6 +909,7 @@ export async function main(argv = process.argv.slice(2)) {
       tlsPort,
       force: Boolean(flags.force),
       targetDir: typeof flags['target-dir'] === 'string' ? flags['target-dir'] : null,
+      yes: Boolean(flags.yes || flags.y),
     })
     return 0
   }

@@ -7,13 +7,14 @@ import { DatabaseSync } from 'node:sqlite'
 import {
   migrate,
   findKanbanDbs,
-  rewriteKanbanTag,
   formatReport,
   resolveHermesHome,
   cleanupLegacyCrons,
-  cronStorePaths,
   isLegacyCronEntry,
+  parseCronList,
+  stripAnsi,
 } from '../../../scripts/migrate-to-hermes-pilot.mjs'
+import { migrationDecision } from '../../../bin/hermes-pilot.mjs'
 
 /** 旧環境（akapen / plugin-data/akapen / mobile-pwa / kanban）を一時ディレクトリに作る。 */
 function tempLegacy() {
@@ -64,9 +65,49 @@ function tempLegacy() {
   return { home, hermesHome, srcRoot, boardDir }
 }
 
+/**
+ * `hermes` CLI の偽ランナー（D55: cleanupLegacyCrons はファイルを触らず CLI だけを叩く）。
+ * @param {string} listText `hermes cron list` の stdout
+ * @param {{listExit?: number, removeExit?: number, removeError?: string|null}} [opts]
+ */
+function fakeCronRunner(listText, { listExit = 0, removeExit = 0, removeError = null } = {}) {
+  const calls = []
+  const envs = []
+  const runner = (cmd, args, opts = {}) => {
+    calls.push([cmd, ...args].join(' '))
+    envs.push(opts.env ?? null)
+    if (args[0] === 'cron' && args[1] === 'list') {
+      return { status: listExit, stdout: listExit ? '' : listText, stderr: listExit ? 'list failed' : '', error: null }
+    }
+    if (args[0] === 'cron' && args[1] === 'remove') {
+      if (removeError) return { status: null, stdout: '', stderr: '', error: removeError }
+      return { status: removeExit, stdout: removeExit ? '' : 'Removed job', stderr: removeExit ? 'no such job' : '', error: null }
+    }
+    return { status: 1, stdout: '', stderr: 'unexpected command', error: null }
+  }
+  return { runner, calls, envs }
+}
+
+/** `hermes cron list` の実出力に近いテキスト（`hermes_cli/cron.py` の `cron_list` 形式）。 */
+function cronListText(jobs) {
+  if (!jobs.length) return "No scheduled jobs in profile 'mobile'.\nCreate one with 'hermes cron create ...' or the /cron command in chat.\n"
+  const lines = ['', '┌' + '─'.repeat(73) + '┐', '│' + ' '.repeat(25) + 'Scheduled Jobs (profile: mobile)'.padEnd(48) + '│', '└' + '─'.repeat(73) + '┘', '']
+  for (const j of jobs) {
+    lines.push(`  ${j.id} [${j.state ?? 'active'}]`)
+    lines.push(`    Name:       ${j.name}`)
+    lines.push(`    Schedule:   ${j.schedule ?? '*/30 * * * *'}`)
+    if (j.deliver) lines.push(`    Deliver:    ${j.deliver}`)
+    lines.push('')
+  }
+  return lines.join('\n')
+}
+
+/** 旧 cron が無いときのランナー（他のテストが本物の CLI を叩かないように必ず渡す）。 */
+const noCronRunner = () => fakeCronRunner(cronListText([])).runner
+
 test('migrate はシート・画像・jsonl・token を物理コピーし、旧ディレクトリを消さない', () => {
   const env = tempLegacy()
-  const report = migrate({ home: env.home, hermesHome: env.hermesHome })
+  const report = migrate({ home: env.home, hermesHome: env.hermesHome, runner: noCronRunner() })
 
   const review = path.join(env.hermesHome, 'plugin-data', 'hermes-pilot', 'review')
   assert.equal(report.copied.sheets, 2, 'html + json')
@@ -91,7 +132,7 @@ test('migrate はシート・画像・jsonl・token を物理コピーし、旧�
 
 test('migrate は画像の mtime を保つ（撮影日時順ソートが壊れない）', () => {
   const env = tempLegacy()
-  migrate({ home: env.home, hermesHome: env.hermesHome })
+  migrate({ home: env.home, hermesHome: env.hermesHome, runner: noCronRunner() })
   const src = fs.statSync(path.join(env.srcRoot, 'library', 'chat', 'shot.png'))
   const dest = fs.statSync(
     path.join(env.hermesHome, 'plugin-data', 'hermes-pilot', 'review', 'library', 'chat', 'shot.png'),
@@ -99,35 +140,54 @@ test('migrate は画像の mtime を保つ（撮影日時順ソートが壊れ�
   assert.equal(Math.round(dest.mtimeMs), Math.round(src.mtimeMs))
 })
 
-test('migrate は kanban.db の [akapen] を [review] に置換し、必ず .bak を取る', () => {
+// ── D55: kanban.db を read-write で開かない ─────────────────────────────
+
+test('migrate は kanban.db を書き換えない（[akapen] はそのまま・.bak も作らない）', () => {
   const env = tempLegacy()
-  const report = migrate({ home: env.home, hermesHome: env.hermesHome })
-
   const dbPath = path.join(env.boardDir, 'kanban.db')
-  const hit = report.kanban.find((k) => k.db === dbPath)
-  assert.equal(hit.updated, 2, '2 件だけ置換する')
-  assert.ok(hit.backup && fs.existsSync(hit.backup), '書換前にバックアップを取る')
-  assert.match(path.basename(hit.backup), /^kanban\.db\.bak-/)
+  const before = fs.readFileSync(dbPath)
+  const beforeMtime = fs.statSync(dbPath).mtimeMs
 
-  const db = new DatabaseSync(dbPath)
+  const report = migrate({ home: env.home, hermesHome: env.hermesHome, runner: noCronRunner() })
+
+  assert.equal(fs.readFileSync(dbPath).equals(before), true, 'DB のバイト列が変わらない')
+  assert.equal(fs.statSync(dbPath).mtimeMs, beforeMtime, 'DB を開いて書き戻していない')
+  assert.equal(
+    fs.readdirSync(env.boardDir).filter((f) => f.includes('.bak-')).length,
+    0,
+    'バックアップも作らない',
+  )
+
+  const hit = report.kanban.find((k) => k.db === dbPath)
+  assert.ok(hit, 'レポートには DB の存在を残す')
+  assert.equal(hit.updated, 0)
+  assert.equal(hit.written, false)
+
+  // 中身は旧タグのまま（読み取りは review.js が後方互換で行う）
+  const db = new DatabaseSync(dbPath, { readOnly: true })
   const bodies = Object.fromEntries(db.prepare('SELECT id, body FROM tasks').all().map((r) => [r.id, r.body]))
   db.close()
-  assert.match(bodies.t_aaa00001, /^\[review\] /m)
-  assert.equal(bodies.t_aaa00001.includes('[akapen]'), false)
-  assert.match(bodies.t_aaa00002, /^\[review\] /m)
-  assert.match(bodies.t_aaa00003, /^\[review\] /m, '既存の [review] は変わらない')
-  assert.equal(bodies.t_aaa00004, 'ふつうの本文')
+  assert.match(bodies.t_aaa00001, /^\[akapen\] /m)
+  assert.match(bodies.t_aaa00002, /^\[akapen\] /m)
 
-  // バックアップは置換前の内容
-  const bak = new DatabaseSync(hit.backup, { readOnly: true })
-  const oldBody = bak.prepare("SELECT body FROM tasks WHERE id='t_aaa00001'").get().body
-  bak.close()
-  assert.match(oldBody, /\[akapen\]/)
+  assert.match(formatReport(report), /kanban\.db: 1 個を確認 \/ \[akapen\] → \[review\] の書換は廃止/)
+})
+
+test('migrate スクリプトは Hermes state を直接書き換えない（D55 の受入条件）', () => {
+  const src = fs.readFileSync(new URL('../../../scripts/migrate-to-hermes-pilot.mjs', import.meta.url), 'utf8')
+  assert.equal(/UPDATE\s+tasks/i.test(src), false, 'kanban.db を UPDATE しない')
+  assert.equal(/DatabaseSync/.test(src), false, 'node:sqlite を import しない')
+  assert.equal(/fs\.renameSync/.test(src), false, 'tmp → rename のファイル差し替えをしない')
+
+  // 書き込みは board.json の default_workdir だけ
+  const writes = [...src.matchAll(/fs\.writeFileSync\(([\s\S]{0,80}?)\)/g)].map((m) => m[1].replace(/\s+/g, ' '))
+  assert.equal(writes.length, 1, `writeFileSync は 1 箇所だけ: ${JSON.stringify(writes)}`)
+  assert.match(writes[0], /^file, /, 'board.json への書き込みだけ')
 })
 
 test('migrate は board.json の default_workdir を新パスへ移す', () => {
   const env = tempLegacy()
-  const report = migrate({ home: env.home, hermesHome: env.hermesHome })
+  const report = migrate({ home: env.home, hermesHome: env.hermesHome, runner: noCronRunner() })
   assert.equal(report.boards.length, 1)
   const meta = JSON.parse(fs.readFileSync(path.join(env.boardDir, 'board.json'), 'utf8'))
   assert.equal(meta.default_workdir, path.join(env.hermesHome, 'plugin-data', 'hermes-pilot', 'review'))
@@ -136,7 +196,8 @@ test('migrate は board.json の default_workdir を新パスへ移す', () => {
 
 test('migrate は冪等（2 回流してもファイルもタスクも増えない）', () => {
   const env = tempLegacy()
-  migrate({ home: env.home, hermesHome: env.hermesHome })
+  const runner = noCronRunner()
+  migrate({ home: env.home, hermesHome: env.hermesHome, runner })
   const review = path.join(env.hermesHome, 'plugin-data', 'hermes-pilot', 'review')
   const countFiles = (dir) => {
     let n = 0
@@ -151,9 +212,9 @@ test('migrate は冪等（2 回流してもファイルもタスクも増えな�
   }
   const before = countFiles(review)
   const dbPath = path.join(env.boardDir, 'kanban.db')
-  const baksBefore = fs.readdirSync(env.boardDir).filter((f) => f.startsWith('kanban.db.bak-')).length
+  const dbBefore = fs.readFileSync(dbPath)
 
-  const second = migrate({ home: env.home, hermesHome: env.hermesHome })
+  const second = migrate({ home: env.home, hermesHome: env.hermesHome, runner })
   assert.equal(second.copied.sheets, 0)
   assert.equal(second.copied.shots, 0)
   assert.equal(second.copied.library, 0)
@@ -161,12 +222,12 @@ test('migrate は冪等（2 回流してもファイルもタスクも増えな�
   assert.equal(second.copied.session, 0)
   assert.equal(countFiles(review), before, 'ファイル数は増えない')
 
-  const hit = second.kanban.find((k) => k.db === dbPath)
-  assert.equal(hit.updated, 0, '置換対象が無ければ書き換えない')
-  assert.equal(hit.backup, null, '変更が無ければバックアップも増やさない')
+  // DB は毎回バイト単位で無変化
+  assert.equal(fs.readFileSync(dbPath).equals(dbBefore), true)
   assert.equal(
-    fs.readdirSync(env.boardDir).filter((f) => f.startsWith('kanban.db.bak-')).length,
-    baksBefore,
+    fs.readdirSync(env.boardDir).filter((f) => f.includes('.bak-')).length,
+    0,
+    'バックアップも増えない',
   )
 })
 
@@ -174,7 +235,7 @@ test('旧環境が無くても落ちず、レポートに skipped を残す', ()
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'migrate-empty-'))
   const hermesHome = path.join(home, '.hermes')
   fs.mkdirSync(hermesHome, { recursive: true })
-  const report = migrate({ home, hermesHome })
+  const report = migrate({ home, hermesHome, runner: noCronRunner() })
   assert.equal(report.copied.sheets, 0)
   assert.ok(report.skipped.length > 0)
   const text = formatReport(report)
@@ -182,7 +243,7 @@ test('旧環境が無くても落ちず、レポートに skipped を残す', ()
   assert.match(text, /旧ディレクトリは削除していません/)
 })
 
-test('findKanbanDbs はルートと各ボードの DB を拾う', () => {
+test('findKanbanDbs はルートと各ボードの DB を拾う（開かずに存在だけ見る）', () => {
   const env = tempLegacy()
   const other = path.join(env.hermesHome, 'kanban', 'boards', 'work')
   fs.mkdirSync(other, { recursive: true })
@@ -190,15 +251,8 @@ test('findKanbanDbs はルートと各ボードの DB を拾う', () => {
   const dbs = findKanbanDbs(env.hermesHome)
   assert.ok(dbs.some((p) => p.endsWith(path.join('boards', 'mobile', 'kanban.db'))))
   assert.ok(dbs.some((p) => p.endsWith(path.join('boards', 'work', 'kanban.db'))))
-})
-
-test('rewriteKanbanTag はタスク表が無い DB でも例外を投げない（呼び出し側で拾う）', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'migrate-bad-'))
-  const dbPath = path.join(dir, 'kanban.db')
-  const db = new DatabaseSync(dbPath)
-  db.exec('CREATE TABLE other (id TEXT)')
-  db.close()
-  assert.throws(() => rewriteKanbanTag(dbPath), /no such table|tasks/i)
+  // 壊れた DB（空ファイル）でも例外を投げない = 開いていない
+  assert.doesNotThrow(() => findKanbanDbs(env.hermesHome))
 })
 
 test('resolveHermesHome はプロファイルディレクトリを ~/.hermes に正す（worker からの実行対策）', () => {
@@ -216,71 +270,131 @@ test('migrate は HERMES_HOME がプロファイルを指していても profile
   const report = migrate({
     home: env.home,
     hermesHome: path.join(env.hermesHome, 'profiles', 'mobile'),
+    runner: noCronRunner(),
   })
   assert.equal(report.hermesHome, env.hermesHome)
   assert.equal(report.pluginDataDir, path.join(env.hermesHome, 'plugin-data', 'hermes-pilot'))
   assert.equal(fs.existsSync(path.join(env.hermesHome, 'profiles', 'mobile', 'plugin-data')), false)
-  // kanban.db も本物（profiles の外）を見つける
+  // 本物（profiles の外）の kanban.db を見つける。書き換えはしない。
   assert.equal(report.kanban.length, 1)
-  assert.equal(report.kanban[0].updated, 2)
+  assert.equal(report.kanban[0].written, false)
 })
 
-// ── D44: 旧外部 cron の自動クリーンアップ ───────────────────────────────
+// ── D44 / D55: 旧外部 cron は公式 CLI（list → remove）で片付ける ────────────
 
-/** cron/jobs.json を一時 hermesHome に作り、{jobs, updated_at} を返す。 */
-function tempCronStore(jobs, { arrayForm = false, extra = {} } = {}) {
+test('parseCronList は hermes cron list の出力から id と name を拾う', () => {
+  const text = cronListText([
+    { id: 'c1aaaa111111', name: 'mobile-akapen-watch' },
+    { id: 'c2bbbb222222', name: 'kanban-reap', state: 'paused' },
+  ])
+  const jobs = parseCronList(text)
+  assert.deepEqual(jobs.map((j) => j.id), ['c1aaaa111111', 'c2bbbb222222'])
+  assert.deepEqual(jobs.map((j) => j.name), ['mobile-akapen-watch', 'kanban-reap'])
+})
+
+test('parseCronList は ANSI カラー入りの出力でも壊れない', () => {
+  const colored = '\u001b[36m  7cad0b034fff \u001b[32m[active]\u001b[0m\n    Name:       \u001b[1mmobile-review-watch\u001b[0m\n'
+  const jobs = parseCronList(colored)
+  assert.equal(jobs.length, 1)
+  assert.equal(jobs[0].id, '7cad0b034fff')
+  assert.equal(jobs[0].name, 'mobile-review-watch')
+  assert.equal(stripAnsi(colored).includes('\u001b'), false)
+})
+
+test('parseCronList はジョブが無い出力で空配列を返す', () => {
+  assert.deepEqual(parseCronList(cronListText([])), [])
+  assert.deepEqual(parseCronList(''), [])
+})
+
+test('cleanupLegacyCrons は旧 watch だけを hermes cron remove で消す（ファイルは触らない）', () => {
   const hermesHome = fs.mkdtempSync(path.join(os.tmpdir(), 'migrate-cron-'))
-  const [file] = cronStorePaths(hermesHome)
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  const body = arrayForm ? jobs : { jobs, updated_at: '2026-11-15T00:00:00+08:00', ...extra }
-  fs.writeFileSync(file, `${JSON.stringify(body, null, 2)}\n`, 'utf8')
-  return { hermesHome, file }
-}
+  // 旧実装が書き換えていたファイルを置いても、一切触らないことを確かめる
+  const storeFile = path.join(hermesHome, 'cron', 'jobs.json')
+  fs.mkdirSync(path.dirname(storeFile), { recursive: true })
+  const storeBody = '{"jobs":[{"id":"c1","name":"mobile-akapen-watch"}],"updated_at":"2026-11-15T00:00:00+08:00"}\n'
+  fs.writeFileSync(storeFile, storeBody)
+  const storeMtime = fs.statSync(storeFile).mtimeMs
 
-test('cleanupLegacyCrons は旧 akapen/review watch だけを消し、他の cron とトップレベル構造を保つ', () => {
-  const store = tempCronStore(
-    [
-      { id: 'c1', name: 'mobile-akapen-watch', prompt: '赤ペンの完了を Discord へ' },
-      { id: 'c2', name: 'mobile-review-watch', script: 'review-watch.sh' },
-      { id: 'c3', name: 'kanban-reap', script: 'kanban-reap.sh' },
-      { id: 'c4', name: 'morning-brief', prompt: '朝のブリーフ' },
-    ],
-    { extra: { version: 3 } },
+  const { runner, calls } = fakeCronRunner(
+    cronListText([
+      { id: 'c1aaaaaaaaaa', name: 'mobile-akapen-watch' },
+      { id: 'c2bbbbbbbbbb', name: 'mobile-review-watch' },
+      { id: 'c3cccccccccc', name: 'kanban-reap' },
+      { id: 'c4dddddddddd', name: 'morning-brief' },
+    ]),
   )
 
-  const res = cleanupLegacyCrons(store.hermesHome)
+  const res = cleanupLegacyCrons(hermesHome, { runner })
+  assert.equal(res.scanned, 4)
+  assert.equal(res.detected, 2)
   assert.equal(res.removed, 2)
   assert.deepEqual(res.names, ['mobile-akapen-watch', 'mobile-review-watch'])
-  assert.equal(res.errors.length, 0)
+  assert.deepEqual(res.ids, ['c1aaaaaaaaaa', 'c2bbbbbbbbbb'])
+  assert.deepEqual(res.errors, [])
+  assert.deepEqual(calls, [
+    'hermes cron list',
+    'hermes cron remove c1aaaaaaaaaa',
+    'hermes cron remove c2bbbbbbbbbb',
+  ])
 
-  const saved = JSON.parse(fs.readFileSync(store.file, 'utf8'))
-  assert.deepEqual(
-    saved.jobs.map((j) => j.id),
-    ['c3', 'c4'],
-    '一致しないジョブは保持する',
-  )
-  assert.equal(saved.updated_at, '2026-11-15T00:00:00+08:00', 'トップレベルの updated_at を保つ')
-  assert.equal(saved.version, 3, '未知のトップレベルキーも保つ')
-  // 元ファイルだけが残る（tmp が残らない＝原子的書き込み）
-  assert.deepEqual(fs.readdirSync(path.dirname(store.file)).sort(), ['jobs.json'])
+  assert.equal(fs.readFileSync(storeFile, 'utf8'), storeBody, 'jobs.json は読まないし書かない')
+  assert.equal(fs.statSync(storeFile).mtimeMs, storeMtime)
 })
 
-test('cleanupLegacyCrons は配列形式の cron ストアにも効く', () => {
-  const store = tempCronStore(
-    [{ name: 'mobile-akapen-watch' }, { name: 'keep-me' }],
-    { arrayForm: true },
-  )
-  const res = cleanupLegacyCrons(store.hermesHome)
-  assert.equal(res.removed, 1)
-  const saved = JSON.parse(fs.readFileSync(store.file, 'utf8'))
-  assert.ok(Array.isArray(saved), '配列形式を保つ')
-  assert.deepEqual(
-    saved.map((j) => j.name),
-    ['keep-me'],
-  )
+test('cleanupLegacyCrons は dryRun で list だけ呼び、remove を呼ばない', () => {
+  const { runner, calls } = fakeCronRunner(cronListText([{ id: 'c1aaaaaaaaaa', name: 'mobile-akapen-watch' }]))
+  const res = cleanupLegacyCrons(os.tmpdir(), { runner, dryRun: true })
+  assert.equal(res.detected, 1)
+  assert.equal(res.removed, 0)
+  assert.deepEqual(res.names, ['mobile-akapen-watch'])
+  assert.deepEqual(calls, ['hermes cron list'])
+  assert.equal(res.dryRun, true)
 })
 
-test('cleanupLegacyCrons は name 以外（script / prompt / label / id）でも旧 cron を検出する', () => {
+test('cleanupLegacyCrons は旧 cron が無ければ remove を呼ばない（冪等）', () => {
+  const { runner, calls } = fakeCronRunner(cronListText([{ id: 'c3cccccccccc', name: 'kanban-reap' }]))
+  const first = cleanupLegacyCrons(os.tmpdir(), { runner })
+  assert.equal(first.removed, 0)
+  assert.equal(first.detected, 0)
+  const second = cleanupLegacyCrons(os.tmpdir(), { runner })
+  assert.equal(second.removed, 0)
+  assert.deepEqual(calls, ['hermes cron list', 'hermes cron list'], 'list だけ・remove は呼ばない')
+})
+
+test('cleanupLegacyCrons は cron list の失敗を握りつぶさず errors に積む', () => {
+  const { runner, calls } = fakeCronRunner('', { listExit: 2 })
+  const res = cleanupLegacyCrons(os.tmpdir(), { runner })
+  assert.equal(res.removed, 0)
+  assert.equal(res.errors.length, 1)
+  assert.match(res.errors[0].cmd, /cron list$/)
+  assert.equal(calls.includes('hermes cron remove'), false)
+})
+
+test('cleanupLegacyCrons は remove の失敗を 1 件ずつ記録し、残りは続行する', () => {
+  const { runner } = fakeCronRunner(
+    cronListText([
+      { id: 'c1aaaaaaaaaa', name: 'mobile-akapen-watch' },
+      { id: 'c2bbbbbbbbbb', name: 'mobile-review-watch' },
+    ]),
+    { removeExit: 1 },
+  )
+  const res = cleanupLegacyCrons(os.tmpdir(), { runner })
+  assert.equal(res.removed, 0)
+  assert.equal(res.errors.length, 2)
+  assert.match(res.errors[0].cmd, /cron remove c1aaaaaaaaaa$/)
+  assert.match(res.errors[1].cmd, /cron remove c2bbbbbbbbbb$/)
+})
+
+test('cleanupLegacyCrons は node:test 配下でランナー未指定なら CLI を叩かない（安全弁）', () => {
+  // NODE_TEST_CONTEXT は node --test が立てる。誤って本物の cron を消さないためのガード。
+  assert.equal(process.env.NODE_TEST_CONTEXT, 'child-v8')
+  const res = cleanupLegacyCrons(os.tmpdir())
+  assert.equal(res.removed, 0)
+  assert.equal(res.errors.length, 1)
+  assert.match(res.errors[0].error, /refusing to run the hermes CLI inside node:test/)
+})
+
+test('isLegacyCronEntry は name 以外（script / prompt / label / id）でも旧 cron を検出する', () => {
   assert.equal(isLegacyCronEntry({ script: '/opt/mobile-akapen-watch.sh' }), true)
   assert.equal(isLegacyCronEntry({ prompt: 'mobile-review-watch を回す' }), true)
   assert.equal(isLegacyCronEntry({ label: 'mobile-akapen-watch' }), true)
@@ -290,91 +404,52 @@ test('cleanupLegacyCrons は name 以外（script / prompt / label / id）でも
   assert.equal(isLegacyCronEntry(null), false)
 })
 
-test('cleanupLegacyCrons は cron ストアが無い環境で無害に空結果を返す', () => {
-  const hermesHome = fs.mkdtempSync(path.join(os.tmpdir(), 'migrate-nocron-'))
-  const res = cleanupLegacyCrons(hermesHome)
-  assert.equal(res.removed, 0)
-  assert.deepEqual(res.names, [])
-  assert.deepEqual(res.files, [])
-  assert.equal(res.errors.length, 0)
-})
-
-test('cleanupLegacyCrons は dryRun でファイルを書き換えない', () => {
-  const store = tempCronStore([{ name: 'mobile-akapen-watch' }, { name: 'keep-me' }])
-  const before = fs.readFileSync(store.file, 'utf8')
-  const stamp = fs.statSync(store.file).mtimeMs
-
-  const res = cleanupLegacyCrons(store.hermesHome, { dryRun: true })
-  assert.equal(res.removed, 1, '何が消えるかは返す')
-  assert.deepEqual(res.names, ['mobile-akapen-watch'])
-  assert.equal(fs.readFileSync(store.file, 'utf8'), before, '本文は変わらない')
-  assert.equal(fs.statSync(store.file).mtimeMs, stamp, '書き込みもしない')
-})
-
-test('cleanupLegacyCrons は冪等（2 回目は 0 件で書き込まない）', () => {
-  const store = tempCronStore([{ name: 'mobile-akapen-watch' }, { name: 'keep-me' }])
-  assert.equal(cleanupLegacyCrons(store.hermesHome).removed, 1)
-  const stamp = fs.statSync(store.file).mtimeMs
-  const second = cleanupLegacyCrons(store.hermesHome)
-  assert.equal(second.removed, 0)
-  assert.equal(fs.statSync(store.file).mtimeMs, stamp, '対象が無ければ書かない')
-})
-
-test('cleanupLegacyCrons は壊れた JSON を消さずに errors へ積む', () => {
-  const hermesHome = fs.mkdtempSync(path.join(os.tmpdir(), 'migrate-badcron-'))
-  const [file] = cronStorePaths(hermesHome)
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(file, '{ this is not json', 'utf8')
-  const res = cleanupLegacyCrons(hermesHome)
-  assert.equal(res.removed, 0)
-  assert.equal(res.errors.length, 1)
-  assert.equal(fs.readFileSync(file, 'utf8'), '{ this is not json')
-})
-
-test('migrate は旧 cron を片付け、レポートに削除件数を出す', () => {
+test('migrate は旧 cron を CLI 経由で片付け、レポートに削除件数を出す', () => {
   const env = tempLegacy()
-  const [file] = cronStorePaths(env.hermesHome)
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(
-    file,
-    `${JSON.stringify(
-      {
-        jobs: [
-          { id: 'c1', name: 'mobile-akapen-watch' },
-          { id: 'c2', name: 'kanban-reap' },
-        ],
-        updated_at: '2026-11-15T00:00:00+08:00',
-      },
-      null,
-      2,
-    )}\n`,
-    'utf8',
+  const { runner, calls, envs } = fakeCronRunner(
+    cronListText([
+      { id: 'c1aaaaaaaaaa', name: 'mobile-akapen-watch' },
+      { id: 'c2bbbbbbbbbb', name: 'kanban-reap' },
+    ]),
   )
+  const report = migrate({ home: env.home, hermesHome: env.hermesHome, runner })
 
-  const report = migrate({ home: env.home, hermesHome: env.hermesHome })
+  assert.equal(report.crons.detected, 1)
   assert.equal(report.crons.removed, 1)
   assert.deepEqual(report.crons.names, ['mobile-akapen-watch'])
-  const saved = JSON.parse(fs.readFileSync(file, 'utf8'))
-  assert.deepEqual(saved.jobs.map((j) => j.id), ['c2'])
-  assert.match(formatReport(report), /旧 cron のクリーンアップ: 1 件を削除（mobile-akapen-watch）/)
+  assert.deepEqual(calls, ['hermes cron list', 'hermes cron remove c1aaaaaaaaaa'])
+  // HERMES_HOME を移行対象の home に固定して、別プロファイルの cron を取り違えない
+  assert.equal(envs[0].HERMES_HOME, env.hermesHome)
+  assert.match(formatReport(report), /旧 cron のクリーンアップ: 1 件を削除（hermes cron: mobile-akapen-watch）/)
 })
 
-test('migrate の dryRun は旧 cron を検出するだけで消さない', () => {
+test('migrate の dryRun は旧 cron を検出するだけで remove を呼ばない', () => {
   const env = tempLegacy()
-  const [file] = cronStorePaths(env.hermesHome)
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  const before = `${JSON.stringify({ jobs: [{ name: 'mobile-review-watch' }] }, null, 2)}\n`
-  fs.writeFileSync(file, before, 'utf8')
+  const { runner, calls } = fakeCronRunner(cronListText([{ id: 'c1aaaaaaaaaa', name: 'mobile-review-watch' }]))
+  const report = migrate({ home: env.home, hermesHome: env.hermesHome, dryRun: true, runner })
 
-  const report = migrate({ home: env.home, hermesHome: env.hermesHome, dryRun: true })
-  assert.equal(report.crons.removed, 1)
-  assert.equal(fs.readFileSync(file, 'utf8'), before, 'dryRun では書かない')
+  assert.equal(report.crons.detected, 1)
+  assert.equal(report.crons.removed, 0)
+  assert.deepEqual(calls, ['hermes cron list'], 'dryRun では remove を呼ばない')
+  assert.match(formatReport(report, { dryRun: true }), /1 件を検出（dry run のため未削除: mobile-review-watch）/)
+  // dryRun でもコピーはしない
+  assert.equal(fs.existsSync(path.join(env.hermesHome, 'plugin-data', 'hermes-pilot', 'review', 'sheets')), false)
 })
 
 test('旧環境が無いときのレポートはクリーンアップ 0 件を明示する', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'migrate-nocron-report-'))
   const hermesHome = path.join(home, '.hermes')
   fs.mkdirSync(hermesHome, { recursive: true })
-  const text = formatReport(migrate({ home, hermesHome }))
+  const text = formatReport(migrate({ home, hermesHome, runner: noCronRunner() }))
   assert.match(text, /旧 cron のクリーンアップ: 0 件/)
+})
+
+// ── D55: init の無言自動移行をやめる ────────────────────────────────────
+
+test('migrationDecision は旧環境・--yes・TTY の組み合わせで 4 通りに分かれる', () => {
+  assert.equal(migrationDecision({ hasLegacy: false }), 'skip')
+  assert.equal(migrationDecision({ hasLegacy: false, yes: true, isTTY: true }), 'skip', '旧環境が無ければ移行しない')
+  assert.equal(migrationDecision({ hasLegacy: true }), 'manual', '非 TTY かつ --yes 無しは案内だけ')
+  assert.equal(migrationDecision({ hasLegacy: true, isTTY: true }), 'ask', 'TTY は y/N を聞く')
+  assert.equal(migrationDecision({ hasLegacy: true, yes: true }), 'migrate', '--yes は確認なし')
 })
