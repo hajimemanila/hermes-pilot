@@ -792,6 +792,12 @@ test('シートの CSP は sec-fetch-dest で分岐せず、常に sandbox を�
     /if \(c === 'view' && req\.method === 'GET'\)[\s\S]{0,400}reviewViewHtml\(b\)/,
     '/api/review/:id/view がラッパー HTML を返す',
   )
+  // 存在判定は sheetHtml（.json を持たない HTML だけのシートでも 409 にしない）
+  assert.match(
+    SERVER_SRC,
+    /if \(c === 'view' && req\.method === 'GET'\)[\s\S]{0,200}review\.sheetHtml\(b\)/,
+    'view は sheetData（DATA_MISSING）ではなく sheetHtml で存在を判定する',
+  )
 })
 
 test('injectReviewBridge はシート内から直接 fetch せず、postMessage 一本にする', () => {

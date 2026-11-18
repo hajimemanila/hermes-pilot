@@ -1050,8 +1050,9 @@ async function handleApi(req, res, url) {
     }
     // /api/review/:id/view … 単体タブ用のラッパー（D57）。
     // シートを sandbox iframe で囲み、postMessage を受けて same-origin で回答を POST する。
+    // 存在判定は sheetHtml（.html が無くても .json から生成できる）に合わせる。
     if (c === 'view' && req.method === 'GET') {
-      const r = review.sheetData(b)
+      const r = review.sheetHtml(b)
       if (!r.ok) return sendFailure(res, r.code === 'NOT_FOUND' ? 404 : 409, r)
       res.writeHead(200, reviewViewHeaders())
       return res.end(reviewViewHtml(b))
