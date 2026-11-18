@@ -64,7 +64,7 @@ const VIEWPORTS = ['390x844', '744x1024', '768x1024', '820x1180', '1180x820', '8
 const LANGS = ['en', 'ja']
 
 /** 下部ナビのタブ id（`App.jsx` の `TABS` と同じ並び）。 */
-const TABS = ['tasks', 'review', 'chat', 'term', 'settings']
+const TABS = ['tasks', 'review', 'chat', 'notes', 'term', 'settings']
 
 /**
  * 既知の「44px 未満のタップ対象」「文字切れ」の受理リスト（baseline）。
@@ -554,7 +554,7 @@ async function auditCombo(cdp, sessionId, base, token, viewport, lang, tabs, noi
       const r = await cdp.send(
         'Runtime.evaluate',
         {
-          expression: 'document.querySelectorAll("nav .nav-item").length === 5 && document.readyState === "complete"',
+          expression: `document.querySelectorAll('nav .nav-item').length === ${TABS.length} && document.readyState === 'complete'`,
           returnByValue: true,
         },
         sessionId,
@@ -562,7 +562,7 @@ async function auditCombo(cdp, sessionId, base, token, viewport, lang, tabs, noi
       return r.result?.value === true
     }, BOOT_TIMEOUT_MS)
     if (!booted) {
-      violations.push(`${lang} - boot-timeout 下部ナビ（5 タブ）が出ない`)
+      violations.push(`${lang} - boot-timeout 下部ナビ（${TABS.length} タブ）が出ない`)
       return violations
     }
     debug(`booted ${viewport} ${lang} (t=${Date.now() - started}ms)`)

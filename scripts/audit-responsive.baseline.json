@@ -1,5 +1,20 @@
 {
   "_note": "acceptance baseline: 44px 未満のタップ対象と文字切れの受理済みパターン。新顔は違反、消えた項目は stale。生成: node scripts/audit-responsive.mjs --update-baseline",
-  "tap": [],
+  "tap": [
+    "button.bubble-menu-btn",
+    "button.chip",
+    "button.chip.on",
+    "button.code-copy",
+    "button.memo-pin-btn",
+    "button.primary.report-card-btn",
+    "button.prof-chip.repo-chip",
+    "button.report-card-btn",
+    "button.report-card-head",
+    "button.snippet-chip.trigger",
+    "input.memos-quick-input",
+    "input.memos-search-input",
+    "summary.pipeline-summary-head",
+    "summary>details.msg-tools"
+  ],
   "clip": []
 }
