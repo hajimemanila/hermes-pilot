@@ -26,9 +26,11 @@ English README: [`README.md`](README.md)
   スキル: `skills/annotation/`
 - **Spec Architect（仕様化）**: 1 行の種から設計ヒアリングを行い、ワーカーが追加質問なしに完走できる
   `docs/SPEC-*.md` を作ります。スキル: `skills/spec-architect/`
-- **タスク / 承認待ち**: ボード切替、詳細、イベント履歴、タスクごとの git 差分、承認・コメント・中断
-- **チャット**: ストリーミング、思考ログ、ツールログ、添付、定型スニペット、セッション横断検索
+- **タスク / 承認待ち**: ボード切替、詳細、イベント履歴、タスクごとの git 差分、承認・コメント・中断。**Spec Seed** と同列に **🧠 ブレスト**・**🛠 リファクタリング** を装備
+- **チャット**: ストリーミング、思考ログ、ツールログ、添付、定型スニペット、セッション横断検索、バブルメニュー（コピー・メモ保存・要約・継続指示）、履歴ドロワーの「継続可 / 閲覧専用」識別＆稼働中表示
+- **メモ（ひらめき＆レポート受信箱）**: Keep 風のカードグリッドで 1 行メモ・チェックリスト・タグ・検索・定期／完了レポートの受信箱を管理し、ブレストや Spec Seed へそのまま接続
 - **ターミナル**: 実 PTY。OS に応じたコマンドスニペット付き
+- **全タブ状態保持**: タスク・レビュー・チャット・メモ・ターミナル・設定のすべてのタブを裏で保持し、タブ往復時の再読み込みタイムラグや入力ロスを防止
 - **英語・日本語**（既定フォールバックは `en`、`ja` 同梱）、**Dark / Light / System** テーマ、そして 2 段階の
   2 ペイン: **680px から狭幅マスター・ディテール**（左 280px。iPad mini 縦などの 744/768px 用）と
   **820px から広幅 2 ペイン**（レビュー左 380px / タスク左 360px）。680px 未満は詳細が全画面シートで開きます
@@ -122,7 +124,7 @@ curl -s -H "x-client: mobile" \
   ファイルに対して操作できます（`scanDirs` の設定箇所は 1 か所だけ）。
 
   ```bash
-  npx hermes-pilot init --force      # 更新後にダッシュボードのプラグインファイルを入れ替える
+  node bin/hermes-pilot.mjs init --force      # 更新後にダッシュボードのプラグインファイルを入れ替える
   ```
 
 - **スニペット編集** — 組み込みも Hot（バー表示）/ 非表示を切替でき、自分用の追加・編集・並べ替え・削除が
@@ -200,9 +202,34 @@ data URL として組み立てるため、デモは外部ネットワークに�
 
 ## インストール
 
+ルートは 2 つ。最初の 1 手が違うだけで、そのあとは同じ **コードを取る → `npm ci` → `init`** の 3 手です。
+まだ npm へ公開していないため、以下のコマンドはすべて `npx` ではなくリポジトリ（またはプラグイン
+ディレクトリ）の CLI を直接叩く `node bin/hermes-pilot.mjs …` で書いています。
+
+**A. Hermes のプラグインカタログから（推奨）**
+
 ```bash
-npx hermes-pilot init
+hermes plugins install hajimemanila/hermes-pilot --ref <sha>   # sha で固定。--ref を省くと既定ブランチ
+cd ~/.hermes/plugins/hermes-pilot
+npm ci
+node bin/hermes-pilot.mjs init
 ```
+
+**B. このリポジトリを clone して**
+
+```bash
+git clone https://github.com/hajimemanila/hermes-pilot.git
+cd hermes-pilot
+npm ci
+node bin/hermes-pilot.mjs init
+```
+
+`npm ci` は省略できません。ブリッジは `ws` と**ネイティブアドオン**の `node-pty` を使い、
+`postinstall` が npm の tarball 展開で落ちる `spawn-helper` の実行ビットを戻しています
+（これが無いと端末タブが `posix_spawnp failed` で落ちます）。
+
+以下の `node bin/hermes-pilot.mjs …` はすべて、カレントディレクトリがそのリポジトリ／プラグイン
+ディレクトリである前提です。短く打ちたければ一度 `npm link` してから `hermes-pilot …` を使ってください。
 
 `init` は何度実行しても安全で、次の 5 つを行います。
 
@@ -217,13 +244,13 @@ npx hermes-pilot init
 そのあとブリッジを起動します。
 
 ```bash
-npx hermes-pilot start                        # http://127.0.0.1:4097
-npx hermes-pilot start --port 4097 --host 127.0.0.1
+node bin/hermes-pilot.mjs start                        # http://127.0.0.1:4097
+node bin/hermes-pilot.mjs start --port 4097 --host 127.0.0.1
 ```
 
 ## 端末のペアリング（長いトークンを打たない）
 
-- **ターミナルから**: `npx hermes-pilot qr` が候補と QR を表示。Tailscale `serve` が 443 以外で HTTPS を
+- **ターミナルから**: `node bin/hermes-pilot.mjs qr` が候補と QR を表示。Tailscale `serve` が 443 以外で HTTPS を
   出している場合は `--tls-port 8444` を付けます
 - **アプリから**: 設定 →「端末を追加」→「ペアリング QR を表示」（`GET /api/auth/pairing`）。
   2 台目のスマホ／タブレットで読み取ります
@@ -239,10 +266,10 @@ QR を読むと `https://<host>/?token=<token>`（または `#token=`）が開�
 ## 常駐化
 
 ```bash
-npx hermes-pilot service install     # macOS は launchd、Linux は systemd --user
-npx hermes-pilot service status
-npx hermes-pilot service restart
-npx hermes-pilot service uninstall
+node bin/hermes-pilot.mjs service install     # macOS は launchd、Linux は systemd --user
+node bin/hermes-pilot.mjs service status
+node bin/hermes-pilot.mjs service restart
+node bin/hermes-pilot.mjs service uninstall
 ```
 
 - macOS: `~/Library/LaunchAgents/ai.hermes.pilot.plist`（ラベル `ai.hermes.pilot`）、
@@ -256,16 +283,16 @@ npx hermes-pilot service uninstall
 `hermes-mobile-pwa` → `hermes-pilot` に変わりました。**旧ラベルは止めずに併設**して、無停止で切り替えます。
 
 ```bash
-npx hermes-pilot init                     # データをコピー（旧ファイルはそのまま残る）
-npx hermes-pilot service install          # 新しいラベルを登録して起動
-npx hermes-pilot service status           # 起動確認
+node bin/hermes-pilot.mjs init                     # データをコピー（旧ファイルはそのまま残る）
+node bin/hermes-pilot.mjs service install          # 新しいラベルを登録して起動
+node bin/hermes-pilot.mjs service status           # 起動確認
 
 # 新しい方で問題ないと確認できてから、旧ラベルを引退させる:
 launchctl bootout gui/$(id -u)/ai.hermes.hermes-mobile
 ```
 
 どちらもポート 4097 を使います。旧がまだ 4097 を掴んでいる場合は、新を別ポートで先に起動して確認し
-（`npx hermes-pilot start --port 4098`）、あとで入れ替えてください。旧 `~/.hermes/mobile-pwa/` は
+（`node bin/hermes-pilot.mjs start --port 4098`）、あとで入れ替えてください。旧 `~/.hermes/mobile-pwa/` は
 コピーされるだけで削除されません。不要になったら手動で消してください。
 
 ## セキュリティ

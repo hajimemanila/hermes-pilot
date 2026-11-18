@@ -4,18 +4,38 @@ Hermes Pilot は **PWA**（`apps/web/dist`）と **ブリッジ**（`apps/bridge
 2 つで動きます。端末が見るのは PWA だけで、データの読み書きはすべてブリッジが Hermes 側
 （ダッシュボード `:9119`・各ボードのカンバン SQLite・`~/.hermes`）に対して行います。
 
-## CLI（`npx hermes-pilot …`）
+## 導入手順
+
+npm へはまだ公開していないため、**`npx hermes-pilot …` は使わない**。取得 → 依存 → 初期化の 3 手。
+
+```bash
+# 1) 取得（sha で固定。--ref を省くと既定ブランチ）
+hermes plugins install hajimemanila/hermes-pilot --ref <sha>
+
+# 2) 依存（ws と、ネイティブアドオンの node-pty。postinstall が spawn-helper の exec bit を直す）
+cd ~/.hermes/plugins/hermes-pilot
+npm ci
+
+# 3) 初期化（データ・トークン・同梱スキル・ペアリング QR。冪等）
+node bin/hermes-pilot.mjs init
+```
+
+git clone から入れる場合も 2) 以降は同じ（`git clone https://github.com/hajimemanila/hermes-pilot.git`）。
+以降のコマンドは**カレントディレクトリがリポジトリ／プラグインルート**である前提。
+短縮形が欲しいときは一度 `npm link` してから `hermes-pilot …` を使う。
+
+## CLI（`node bin/hermes-pilot.mjs …`）
 
 | コマンド | 用途 |
 |---|---|
-| `hermes-pilot init` | 初回設定。データディレクトリ作成・アプリトークン（256-bit / `0600`）生成・旧環境からの移行・同梱 3 スキル（`quick-review` / `annotation` / `spec-architect`）配置・到達可能アドレスの検出とペアリング QR 表示。冪等 |
-| `hermes-pilot start [--port 4097] [--host 127.0.0.1] [--tls-port 8444]` | 必要なら UI をビルドしてブリッジを起動 |
-| `hermes-pilot qr [--tls-port 8444]` | 接続先候補とターミナル QR を表示 |
-| `hermes-pilot service install \| uninstall \| restart \| status` | 常駐（macOS は launchd `ai.hermes.pilot`、Linux は systemd --user） |
-| `hermes-pilot migrate [--dry-run]` | `init` と同じ移行だけを実行（旧 cron の片付けを含む） |
-| `hermes-pilot --help` | コマンド一覧 |
+| `node bin/hermes-pilot.mjs init` | 初回設定。データディレクトリ作成・アプリトークン（256-bit / `0600`）生成・旧環境からの移行・同梱 3 スキル（`quick-review` / `annotation` / `spec-architect`）配置・到達可能アドレスの検出とペアリング QR 表示。冪等 |
+| `node bin/hermes-pilot.mjs start [--port 4097] [--host 127.0.0.1] [--tls-port 8444]` | 必要なら UI をビルドしてブリッジを起動 |
+| `node bin/hermes-pilot.mjs qr [--tls-port 8444]` | 接続先候補とターミナル QR を表示 |
+| `node bin/hermes-pilot.mjs service install \| uninstall \| restart \| status` | 常駐（macOS は launchd `ai.hermes.pilot`、Linux は systemd --user） |
+| `node bin/hermes-pilot.mjs migrate [--dry-run]` | `init` と同じ移行だけを実行（旧 cron の片付けを含む） |
+| `node bin/hermes-pilot.mjs --help` | コマンド一覧 |
 
-更新後にダッシュボードのプラグインファイルを入れ替えるときは `npx hermes-pilot init --force`。
+更新後にダッシュボードのプラグインファイルを入れ替えるときは `node bin/hermes-pilot.mjs init --force`。
 
 ## 検証スイート
 
@@ -49,10 +69,10 @@ npm run build:demo    # VITE_DEMO_MODE=1 / base ./ / outDir apps/web/dist-demo
 ### 常駐（launchd / systemd）
 
 ```bash
-npx hermes-pilot service install     # 登録して起動（macOS: launchd、Linux: systemd --user）
-npx hermes-pilot service status      # 状態
-npx hermes-pilot service restart     # 反映（plist / unit を書き換えたときもこれ）
-npx hermes-pilot service uninstall   # 解除
+node bin/hermes-pilot.mjs service install     # 登録して起動（macOS: launchd、Linux: systemd --user）
+node bin/hermes-pilot.mjs service status      # 状態
+node bin/hermes-pilot.mjs service restart     # 反映（plist / unit を書き換えたときもこれ）
+node bin/hermes-pilot.mjs service uninstall   # 解除
 ```
 
 - macOS: `~/Library/LaunchAgents/ai.hermes.pilot.plist`（ラベル `ai.hermes.pilot`）、
@@ -74,10 +94,10 @@ launchctl list | grep hermes-pilot                       # 2列目が直近の�
 - 登録をやり直したいときは先に外す:
 
 ```bash
-npx hermes-pilot service uninstall && npx hermes-pilot service install
+node bin/hermes-pilot.mjs service uninstall && node bin/hermes-pilot.mjs service install
 ```
 
-- 反映したいだけなら `npx hermes-pilot service restart`（plist を書き換えた場合もこれで再読込される）
+- 反映したいだけなら `node bin/hermes-pilot.mjs service restart`（plist を書き換えた場合もこれで再読込される）
 
 
 ### 手動起動（動作確認）

@@ -27,9 +27,11 @@ kanban, chat, terminal and usage into a single installable PWA.
   and send back an ordered, coordinate-tagged fix list. Skill: `skills/annotation/`.
 - **Spec Architect** — a one-line seed becomes a design interview, then a `docs/SPEC-*.md` whose batches a
   worker can execute without asking again. Skill: `skills/spec-architect/`.
-- **Tasks / Inbox** — boards, task detail, event history, per-task git diff, approve / comment / abort.
-- **Chat** — streaming Hermes chat with thinking log, tool log, attachments, snippets, cross-session search.
+- **Tasks / Inbox** — boards, task detail, event history, per-task git diff, approve / comment / abort, plus **🧠 Brainstorm** and **🛠 Refactor** sheets alongside **Spec Seed**.
+- **Chat** — streaming Hermes chat with thinking log, tool log, attachments, snippets, cross-session search, bubble context menu (copy, save to Memos, summarize, continue instructing), and clear *Reply / RO* + running indicators in the session drawer.
+- **Memos (Ideas & Report Inbox)** — Keep-style card grid for one-line capture, checklists, tags, search, and scheduled/completion report inbox, with direct handoff to Brainstorm and Spec Seed.
 - **Terminal** — a real PTY over the bridge, with command snippets that follow your OS.
+- **Persistent tab state** — all six tabs (Tasks, Review, Chat, Memos, Terminal, Settings) stay mounted in the background so switching tabs preserves scroll position, drafts, and loaded state without reload lag.
 - **English and Japanese** (`en` is the fallback, `ja` is bundled), **Dark / Light / System** themes and two
   two-pane layouts: a **narrow master-detail from 680 px** (280 px master, for portrait tablets such as the
   iPad mini) and the **wide two-pane from 820 px** (380 px review master / 360 px tasks master). Below 680 px
@@ -125,7 +127,7 @@ Every one of them is reachable from the phone and from the standard dashboard.
   logs against the same files the PWA uses, so `scanDirs` is configured in exactly one place.
 
   ```bash
-  npx hermes-pilot init --force      # refresh the dashboard plugin files after an upgrade
+  node bin/hermes-pilot.mjs init --force      # refresh the dashboard plugin files after an upgrade
   ```
 
 - **Snippet editing** — built-in snippets can be pinned to the chip bar (Hot) or hidden, and you can add,
@@ -208,9 +210,34 @@ check, so a broken file cannot reach the site.
 
 ## Install
 
+Two routes, same three steps after the first one: **get the code → `npm ci` → `init`**.
+There is no published npm release yet, so every command below runs the checked-in CLI
+(`node bin/hermes-pilot.mjs …`) from the repository or plugin directory instead of `npx`.
+
+**A. From the Hermes plugin catalog (recommended)**
+
 ```bash
-npx hermes-pilot init
+hermes plugins install hajimemanila/hermes-pilot --ref <sha>   # pin a commit; omit --ref to track the default branch
+cd ~/.hermes/plugins/hermes-pilot
+npm ci
+node bin/hermes-pilot.mjs init
 ```
+
+**B. From a clone of this repository**
+
+```bash
+git clone https://github.com/hajimemanila/hermes-pilot.git
+cd hermes-pilot
+npm ci
+node bin/hermes-pilot.mjs init
+```
+
+`npm ci` is not optional: the bridge needs `ws` and the **native** addon `node-pty`, and the
+`postinstall` step restores the `spawn-helper` exec bit that npm's tarball extraction drops
+(without it the terminal tab fails with `posix_spawnp failed`).
+
+Every `node bin/hermes-pilot.mjs …` below assumes the current directory is that repository /
+plugin directory. If you prefer the short form, run `npm link` once and use `hermes-pilot …`.
 
 `init` is idempotent and does five things:
 
@@ -225,13 +252,13 @@ npx hermes-pilot init
 Then start the bridge:
 
 ```bash
-npx hermes-pilot start                        # http://127.0.0.1:4097
-npx hermes-pilot start --port 4097 --host 127.0.0.1
+node bin/hermes-pilot.mjs start                        # http://127.0.0.1:4097
+node bin/hermes-pilot.mjs start --port 4097 --host 127.0.0.1
 ```
 
 ## Pairing a device (no long token to type)
 
-- **From the terminal**: `npx hermes-pilot qr` prints the candidates and a QR. Pass `--tls-port 8444` when
+- **From the terminal**: `node bin/hermes-pilot.mjs qr` prints the candidates and a QR. Pass `--tls-port 8444` when
   Tailscale `serve` publishes HTTPS on a non-443 port.
 - **From the app**: Settings → *Pair a device* → *Show Pairing QR* (`GET /api/auth/pairing`). Show it to a
   second phone or tablet.
@@ -247,10 +274,10 @@ with `history.replaceState`, so the token stays out of history, bookmarks and sc
 ## Keeping it running
 
 ```bash
-npx hermes-pilot service install     # launchd on macOS, systemd --user on Linux
-npx hermes-pilot service status
-npx hermes-pilot service restart
-npx hermes-pilot service uninstall
+node bin/hermes-pilot.mjs service install     # launchd on macOS, systemd --user on Linux
+node bin/hermes-pilot.mjs service status
+node bin/hermes-pilot.mjs service restart
+node bin/hermes-pilot.mjs service uninstall
 ```
 
 - macOS: `~/Library/LaunchAgents/ai.hermes.pilot.plist` (label `ai.hermes.pilot`), logs in
@@ -265,16 +292,16 @@ The service label changed from `ai.hermes.hermes-mobile` to `ai.hermes.pilot`, a
 without downtime:
 
 ```bash
-npx hermes-pilot init                     # copy the data (old files stay in place)
-npx hermes-pilot service install          # register + start the NEW label
-npx hermes-pilot service status           # confirm it is running
+node bin/hermes-pilot.mjs init                     # copy the data (old files stay in place)
+node bin/hermes-pilot.mjs service install          # register + start the NEW label
+node bin/hermes-pilot.mjs service status           # confirm it is running
 
 # once you are happy with the new one, retire the old one:
 launchctl bootout gui/$(id -u)/ai.hermes.hermes-mobile
 ```
 
 Both labels want port 4097. If the old agent is still bound to it, start the new one on another port first
-(`npx hermes-pilot start --port 4098`), verify, then swap. The old `~/.hermes/mobile-pwa/` directory is
+(`node bin/hermes-pilot.mjs start --port 4098`), verify, then swap. The old `~/.hermes/mobile-pwa/` directory is
 copied, never deleted — remove it yourself when you no longer need it.
 
 ## Security

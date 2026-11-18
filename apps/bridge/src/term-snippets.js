@@ -87,7 +87,9 @@ const TABLE = [
     run: true,
     en: ['Pairing QR', 'Show pairing URL & QR in terminal'],
     ja: ['ペアリングQR', 'ペアリングURLとQRを表示'],
-    text: 'npx hermes-pilot qr',
+    // 未公開 npm パッケージを前提にしない（SPEC-CATALOG-ADMISSION D59）。リポジトリ／プラグイン
+    // ディレクトリを cwd にして実行する。`npm link` 済みなら `hermes-pilot qr` でもよい。
+    text: 'node bin/hermes-pilot.mjs qr',
   },
   {
     id: 't-verify',
