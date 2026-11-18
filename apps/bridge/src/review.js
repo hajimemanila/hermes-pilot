@@ -341,6 +341,139 @@ ${sections.length ? sections.join('\n') : '  <p class="empty">設問がありま
 }
 
 /**
+ * レビューシートの CSP（D57）。**条件分岐しない**。
+ *
+ * `sandbox allow-scripts allow-forms` を付けると、シートは不透明オリジンに落ちる。
+ * シートに同居するスクリプト（設問の描画・回答テキストの生成）は動くが、
+ * same-origin Cookie も `/ws/term` も `/api/*` も触れない。回答は postMessage で
+ * 親（PWA の iframe / `/api/review/:id/view` ラッパー）へ渡し、親が POST する。
+ *
+ * 以前は `sec-fetch-dest` を見て単体タブだけ same-origin を許していたが、
+ * 「ヘッダを付け替えれば same-origin に戻せる」抜け道になるので廃止した。
+ * 単体タブで開きたい場合は `/api/review/:id/view` を使う。
+ */
+export const REVIEW_SHEET_CSP =
+  "sandbox allow-scripts allow-forms; default-src 'none'; style-src 'unsafe-inline'; " +
+  "img-src data: blob:; script-src 'unsafe-inline'; font-src data:"
+
+/** `/api/review/:id/sheet` のレスポンスヘッダ（常に sandbox）。 */
+export function reviewSheetHeaders() {
+  return {
+    'content-type': 'text/html; charset=utf-8',
+    'content-security-policy': REVIEW_SHEET_CSP,
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+  }
+}
+
+/**
+ * `/api/review/:id/view` ラッパー自身の CSP。
+ *
+ * ラッパーはブリッジが生成する最小 HTML なので same-origin を許可する必要がある
+ * （回答の POST と sheet の iframe 読み込みだけ）。`sandbox` は付けない —
+ * 付けると `allow-same-origin` 抜きでは fetch が不透明オリジン扱いになる。
+ */
+export const REVIEW_VIEW_CSP =
+  "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; " +
+  "frame-src 'self'; connect-src 'self'; img-src data:"
+
+/** `/api/review/:id/view` のレスポンスヘッダ。 */
+export function reviewViewHeaders() {
+  return {
+    'content-type': 'text/html; charset=utf-8',
+    'content-security-policy': REVIEW_VIEW_CSP,
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+  }
+}
+
+/** JSON を `<script>` の中へ安全に埋める（`</script>` での脱出を潰す）。 */
+function scriptJson(value) {
+  return JSON.stringify(String(value)).replace(/</g, '\\u003c').replace(/>/g, '\\u003e')
+}
+
+/**
+ * 単体タブ用のラッパー HTML（D57）。
+ *
+ * `/api/review/:id/sheet` は常に sandbox なので、シート単体では回答を POST できない。
+ * このラッパーが same-origin の親として sandbox `<iframe>` を抱え、
+ * シートからの `postMessage` を `POST /api/review/:id/answer` へ中継する。
+ *
+ * @param {string} taskId タスク id
+ * @returns {string} HTML
+ */
+export function reviewViewHtml(taskId) {
+  const id = String(taskId)
+  const jsTask = scriptJson(id)
+  const jsSrc = scriptJson(`/api/review/${encodeURIComponent(id)}/sheet`)
+  return `<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>レビューシート ${escapeHtmlText(id)}</title>
+<style>
+html,body{margin:0;height:100%;background:#f6f4ef;color:#1b1a17;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif}
+#akViewSheet{display:block;width:100%;height:100%;border:0;background:#f6f4ef}
+#akViewStatus{position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));z-index:9;display:none;padding:10px 12px;border-radius:12px;font-size:13px;line-height:1.6;box-shadow:0 6px 20px rgba(0,0,0,.16)}
+#akViewStatus.show{display:block}
+#akViewStatus.ok{background:#e7f8f1;color:#0b5f45}
+#akViewStatus.ng{background:#fdecea;color:#8a1f17}
+</style>
+</head>
+<body>
+<iframe id="akViewSheet" src="${escapeHtmlText(`/api/review/${encodeURIComponent(id)}/sheet`)}" sandbox="allow-scripts allow-forms" title="レビューシート"></iframe>
+<div id="akViewStatus" role="status" aria-live="polite"></div>
+<script>
+(function () {
+  var TASK = ${jsTask};
+  var SHEET = ${jsSrc};
+  var box = document.getElementById('akViewStatus');
+  var timer = 0;
+  function note(ok, msg) {
+    box.textContent = msg;
+    box.className = 'show ' + (ok ? 'ok' : 'ng');
+    clearTimeout(timer);
+    // 成功は控えめに消す。失敗は読ませたいので残す。
+    if (ok) timer = setTimeout(function () { box.className = ''; }, 4000);
+  }
+  function title(el) {
+    return (el && ((el.error && el.error.message) || el.message)) || 'unknown';
+  }
+  window.addEventListener('message', function (ev) {
+    var d = ev.data;
+    if (!d) return;
+    // 旧シート（akapen:reply）も受ける。新しい注入スクリプトは review:reply を送る。
+    if (d.type !== 'review:reply' && d.type !== 'akapen:reply') return;
+    if (String(d.taskId) !== TASK) return;
+    var text = String(d.text || '');
+    if (!text) return;
+    note(true, '送信中…');
+    fetch('/api/review/' + encodeURIComponent(TASK) + '/answer', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json', 'x-client': 'mobile' },
+      body: JSON.stringify({ text: text, by: 'web' })
+    }).then(function (r) {
+      return r.json().then(function (j) { return { ok: r.ok, j: j }; }, function () { return { ok: r.ok, j: null }; });
+    }).then(function (res) {
+      var ok = Boolean(res.ok && res.j && res.j.ok);
+      note(ok, ok ? '回答を送信しました（タスクは ' + (res.j.moved || '—') + '）' : '送信できませんでした: ' + title(res.j));
+    }).catch(function (e) {
+      note(false, '送信エラー: ' + (e && e.message ? e.message : e));
+    });
+  });
+  // シートが読めなかったとき（404 など）に無言の白画面を出さない
+  var frame = document.getElementById('akViewSheet');
+  if (frame) frame.addEventListener('error', function () { note(false, 'シートを読み込めません: ' + SHEET); });
+})();
+</script>
+</body>
+</html>
+`
+}
+
+/**
  * シート HTML に「回答をアプリへ送る」小さなブリッジを注入する（保存物は書き換えない）。
  *
  * アプリ内で開いたときだけ、設問見出し (Q1…) をマーカーで装飾する（レビュー注釈の指摘）。
@@ -388,17 +521,14 @@ export function injectReviewBridge(html, taskId) {
       report(true, 'アプリに回答を送りました（この画面は閉じてOK）');
       return;
     }
-    fetch('/api/review/' + TASK + '/answer', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'content-type': 'application/json', 'x-client': 'mobile' },
-      body: JSON.stringify({ text: text })
-    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
-      .then(function (res) {
-        var ok = res.ok && res.j && res.j.ok;
-        report(ok, ok ? '回答を送信しました（タスクは ' + (res.j.moved || '') + '）'
-                      : '送信できませんでした: ' + ((res.j && ((res.j.error && res.j.error.message) || res.j.message)) || 'unknown'));
-      })
-      .catch(function (e) { report(false, '送信エラー: ' + e.message); });
+    // シートは常に sandbox（不透明オリジン）で配信されるので、自分では API を叩けない。
+    // 回答は必ず親（PWA の iframe / /api/review/:id/view ラッパー）へ postMessage する。
+    report(
+      false,
+      'この画面からは直接送信できません。アプリのレビュータブ、または /api/review/' +
+        TASK +
+        '/view から開いてください'
+    );
   }
   // アプリ経由で開いているときは「貼り付ける」ではなく「送信」として見せる
   function relabel() {

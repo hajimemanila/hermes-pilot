@@ -13,6 +13,9 @@ import {
   toReplyText,
   injectReviewBridge,
   compareCandidates,
+  reviewSheetHeaders,
+  reviewViewHeaders,
+  reviewViewHtml,
   createReview,
 } from '../src/review.js'
 
@@ -756,6 +759,73 @@ test('injectReviewBridge は window.__reviewSubmit と互換エイリアス __ak
   assert.ok(html.includes("type: 'review:reply'"))
   // 旧シートが吐く【赤ペン回答】でも送信できる（判定は両対応）
   assert.ok(html.includes('レビュー|赤ペン'))
+})
+
+// --- D57: レビューシートの常時サンドボックス化 & ラッパー経由 postMessage ---------
+
+const SERVER_SRC = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8')
+
+test('シートの CSP は sec-fetch-dest で分岐せず、常に sandbox を含む', () => {
+  const headers = reviewSheetHeaders()
+  const csp = headers['content-security-policy']
+  // SPEC-CATALOG-ADMISSION C3 の文字列そのもの
+  assert.equal(
+    csp,
+    "sandbox allow-scripts allow-forms; default-src 'none'; style-src 'unsafe-inline'; " +
+      "img-src data: blob:; script-src 'unsafe-inline'; font-src data:",
+  )
+  assert.match(csp, /^sandbox allow-scripts allow-forms;/)
+  assert.equal(csp.includes('connect-src'), false, 'same-origin への書き込みを許さない')
+  assert.equal(headers['content-type'], 'text/html; charset=utf-8')
+  // リクエストヘッダに依存しない（同じ値を何度でも返す）
+  assert.deepEqual(reviewSheetHeaders(), headers)
+  // ルート側にも分岐が残っていない（単体タブで開いても同じ CSP）
+  assert.equal(SERVER_SRC.includes('sec-fetch-dest'), false, 'server.js に sec-fetch-dest の分岐が残っている')
+  assert.match(
+    SERVER_SRC,
+    /if \(c === 'sheet' && req\.method === 'GET'\)[\s\S]{0,400}reviewSheetHeaders\(\)/,
+    'sheet ルートは共通ヘッダを使う',
+  )
+  // 単体タブ用ラッパーのルートが存在する
+  assert.match(
+    SERVER_SRC,
+    /if \(c === 'view' && req\.method === 'GET'\)[\s\S]{0,400}reviewViewHtml\(b\)/,
+    '/api/review/:id/view がラッパー HTML を返す',
+  )
+})
+
+test('injectReviewBridge はシート内から直接 fetch せず、postMessage 一本にする', () => {
+  const html = injectReviewBridge('<html><body><div id="akForm"></div></body></html>', 't_1')
+  assert.equal(html.includes("fetch('/api/review/"), false, 'sandbox 下では same-origin fetch が通らない')
+  assert.ok(html.includes("window.parent.postMessage({ type: 'review:reply'"))
+  // 単体で開かれたときは「/view から開け」と案内する（無言で失敗させない）
+  assert.ok(html.includes('/view から開いてください'))
+})
+
+test('/api/review/:id/view ラッパーは sandbox iframe を埋め、回答を同じオリジンから中継する', () => {
+  const html = reviewViewHtml('t_test1')
+  assert.match(html, /<iframe[^>]+src="\/api\/review\/t_test1\/sheet"[^>]*sandbox="allow-scripts allow-forms"/)
+  assert.ok(html.includes("window.addEventListener('message'"))
+  assert.ok(html.includes("d.type !== 'review:reply' && d.type !== 'akapen:reply'"))
+  assert.ok(html.includes("'/api/review/' + encodeURIComponent(TASK) + '/answer'"))
+  assert.ok(html.includes("credentials: 'same-origin'"), '回答は same-origin で POST する')
+  assert.ok(html.includes("JSON.stringify({ text: text, by: 'web' })"))
+  // ラッパー自身は same-origin（sandbox を付けると fetch が不透明オリジンになる）
+  const csp = reviewViewHeaders()['content-security-policy']
+  assert.match(csp, /frame-src 'self'/)
+  assert.match(csp, /connect-src 'self'/)
+  assert.equal(/(^|;)\s*sandbox/.test(csp), false)
+  assert.equal(reviewViewHeaders()['content-type'], 'text/html; charset=utf-8')
+})
+
+test('view ラッパーは taskId を HTML 属性と script の両方でエスケープする', () => {
+  const evil = 't_"><script>alert(1)</script>'
+  const html = reviewViewHtml(evil)
+  assert.equal(html.includes('<script>alert(1)'), false, '生の script タグを出さない')
+  assert.ok(html.includes('&lt;script&gt;alert(1)'), 'title 側は実体参照へ')
+  assert.ok(html.includes('\\u003cscript\\u003e'), 'script 側は \\u003c へ')
+  // iframe の src は URL エンコード済み
+  assert.ok(html.includes('/api/review/t_%22%3E%3Cscript%3Ealert(1)%3C%2Fscript%3E/sheet'))
 })
 
 test('データの置き場は ~/.hermes/plugin-data/hermes-pilot/review（旧 akapen を参照しない）', () => {

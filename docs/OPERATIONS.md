@@ -166,7 +166,8 @@ A2B は **2 つの正規ルート**だけを持ちます。どちらも外部 AI
 | POST | `/api/boards/:slug/tasks/:id/abort` | 実行中タスクの中断（reclaim → block） |
 | GET | `/api/inbox` | ボード横断の blocked タスク一覧 |
 | GET | `/api/review` | レビューシート一覧（review / ready / done） |
-| GET | `/api/review/:id/sheet` | シート HTML（sandbox 隔離。回答は postMessage） |
+| GET | `/api/review/:id/sheet` | シート HTML。**常に** `sandbox` CSP（`sec-fetch-dest` で変わらない）。回答は postMessage で親へ |
+| GET | `/api/review/:id/view` | 単体タブ用ラッパー。sandbox `<iframe>` でシートを囲み、`postMessage` を `POST /api/review/:id/answer` へ中継する |
 | GET | `/api/review/:id/data` | `sheet.json`（PWA ネイティブフォーム用の構造化データ） |
 | GET | `/api/review/:id/image` | 注釈の下地画像（`?compare=1` で前ラウンド＝Before） |
 | GET | `/api/review/:id/thumb/:name` | サムネイル |

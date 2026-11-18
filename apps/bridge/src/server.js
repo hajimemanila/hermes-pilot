@@ -7,7 +7,7 @@ import { loadConfig, VERSION } from './config.js'
 import { createAuth, isAllowedWsOrigin } from './auth.js'
 import { createHermesClient } from './hermes.js'
 import { createKanban } from './kanban.js'
-import { createReview, injectReviewBridge } from './review.js'
+import { createReview, injectReviewBridge, reviewSheetHeaders, reviewViewHeaders, reviewViewHtml } from './review.js'
 import { createReviewWatcher } from './review-watcher.js'
 import { createPipelineWatcher, readPipelineReports } from './pipeline-watcher.js'
 import { createOps } from './ops.js'
@@ -925,7 +925,8 @@ async function handleApi(req, res, url) {
   // --- レビュー（review）------------------------------------------------------
   // 全ルートは SPEC §4.2。旧 `/api/akapen/*` は廃止し、ここに一本化する。
   // /api/review                     … 一覧（review / ready / done）
-  // /api/review/:id/sheet           … シート HTML（sandbox・生成物）
+  // /api/review/:id/sheet           … シート HTML（常に sandbox・生成物）
+  // /api/review/:id/view            … 単体タブ用ラッパー（sandbox iframe + postMessage 中継）
   // /api/review/:id/data            … sheet.json（PWA のネイティブフォーム用）
   // POST /api/review/:id/answer     … 回答を保存 → comment → unblock（冪等）
   // POST /api/review/:id/reopen     … 反映が違うとき review に戻す
@@ -1041,21 +1042,19 @@ async function handleApi(req, res, url) {
     if (c === 'sheet' && req.method === 'GET') {
       const r = review.sheetHtml(b)
       if (!r.ok) return sendFailure(res, r.code === 'NOT_FOUND' ? 404 : 409, r)
-      // iframe で埋め込む時は sandbox（別オリジン）で隔離し、回答は postMessage で親へ。
-      // 単体タブで開いた時は same-origin を許可して自分で API に POST できるようにする。
-      const framed = String(req.headers['sec-fetch-dest'] || '') === 'iframe'
-      const csp = framed
-        ? "sandbox allow-scripts allow-forms; default-src 'none'; style-src 'unsafe-inline'; " +
-          "img-src data: blob:; script-src 'unsafe-inline'; font-src data:"
-        : "default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:; script-src 'unsafe-inline'; " +
-          "connect-src 'self'; font-src data:"
-      res.writeHead(200, {
-        'content-type': 'text/html; charset=utf-8',
-        'content-security-policy': csp,
-        'cache-control': 'no-store',
-        'x-content-type-options': 'nosniff',
-      })
+      // D57: 埋め込みでも単体タブでも**同じ**厳格な CSP（sandbox = 不透明オリジン）で返す。
+      // シート内のスクリプトは same-origin Cookie にも /ws/term にも /api/* にも届かない。
+      // 回答は postMessage で親（PWA の iframe / :id/view ラッパー）へ渡し、親が POST する。
+      res.writeHead(200, reviewSheetHeaders())
       return res.end(injectReviewBridge(r.html, b))
+    }
+    // /api/review/:id/view … 単体タブ用のラッパー（D57）。
+    // シートを sandbox iframe で囲み、postMessage を受けて same-origin で回答を POST する。
+    if (c === 'view' && req.method === 'GET') {
+      const r = review.sheetData(b)
+      if (!r.ok) return sendFailure(res, r.code === 'NOT_FOUND' ? 404 : 409, r)
+      res.writeHead(200, reviewViewHeaders())
+      return res.end(reviewViewHtml(b))
     }
     if (c === 'thumb' && req.method === 'GET') {
       const rel = url.pathname.split('/').slice(5).join('/')

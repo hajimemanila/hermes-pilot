@@ -442,18 +442,21 @@ function IframeForm({ item, onSubmitted, notify }) {
 }
 
 /**
- * 詳細シート（`/api/review/:id/sheet`）への導線。**ドロワーの先頭に固定して出す**。
+ * 詳細シート（`/api/review/:id/view` ラッパー経由）への導線。**ドロワーの先頭に固定して出す**。
  *
  * 判断待ちのドロワーはネイティブの設問フォームが主で、前提・挿絵・前回の回答といった
  * シートの全体像は見えない。リンクをフォームの末尾に置くと、設問が増えた時点で
  * スクロールの下に隠れて「導線が無い」と読める（実測: Q3+挿絵で 390x844 の1画面を超える）。
  * 完了（ReadOnlyDetail）でも同じ位置に出す — 同じ操作は同じ場所に置く。
+ *
+ * リンク先は `/sheet` ではなく `/view`（D57）。シートは常に sandbox で配信されるので
+ * 単体タブでは回答を POST できない。`/view` が same-origin の親として中継する。
  */
 function SheetLink({ item }) {
   const { t } = useI18n()
   return (
     <div className="ak-sheetlink">
-      <a className="ak-link" href={`/api/review/${item.id}/sheet`} target="_blank" rel="noreferrer">
+      <a className="ak-link" href={`/api/review/${item.id}/view`} target="_blank" rel="noreferrer">
         {t('review.openSheet')}
       </a>
     </div>
