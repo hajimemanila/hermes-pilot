@@ -127,7 +127,7 @@ export function parseArgv(argv = []) {
         flags[body.slice(0, eq)] = body.slice(eq + 1)
       } else {
         const next = args[i + 1]
-        if (next !== undefined && !next.startsWith('-') && ['port', 'host', 'tls-port', 'home'].includes(body)) {
+        if (next !== undefined && !next.startsWith('-') && ['port', 'host', 'tls-port', 'home', 'target-dir'].includes(body)) {
           flags[body] = next
           i++
         } else {
@@ -155,7 +155,9 @@ export function helpText() {
     'hermes-pilot — control your Hermes Agent from your phone or tablet',
     '',
     'Usage:',
-    '  hermes-pilot init [--force]             First-run setup: data dirs, token, skills, dashboard tab, pairing QR',
+    '  hermes-pilot init [--force] [--target-dir <plugin dir>]',
+    '                                           First-run setup: data dirs, token, skills, dashboard tab, pairing QR',
+    '                                           --target-dir: where `hermes plugins install` unpacked this repo',
     '  hermes-pilot start [--port 4097] [--host 127.0.0.1] [--tls-port 8444]',
     '                                           Build the UI if needed and run the bridge',
     '  hermes-pilot qr [--port 4097] [--tls-port 8444] [--png <path>]',
@@ -435,31 +437,84 @@ function hasLegacyEnv(p) {
 }
 
 /**
+ * 標準ダッシュボード用タブの配置先を返す（`installDashboardPlugin` の `root`）。
+ *
+ * 通常は `~/.hermes/plugins/hermes-pilot/`。`hermes plugins install` が**リポジトリ
+ * ルート自体**をプラグインディレクトリとして展開した場合はプラグインのベースが
+ * 別の場所になるので、`HERMES_PLUGINS_DIR`（ベース）か `targetDir`（完全パス）で
+ * 上書きできる。D56 の「`targetDir === ROOT` のときは自己上書きしない」判定はここで得た
+ * パスを :func:`sameDir` で `ROOT` と比べて行う。
+ * @param {object} p `resolvePaths()` の結果
+ * @param {object} [opts] オプション
+ * @param {string|null} [opts.targetDir] 完全パスで指定する場合
+ * @param {object} [opts.env] 環境変数
+ * @returns {string} プラグインのディレクトリ
+ */
+export function resolveDashboardTarget(p, { targetDir = null, env = process.env } = {}) {
+  const expand = (value) => path.resolve(String(value).replace(/^~(?=$|\/)/, p.home ?? os.homedir()))
+  if (targetDir) return expand(targetDir)
+  const base = env.HERMES_PLUGINS_DIR ? expand(env.HERMES_PLUGINS_DIR) : path.join(p.hermesHome, 'plugins')
+  return path.join(base, DASHBOARD_PLUGIN)
+}
+
+/**
+ * 2 つのパスが同じディレクトリを指すか（symlink を解決する）。
+ *
+ * `hermes plugins install` はクローン先を symlink にすることがあり、文字列比較だけだと
+ * 「リポジトリルートに直接インストールされた」ケースを取り逃がして自己上書きする。
+ * @param {string} a パス
+ * @param {string} b パス
+ * @returns {boolean} 同じ実体なら true
+ */
+export function sameDir(a, b) {
+  const real = (dir) => {
+    try {
+      return fs.realpathSync(dir)
+    } catch {
+      return null
+    }
+  }
+  const ra = real(a)
+  const rb = real(b)
+  if (ra && rb) return ra === rb
+  return path.resolve(a) === path.resolve(b)
+}
+
+/**
  * 標準ダッシュボード用タブを `~/.hermes/plugins/hermes-pilot/` へ**冪等に**配置する。
  *
  * - 既にあるファイルは `force` が真のときだけ上書きする（`skills` 配置と同じ流儀）。
  * - あわせて `dashboard.json`（CLI の絶対パス・node・リポジトリ根）をデータ先へ書き、
  *   ダッシュボードの「サービス」操作がこれを spawn できるようにする。
+ * - **自己上書きの回避（D56）**: 配置先がリポジトリルート自身（`targetDir === ROOT`）の
+ *   ときはコピーを行わない。ルートには `__init__.py` / `dashboard/` が既にコミット済みで、
+ *   写し元（`apps/dashboard/`）と写し先が同一ツリーになるため、コピーは無意味か
+ *   破壊的（`apps/dashboard/` → `dashboard/` の逆向き同期事故）になりうる。
+ *   この場合はスキル・データ初期化だけを完了させ、`selfHosted: true` で返す。
  * @param {object} p `resolvePaths()` の結果
  * @param {object} [opts] オプション
  * @param {boolean} [opts.force] 既存ファイルも上書きする
- * @returns {{root: string, installed: string[], skipped: string[]}} 結果
+ * @param {string|null} [opts.targetDir] 配置先を明示する（省略時は `~/.hermes/plugins/hermes-pilot`）
+ * @returns {{root: string, installed: string[], skipped: string[], selfHosted: boolean}} 結果
  */
-export function installDashboardPlugin(p, { force = false } = {}) {
-  const root = path.join(p.hermesHome, 'plugins', DASHBOARD_PLUGIN)
+export function installDashboardPlugin(p, { force = false, targetDir = null } = {}) {
+  const root = resolveDashboardTarget(p, { targetDir })
+  const selfHosted = sameDir(root, ROOT)
   const installed = []
   const skipped = []
-  for (const file of DASHBOARD_FILES) {
-    const src = path.join(ROOT, file.from)
-    const dest = path.join(root, file.to)
-    if (!fs.existsSync(src)) continue
-    if (fs.existsSync(dest) && !force) {
-      skipped.push(dest)
-      continue
+  if (!selfHosted) {
+    for (const file of DASHBOARD_FILES) {
+      const src = path.join(ROOT, file.from)
+      const dest = path.join(root, file.to)
+      if (!fs.existsSync(src)) continue
+      if (fs.existsSync(dest) && !force) {
+        skipped.push(dest)
+        continue
+      }
+      fs.mkdirSync(path.dirname(dest), { recursive: true })
+      fs.copyFileSync(src, dest)
+      installed.push(dest)
     }
-    fs.mkdirSync(path.dirname(dest), { recursive: true })
-    fs.copyFileSync(src, dest)
-    installed.push(dest)
   }
   // サービス操作は CLI を spawn する。常駐・worker からも辿れるよう絶対パスで残す。
   fs.mkdirSync(p.dataDir, { recursive: true, mode: 0o700 })
@@ -479,7 +534,7 @@ export function installDashboardPlugin(p, { force = false } = {}) {
     )}\n`,
     { mode: 0o600 },
   )
-  return { root, installed, skipped }
+  return { root, installed, skipped, selfHosted }
 }
 
 /**
@@ -489,9 +544,10 @@ export function installDashboardPlugin(p, { force = false } = {}) {
  * @param {object} [opts] オプション
  * @param {number|null} [opts.tlsPort] TLS ポート
  * @param {boolean} [opts.force] ダッシュボード・プラグインを上書きする
+ * @param {string|null} [opts.targetDir] ダッシュボード・プラグインの配置先（`hermes plugins install` の展開先）
  * @returns {{created: boolean, migrated: boolean, skills: string[], dashboard: object}} 結果
  */
-export async function runInit(p, port, { tlsPort = null, force = false } = {}) {
+export async function runInit(p, port, { tlsPort = null, force = false, targetDir = null } = {}) {
   fs.mkdirSync(p.dataDir, { recursive: true, mode: 0o700 })
   for (const sub of ['sheets', 'shots', 'library']) {
     fs.mkdirSync(path.join(p.reviewDir, sub), { recursive: true })
@@ -523,7 +579,7 @@ export async function runInit(p, port, { tlsPort = null, force = false } = {}) {
     }
   }
   // 標準ダッシュボードのタブ（冪等）。`--force` で既存ファイルも上書きする。
-  const dashboard = installDashboardPlugin(p, { force })
+  const dashboard = installDashboardPlugin(p, { force, targetDir })
   out(
     '',
     'hermes-pilot init 完了 / done',
@@ -532,11 +588,22 @@ export async function runInit(p, port, { tlsPort = null, force = false } = {}) {
     `  スキル / skills: ${installed.length ? installed.join(', ') : '（既に配置済み）'}`,
     `  移行 / migrate: ${migrated ? '実行' : '不要'}`,
   )
-  out(
-    `  ダッシュボード / dashboard tab: ${dashboard.root}`,
-    `    ${dashboard.installed.length} ファイル配置${dashboard.installed.length ? '' : '（既に配置済み。--force で上書き）'}`,
-    '    → Hermes ダッシュボード（:9119）の「Hermes Pilot」タブに出ます。初回は `hermes plugins enable hermes-pilot` とダッシュボードの再起動が必要です。',
-  )
+  if (dashboard.selfHosted) {
+    // リポジトリルート自体がプラグインディレクトリ（`hermes plugins install` 直後の形）。
+    // ルートに `__init__.py` / `dashboard/` がコミット済みなのでコピーはしない。
+    out(
+      `  ダッシュボード / dashboard tab: ${dashboard.root}`,
+      '    リポジトリルートがプラグインディレクトリなのでコピーは省略（自己上書きの回避）。',
+      '    / plugin dir == repo root: nothing to copy, the layout is already committed.',
+      '    → 初回は `hermes plugins enable hermes-pilot` とダッシュボードの再起動が必要です。',
+    )
+  } else {
+    out(
+      `  ダッシュボード / dashboard tab: ${dashboard.root}`,
+      `    ${dashboard.installed.length} ファイル配置${dashboard.installed.length ? '' : '（既に配置済み。--force で上書き）'}`,
+      '    → Hermes ダッシュボード（:9119）の「Hermes Pilot」タブに出ます。初回は `hermes plugins enable hermes-pilot` とダッシュボードの再起動が必要です。',
+    )
+  }
   printPairing({ token: mintPairCode(p.dataDir), port, tlsPort, pngPath: path.join(p.dataDir, 'pair-qr.png') })
   return { created, migrated, skills: installed, dashboard }
 }
@@ -767,7 +834,11 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   if (command === 'init') {
-    await runInit(paths, port, { tlsPort, force: Boolean(flags.force) })
+    await runInit(paths, port, {
+      tlsPort,
+      force: Boolean(flags.force),
+      targetDir: typeof flags['target-dir'] === 'string' ? flags['target-dir'] : null,
+    })
     return 0
   }
 

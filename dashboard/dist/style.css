@@ -1,0 +1,928 @@
+/* Hermes Pilot — dashboard tab styles.
+ *
+ * Scoped under .hp-* and built only from the host's --color-* tokens, so the tab
+ * follows the active theme instead of hard-coding a palette. Fallbacks are the
+ * dark-teal pair from the host so a missing token still looks intentional.
+ *
+ * The pairing QR is deliberately boring: pure white background, no radius, no
+ * shadow, pixelated scaling. Anything that softens the module edges costs a
+ * camera scan.
+ */
+
+.hp-root {
+  --hp-surface: var(--color-card, #10201f);
+  --hp-surface-2: var(--color-popover, #0c1a19);
+  --hp-border: var(--color-border, rgba(255, 255, 255, 0.1));
+  --hp-text: var(--color-card-foreground, #e6f2f0);
+  --hp-muted: var(--color-muted-foreground, #8aa5a1);
+  --hp-primary: var(--color-primary, #14b8a6);
+  --hp-warn: #f59e0b;
+  --hp-bad: #f43f5e;
+  --hp-ok: #22c55e;
+  --hp-radius: var(--radius, 12px);
+
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 24px 40px;
+  color: var(--hp-text);
+  min-height: 100%;
+}
+
+/* ---------------------------------------------------------------- header */
+
+.hp-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.hp-heading h1 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.25;
+}
+
+.hp-heading p {
+  margin: 4px 0 0;
+  color: var(--hp-muted);
+  font-size: 13px;
+  max-width: 62ch;
+}
+
+/* Language switch + Refresh share the right edge of the header. */
+.hp-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hp-lang {
+  display: inline-flex;
+  border: 1px solid var(--hp-border);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--hp-surface-2);
+  flex: 0 0 auto;
+}
+
+.hp-lang-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--hp-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 7px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.hp-lang-btn + .hp-lang-btn {
+  border-left: 1px solid var(--hp-border);
+}
+
+.hp-lang-btn:hover {
+  color: var(--hp-text);
+}
+
+.hp-lang-btn:focus-visible {
+  outline: 2px solid var(--hp-primary);
+  outline-offset: -2px;
+}
+
+.hp-lang-active,
+.hp-lang-active:hover {
+  background: var(--hp-primary);
+  color: #04231f;
+}
+
+/* --------------------------------------------------------- section jumps */
+
+.hp-nav {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.hp-nav-chip {
+  appearance: none;
+  border: 1px solid var(--hp-border);
+  border-radius: 999px;
+  background: var(--hp-surface-2);
+  color: var(--hp-text);
+  font-family: inherit;
+  font-size: 11.5px;
+  line-height: 1.3;
+  padding: 5px 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hp-nav-chip:hover,
+.hp-nav-chip:focus-visible {
+  border-color: var(--hp-primary);
+  color: var(--hp-primary);
+}
+
+/* ----------------------------------------------------------------- chips */
+.hp-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 12px;
+  border: 1px solid var(--hp-border);
+  border-radius: 999px;
+  background: var(--hp-surface-2);
+  font-size: 12px;
+}
+
+.hp-chip-label {
+  color: var(--hp-muted);
+  white-space: nowrap;
+}
+
+.hp-chip strong {
+  font-weight: 600;
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 22ch;
+}
+
+.hp-chip-ok strong {
+  color: var(--hp-ok);
+}
+
+.hp-chip-bad strong {
+  color: var(--hp-bad);
+}
+
+.hp-chip-muted strong {
+  color: var(--hp-muted);
+}
+
+/* ----------------------------------------------------------------- cards */
+
+.hp-card {
+  border: 1px solid var(--hp-border);
+  border-radius: var(--hp-radius);
+  background: var(--hp-surface);
+  padding: 18px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  /* The jump chips scroll a card under any sticky host header. */
+  scroll-margin-top: 12px;
+}
+
+.hp-card-head h2 {
+  margin: 0;
+  font-size: 15px;
+  letter-spacing: 0.01em;
+}
+
+.hp-hint {
+  margin: 6px 0 0;
+  color: var(--hp-muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.hp-error {
+  margin: 0;
+  color: var(--hp-bad);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.hp-note {
+  color: var(--hp-muted);
+  font-size: 12.5px;
+}
+
+/* --------------------------------------------------------------- pairing */
+
+.hp-pairing {
+  display: grid;
+  grid-template-columns: minmax(0, 287px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+/* 1:1, white behind, no radius: the camera needs square black modules. */
+.hp-qr {
+  width: 287px;
+  height: 287px;
+  max-width: 100%;
+  display: block;
+  background: #ffffff;
+  border: 1px solid var(--hp-border);
+  border-radius: 0;
+  image-rendering: pixelated;
+}
+
+.hp-pairing-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.hp-steps {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.hp-expiry {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--hp-muted);
+}
+
+.hp-expiry-over {
+  color: var(--hp-warn);
+}
+
+.hp-targets {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hp-targets li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  min-width: 0;
+}
+
+.hp-target-label {
+  color: var(--hp-muted);
+  white-space: nowrap;
+}
+
+.hp-url {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--hp-text);
+  overflow-wrap: anywhere;
+  text-decoration: none;
+  /* The host styles `code` with a filled background; a URL is long, so a block
+     behind it reads as a redacted bar. Keep only the monospace face. */
+  background: none;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+a.hp-url {
+  color: var(--hp-primary);
+  text-decoration: underline;
+}
+
+/* ----------------------------------------------------------------- form */
+
+.hp-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.hp-field-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--hp-muted);
+}
+
+.hp-field input,
+.hp-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--hp-border);
+  border-radius: 8px;
+  background: var(--hp-surface-2);
+  color: var(--hp-text);
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.45;
+}
+
+.hp-field textarea {
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+}
+
+/* The Settings language select reads like the text fields next to it. */
+.hp-field-select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--hp-border);
+  border-radius: 8px;
+  background: var(--hp-surface-2);
+  color: var(--hp-text);
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.45;
+}
+
+.hp-field-select:focus {
+  outline: 2px solid var(--hp-primary);
+  outline-offset: 1px;
+}
+
+.hp-field-bad .hp-field-select {
+  border-color: var(--hp-bad);
+}
+
+.hp-field input:focus,
+.hp-field textarea:focus {
+  outline: 2px solid var(--hp-primary);
+  outline-offset: 1px;
+}
+
+.hp-field-hint {
+  font-size: 11.5px;
+  color: var(--hp-muted);
+}
+
+.hp-field-bad input,
+.hp-field-bad textarea {
+  border-color: var(--hp-bad);
+}
+
+.hp-field-error {
+  font-size: 11.5px;
+  color: var(--hp-bad);
+}
+
+/* --------------------------------------------------------------- actions */
+
+.hp-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hp-btn {
+  appearance: none;
+  border: 1px solid var(--hp-border);
+  border-radius: 8px;
+  background: var(--hp-surface-2);
+  color: var(--hp-text);
+  font-size: 12.5px;
+  font-family: inherit;
+  padding: 7px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.hp-btn:hover:not(:disabled) {
+  border-color: var(--hp-primary);
+}
+
+.hp-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.hp-btn-sm {
+  padding: 4px 10px;
+  font-size: 11.5px;
+}
+
+.hp-btn-primary {
+  background: var(--hp-primary);
+  border-color: var(--hp-primary);
+  color: #04201d;
+  font-weight: 600;
+}
+
+.hp-btn-warn {
+  border-color: var(--hp-warn);
+  color: var(--hp-warn);
+}
+
+.hp-out {
+  border: 1px solid var(--hp-border);
+  border-radius: 8px;
+  background: var(--hp-surface-2);
+  padding: 10px 12px;
+  font-size: 12px;
+}
+
+.hp-out summary {
+  cursor: pointer;
+  color: var(--hp-muted);
+}
+
+.hp-out pre {
+  margin: 8px 0 0;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+/* ----------------------------------------------------------------- links */
+
+.hp-links {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hp-links li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* --------------------------------------------------------- repositories */
+
+.hp-input {
+  box-sizing: border-box;
+  padding: 7px 10px;
+  border: 1px solid var(--hp-border);
+  border-radius: 8px;
+  background: var(--hp-surface-2);
+  color: var(--hp-text);
+  font-size: 12.5px;
+  font-family: inherit;
+  min-width: 0;
+}
+
+.hp-input:focus {
+  outline: 2px solid var(--hp-primary);
+  outline-offset: 1px;
+}
+
+.hp-input-sm {
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.hp-textarea {
+  width: 100%;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.hp-add-row .hp-input {
+  flex: 1 1 180px;
+}
+
+.hp-scanhint {
+  overflow-wrap: anywhere;
+}
+
+.hp-scanhint-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--hp-text);
+}
+
+.hp-repos {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hp-repo {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  border: 1px solid var(--hp-border);
+  border-radius: 8px;
+  background: var(--hp-surface-2);
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.hp-repo-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1 1 180px;
+}
+
+.hp-repo-label {
+  font-size: 13px;
+}
+
+.hp-repo-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--hp-muted);
+  overflow-wrap: anywhere;
+  background: none;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.hp-repo-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.hp-badge {
+  align-self: flex-start;
+  font-size: 10.5px;
+  padding: 1px 7px;
+  border: 1px solid var(--hp-border);
+  border-radius: 999px;
+  color: var(--hp-muted);
+}
+
+.hp-badge-ok {
+  color: var(--hp-ok);
+  border-color: var(--hp-ok);
+}
+
+.hp-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hp-sub h3 {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--hp-muted);
+}
+
+/* A single action inside a column should not stretch into a full-width bar. */
+.hp-sub > .hp-btn {
+  align-self: flex-start;
+}
+
+/* ------------------------------------------------------------ tabs/chips */
+
+.hp-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.hp-tab {
+  appearance: none;
+  border: 1px solid var(--hp-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--hp-muted);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 5px 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.hp-tab-active {
+  background: var(--hp-primary);
+  border-color: var(--hp-primary);
+  color: #04201d;
+  font-weight: 600;
+}
+
+.hp-select {
+  border: 1px solid var(--hp-border);
+  border-radius: 8px;
+  background: var(--hp-surface-2);
+  color: var(--hp-text);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 5px 8px;
+}
+
+/* -------------------------------------------------------------- snippets */
+
+.hp-snippets {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hp-snippet {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border: 1px solid var(--hp-border);
+  border-radius: 8px;
+  background: var(--hp-surface-2);
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.hp-snippet-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.hp-snippet-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  color: var(--hp-muted);
+  background: none;
+  padding: 0;
+  border: 0;
+}
+
+.hp-snippet-toggles {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.hp-snippet-text {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--hp-muted);
+  overflow-wrap: anywhere;
+}
+
+.hp-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--hp-muted);
+  border: 1px solid var(--hp-border);
+  border-radius: 999px;
+  padding: 2px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.hp-toggle input {
+  margin: 0;
+  accent-color: var(--hp-primary);
+}
+
+.hp-toggle-on {
+  color: var(--hp-primary);
+  border-color: var(--hp-primary);
+}
+
+.hp-custom {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--hp-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.hp-custom-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.hp-custom-row .hp-input-sm {
+  flex: 1 1 130px;
+}
+
+/* ------------------------------------------------------------------ logs */
+
+.hp-log-meta {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
+.hp-log {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  background: var(--hp-surface-2);
+  border: 1px solid var(--hp-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+/* --------------------------------------------------------------- audit list */
+
+.hp-audit-toggle {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.hp-audit {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.hp-audit-row {
+  border: 1px solid var(--hp-border);
+  border-left: 3px solid var(--hp-border);
+  border-radius: 8px;
+  background: var(--hp-surface-2);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.hp-audit-ok {
+  border-left-color: var(--hp-ok);
+}
+
+.hp-audit-bad {
+  border-left-color: var(--hp-bad);
+}
+
+.hp-audit-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hp-audit-kind {
+  font-size: 12px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.hp-audit-at {
+  font-size: 11px;
+  color: var(--hp-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+}
+
+.hp-audit-detail {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--hp-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
+.hp-audit-more {
+  align-self: flex-start;
+}
+
+/* ------------------------------------------------------------ responsive */
+
+/* The dashboard is also opened from a phone: stack the QR above its steps and
+ * let chips wrap to one per line instead of scrolling sideways. */
+@media (max-width: 720px) {
+  .hp-root {
+    padding: 14px 14px 32px;
+  }
+
+  .hp-pairing {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .hp-qr {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1 / 1;
+    max-width: 287px;
+    margin: 0 auto;
+  }
+
+  .hp-chip strong {
+    max-width: 16ch;
+  }
+
+  .hp-card {
+    padding: 14px 14px 16px;
+  }
+}
+
+/* Wide screens have room for two fields per row next to a tall QR; the textarea
+ * still spans the full width because directory paths are long. */
+@media (min-width: 721px) {
+  .hp-form {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px 20px;
+  }
+
+  .hp-field-wide {
+    grid-column: 1 / -1;
+  }
+}
+
+/* A lone action button should not stretch across the pairing column. */
+.hp-pairing-side > .hp-btn {
+  align-self: flex-start;
+}
+
+/* Pipeline & Architect card (SPEC V5 §3.2 / D25): label ↔ value rows. */
+.hp-kv {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--hp-border);
+  font-size: 13px;
+  min-width: 0;
+}
+
+.hp-kv > span {
+  color: var(--hp-muted);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.hp-kv > strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.hp-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.hp-list > li {
+  overflow-wrap: anywhere;
+}

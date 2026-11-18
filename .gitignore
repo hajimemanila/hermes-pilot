@@ -1,9 +1,15 @@
 node_modules/
-dist/
-.DS_Store
-*.log
+# ビルド成果物（Vite）。リポジトリ直下に dist/ を置くことは無くなったので
+# `apps/web/dist` に限定する。ルートの `dashboard/dist/` はプラグインの
+# 配布物（コミット対象）なので、下の 2 行で明示的に取り込む。
+apps/web/dist/
 apps/web/dist.prev/
 apps/web/dist.next/
+# ルートのプラグイン構成（`hermes plugins install` 直後から読める形）は成果物ではなくソース。
+!dashboard/dist/
+!dashboard/dist/**
+.DS_Store
+*.log
 # デモビルド（`npm run build:demo`）は成果物なので追跡しない
 apps/web/dist-demo/
 __pycache__/
