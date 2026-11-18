@@ -1,6 +1,6 @@
 {
   "name": "hermes-pilot",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Drive an autonomous Hermes Agent from your phone or tablet: Quick Review, annotation, kanban and chat in one installable PWA.",
   "license": "MIT",
   "homepage": "https://github.com/hajimemanila/hermes-pilot#readme",

@@ -1072,7 +1072,7 @@ export function SettingsPane({ overview, notify, refresh }) {
         </div>
 
         <div className="row-sub" style={{ padding: '10px 0 0', lineHeight: 1.7 }}>
-          {t('settings.about', { version: '0.1.0' })}{' '}
+          {t('settings.about', { version: '0.2.0' })}{' '}
           <span className="mono">~/.hermes/plugin-data/hermes-pilot/token</span>
         </div>
       </section>

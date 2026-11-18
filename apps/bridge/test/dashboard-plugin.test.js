@@ -72,7 +72,9 @@ test('manifest: label / icon / tab / entry / css / api が揃い、指す先が�
   assert.equal(manifest.name, DASHBOARD_PLUGIN)
   assert.equal(manifest.label, 'Hermes Pilot')
   assert.equal(manifest.icon, 'QrCode')
-  assert.equal(manifest.version, '0.1.0')
+  // 版はリリースごとに上がるので、正本（package.json）と一致することを見る
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
+  assert.equal(manifest.version, pkg.version, 'manifest.version は package.json と一致すること')
   assert.ok(manifest.description && manifest.description.length > 20, 'description は説明文であること')
   assert.deepEqual(manifest.tab, { path: '/hermes-pilot', position: 'after:git-ops' })
   assert.equal(manifest.entry, 'dist/index.js')
