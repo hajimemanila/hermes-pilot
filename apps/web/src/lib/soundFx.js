@@ -94,6 +94,10 @@ export function soundPlan(kind = 'tap', combo = 1) {
 
   let notes
   switch (kind) {
+    case 'send':
+      // チャット送信: 軽やかな上昇ジップ（~80ms、音量控えめ）
+      notes = [note(NOTES.E5, 0, 0.045, 'sine', 0.065), note(NOTES.G5, 0.03, 0.05, 'sine', 0.055)]
+      break
     case 'approve':
     case 'stamp':
       // 上昇系のデュアルクリック（~80ms ずつ、523Hz → 784Hz）
@@ -154,28 +158,40 @@ export function playSound(kind, opts = {}) {
     if (!engineCtx) engineCtx = new Ctor()
     const ctx = engineCtx
     // Autoplay 制限: ユーザー操作ハンドラから呼ばれるので resume() だけで足りる
+    let resumePromise = null
     if (typeof ctx.resume === 'function') {
       try {
         const p = ctx.resume()
-        if (p && typeof p.catch === 'function') p.catch(() => {})
+        if (p && typeof p.then === 'function') {
+          resumePromise = p
+          if (typeof p.catch === 'function') p.catch(() => {})
+        }
       } catch {
         /* resume できない環境は無音のまま */
       }
     }
     const plan = soundPlan(kind, opts.combo)
-    const t0 = Number(ctx.currentTime) || 0
-    for (const n of plan.notes) {
-      const osc = ctx.createOscillator()
-      const gain = ctx.createGain()
-      osc.type = n.type
-      osc.frequency.setValueAtTime(n.freq, t0 + n.at)
-      gain.gain.setValueAtTime(0.0001, t0 + n.at)
-      gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, n.gain), t0 + n.at + 0.012)
-      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + n.at + n.dur)
-      osc.connect(gain)
-      gain.connect(ctx.destination)
-      osc.start(t0 + n.at)
-      osc.stop(t0 + n.at + n.dur + 0.02)
+    const schedule = () => {
+      const t0 = Number(ctx.currentTime) || 0
+      for (const n of plan.notes) {
+        const osc = ctx.createOscillator()
+        const gain = ctx.createGain()
+        osc.type = n.type
+        osc.frequency.setValueAtTime(n.freq, t0 + n.at)
+        gain.gain.setValueAtTime(0.0001, t0 + n.at)
+        gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, n.gain), t0 + n.at + 0.012)
+        gain.gain.exponentialRampToValueAtTime(0.0001, t0 + n.at + n.dur)
+        osc.connect(gain)
+        gain.connect(ctx.destination)
+        osc.start(t0 + n.at)
+        osc.stop(t0 + n.at + n.dur + 0.02)
+      }
+    }
+    // 実機では resume() 完了前に start() すると先頭の音が途切れるため、まだ suspended なら完了後に鳴らす
+    if (ctx.state === 'suspended' && resumePromise) {
+      resumePromise.then(schedule, () => {})
+    } else {
+      schedule()
     }
     return true
   } catch {

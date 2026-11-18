@@ -16,7 +16,7 @@ import { useI18n } from '../i18n/index.js'
  *   タップ = 入力欄に挿入（Enter は送らない）
  *   長押し = 挿入して実行（`run: true` のものだけ）
  */
-export function TermPane({ notify }) {
+export function TermPane({ notify, active = true }) {
   const { lang, t } = useI18n()
   const tRef = useRef(t)
   tRef.current = t
@@ -131,8 +131,9 @@ export function TermPane({ notify }) {
     }
   }, [lang])
 
-  /** バーが増減したら PTY の桁数を合わせ直す。 */
+  /** バー増減・タブ復帰時に PTY の桁数を合わせ直す。 */
   useEffect(() => {
+    if (!active) return undefined
     const fitTimer = setTimeout(() => {
       try {
         fitRef.current?.fit()
@@ -146,7 +147,7 @@ export function TermPane({ notify }) {
       }
     }, 80)
     return () => clearTimeout(fitTimer)
-  }, [snippets.length, bars.term])
+  }, [snippets.length, bars.term, active])
 
   /** 端末へ送る（exec=true で「現在の行を消して Enter まで」）。 */
   const sendToPty = useCallback(

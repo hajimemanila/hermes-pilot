@@ -20,6 +20,7 @@ import { ReviewPane } from './features/ReviewPane.jsx'
 import { SearchSheet } from './features/SearchSheet.jsx'
 import { UsageSheet } from './features/UsageSheet.jsx'
 import { LiveSheet } from './features/LiveSheet.jsx'
+import { MemosPane } from './features/MemosPane.jsx'
 import { Icon, Loader } from './components/Ui.jsx'
 import { FxLayer } from './components/FxLayer.jsx'
 import { haptic } from './lib/haptic.js'
@@ -35,9 +36,34 @@ const TABS = [
   { id: 'tasks', key: 'nav.tasks', icon: 'grid' },
   { id: 'review', key: 'nav.review', icon: 'pen' },
   { id: 'chat', key: 'nav.chat', icon: 'chat' },
+  { id: 'notes', key: 'nav.notes', icon: 'memo' },
   { id: 'term', key: 'nav.term', icon: 'term' },
   { id: 'settings', key: 'nav.settings', icon: 'gear' },
 ]
+
+/**
+ * タブ共通のホスト（非アクティブ時は `display:none` ではなく `visibility:hidden + inert` で隠し、
+ * スクロール位置・入力欄・端末セッションなどをそのまま保持する）。
+ */
+function TabHost({ active, children }) {
+  const hostRef = useRef(null)
+  useEffect(() => {
+    const host = hostRef.current
+    if (!host) return
+    const hidden = !active
+    if ('inert' in host) host.inert = hidden
+    if (hidden) {
+      const el = document.activeElement
+      if (el && host.contains(el) && typeof el.blur === 'function') el.blur()
+    }
+  }, [active])
+
+  return (
+    <div ref={hostRef} className={`pane-host${active ? '' : ' is-hidden'}`} aria-hidden={active ? undefined : 'true'}>
+      {children}
+    </div>
+  )
+}
 
 /** タブ内の描画エラー画面（フックを使うため関数コンポーネントに切り出す）。 */
 function TabError({ error, onRetry }) {
@@ -139,8 +165,8 @@ export function App() {
    * 起動直後にチャットへ繋がないよう、初回にチャットタブを開くまでマウントしない。
    * 書きかけはメモリのみ（q3=B）なので localStorage には保存しない。
    */
-  const [chatMounted, setChatMounted] = useState(tab === 'chat')
-  const chatHostRef = useRef(null)
+  const [mountedTabs, setMountedTabs] = useState(() => ({ [tab]: true }))
+  const chatMounted = Boolean(mountedTabs.chat)
   // 下部ナビのレビュータブに出す判断待ち件数（注釈 1377.jpg の赤 = 小さい丸に数字）。
   // タブ内の表示は ReviewPane の持ち物なので、ここでは数えるだけ。
   const [reviewWaiting, setReviewWaiting] = useState(0)
@@ -175,6 +201,24 @@ export function App() {
   const [chatStreaming, setChatStreaming] = useState(false)
   const [reviewFocus, setReviewFocus] = useState(null)
   const [pendingChatOpen, setPendingChatOpen] = useState(null)
+  const [pendingTaskTool, setPendingTaskTool] = useState(null)
+
+  useEffect(() => {
+    const onOpenBrainstorm = (e) => {
+      setPendingTaskTool({ kind: 'brainstorm', ...(e?.detail || {}) })
+      setTab('tasks')
+    }
+    const onOpenSeed = (e) => {
+      setPendingTaskTool({ kind: 'seed', ...(e?.detail || {}) })
+      setTab('tasks')
+    }
+    window.addEventListener('hm:open-brainstorm', onOpenBrainstorm)
+    window.addEventListener('hm:open-seed', onOpenSeed)
+    return () => {
+      window.removeEventListener('hm:open-brainstorm', onOpenBrainstorm)
+      window.removeEventListener('hm:open-seed', onOpenSeed)
+    }
+  }, [])
   /*
    * パイプライン完走サマリの導線（SPEC-PILOT-V4 §3.3 ③ / D20③）。
    *  - pendingDiscuss: Tasks タブのバナー「💬 チャットで次の一手を相談」→ ChatPane が会話を開いて相談文を置く
@@ -448,22 +492,10 @@ export function App() {
   }, [])
 
   const toastTimer = useRef(null)
-  // チャットは初回に開いたときだけマウントし、以降はタブを移っても残す（下の pane-host）。
+  // 各タブは初回表示時にマウントし、以降は切替で破棄せず保持する
   useEffect(() => {
-    if (tab === 'chat') setChatMounted(true)
+    setMountedTabs((prev) => (prev[tab] ? prev : { ...prev, [tab]: true }))
   }, [tab])
-
-  // 隠している間はフォーカスもキー入力も入れない（隠れた入力欄に物理キーボードが吸われるのを防ぐ）。
-  useEffect(() => {
-    const host = chatHostRef.current
-    if (!host) return
-    const hidden = tab !== 'chat'
-    if ('inert' in host) host.inert = hidden
-    if (hidden) {
-      const active = document.activeElement
-      if (active && host.contains(active) && typeof active.blur === 'function') active.blur()
-    }
-  }, [tab, chatMounted])
 
   // タブが増えても選択中が見えるように、切替時に横スクロールで寄せる
   const navRef = useRef(null)
@@ -865,54 +897,92 @@ export function App() {
       ) : null}
 
       <main className="panes">
-        <ErrorBoundary tab={tab}>
-          {booting ? (
-            <Loader label={t('common.loading')} />
-          ) : tab === 'tasks' ? (
-            <TasksPane
-              overview={overview}
-              refresh={refresh}
-              notify={notify}
-              initialInbox={deepLink?.open === 'inbox' ? deepLink : null}
-              focusBoard={focusBoard}
-              onConsumedFocusBoard={() => setFocusBoard(null)}
-            />
-          ) : tab === 'review' ? (
-            <ReviewPane notify={notify} focusRequest={reviewFocus} onConsumedFocus={() => setReviewFocus(null)} />
-          ) : tab === 'term' ? (
-            <Suspense fallback={<Loader label={t('app.termLoading')} />}>
-              <TermPane notify={notify} />
-            </Suspense>
-          ) : tab === 'settings' ? (
-            <SettingsPane overview={overview} notify={notify} refresh={refresh} />
-          ) : null}
-          {/*
-            チャットはタブを移っても作り直さない（q1=A）。隠すだけなのでスクロール位置・
-            ツール使用ログ・書きかけが残り、他のタブにいる間も進捗を受け続ける（q2=A）。
-            display:none だとスクロール位置が飛ぶので、CSS 側で絶対配置 + visibility で隠す。
-          */}
-          {chatMounted && !booting ? (
-            <div
-              className={`pane-host${tab === 'chat' ? '' : ' is-hidden'}`}
-              ref={chatHostRef}
-              aria-hidden={tab === 'chat' ? undefined : 'true'}
-            >
-              <ErrorBoundary tab="chat">
-                <ChatPane
-                  notify={notify}
-                  chatReports={chatReportItems}
-                  reviewItems={reviewItems}
-                  liveTurns={liveTurnsList}
-                  active={tab === 'chat'}
-                  openRequest={pendingChatOpen}
-                  onConsumedOpen={() => setPendingChatOpen(null)}
-                  discussRequest={pendingDiscuss}
-                  onConsumedDiscuss={() => setPendingDiscuss(null)}
-                />
-              </ErrorBoundary>
-            </div>
-          ) : null}
-        </ErrorBoundary>
+        {booting ? (
+          <Loader label={t('common.loading')} />
+        ) : (
+          <>
+            {mountedTabs.tasks ? (
+              <TabHost active={tab === 'tasks'}>
+                <ErrorBoundary tab="tasks">
+                  <TasksPane
+                    overview={overview}
+                    refresh={refresh}
+                    notify={notify}
+                    initialInbox={deepLink?.open === 'inbox' ? deepLink : null}
+                    focusBoard={focusBoard}
+                    onConsumedFocusBoard={() => setFocusBoard(null)}
+                    taskToolRequest={pendingTaskTool}
+                    onConsumedTaskTool={() => setPendingTaskTool(null)}
+                    active={tab === 'tasks'}
+                  />
+                </ErrorBoundary>
+              </TabHost>
+            ) : null}
+
+            {mountedTabs.review ? (
+              <TabHost active={tab === 'review'}>
+                <ErrorBoundary tab="review">
+                  <ReviewPane
+                    notify={notify}
+                    focusRequest={reviewFocus}
+                    onConsumedFocus={() => setReviewFocus(null)}
+                    active={tab === 'review'}
+                  />
+                </ErrorBoundary>
+              </TabHost>
+            ) : null}
+
+            {mountedTabs.notes ? (
+              <TabHost active={tab === 'notes'}>
+                <ErrorBoundary tab="notes">
+                  <MemosPane
+                    notify={notify}
+                    onOpenChat={(chatId) => {
+                      setPendingChatOpen({ id: chatId })
+                      setTab('chat')
+                    }}
+                  />
+                </ErrorBoundary>
+              </TabHost>
+            ) : null}
+
+            {mountedTabs.term ? (
+              <TabHost active={tab === 'term'}>
+                <ErrorBoundary tab="term">
+                  <Suspense fallback={<Loader label={t('app.termLoading')} />}>
+                    <TermPane notify={notify} active={tab === 'term'} />
+                  </Suspense>
+                </ErrorBoundary>
+              </TabHost>
+            ) : null}
+
+            {mountedTabs.settings ? (
+              <TabHost active={tab === 'settings'}>
+                <ErrorBoundary tab="settings">
+                  <SettingsPane overview={overview} notify={notify} refresh={refresh} />
+                </ErrorBoundary>
+              </TabHost>
+            ) : null}
+
+            {mountedTabs.chat ? (
+              <TabHost active={tab === 'chat'}>
+                <ErrorBoundary tab="chat">
+                  <ChatPane
+                    notify={notify}
+                    chatReports={chatReportItems}
+                    reviewItems={reviewItems}
+                    liveTurns={liveTurnsList}
+                    active={tab === 'chat'}
+                    openRequest={pendingChatOpen}
+                    onConsumedOpen={() => setPendingChatOpen(null)}
+                    discussRequest={pendingDiscuss}
+                    onConsumedDiscuss={() => setPendingDiscuss(null)}
+                  />
+                </ErrorBoundary>
+              </TabHost>
+            ) : null}
+          </>
+        )}
       </main>
 
       <nav className="nav" ref={navRef}>

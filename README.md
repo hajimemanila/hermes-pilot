@@ -27,9 +27,11 @@ kanban, chat, terminal and usage into a single installable PWA.
   and send back an ordered, coordinate-tagged fix list. Skill: `skills/annotation/`.
 - **Spec Architect** — a one-line seed becomes a design interview, then a `docs/SPEC-*.md` whose batches a
   worker can execute without asking again. Skill: `skills/spec-architect/`.
-- **Tasks / Inbox** — boards, task detail, event history, per-task git diff, approve / comment / abort.
-- **Chat** — streaming Hermes chat with thinking log, tool log, attachments, snippets, cross-session search.
+- **Tasks / Inbox** — boards, task detail, event history, per-task git diff, approve / comment / abort, plus **🧠 Brainstorm** and **🛠 Refactor** sheets alongside **Spec Seed**.
+- **Chat** — streaming Hermes chat with thinking log, tool log, attachments, snippets, cross-session search, bubble context menu (copy, save to Memos, summarize, continue instructing), and clear *Reply / RO* + running indicators in the session drawer.
+- **Memos (Ideas & Report Inbox)** — Keep-style card grid for one-line capture, checklists, tags, search, and scheduled/completion report inbox, with direct handoff to Brainstorm and Spec Seed.
 - **Terminal** — a real PTY over the bridge, with command snippets that follow your OS.
+- **Persistent tab state** — all six tabs (Tasks, Review, Chat, Memos, Terminal, Settings) stay mounted in the background so switching tabs preserves scroll position, drafts, and loaded state without reload lag.
 - **English and Japanese** (`en` is the fallback, `ja` is bundled), **Dark / Light / System** themes and two
   two-pane layouts: a **narrow master-detail from 680 px** (280 px master, for portrait tablets such as the
   iPad mini) and the **wide two-pane from 820 px** (380 px review master / 360 px tasks master). Below 680 px

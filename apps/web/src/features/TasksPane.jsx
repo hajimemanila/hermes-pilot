@@ -7,6 +7,7 @@ import { CaptureSheet } from './CaptureSheet.jsx'
 import { UsageSheet } from './UsageSheet.jsx'
 import { MissionReceiptSheet } from './MissionReceiptSheet.jsx'
 import { SpecSeedSheet } from './SpecSeedSheet.jsx'
+import { BrainstormSheet, RefactorSheet } from './TaskToolSheets.jsx'
 import { SpecReadyBanner } from '../components/SpecReadyBanner.jsx'
 import { SpecMarkdownSheet } from '../components/SpecMarkdownSheet.jsx'
 import { ArchitectJobBar } from '../components/ArchitectJobBar.jsx'
@@ -146,7 +147,7 @@ function readStoredBoard() {
   }
 }
 
-export function TasksPane({ overview, refresh, notify, initialInbox = null, focusBoard = null, onConsumedFocusBoard }) {
+export function TasksPane({ overview, refresh, notify, initialInbox = null, focusBoard = null, onConsumedFocusBoard, taskToolRequest = null, onConsumedTaskTool, active = true }) {
   const { t } = useI18n()
   const [boards, setBoards] = useState([])
   const [board, setBoard] = useState(null)
@@ -188,6 +189,22 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
   const [specBatchOpen, setSpecBatchOpen] = useState([])
   // 📝 Spec Seed と A2B クイック起票カード（SPEC-PILOT-V5 §3.2・§3.3 ① / D23・D26①）
   const [seedOpen, setSeedOpen] = useState(false)
+  const [seedInitial, setSeedInitial] = useState('')
+  const [brainstormOpen, setBrainstormOpen] = useState(false)
+  const [brainstormInitial, setBrainstormInitial] = useState('')
+  const [refactorOpen, setRefactorOpen] = useState(false)
+
+  useEffect(() => {
+    if (!taskToolRequest) return
+    if (taskToolRequest.kind === 'brainstorm') {
+      setBrainstormInitial(taskToolRequest.seed || '')
+      setBrainstormOpen(true)
+    } else if (taskToolRequest.kind === 'seed') {
+      setSeedInitial(taskToolRequest.seed || '')
+      setSeedOpen(true)
+    }
+    onConsumedTaskTool?.()
+  }, [taskToolRequest, onConsumedTaskTool])
   const [architectJobs, setArchitectJobs] = useState(null)
   const [architectFiling, setArchitectFiling] = useState(false)
   const [architectDismissed, setArchitectDismissed] = useState([])
@@ -298,6 +315,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
 
   // 使用量は60秒ごと（サーバ側も30秒キャッシュ）
   useEffect(() => {
+    if (!active) return undefined
     let alive = true
     const load = () =>
       api('/api/usage?hours=24')
@@ -309,10 +327,11 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
       alive = false
       clearInterval(id)
     }
-  }, [])
+  }, [active])
 
   // 実行中ターン数（タイルの点。10秒ごと）
   useEffect(() => {
+    if (!active) return undefined
     let alive = true
     const load = () =>
       api('/api/live')
@@ -337,7 +356,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
       alive = false
       clearInterval(id)
     }
-  }, [])
+  }, [active])
 
   // 承認待ちの件数（15秒ごと）
   const loadInbox = useCallback(async () => {
@@ -357,10 +376,11 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
   }, [])
 
   useEffect(() => {
+    if (!active) return undefined
     loadInbox()
     const id = setInterval(() => document.visibilityState === 'visible' && loadInbox(), 15_000)
     return () => clearInterval(id)
-  }, [loadInbox])
+  }, [loadInbox, active])
 
   /*
    * Spec Launchpad 用の SPEC 検出（SPEC §5.4）。ボードを変えるたびに 1 回だけ問い合わせる
@@ -402,11 +422,11 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
   }, [board, loadTasks, loadInbox, loadSpecs, refresh])
 
   useEffect(() => {
-    if (!board) return
+    if (!board || !active) return undefined
     loadTasks(board)
     const id = setInterval(() => document.visibilityState === 'visible' && loadTasks(board), 5000)
     return () => clearInterval(id)
-  }, [board, loadTasks])
+  }, [board, loadTasks, active])
 
   /*
    * A2B クイック起票カードの材料（GET /api/architect/jobs・SPEC V5 §3.2 D23）。
@@ -451,6 +471,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
   )
 
   useEffect(() => {
+    if (!active) return undefined
     loadArchitectJobs()
     // 進行中（running / awaiting_spec）だけ 4 秒。人待ち・停止・ジョブ無しは 20 秒（SPEC V6 §3.3 ③）
     const id = setInterval(
@@ -458,7 +479,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
       pollMs,
     )
     return () => clearInterval(id)
-  }, [loadArchitectJobs, pollMs])
+  }, [loadArchitectJobs, pollMs, active])
 
   /*
    * 新 SPEC の即時同期（SPEC V6 §3.3 ③ / D31）。
@@ -534,6 +555,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
       setLatestReport(null)
       return undefined
     }
+    if (!board || !active) return undefined
     let alive = true
     const load = () =>
       api(`/api/specs/reports?board=${encodeURIComponent(board)}&limit=1`)
@@ -551,7 +573,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
       alive = false
       clearInterval(id)
     }
-  }, [board, idle])
+  }, [board, idle, active])
 
   /* 直近 24 時間のレポートだけをバナーに出す（古い完走を常設しない）。 */
   const reportRecent = useMemo(() => {
@@ -1120,18 +1142,40 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
         onPreview={(b) => openSpecMd({ path: b.path, title: b.title })}
       />
 
-      {/* 📝 Spec Seed（SPEC V5 §3.3 ① D26①）: 仕様ランチャーの隣から 1 タップで種を撒く */}
+      {/* 📝 Spec Seed ＋ 🧠 ブレスト ＋ 🛠 リファクタリング（同列エントリ） */}
       <div className="seed-entry">
         <button
           type="button"
           className="snippet-chip trigger"
           onClick={() => {
             haptic('tap')
+            setSeedInitial('')
             setSeedOpen(true)
           }}
           aria-label={t('seed.openAria')}
         >
           📝 {t('seed.title')}
+        </button>
+        <button
+          type="button"
+          className="snippet-chip trigger"
+          onClick={() => {
+            haptic('tap')
+            setBrainstormInitial('')
+            setBrainstormOpen(true)
+          }}
+        >
+          🧠 {t('brainstorm.title')}
+        </button>
+        <button
+          type="button"
+          className="snippet-chip trigger"
+          onClick={() => {
+            haptic('tap')
+            setRefactorOpen(true)
+          }}
+        >
+          🛠 {t('refactor.title')}
         </button>
       </div>
 
@@ -1284,9 +1328,34 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
           board={board ?? ''}
           repo={specsInfo?.repo ?? null}
           chat={readActiveChatId(globalThis.localStorage) || null}
+          initialText={seedInitial}
           notify={notify}
-          onClose={() => setSeedOpen(false)}
+          onClose={() => {
+            setSeedOpen(false)
+            setSeedInitial('')
+          }}
           onSeeded={() => loadArchitectJobs()}
+        />
+      ) : null}
+
+      {brainstormOpen ? (
+        <BrainstormSheet
+          initialSeed={brainstormInitial}
+          board={board ?? ''}
+          repo={specsInfo?.repo ?? null}
+          notify={notify}
+          onClose={() => {
+            setBrainstormOpen(false)
+            setBrainstormInitial('')
+          }}
+        />
+      ) : null}
+
+      {refactorOpen ? (
+        <RefactorSheet
+          board={board ?? ''}
+          notify={notify}
+          onClose={() => setRefactorOpen(false)}
         />
       ) : null}
 

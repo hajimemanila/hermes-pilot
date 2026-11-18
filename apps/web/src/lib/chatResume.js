@@ -30,3 +30,22 @@ export function recentSessions(sessions, profile, n = 3) {
     .sort((a, b) => stamp(b) - stamp(a))
     .slice(0, n)
 }
+
+/**
+ * 履歴行が読み取り専用（継続して指示を送れない会話）かどうかを判定する。
+ * カンバン作業ログ（`local-…` / `source === 'kanban'`）は Hermes が `session.resume` を
+ * 拒否する（4132）ため、開く前から一覧上で区別できるようにする。
+ *
+ * @param {{id?: string, source?: string}|null|undefined} session
+ * @param {string|null|undefined} [readonlySessionId] 現在読み取り専用で開いているセッション ID
+ * @returns {boolean}
+ */
+export function isReadonlySession(session, readonlySessionId = null) {
+  if (!session) return false
+  const id = String(session.id ?? '').trim()
+  if (!id) return false
+  if (readonlySessionId && id === String(readonlySessionId).trim()) return true
+  if (id.startsWith('local-')) return true
+  if (String(session.source ?? '').trim().toLowerCase() === 'kanban') return true
+  return false
+}

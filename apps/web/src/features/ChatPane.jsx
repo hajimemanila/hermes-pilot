@@ -13,7 +13,7 @@ import {
   repoLabel,
   writePendingRepo,
 } from '../lib/repoPicker.js'
-import { pickResumeTarget, recentSessions } from '../lib/chatResume.js'
+import { isReadonlySession, pickResumeTarget, recentSessions } from '../lib/chatResume.js'
 import { orderProfiles } from '../lib/profileOrder.js'
 import { foldTranscriptMessages, mergeProgress, shortenPath } from '../lib/toolProgress.js'
 import { renderMarkdown } from '../lib/markdown.js'
@@ -253,6 +253,7 @@ export function ChatPane({
   const [reportOpen, setReportOpen] = useState({})
   // 完了レシート（SPEC-PILOT-V5 §3.3 ③ / D26③）。統合レポートカードから開く。
   const [receiptCtx, setReceiptCtx] = useState(null)
+  const [bubbleMenu, setBubbleMenu] = useState(null)
   // 📝 Spec Seed（SPEC-PILOT-V5 §3.3 ① / D26①）。一行メモから仕様策定を始める。
   const [seedOpen, setSeedOpen] = useState(false)
   // 仕様書の準備完了（A2B クイック起票カード・§3.2 D23）。
@@ -1597,6 +1598,7 @@ export function ChatPane({
       }
       if (r?.error) failed(t('chat.sendFailed', { message: r.error.message }))
       haptic('action')
+      celebrate('send', { sfx: t('fx.sfx.send') })
     },
     [text, attached, streaming, sid, rpc, notify, stageAttachments, resumeInto, profile],
   )
@@ -2215,6 +2217,20 @@ export function ChatPane({
                     </div>
                   ) : null}
                   {b.text}
+                  {b.text ? (
+                    <button
+                      type="button"
+                      className="bubble-menu-btn"
+                      aria-label={t('chat.bubbleMenuAria')}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        haptic('tap')
+                        setBubbleMenu({ text: b.text, role: 'user', mid: b.mid ?? null })
+                      }}
+                    >
+                      <Icon name="more" size={14} />
+                    </button>
+                  ) : null}
                 </div>
               </div>
             ) : b.role === 'assistant' ? (
@@ -2236,7 +2252,21 @@ export function ChatPane({
                     </details>
                   ) : null}
                   {b.text ? (
-                    <MarkdownBody text={b.text} onCopyCode={copyCode} copyLabel={t('chat.copy')} />
+                    <>
+                      <MarkdownBody text={b.text} onCopyCode={copyCode} copyLabel={t('chat.copy')} />
+                      <button
+                        type="button"
+                        className="bubble-menu-btn"
+                        aria-label={t('chat.bubbleMenuAria')}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          haptic('tap')
+                          setBubbleMenu({ text: b.text, role: 'assistant', mid: b.mid ?? null })
+                        }}
+                      >
+                        <Icon name="more" size={14} />
+                      </button>
+                    </>
                   ) : b.open ? (
                     <span className="dots">…</span>
                   ) : (
@@ -2291,7 +2321,6 @@ export function ChatPane({
                     {thinkingShown}
                   </div>
                 ) : null}
-                <span className="working-edge-bar" aria-hidden="true" />
               </div>
             )
           })() : null}
@@ -2367,7 +2396,6 @@ export function ChatPane({
                     />
                   )
                 })()}
-                <span className="working-edge-bar" aria-hidden="true" />
               </div>
             )
           ) : null}
@@ -2927,12 +2955,12 @@ export function ChatPane({
               unreadReports: 0,
               unreadReplies: 0,
             }
-            const isRo = String(readonly?.sessionId ?? '') === String(s.id)
+            const isRo = isReadonlySession(s, readonly?.sessionId)
             const replyLabel = unreadRepliesLabel(badge.unreadReplies)
             return (
               <button
                 key={key}
-                className={`row${badge.isActive ? ' on' : ''}${
+                className={`row${badge.isActive ? ' on' : ''}${isRo ? ' ro' : ''}${
                   badge.unreadReports || pipelineSessionIds.has(String(s.id)) ? ' has-report' : ''
                 }`}
                 title={
@@ -2941,8 +2969,8 @@ export function ChatPane({
                     : replyLabel
                       ? t('chat.newReplyTitle')
                       : isRo
-                        ? t('chat.readonly')
-                        : undefined
+                        ? t('chat.readonlyTitle')
+                        : t('chat.resumableTitle')
                 }
                 onClick={() => openSessionSafe(s.id, null, s.profile ?? 'default')}
               >
@@ -2954,18 +2982,21 @@ export function ChatPane({
                       </span>
                     ) : null}
                     {s.title || s.id}
-                    {isRo ? (
-                      <span className="row-ro" title={t('chat.readonly')}>
-                        {t('chat.readonlyShort')}
-                      </span>
-                    ) : null}
                   </span>
-                  <span className="row-sub">
+                  <span className="row-sub session-meta">
+                    <span
+                      className={`row-mode ${isRo ? 'ro' : 'resumable'}`}
+                      title={isRo ? t('chat.readonlyTitle') : t('chat.resumableTitle')}
+                    >
+                      {isRo ? t('chat.readonlyShort') : t('chat.resumableShort')}
+                    </span>
                     {foreign ? (
                       <span className="prof-chip on">{s.profile}</span>
                     ) : null}
-                    {s.source ?? 'cli'} ・ {s.message_count ?? 0} msg ・ {relTime((s.started_at ?? 0) * 1000)}
-                    {s.is_active ? t('chat.runningSuffix') : ''}
+                    <span>
+                      {s.source ?? 'cli'} ・ {s.message_count ?? 0} msg ・ {relTime((s.started_at ?? 0) * 1000)}
+                      {s.is_active ? t('chat.runningSuffix') : ''}
+                    </span>
                   </span>
                 </span>
                 {badge.isRunning ? (
@@ -3003,6 +3034,123 @@ export function ChatPane({
           onClose={() => setReceiptCtx(null)}
           notify={notify}
         />
+      ) : null}
+
+      {bubbleMenu ? (
+        <Sheet title={t('chat.bubbleMenuTitle')} onClose={() => setBubbleMenu(null)}>
+          <div className="bubble-menu-preview">{bubbleMenu.text.slice(0, 180)}</div>
+          <div className="pick-list">
+            <button
+              type="button"
+              className="pick-item"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard?.writeText?.(bubbleMenu.text)
+                  notify?.(t('chat.bubbleCopied'))
+                } catch {
+                  notify?.(t('chat.bubbleCopied'))
+                }
+                setBubbleMenu(null)
+              }}
+            >
+              <span className="pick-main">
+                <span className="pick-title">{t('chat.bubbleCopy')}</span>
+              </span>
+            </button>
+            <button
+              type="button"
+              className="pick-item"
+              onClick={async () => {
+                const firstLine = bubbleMenu.text.split('\n').map((s) => s.trim()).find(Boolean) || ''
+                await api('/api/memos', {
+                  method: 'POST',
+                  body: {
+                    title: firstLine.slice(0, 60),
+                    body: bubbleMenu.text,
+                    tags: ['clip'],
+                    kind: 'clip',
+                    color: bubbleMenu.role === 'user' ? 'teal' : 'default',
+                    source: {
+                      chatId: sid || undefined,
+                      chatTitle: title || undefined,
+                      board: repo?.board || undefined,
+                      repo: repo?.id || undefined,
+                      mid: bubbleMenu.mid ? String(bubbleMenu.mid) : undefined,
+                    },
+                  },
+                })
+                window.dispatchEvent(new CustomEvent('hm:memos-changed'))
+                celebrate('approve')
+                notify?.(t('chat.bubbleSavedMemo'))
+                setBubbleMenu(null)
+              }}
+            >
+              <span className="pick-main">
+                <span className="pick-title">{t('chat.bubbleSaveMemo')}</span>
+              </span>
+            </button>
+            <button
+              type="button"
+              className="pick-item"
+              onClick={() => {
+                const seed = bubbleMenu.text.slice(0, 600)
+                setBubbleMenu(null)
+                window.dispatchEvent(
+                  new CustomEvent('hm:open-seed', {
+                    detail: { seed, repo: repo?.path, board: repo?.board },
+                  }),
+                )
+              }}
+            >
+              <span className="pick-main">
+                <span className="pick-title">{t('chat.bubbleToSeed')}</span>
+              </span>
+            </button>
+          </div>
+          {!readonly ? (
+            <>
+              <div className="list-head" style={{ marginTop: 12 }}>
+                {t('chat.bubbleContinueHead')}
+              </div>
+              <div className="pick-list">
+                {[
+                  { label: t('chat.bubbleSummarize'), key: 'chat.bubbleSummarizePrompt' },
+                  { label: t('chat.bubbleBrainstorm'), key: 'chat.bubbleBrainstormPrompt' },
+                  { label: t('chat.bubbleDig'), key: 'chat.bubbleDigPrompt' },
+                ].map((act) => (
+                  <button
+                    key={act.key}
+                    type="button"
+                    className="pick-item"
+                    onClick={() => {
+                      const quote = bubbleMenu.text.slice(0, 600).replace(/\n+/g, '\n> ')
+                      setBubbleMenu(null)
+                      sendText(t(act.key, { quote }))
+                    }}
+                  >
+                    <span className="pick-main">
+                      <span className="pick-title">{act.label}</span>
+                    </span>
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className="pick-item"
+                  onClick={() => {
+                    const quote = bubbleMenu.text.slice(0, 320).replace(/\n+/g, '\n> ')
+                    setText((cur) => (cur ? `${cur}\n> ${quote}\n\n` : `> ${quote}\n\n`))
+                    setBubbleMenu(null)
+                    setTimeout(() => taRef.current?.focus(), 60)
+                  }}
+                >
+                  <span className="pick-main">
+                    <span className="pick-title">{t('chat.bubbleQuote')}</span>
+                  </span>
+                </button>
+              </div>
+            </>
+          ) : null}
+        </Sheet>
       ) : null}
     </div>
   )

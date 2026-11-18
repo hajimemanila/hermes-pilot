@@ -4,8 +4,9 @@ import { useInstallState, swState } from '../lib/useInstallState.js'
 import { diagnosePwa } from '../lib/pwaDiagnose.js'
 import { RefreshButton, Sheet, Spinner, fmtBytes, fmtDateTime, relTime } from '../components/Ui.jsx'
 import { haptic, isHapticEnabled, setHapticEnabled } from '../lib/haptic.js'
-import { getActiveVibe, onVibeChange, setVibe } from '../lib/vibe.js'
+import { getActiveVibe, onVibeChange } from '../lib/vibe.js'
 import { isSoundEnabled, playSound, setSoundEnabled } from '../lib/soundFx.js'
+import { switchThemeWithTransition, switchVibeWithTransition } from '../lib/modeTransition.js'
 import { foldAudit } from '../lib/auditFold.js'
 import { readSnippetBars, setSnippetBar } from '../lib/snippetBars.js'
 import { useI18n } from '../i18n/index.js'
@@ -606,9 +607,9 @@ export function SettingsPane({ overview, notify, refresh }) {
               type="button"
               className={`chip${themePref === o.value ? ' on' : ''}`}
               aria-pressed={themePref === o.value}
-              onClick={() => {
+              onClick={(e) => {
                 haptic('tap')
-                setThemePref(o.value)
+                switchThemeWithTransition(o.value, setThemePref, e)
               }}
             >
               {t(o.key)}
@@ -627,12 +628,10 @@ export function SettingsPane({ overview, notify, refresh }) {
               type="button"
               className={`chip vibe-chip${vibeMode === o.value ? ' on' : ''}`}
               aria-pressed={vibeMode === o.value}
-              onClick={() => {
+              onClick={(e) => {
                 haptic('tap')
-                setVibe(o.value)
-                setVibeMode(o.value)
-                // Dopamine に切り替えた瞬間だけ「鳴る・光る」を確かめられるようにする
-                if (o.value === 'dopamine') playSound('approve')
+                const applied = switchVibeWithTransition(o.value, e)
+                setVibeMode(applied)
                 notify?.(t('settings.vibeSwitched', { mode: t(o.key) }))
               }}
             >

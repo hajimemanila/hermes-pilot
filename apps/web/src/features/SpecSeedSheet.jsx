@@ -35,9 +35,9 @@ import {
  *          onSeeded?: Function, notify?: Function}} props ボード・リポジトリ・起票元チャット
  * @returns {any} シート
  */
-export function SpecSeedSheet({ board = '', repo = null, chat = null, onClose, onSeeded, notify }) {
+export function SpecSeedSheet({ board = '', repo = null, chat = null, initialText = '', onClose, onSeeded, notify }) {
   const { t, lang } = useI18n()
-  const [text, setText] = useState('')
+  const [text, setText] = useState(initialText)
   const [autoStart, setAutoStart] = useState(false)
   const [executionPolicy, setExecutionPolicy] = useState(DEFAULT_EXECUTION_POLICY)
   const [busy, setBusy] = useState(false)

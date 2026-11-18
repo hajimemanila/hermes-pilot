@@ -235,6 +235,19 @@ body {
   height: 100%;
 }
 
+html[data-vibe='dopamine'] .pane-host:not(.is-hidden) {
+  animation: hm-pane-enter 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes hm-pane-enter {
+  from {
+    opacity: 0.86;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 .pane-host.is-hidden {
   position: absolute;
   inset: 0;
@@ -601,6 +614,7 @@ button.t-pill:active {
   display: flex;
   gap: 6px;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   /* チップは 30px の見た目のまま、当たり判定（44px）が切られない高さを確保する */
   padding: 7px 0;
   scrollbar-width: none;
@@ -835,7 +849,13 @@ button.t-pill:active {
 }
 
 .row.on {
-  background: var(--surface-2);
+  background: var(--rec-bg);
+  box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 1px var(--line-strong);
+}
+
+.row.on .row-title {
+  color: var(--rec-fg);
+  font-weight: 700;
 }
 
 .row.static {
@@ -1752,13 +1772,11 @@ ol.md-list {
   color: var(--accent);
 }
 
-/* 意思決定トリガー（Quick Review / Annotate Shot）。ティール＋アンバーのアクセント枠（SPEC §5.3） */
+/* 意思決定トリガー（Quick Review / Annotate Shot）。Serotonin 準拠の単色強調をベースとし、グラデーションは Dopamine 層で付与 */
 .snippet-chip.trigger {
-  border: 1px solid transparent;
-  background:
-    linear-gradient(var(--surface), var(--surface)) padding-box,
-    linear-gradient(90deg, var(--accent), #f5b32d) border-box;
-  color: var(--text);
+  border: 1px solid var(--accent);
+  background: var(--rec-bg);
+  color: var(--rec-fg);
   font-weight: 600;
 }
 
@@ -2524,9 +2542,9 @@ ol.md-list {
   align-items: center;
   justify-content: center;
   gap: 3px;
-  /* 4つなら等分、増えたら最小幅を保って横スクロール */
-  flex: 1 0 68px;
-  min-width: 68px;
+  /* 6 タブでも 390px に収まる最小幅（390 / 6 = 65px） */
+  flex: 1 0 56px;
+  min-width: 56px;
   scroll-snap-align: center;
   white-space: nowrap;
   border: none;
@@ -2620,18 +2638,43 @@ ol.md-list {
   color: #04202a;
 }
 
-/* 閲覧専用（readonly）の会話であることを一覧上でも示す小さな札（`chat.readonlyShort`）。 */
-.row-ro {
-  margin-left: 6px;
-  padding: 0 5px;
+/* 会話一覧の「継続可 / 閲覧専用」区別とメタ行。タイトル末尾（line-clamp で切れる）ではなく
+   メタ行の先頭に固定配置し、開く前から指示を継続できる会話か一目で判別できるようにする。 */
+.row-sub.session-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+.row-sub.session-meta .prof-chip {
+  margin-right: 0;
+}
+.row-mode {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
   border-radius: 6px;
   font-size: 9.5px;
   font-weight: 700;
-  line-height: 16px;
+  line-height: 1.45;
+  white-space: nowrap;
+}
+.row-mode.resumable {
+  color: var(--accent);
+  background: rgba(45, 212, 191, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(45, 212, 191, 0.35);
+}
+.row-mode.ro {
   color: var(--muted);
   background: var(--surface);
   box-shadow: inset 0 0 0 1px var(--line);
-  vertical-align: 1px;
+}
+.row.ro:not(.on) .row-title {
+  color: var(--muted);
+}
+html[data-vibe='dopamine'] .row-mode.resumable {
+  box-shadow: inset 0 0 0 1px var(--vibe-border), 0 0 8px rgba(34, 211, 238, 0.16);
 }
 
 /* チャットヘッダの `≡`（会話一覧）に出す未読会話数。点だと「何かある」しか
@@ -3995,6 +4038,38 @@ ol.md-list {
   background: var(--accent-2);
 }
 
+.fx-particle.cyan {
+  background: #22d3ee;
+  box-shadow: 0 0 6px rgba(34, 211, 238, 0.75);
+}
+
+.fx-particle.amber {
+  background: #fde68a;
+  box-shadow: 0 0 8px rgba(251, 191, 36, 0.85);
+}
+
+.fx-scan-sweep {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 72px;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent, rgba(34, 211, 238, 0.28) 55%, rgba(251, 191, 36, 0.16) 78%, transparent);
+  animation: fx-scan-sweep 420ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes fx-scan-sweep {
+  from {
+    opacity: 0.9;
+    transform: translate3d(0, -100%, 0);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(0, 100vh, 0);
+  }
+}
+
 @keyframes fx-fly {
   0% {
     opacity: 1;
@@ -4113,10 +4188,6 @@ html[data-vibe='dopamine'] .ak-allclear {
   inherits: false;
 }
 
-.working-edge-bar {
-  display: none;
-}
-
 html[data-vibe='dopamine'] .thinking-card,
 html[data-vibe='dopamine'] .chat-live-card.running {
   --vibe-glow-a: rgba(34, 211, 238, 0.92);
@@ -4186,32 +4257,6 @@ html[data-vibe='dopamine'] .chat-live-card.running > * {
   z-index: 1;
 }
 
-html[data-vibe='dopamine'] .working-edge-bar {
-  display: block;
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 2px;
-  pointer-events: none;
-  z-index: 2;
-  overflow: hidden;
-  background: rgba(45, 212, 191, 0.1);
-}
-
-html[data-vibe='dopamine'] .working-edge-bar::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 44%;
-  background: linear-gradient(90deg, transparent 0%, var(--vibe-glow-a) 68%, #fff7e0 100%);
-  box-shadow: 0 0 8px var(--vibe-glow-b);
-  transform: translateX(-100%);
-  animation: vibe-edge-run 1.7s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-}
-
 html[data-vibe='dopamine'] .vibe-settle-flash {
   animation: vibe-settle-flash 220ms ease-out;
 }
@@ -4239,15 +4284,6 @@ html[data-vibe='dopamine'] .vibe-settle-flash {
   65%,
   100% {
     transform: translateX(130%);
-  }
-}
-
-@keyframes vibe-edge-run {
-  0% {
-    transform: translateX(-100%);
-  }
-  100% {
-    transform: translateX(250%);
   }
 }
 
@@ -4317,6 +4353,9 @@ html[data-vibe='dopamine'][data-combo='3'] {
 html[data-vibe='dopamine'] .btn:not(:disabled),
 html[data-vibe='dopamine'] .chip:not(:disabled),
 html[data-vibe='dopamine'] .hm-switch:not(:disabled),
+html[data-vibe='dopamine'] .seed-seg-btn:not(:disabled),
+html[data-vibe='dopamine'] .seed-toggle,
+html[data-vibe='dopamine'] .seed-submit:not(:disabled),
 html[data-vibe='dopamine'] .report-card-btn:not(:disabled),
 html[data-vibe='dopamine'] .composer .plus:not(:disabled),
 html[data-vibe='dopamine'] .composer .send:not(:disabled),
@@ -4326,11 +4365,13 @@ html[data-vibe='dopamine'] .ak-btn:not(:disabled),
 html[data-vibe='dopamine'] .ak-empty-btn:not(:disabled),
 html[data-vibe='dopamine'] .ak-thumb-btn:not(:disabled),
 html[data-vibe='dopamine'] .ak-anno-preview-btn:not(:disabled),
+html[data-vibe='dopamine'] .receipt-btn:not(:disabled),
+html[data-vibe='dopamine'] .spec-banner-btn:not(:disabled),
+html[data-vibe='dopamine'] .job-bar-btn:not(:disabled),
 html[data-vibe='dopamine'] .icon-btn:not(:disabled),
 html[data-vibe='dopamine'] .prof-chip:not(:disabled),
 html[data-vibe='dopamine'] .snippet-chip:not(:disabled),
 html[data-vibe='dopamine'] .settings-nav-chip:not(:disabled),
-html[data-vibe='dopamine'] .pick-item:not(:disabled),
 html[data-vibe='dopamine'] button.t-pill:not(:disabled),
 html[data-vibe='dopamine'] .nav-item:not(:disabled) {
   transition: transform 70ms ease-out, box-shadow 120ms ease, filter 120ms ease;
@@ -4341,6 +4382,9 @@ html[data-vibe='dopamine'] .btn:not(:disabled):active,
 html[data-vibe='dopamine'] .btn.fast-track:not(:disabled):active,
 html[data-vibe='dopamine'] .chip:not(:disabled):active,
 html[data-vibe='dopamine'] .hm-switch:not(:disabled):active,
+html[data-vibe='dopamine'] .seed-seg-btn:not(:disabled):active,
+html[data-vibe='dopamine'] .seed-toggle:active,
+html[data-vibe='dopamine'] .seed-submit:not(:disabled):active,
 html[data-vibe='dopamine'] .report-card-btn:not(:disabled):active,
 html[data-vibe='dopamine'] .composer .plus:not(:disabled):active,
 html[data-vibe='dopamine'] .composer .send:not(:disabled):active,
@@ -4350,11 +4394,13 @@ html[data-vibe='dopamine'] .ak-btn:not(:disabled):active,
 html[data-vibe='dopamine'] .ak-empty-btn:not(:disabled):active,
 html[data-vibe='dopamine'] .ak-thumb-btn:not(:disabled):active,
 html[data-vibe='dopamine'] .ak-anno-preview-btn:not(:disabled):active,
+html[data-vibe='dopamine'] .receipt-btn:not(:disabled):active,
+html[data-vibe='dopamine'] .spec-banner-btn:not(:disabled):active,
+html[data-vibe='dopamine'] .job-bar-btn:not(:disabled):active,
 html[data-vibe='dopamine'] .icon-btn:not(:disabled):active,
 html[data-vibe='dopamine'] .prof-chip:not(:disabled):active,
 html[data-vibe='dopamine'] .snippet-chip:not(:disabled):active,
 html[data-vibe='dopamine'] .settings-nav-chip:not(:disabled):active,
-html[data-vibe='dopamine'] .pick-item:not(:disabled):active,
 html[data-vibe='dopamine'] button.t-pill:not(:disabled):active,
 html[data-vibe='dopamine'] .nav-item:not(:disabled):active {
   transform: translateY(2px) scale(1.08, 0.86);
@@ -4364,15 +4410,32 @@ html[data-vibe='dopamine'] .fx-sakuga-pop {
   animation: sakuga-spring 320ms cubic-bezier(0.22, 1.35, 0.36, 1);
 }
 
+html[data-vibe='dopamine'] .fx-sakuga-lite {
+  animation: sakuga-lite 160ms ease-out;
+}
+
 html[data-vibe='dopamine'] .btn.primary.fx-sakuga-pop,
 html[data-vibe='dopamine'] .btn.fast-track.fx-sakuga-pop,
+html[data-vibe='dopamine'] .seed-submit.fx-sakuga-pop,
 html[data-vibe='dopamine'] .ak-empty-btn.fx-sakuga-pop,
 html[data-vibe='dopamine'] .ak-new-btn.fx-sakuga-pop,
 html[data-vibe='dopamine'] .report-card-btn.primary.fx-sakuga-pop,
+html[data-vibe='dopamine'] .receipt-btn.primary.fx-sakuga-pop,
+html[data-vibe='dopamine'] .spec-banner-btn:not(.ghost).fx-sakuga-pop,
 html[data-vibe='dopamine'] .composer .send.fx-sakuga-pop,
 html[data-vibe='dopamine'] .chat-report-btn.primary.fx-sakuga-pop,
-html[data-vibe='dopamine'] .hm-switch.fx-sakuga-pop {
+html[data-vibe='dopamine'] .hm-switch.fx-sakuga-pop,
+html[data-vibe='dopamine'] .seed-seg-btn.fx-sakuga-pop {
   animation: sakuga-spring-flash 320ms cubic-bezier(0.22, 1.35, 0.36, 1);
+}
+
+@keyframes sakuga-lite {
+  0% {
+    transform: scale(0.985);
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 
 html[data-vibe='dopamine'] .hm-switch-knob {
@@ -4458,12 +4521,23 @@ html[data-vibe='dopamine'] .t-pill.gw .t-dot.ok {
 
 html[data-vibe='dopamine'] .t-dot.live,
 html[data-vibe='dopamine'] .live-dot,
-html[data-vibe='dopamine'] .nav-dot.running {
+html[data-vibe='dopamine'] .nav-dot.running,
+html[data-vibe='dopamine'] .row-dot.running {
   animation: vibe-sonar-pulse 1.6s ease-out infinite;
 }
 
-html[data-vibe='dopamine'] .nav-dot.done {
+html[data-vibe='dopamine'] .nav-dot.done,
+html[data-vibe='dopamine'] .row-dot.done {
   animation: vibe-dot-breathe 3.2s ease-in-out infinite;
+}
+
+html[data-vibe='dopamine'] .row.on {
+  background: var(--vibe-chip-on-bg);
+  box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 1px var(--vibe-border), 0 0 12px rgba(34, 211, 238, 0.16);
+}
+
+html[data-vibe='dopamine'] .row.on .row-title {
+  color: var(--vibe-chip-on-fg);
 }
 
 html[data-vibe='dopamine'] .nav-badge,
@@ -4538,8 +4612,11 @@ html[data-vibe='dopamine'] .drawer-actions .drawer-mark-read:not(:disabled) {
 }
 
 html[data-vibe='dopamine'] .btn.primary:not(:disabled),
+html[data-vibe='dopamine'] .seed-submit:not(:disabled),
 html[data-vibe='dopamine'] .ak-empty-btn:not(:disabled),
 html[data-vibe='dopamine'] .report-card-btn.primary:not(:disabled),
+html[data-vibe='dopamine'] .receipt-btn.primary:not(:disabled),
+html[data-vibe='dopamine'] .spec-banner-btn:not(.ghost):not(:disabled),
 html[data-vibe='dopamine'] .chat-report-btn.primary:not(:disabled),
 html[data-vibe='dopamine'] .composer .send:not(:disabled) {
   background: var(--vibe-primary-bg);
@@ -4552,16 +4629,54 @@ html[data-vibe='dopamine'] .composer .send:not(.stop):not(:disabled) {
   animation: vibe-send-ready 240ms cubic-bezier(0.22, 1.35, 0.36, 1);
 }
 
+/* チャット入力欄のアクティブ（入力中）演出: 稼働中カード同様の青緑系テーマカラー外枠オーロラ */
+html[data-vibe='dopamine'] .composer {
+  position: relative;
+  isolation: isolate;
+}
+
+html[data-vibe='dopamine'] .composer:focus-within::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 1.5px 0 0;
+  pointer-events: none;
+  z-index: 2;
+  background: conic-gradient(
+    from var(--vibe-orbit),
+    rgba(45, 212, 191, 0.35) 0deg,
+    rgba(34, 211, 238, 0.95) 85deg,
+    rgba(94, 234, 212, 0.9) 160deg,
+    rgba(45, 212, 191, 0.35) 260deg,
+    rgba(45, 212, 191, 0.35) 360deg
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  animation: vibe-orbit-spin 4s linear infinite;
+}
+
 html[data-vibe='dopamine'] .composer:focus-within {
-  box-shadow: inset 0 2px 0 var(--vibe-border);
+  box-shadow: 0 -4px 18px rgba(45, 212, 191, 0.16);
 }
 
 html[data-vibe='dopamine'] .composer textarea:focus {
-  border-color: var(--vibe-border-gold);
-  box-shadow: 0 0 0 1px var(--vibe-border), 0 0 14px rgba(34, 211, 238, 0.22);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 14px rgba(45, 212, 191, 0.28);
+}
+
+html[data-vibe='dopamine'] .seed-seg-btn:not(.on):not(:disabled),
+html[data-vibe='dopamine'] .receipt-btn:not(.primary):not(:disabled),
+html[data-vibe='dopamine'] .spec-banner-btn.ghost:not(:disabled),
+html[data-vibe='dopamine'] .job-bar-btn:not(:disabled) {
+  background: var(--vibe-btn-bg);
+  border-color: var(--vibe-border);
+  box-shadow: inset 0 1px 0 var(--vibe-hi), 0 3px 0 var(--vibe-bevel);
 }
 
 html[data-vibe='dopamine'] .chip.on,
+html[data-vibe='dopamine'] .seed-seg-btn.on,
 html[data-vibe='dopamine'] .prof-chip.on,
 html[data-vibe='dopamine'] .snippet-chip.trigger {
   border-color: var(--vibe-border-gold);
@@ -4801,12 +4916,38 @@ html[data-vibe='dopamine'] .ak-empty-card::after {
   }
 }
 
-/* Serotonin: 現行 V4 と完全同等（演出・パルスを出さない） */
+/* Serotonin: 現行 V4 と完全同等（不要なグラデーション・演出・パルスを出さない） */
+html[data-vibe='serotonin'] {
+  --user-bubble: #0d5a57;
+  --accent-grad: #0f7d76;
+  --danger-grad: #b91c1c;
+}
+
+html[data-vibe='serotonin'][data-theme='light'] {
+  --user-bubble: #0f766e;
+  --accent-grad: #0d9488;
+  --danger-grad: #dc2626;
+}
+
 html[data-vibe='serotonin'] .fx-layer,
 html[data-vibe='serotonin'] .fx-combo-pill,
-html[data-vibe='serotonin'] .fx-allclear-card,
-html[data-vibe='serotonin'] .working-edge-bar {
+html[data-vibe='serotonin'] .fx-allclear-card {
   display: none;
+}
+
+html[data-vibe='dopamine'] .vibe-chip.on {
+  animation: fx-vibe-charge 480ms cubic-bezier(0.22, 1.24, 0.36, 1);
+}
+
+@keyframes fx-vibe-charge {
+  0% {
+    box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.7), 0 0 18px rgba(34, 211, 238, 0.65);
+    filter: brightness(1.25);
+  }
+  100% {
+    box-shadow: var(--vibe-shadow);
+    filter: brightness(1);
+  }
 }
 
 /* 端末が「視差効果を減らす」設定なら、Dopamine でもアニメーションは止める */
@@ -4814,6 +4955,10 @@ html[data-vibe='serotonin'] .working-edge-bar {
   .fx-particle,
   .fx-combo-pill,
   .fx-allclear-card,
+  .fx-scan-sweep,
+  html[data-vibe='dopamine'] .pane-host:not(.is-hidden),
+  html[data-vibe='dopamine'] .vibe-chip.on,
+  html[data-vibe='dopamine'] details.history-row[open] > .history-body,
   html[data-vibe='dopamine'] .btn.fast-track,
   html[data-vibe='dopamine'] .thinking-card,
   html[data-vibe='dopamine'] .thinking-card::before,
@@ -4821,7 +4966,6 @@ html[data-vibe='serotonin'] .working-edge-bar {
   html[data-vibe='dopamine'] .chat-live-card.running,
   html[data-vibe='dopamine'] .chat-live-card.running::before,
   html[data-vibe='dopamine'] .chat-live-card.running::after,
-  html[data-vibe='dopamine'] .working-edge-bar::before,
   html[data-vibe='dopamine'] .vibe-settle-flash,
   html[data-vibe='dopamine'] .fx-sakuga-pop,
   html[data-vibe='dopamine'] .btn.primary.fx-sakuga-pop,
@@ -4840,9 +4984,13 @@ html[data-vibe='serotonin'] .working-edge-bar {
   html[data-vibe='dopamine'] .live-dot,
   html[data-vibe='dopamine'] .nav-dot.running,
   html[data-vibe='dopamine'] .nav-dot.done,
+  html[data-vibe='dopamine'] .row-dot.running,
+  html[data-vibe='dopamine'] .row-dot.done,
   html[data-vibe='dopamine'] .nav-badge,
   html[data-vibe='dopamine'] .drawer-btn-badge,
+  html[data-vibe='dopamine'] .composer:focus-within::before,
   html[data-vibe='dopamine'] .composer .send:not(.stop):not(:disabled),
+  html[data-vibe='dopamine'] .fx-sakuga-lite,
   html[data-vibe='dopamine'] .chat-jump-bottom.active,
   html[data-vibe='dopamine'] .ak-allclear::after,
   html[data-vibe='dopamine'] .ak-empty-card::after {
@@ -5097,7 +5245,13 @@ html[data-vibe='serotonin'] .spec-receipt-btn {
   gap: 8px;
   padding: 0 2px 6px;
   min-width: 0;
-  flex-wrap: wrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.seed-entry::-webkit-scrollbar {
+  display: none;
 }
 
 /* --- 🎙️ Spec Seed シート（SPEC V5 §3.3 ① / D26①） --------------------------
@@ -5798,6 +5952,22 @@ details.history-row > .history-body {
   min-width: 0;
 }
 
+html[data-vibe='dopamine'] details.history-row[open] > .history-body {
+  transform-origin: top center;
+  animation: hm-history-open 200ms cubic-bezier(0.22, 1.24, 0.36, 1);
+}
+
+@keyframes hm-history-open {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scaleY(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scaleY(1);
+  }
+}
+
 .history-head {
   display: flex;
   align-items: center;
@@ -6004,4 +6174,370 @@ details.history-row > .history-body {
 .spec-banner-btn.ghost {
   background: transparent;
   color: var(--accent);
+}
+
+/* ===========================================================================
+ * Google Keep 風メモ・ひらめき＆定期レポート受信箱（MemosPane）＆バブルメニュー
+ * ========================================================================= */
+
+.memos-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 10px;
+  margin-bottom: 10px;
+}
+
+.memos-header-titles {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.memos-header-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.memos-header-sub {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.35;
+  margin-top: 2px;
+}
+
+.memos-header-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.memos-header-actions .btn,
+.memos-new-btn {
+  width: auto;
+  flex: none;
+  padding: 7px 12px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.memos-quick-bar,
+.memos-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.memos-quick-bar .btn {
+  flex: 0 0 auto;
+  width: auto;
+  padding: 8px 14px;
+  white-space: nowrap;
+}
+
+.memo-check-add-row .btn {
+  flex: 0 0 auto;
+  width: auto;
+  padding: 8px 12px;
+  white-space: nowrap;
+}
+
+.memos-quick-input,
+.memos-search-input,
+.memo-input,
+.memo-textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  padding: 8px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.memos-quick-input:focus,
+.memos-search-input:focus,
+.memo-input:focus,
+.memo-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.memos-filter-chips {
+  padding: 0 0 8px;
+}
+
+.memos-inbox-box {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+}
+
+.memos-inbox-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.memos-inbox-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.memos-inbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.memos-inbox-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.memos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(165px, 1fr));
+  gap: 10px;
+}
+
+.memo-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.memo-card.color-teal {
+  border-color: rgba(45, 212, 191, 0.48);
+  background: rgba(45, 212, 191, 0.08);
+}
+
+.memo-card.color-amber {
+  border-color: rgba(245, 158, 11, 0.48);
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.memo-card.color-violet {
+  border-color: rgba(167, 139, 250, 0.48);
+  background: rgba(167, 139, 250, 0.08);
+}
+
+.memo-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.memo-card-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.memo-pin-btn {
+  flex: none;
+  border: none;
+  background: none;
+  padding: 2px 4px;
+  opacity: 0.4;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.memo-pin-btn.on {
+  opacity: 1;
+}
+
+.memo-card-body {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.memo-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.memo-check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  text-align: left;
+  border: none;
+  background: none;
+  padding: 2px 0;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.memo-check-row.done {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.memo-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.memo-tag {
+  font-size: 10.5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+}
+
+.memo-source-meta {
+  font-size: 10.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memo-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+.memo-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.memo-field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.memo-editor-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.memo-editor-check-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.memo-editor-check-item > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.memo-editor-check-item > span.done {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.memo-check-add-row,
+.memo-color-row,
+.memo-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.memo-color-row {
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.memo-editor-actions > .btn {
+  flex: 1 1 0;
+}
+
+/* チャットバブルのコンテキストメニューボタン（本文選択を邪魔しない独立ボタン） */
+.bubble {
+  position: relative;
+}
+
+.bubble-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  float: right;
+  margin: 2px -4px -2px 6px;
+  width: 24px;
+  height: 22px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.55;
+  cursor: pointer;
+}
+
+.bubble-menu-btn:active {
+  opacity: 1;
+}
+
+.bubble-menu-preview {
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Dark ⇄ Light テーマ切替の円形イリス展開（View Transitions API） */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+::view-transition-new(root) {
+  z-index: 9998;
 }

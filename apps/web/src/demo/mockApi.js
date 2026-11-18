@@ -425,6 +425,38 @@ export function createArchitectState(now = Date.now()) {
         reviewTitle: '[DEMO-1] Interactive demo — three design decisions',
       },
     ],
+    memos: [
+      {
+        id: 'm_demo_1',
+        title: 'Quick idea: Voice brainstorm flow',
+        body: 'Expand one-line ideas into checklists before turning them into a full Spec Seed.',
+        tags: ['idea', 'ux'],
+        pinned: true,
+        color: 'teal',
+        kind: 'note',
+        checklist: [
+          { id: 'c1', text: 'Capture one-line spark', done: true },
+          { id: 'c2', text: 'Run brainstorm checklist', done: false },
+          { id: 'c3', text: 'Promote to Spec Seed', done: false },
+        ],
+        source: null,
+        createdAt: new Date(now - 30 * MIN).toISOString(),
+        updatedAt: new Date(now - 10 * MIN).toISOString(),
+      },
+      {
+        id: 'm_demo_2',
+        title: 'Daily Pipeline Digest',
+        body: '3 batches completed cleanly on mobile board. Zero OAuth boundary violations.',
+        tags: ['report', 'digest'],
+        pinned: false,
+        color: 'amber',
+        kind: 'report',
+        checklist: [],
+        source: { board: DEMO_BOARD, repo: 'hermes-pilot-demo' },
+        createdAt: new Date(now - 2 * 60 * MIN).toISOString(),
+        updatedAt: new Date(now - 2 * 60 * MIN).toISOString(),
+      },
+    ],
   }
 }
 
@@ -718,6 +750,8 @@ export function demoRoute(path) {
   if (p === '/api/snippets' || p === '/api/snippets/term') {
     return { name: 'snippets', kind: p.endsWith('/term') ? 'term' : 'chat', params }
   }
+  if (p === '/api/memos') return { name: 'memos.list', params }
+  if (parts[1] === 'memos' && parts[2]) return { name: 'memos.item', id: decodeURIComponent(parts[2]), params }
   if (p === '/api/repos') return { name: 'repos', params }
   if (p === '/api/telemetry/receipt') return { name: 'receipt', params }
   if (p.startsWith('/api/auth/')) return { name: 'auth', params }
@@ -1861,6 +1895,46 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
         hotLimit: 8,
         lang,
       }
+    }
+    case 'memos.list': {
+      if (method === 'POST') {
+        const nowIso = new Date().toISOString()
+        const memo = {
+          id: `m_${Math.random().toString(16).slice(2, 10)}`,
+          title: String(payload?.title ?? '').trim(),
+          body: String(payload?.body ?? '').trim(),
+          tags: Array.isArray(payload?.tags) ? payload.tags.map((x) => String(x).replace(/^#+/, '').trim()).filter(Boolean) : [],
+          pinned: Boolean(payload?.pinned),
+          color: payload?.color || 'default',
+          kind: payload?.kind || 'note',
+          checklist: Array.isArray(payload?.checklist) ? payload.checklist : [],
+          source: payload?.source || null,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        }
+        state.memos = [memo, ...(state.memos || [])]
+        return { ok: true, memo }
+      }
+      const sorted = [...(state.memos || [])].sort((a, b) => {
+        if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1
+        return String(b.updatedAt ?? '').localeCompare(String(a.updatedAt ?? ''))
+      })
+      return { ok: true, memos: sorted }
+    }
+    case 'memos.item': {
+      const list = state.memos || []
+      const idx = list.findIndex((m) => m.id === route.id)
+      if (idx === -1) return { ok: false, error: 'MEMO_NOT_FOUND' }
+      if (method === 'DELETE') {
+        state.memos = list.filter((m) => m.id !== route.id)
+        return { ok: true, id: route.id }
+      }
+      if (method === 'PATCH') {
+        const updated = { ...list[idx], ...(payload || {}), updatedAt: new Date().toISOString() }
+        list[idx] = updated
+        return { ok: true, memo: updated }
+      }
+      return { ok: true, memo: list[idx] }
     }
     case 'repos':
       return { repos: [{ id: 'hermes-pilot-demo', label: 'hermes-pilot (demo)', path: '/demo/hermes-pilot', board: DEMO_BOARD }] }

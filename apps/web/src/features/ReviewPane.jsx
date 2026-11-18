@@ -692,12 +692,35 @@ function downscaleFile(file) {
   })
 }
 
+/** 「＋ 注釈」シートを開く前から候補と対象リポジトリを先読みしておくキャッシュ。 */
+let cachedAnnoLibrary = null
+let cachedAnnoTargets = null
+
+function prefetchAnnotationData() {
+  return Promise.allSettled([
+    api('/api/review/library?limit=36').then((r) => {
+      cachedAnnoLibrary = r.items || []
+      return cachedAnnoLibrary
+    }),
+    api('/api/review/targets').then((r) => {
+      cachedAnnoTargets = r.targets || []
+      return cachedAnnoTargets
+    }),
+  ])
+}
+
 /** 「＋ 注釈」: 端末の画像 / library・直近スクショ から注釈タスクを作る。 */
 function NewAnnotationSheet({ onCreated, onClose, notify, initialTarget = '' }) {
   const { t } = useI18n()
-  const [items, setItems] = useState(null)
-  const [targets, setTargets] = useState([])
-  const [target, setTarget] = useState('')
+  const [items, setItems] = useState(() => cachedAnnoLibrary)
+  const [targets, setTargets] = useState(() => cachedAnnoTargets || [])
+  const [target, setTarget] = useState(() => {
+    const list = cachedAnnoTargets || []
+    const hit = initialTarget
+      ? list.find((x) => x.path.toLowerCase() === String(initialTarget).toLowerCase())
+      : null
+    return hit?.path || list[0]?.path || ''
+  })
   const [repoOnly, setRepoOnly] = useState(Boolean(initialTarget))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
@@ -705,15 +728,23 @@ function NewAnnotationSheet({ onCreated, onClose, notify, initialTarget = '' }) 
   const fileRef = React.useRef(null)
 
   useEffect(() => {
+    let alive = true
     api('/api/review/library?limit=36')
-      .then((r) => setItems(r.items || []))
+      .then((r) => {
+        const list = r.items || []
+        cachedAnnoLibrary = list
+        if (alive) setItems(list)
+      })
       .catch((e) => {
-        setItems([])
+        if (!alive) return
+        if (!cachedAnnoLibrary) setItems([])
         setError(e?.message || t('review.listFailed'))
       })
     api('/api/review/targets')
       .then((r) => {
         const list = r.targets || []
+        cachedAnnoTargets = list
+        if (!alive) return
         setTargets(list)
         const hit = initialTarget
           ? list.find((x) => x.path.toLowerCase() === String(initialTarget).toLowerCase())
@@ -721,7 +752,12 @@ function NewAnnotationSheet({ onCreated, onClose, notify, initialTarget = '' }) 
         // 既定は指定リポジトリまたは hermes-mobile-pwa（サーバ側で先頭に並ぶ）
         setTarget((prev) => prev || hit?.path || list[0]?.path || '')
       })
-      .catch(() => setTargets([]))
+      .catch(() => {
+        if (alive && !cachedAnnoTargets) setTargets([])
+      })
+    return () => {
+      alive = false
+    }
   }, [initialTarget])
 
   async function create(body) {
@@ -885,7 +921,7 @@ function NewAnnotationSheet({ onCreated, onClose, notify, initialTarget = '' }) 
   )
 }
 
-export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
+export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, active = true }) {
   const { t } = useI18n()
   const [state, setState] = useState({ loading: true, items: [], error: null })
   const [tab, setTab] = useState('waiting')
@@ -919,6 +955,8 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
       } catch {
         /* noop */
       }
+      // 「注釈を作る」シートを開いた瞬間に段階的読み込みにならないよう先読みする
+      prefetchAnnotationData()
       return items
     } catch (e) {
       lastLoadOkRef.current = false
@@ -1042,10 +1080,11 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus }) {
   }, [notify])
 
   useEffect(() => {
+    if (!active) return undefined
     loadFeed()
     const id = setInterval(() => document.visibilityState === 'visible' && loadFeed(), 15000)
     return () => clearInterval(id)
-  }, [loadFeed])
+  }, [loadFeed, active])
 
   /**
    * 送信後（レビュー回答 Q2-B）: 閉じずに次の判断待ちを開く。
