@@ -1,7 +1,11 @@
 # SPEC: Hermes Agent 公式プラグインカタログ掲載対応 (`SPEC-CATALOG-ADMISSION`)
 
-- **状態**: 仕様確定（`NousResearch/hermes-agent#156102` レビュー指摘事項 #1〜#5 対応）
-- **対象 PR**: <https://github.com/NousResearch/hermes-agent/pull/156102>（レビュアー: `@teknium1`、対象基準コミット: `8c7d8d81`）
+- **状態**: 対応完了（`NousResearch/hermes-agent#156102` レビュー指摘事項 #1〜#5 を実装。`v0.2.0` として
+  npm 公開・Release 公開済み、PR には再レビュー依頼を投稿済み）
+- **対象 PR**: <https://github.com/NousResearch/hermes-agent/pull/156102>（レビュアー: `@teknium1`、
+  対象基準コミット: `5c82ba628ae715e5ae4d390940d5fd4c20612cac` / tag `v0.2.0`）
+  - npm: `hermes-pilot@0.2.0`（`latest`、`gitHead` も同 SHA）
+  - 旧ピン `8c7d8d81`（`v0.1.0`）は D55〜D59 実装前のため失効
 - **対象リポジトリ**: `hermes-mobile-pwa`（プラグイン名: `hermes-pilot` / `Hermes Pilot`）
 - **全バッチ共通の完了条件**:
   - `npm run verify`（`npm test` + `check:pwa` + `check:oauth` + `build` + `audit:responsive`）が 0 fail であること
