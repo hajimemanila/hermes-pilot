@@ -40,6 +40,7 @@ import {
   optimizeHermesSoul,
 } from './pipeline-optimizer.js'
 import { createPairCodes } from './pair-codes.js'
+import { createMemosStore } from './memos.js'
 import { getCapabilities } from './capabilities.js'
 import { errorBody } from './api-errors.js'
 import { resolveLang } from './lang.js'
@@ -96,6 +97,7 @@ const cfg = loadConfig()
 const capabilities = getCapabilities()
 // ワンタイム・ペアリングコード（QR を短くするため。SPEC §8.2 の one-time token）
 const pairCodes = createPairCodes(cfg)
+const memos = createMemosStore(cfg.dataDir)
 const auth = createAuth(cfg, { pairCodes })
 const hermes = createHermesClient(cfg)
 const kanban = createKanban(cfg)
@@ -1294,6 +1296,39 @@ async function handleApi(req, res, url) {
       const saved = saveSnippetStore('term', body ?? {})
       auth.audit({ kind: 'term_snippets.save', count: saved.custom.length, overrides: Object.keys(saved.overrides).length })
       return sendJson(res, 200, snippetPayload('term', langOf(req, url)))
+    }
+  }
+
+  // --- メモ・ひらめき・受信箱 ----------------------------------------------
+  if (a === 'memos' && !b) {
+    if (req.method === 'GET') {
+      return sendJson(res, 200, { ok: true, memos: memos.list() })
+    }
+    if (req.method === 'POST') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendError(res, 429, 'RATE_LIMITED')
+      }
+      const body = await readJson(req)
+      const memo = memos.create(body ?? {})
+      auth.audit({ kind: 'memos.create', id: memo.id, memoKind: memo.kind })
+      return sendJson(res, 201, { ok: true, memo })
+    }
+  }
+  if (a === 'memos' && b && !c) {
+    if (req.method === 'PATCH') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendError(res, 429, 'RATE_LIMITED')
+      }
+      const body = await readJson(req)
+      const memo = memos.update(b, body ?? {})
+      return sendJson(res, 200, { ok: true, memo })
+    }
+    if (req.method === 'DELETE') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendError(res, 429, 'RATE_LIMITED')
+      }
+      const out = memos.remove(b)
+      return sendJson(res, 200, out)
     }
   }
 

@@ -100,6 +100,8 @@ export const ERROR_MESSAGES = {
   INVALID_JOB_ID: 'A job id is required',
   JOB_NOT_FOUND: 'The architect job was not found',
   WRITE_FAILED: 'Could not write the output',
+  MEMO_EMPTY: 'Note text or checklist is required',
+  MEMO_NOT_FOUND: 'Note not found',
 }
 
 /**
