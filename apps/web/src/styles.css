@@ -1072,8 +1072,8 @@ label.row-sub {
 }
 
 /* 面を塗る ::before は絶対配置なので、そのままだとアイコンより上に描かれる。
-   アイコン側を positioned にして上に載せる（`.nav-dot` は自分で absolute を持つ）。 */
-.icon-btn > *:not(.nav-dot) {
+   アイコン側を positioned にして上に載せる（`.nav-dot` / `.drawer-btn-badge` は自分で absolute を持つ）。 */
+.icon-btn > *:not(.nav-dot):not(.drawer-btn-badge) {
   position: relative;
 }
 
@@ -2681,8 +2681,9 @@ html[data-vibe='dopamine'] .row-mode.resumable {
    分からないので、件数は数字で出す（D16③）。 */
 .drawer-btn-badge {
   position: absolute;
-  top: -4px;
-  right: -4px;
+  top: 2px;
+  right: 2px;
+  z-index: 2;
   min-width: 16px;
   height: 16px;
   padding: 0 4px;

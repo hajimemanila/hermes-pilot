@@ -1551,7 +1551,7 @@ export function ChatPane({
           ...(repoRef.current?.path ? { cwd: repoRef.current.path } : {}),
         })
         target = r?.result?.session_id
-        setStoredSid(r?.result?.stored_session_id ?? null)
+        setStoredSid(r?.result?.stored_session_id ?? target ?? null)
         setStoredProfile(profile || DEFAULT_PROFILE)
         if (!target) return failed(t('chat.sessionCreateFailed'))
         writePendingRepo(globalThis.localStorage, null)

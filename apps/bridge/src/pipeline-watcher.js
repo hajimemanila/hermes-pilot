@@ -638,7 +638,7 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
     return out
   }
 
-  /** `state.db` から cwd 一致の最新通常セッションを 1 件返す。 */
+  /** `state.db` から cwd 一致の最新通常セッション `{ id, at }` を 1 件返す。 */
   function latestSessionForCwd(dbPath, workdir) {
     let db
     try {
@@ -649,7 +649,7 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
     const want = normalizePath(workdir)
     try {
       const sql = (order) =>
-        `SELECT id, cwd FROM sessions
+        `SELECT id, cwd, ${order} AS ts FROM sessions
           WHERE cwd IS NOT NULL AND id NOT LIKE 'local-%'
           ORDER BY ${order} DESC LIMIT 300`
       let rows = []
@@ -659,7 +659,9 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
         rows = db.prepare(sql('started_at')).all()
       }
       for (const r of rows) {
-        if (normalizePath(r.cwd) === want) return String(r.id)
+        if (normalizePath(r.cwd) === want) {
+          return { id: String(r.id), at: Number(r.ts) || 0 }
+        }
       }
       return null
     } catch {
@@ -734,10 +736,12 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
     if (CHAT_ID_RE.test(origin)) return origin
     const workdir = boardWorkdir(group.board)
     if (workdir) {
+      let best = null
       for (const dbPath of stateDbs()) {
-        const id = latestSessionForCwd(dbPath, workdir)
-        if (id) return id
+        const hit = latestSessionForCwd(dbPath, workdir)
+        if (hit && (!best || hit.at > best.at)) best = hit
       }
+      if (best) return best.id
     }
     return '__latest__'
   }

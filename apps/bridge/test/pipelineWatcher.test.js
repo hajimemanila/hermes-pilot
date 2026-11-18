@@ -369,6 +369,28 @@ test('⑦ 宛先は state.db の cwd 一致 → 見つからなければ __lates
   await b.w.tick()
   const rowB = readJsonl(path.join(envB.reviewDir, 'chat-reports.jsonl'))[0]
   assert.equal(rowB.session_id, '__latest__')
+
+  // (c) default より他プロファイル (mobile 等) のセッションが新しければ、古い default に吸い込まれない
+  const envC = tempEnv()
+  const mobileDb = path.join(envC.root, 'mobile-state.db')
+  const dbDef = new DatabaseSync(envC.stateDb)
+  dbDef
+    .prepare('INSERT INTO sessions (id,cwd,started_at,last_activity_at) VALUES (?,?,?,?)')
+    .run('ses_old_default', envC.repoPath, 1000, 1000)
+  dbDef.close()
+  const dbMob = new DatabaseSync(mobileDb)
+  dbMob.exec('CREATE TABLE sessions (id TEXT PRIMARY KEY, cwd TEXT, started_at REAL, last_activity_at REAL)')
+  dbMob
+    .prepare('INSERT INTO sessions (id,cwd,started_at,last_activity_at) VALUES (?,?,?,?)')
+    .run('ses_new_mobile', envC.repoPath, 5000, 5000)
+  dbMob.close()
+  addTask(envC.dbPath, { id: 't_c3', title: 'mobile起票', body: '本文だけ', status: 'ready' })
+  const c = makeWatcher(envC, { stateDbs: [envC.stateDb, mobileDb] })
+  await c.w.tick()
+  setStatus(envC.dbPath, 't_c3', 'done', { completedAt: Math.floor(CLOCK / 1000), result: 'ok' })
+  await c.w.tick()
+  const rowC = readJsonl(path.join(envC.reviewDir, 'chat-reports.jsonl'))[0]
+  assert.equal(rowC.session_id, 'ses_new_mobile', '全プロファイルの state.db を比較して最新時刻のセッションを選ぶ')
 })
 
 test('⑧ review/feed.jsonl を汚さない（既存行はそのまま）', async () => {
