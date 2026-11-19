@@ -1357,13 +1357,13 @@ label.row-sub {
   animation: hm-working-pulse 1.5s ease-in-out infinite;
 }
 
+/* 色（背景の --accent）は動かさず、外側リングだけを明滅させる。
+   要素全体を薄くする指定は暗い面で黒く見えるため置かない（SPEC-ver-0-2-1 §2.1）。 */
 @keyframes hm-working-pulse {
   0%, 100% {
-    opacity: 1;
     box-shadow: 0 0 0 0 rgba(45, 212, 191, 0.55);
   }
   50% {
-    opacity: 0.45;
     box-shadow: 0 0 0 5px rgba(45, 212, 191, 0);
   }
 }

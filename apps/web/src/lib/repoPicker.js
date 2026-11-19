@@ -24,6 +24,12 @@ export const BOARD_KEY = 'hm.board'
 /** 送信前の「新しい会話で選んだリポジトリ」（1通目送信・既存会話resumeまでのリロード復元用）。 */
 export const PENDING_REPO_KEY = 'hm.pendingRepo'
 
+/**
+ * 直近に注釈を付けた対象リポジトリ（SPEC-ver-0-2-1 §2.1）。
+ * 注釈シートを開くたびに対象が空へ戻る不具合を、この 1 キーで止める。
+ */
+export const REVIEW_REPO_KEY = 'hm.reviewRepo'
+
 /** 履歴に残す件数。 */
 export const RECENT_MAX = 6
 
@@ -118,6 +124,46 @@ export function pinnedRepos(repos = [], recent = [], limit = PINNED_ROWS) {
 /** リポジトリ名の表示（長すぎる id を切らない。CSS 側で省略する）。 */
 export function repoLabel(repo) {
   return String(repo?.label ?? repo?.id ?? '')
+}
+
+/**
+ * 注釈の対象リポジトリの初期値（`hm.reviewRepo` → `hm.repo` → `''`）。
+ *
+ * `hm.reviewRepo` は「最後に注釈を付けた対象」、`hm.repo` は「最後に会話で選んだリポジトリ」。
+ * 注釈をまだ一度も作っていない端末では会話側の選択に落ちるので、初回から空にならない。
+ *
+ * @param {{getItem: Function}} [storage] 端末ストレージ
+ * @returns {string} repo id（無ければ空文字）
+ */
+export function readReviewRepo(storage = globalThis.localStorage) {
+  try {
+    const own = storage?.getItem(REVIEW_REPO_KEY)
+    if (own) return String(own)
+    const fallback = storage?.getItem(REPO_KEY)
+    return fallback ? String(fallback) : ''
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * 注釈の対象リポジトリを覚える（次に注釈シートを開いたときの初期値）。
+ *
+ * `hm.repo`（会話側の選択）は書き換えない。会話の既定リポジトリを注釈が乗っ取らないため。
+ *
+ * @param {{setItem: Function}} [storage] 端末ストレージ
+ * @param {string} id 確定した対象リポジトリの id
+ * @returns {string} 保存した id（保存できなければ空文字）
+ */
+export function rememberReviewRepo(storage = globalThis.localStorage, id = '') {
+  const value = String(id ?? '')
+  if (!storage || !value) return ''
+  try {
+    storage.setItem(REVIEW_REPO_KEY, value)
+    return value
+  } catch {
+    return ''
+  }
 }
 
 /**

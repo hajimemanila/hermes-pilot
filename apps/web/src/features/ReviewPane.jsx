@@ -6,6 +6,7 @@ import { Icon, Loader, RefreshButton, Sheet, Spinner, fmtTime, relTime } from '.
 import { haptic } from '../lib/haptic.js'
 import { celebrate } from '../lib/vibe.js'
 import { readActiveChatId } from '../lib/chatReports.js'
+import { readReviewRepo, rememberReviewRepo } from '../lib/repoPicker.js'
 import { AnnotationEditor } from './AnnotationEditor.jsx'
 import { answerRows, capturedLabel, DONE_LIMIT, doneHint, extractRecommendedAnswers, groupItems, isWaiting, nextWaiting, repoLabel, shouldFetchSheetData, shouldShowModeChip, thumbCaption } from '../lib/reviewView.js'
 import { parsePastedReply } from '../lib/reviewPaste.js'
@@ -709,17 +710,34 @@ function prefetchAnnotationData() {
   ])
 }
 
+/**
+ * 注釈の対象を id か path で引く（SPEC-ver-0-2-1 §2.1・大小文字は無視）。
+ *
+ * 保存しているのは repo の **id**、`ReadOnlyDetail` から来るのは **path** なので、
+ * 片方だけ照合すると「シートを開くたび空に戻る」が再発する。規則は 1 箇所だけに置く。
+ *
+ * @param {Array<{id: string, path: string}>} list `/api/review/targets` の応答
+ * @param {string|null|undefined} want id または path
+ * @returns {object|null} 一致した対象
+ */
+function findTarget(list, want) {
+  const w = String(want ?? '').trim().toLowerCase()
+  if (!w || !Array.isArray(list)) return null
+  return (
+    list.find((x) => String(x?.id ?? '').toLowerCase() === w) ??
+    list.find((x) => String(x?.path ?? '').toLowerCase() === w) ??
+    null
+  )
+}
+
 /** 「＋ 注釈」: 端末の画像 / library・直近スクショ から注釈タスクを作る。 */
 function NewAnnotationSheet({ onCreated, onClose, notify, initialTarget = '' }) {
   const { t } = useI18n()
   const [items, setItems] = useState(() => cachedAnnoLibrary)
   const [targets, setTargets] = useState(() => cachedAnnoTargets || [])
   const [target, setTarget] = useState(() => {
-    const list = cachedAnnoTargets || []
-    const hit = initialTarget
-      ? list.find((x) => x.path.toLowerCase() === String(initialTarget).toLowerCase())
-      : null
-    return hit?.path || list[0]?.path || ''
+    const hit = findTarget(cachedAnnoTargets, initialTarget)
+    return hit?.path || cachedAnnoTargets?.[0]?.path || ''
   })
   const [repoOnly, setRepoOnly] = useState(Boolean(initialTarget))
   const [busy, setBusy] = useState(false)
@@ -746,9 +764,7 @@ function NewAnnotationSheet({ onCreated, onClose, notify, initialTarget = '' }) 
         cachedAnnoTargets = list
         if (!alive) return
         setTargets(list)
-        const hit = initialTarget
-          ? list.find((x) => x.path.toLowerCase() === String(initialTarget).toLowerCase())
-          : null
+        const hit = findTarget(list, initialTarget)
         // 既定は指定リポジトリまたは hermes-mobile-pwa（サーバ側で先頭に並ぶ）
         setTarget((prev) => prev || hit?.path || list[0]?.path || '')
       })
@@ -768,6 +784,9 @@ function NewAnnotationSheet({ onCreated, onClose, notify, initialTarget = '' }) 
       const chat = readActiveChatId()
       const r = await api('/api/review/annotation/new', { method: 'POST', body: { ...body, chat } })
       if (!r?.ok) throw new Error(r?.message || t('review.createFailed'))
+      // 対象が確定したので覚える（次にシートを開いたとき同じリポジトリから始まる）
+      const chosen = findTarget(targets, body?.target)
+      if (chosen?.id) rememberReviewRepo(globalThis.localStorage, chosen.id)
       notify?.(t('review.createdAnno', { image: r.image }))
       onCreated?.(r)
     } catch (e) {
@@ -927,7 +946,8 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
   const [tab, setTab] = useState('waiting')
   const [open, setOpen] = useState(null)
   const [showNew, setShowNew] = useState(false)
-  const [newTarget, setNewTarget] = useState('')
+  // 直前に注釈を付けた対象から始める（空に戻ると毎回選び直しになる・SPEC-ver-0-2-1 §2.1）
+  const [newTarget, setNewTarget] = useState(() => readReviewRepo())
   const [data, setData] = useState(null)
   const [answer, setAnswer] = useState(null)
   const [dataError, setDataError] = useState(null)
@@ -1252,7 +1272,6 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
             type="button"
             onClick={() => {
               haptic('tap')
-              setNewTarget('')
               setShowNew(true)
             }}
           >
@@ -1391,6 +1410,8 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
           onClose={() => setShowNew(false)}
           onCreated={async (r) => {
             setShowNew(false)
+            // 記憶した対象を state にも反映（この画面は再マウントされない）
+            setNewTarget(readReviewRepo())
             await load()
             setOpen({ id: r.taskId, title: r.label, status: 'blocked', review: { mode: 'annotation', label: r.label } })
           }}
