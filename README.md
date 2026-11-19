@@ -98,6 +98,34 @@ curl -s -H "x-client: mobile" \
      "http://127.0.0.1:4097/api/telemetry/receipt?board=<board>&hours=24&t=$(cat ~/.hermes/plugin-data/hermes-pilot/token)"
 ```
 
+## Abstract roles and native delegation
+
+A batch is routed by **role**, not by model name. Four abstract roles cover the whole pipeline, and they are
+the only vocabulary the repo and the bundled skills use:
+
+- `role:planner` — design, spec authoring, impact analysis, hard root-cause work.
+- `role:builder` — implementation, test repair, builds, routine kanban work (the default).
+- `role:visual-reviewer` — screenshot / annotation reading and `390×844` / `820×1180` visual acceptance.
+- `role:decision-framer` — quick-review question design and trade-off framing.
+
+A batch may declare `- **Recommended Role**: \`role:planner\``; the bridge extracts it and adds the role
+guidance to the `[Hermes Pilot Execution Contract]` appended to the filed task. Specs without the line behave
+exactly as before.
+
+Delegation is **native** — Hermes's own `delegate_task` — and never an external AI CLI subprocess
+(`gemini -p`, `agy -p`, …); `npm run check:oauth` fails if a runtime file tries to spawn one. It is also
+**non-blocking**: if the delegated model errors, is rate-limited, times out or is not configured, the parent
+continues on its own model in the fallback order its profile declares, and the batch still finishes. A failed
+delegation never leaves a task stopped.
+
+**Where the models are named: not here.** The repository and the three bundled skills speak only abstract
+roles. The mapping (which role uses which model, in what fallback order) belongs to the operator and lives in
+the Hermes profile — `~/.hermes/SOUL.md` for the short always-read contract, the profile's own `SOUL.md` and
+memory for the concrete assignment table. That split is what keeps the plugin installable for anyone.
+`POST /api/pipeline/optimize` writes the marker block into `~/.hermes/SOUL.md` **and** every
+`~/.hermes/profiles/<name>/SOUL.md` it finds, idempotently and after a `.bak-<stamp>` backup;
+`GET /api/pipeline/status` reports which profiles are applied without returning any file content.
+
 ## Decision cockpit (v2)
 
 Five additions that shorten the loop from "the agent needs a decision" to "it is running again".
@@ -150,9 +178,11 @@ Every one of them is reachable from the phone and from the standard dashboard.
   keys can each be collapsed. The choice is per band and remembered, so a small phone keeps the composer and
   the keyboard from fighting for the same 390 px.
 - **1-tap environment optimisation** — *Settings → Optimise this Hermes* (`POST /api/pipeline/optimize`)
-  appends the A2B discipline section to `~/.hermes/SOUL.md` (idempotent — an existing section is never
-  duplicated) and places the three bundled skills into `~/.hermes/skills/`. `GET /api/pipeline/status` reports
-  what is already applied without returning any `SOUL.md` content.
+  appends the A2B discipline section to `~/.hermes/SOUL.md` and to each profile's
+  `~/.hermes/profiles/<name>/SOUL.md` (idempotent — an existing section is never duplicated, and a
+  `.bak-<stamp>` backup is taken first), then places the three bundled skills into `~/.hermes/skills/`.
+  `GET /api/pipeline/status` reports what is already applied, per profile, without returning any `SOUL.md`
+  content.
 - **Legacy cron cleanup** — `migrate` (and `init`) removes the old `mobile-akapen-watch` /
   `mobile-review-watch` cron entries, because the bridge's own watcher writes the completion feed now and two
   writers produced duplicate reports. Other cron entries and the store's top-level shape are untouched.

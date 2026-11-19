@@ -155,6 +155,29 @@ A2B は **2 つの正規ルート**だけを持ちます。どちらも外部 AI
 2. **`Hermes Native` 仕様策定（スマホ完結）** — `Spec Seed` → Quick Review → `docs/SPEC-*.md` → Launchpad。
    Hermes 自身の `hermes kanban create` で回すため規約上の問題がなく、外部プロセスはゼロ。
 
+### 抽象ロールと委譲・フォールバック（D60〜D65）
+
+バッチはモデル名ではなく**抽象ロール**で振り分けます。リポジトリ・同梱スキル・ブリッジが使う語彙は
+`role:planner`（設計・仕様策定・難所の原因究明）/ `role:builder`（実装・テスト修復・定型作業・既定）/
+`role:visual-reviewer`（スクショ差分・赤入れ読解・視覚検収）/ `role:decision-framer`（設問設計・
+トレードオフ整理）の 4 つだけで、特定モデル名はコードにもドキュメントにも書きません。
+
+- **バッチ宣言**: 各バッチに任意行 `- **Recommended Role**: \`role:builder\`` を書けます。ブリッジが
+  抽出し（`role:` 接頭辞なしも正規化）、起票タスク本文の `[Hermes Pilot Execution Contract]` に
+  ロール指針を 1〜2 行で注入します。未宣言の SPEC は従来どおり（後方互換）。
+- **委譲**: Hermes 標準の `delegate_task` のみ。外部 AI CLI の子プロセス（`gemini -p` / `agy -p` 等）は
+  起動しません。`npm run check:oauth` がランタイム側の `gemini` / `agy` 起動パターンを検出して失敗させます。
+- **フォールバック**: 委譲先がエラー・レート制限・タイムアウト・未設定のいずれでも停止せず、プロファイルが
+  宣言した順（次点 → 主モデル）へ落として完走します。委譲の失敗でタスクを `blocked` にしません。
+- **モデル割当の置き場所**: リポジトリではなく実機プロファイル。`~/.hermes/SOUL.md` は毎ターン読まれる
+  ためマーカー内を短く保ち（「抽象ロールに従いプロファイルメモリの割当表を参照」）、具体的な
+  ロール→モデル対応とフォールバック順は `~/.hermes/profiles/<name>/` 側の `SOUL.md`・メモリに置きます。
+- **プロファイル `SOUL.md` の同期**: `POST /api/pipeline/optimize` は `~/.hermes/SOUL.md` に加えて、
+  存在する `~/.hermes/profiles/<name>/SOUL.md` へもマーカーブロック（`<!-- hermes-pilot:a2b:start -->`〜
+  `end`）を冪等適用します（2 回適用しても 1 ブロック・タイムスタンプ付き `.bak-<stamp>` を事前退避）。
+  `GET /api/pipeline/status` は `profiles: [{ name, path, exists, applied, backups }]` を返し、
+  ファイル本文は決して返しません。
+
 | メソッド | パス | 用途 |
 |---|---|---|
 | GET | `/api/specs?repo=<id>\|board=<slug>` | リポジトリの `docs/SPEC-*.md` とバッチ一覧 |
@@ -166,8 +189,8 @@ A2B は **2 つの正規ルート**だけを持ちます。どちらも外部 AI
 | POST | `/api/architect/jobs/:id/dismiss` | ジョブ破棄を永続化（再取得しても進行バーに出ない） |
 | GET | `/api/architect/config` | 実行ランナー設定（`runner` は常に `hermes`） |
 | PUT | `/api/architect/config` | `{ runner }`。`hermes` 以外は **400 `INVALID_RUNNER`**（ランナーは `Hermes Native` 固定） |
-| GET | `/api/pipeline/status` | 環境最適化の適用状況（`SOUL.md` の中身は返さない） |
-| POST | `/api/pipeline/optimize` | `{ soul?, skills? }` … `SOUL.md` へ冪等追記＋3 スキル配置 |
+| GET | `/api/pipeline/status` | 環境最適化の適用状況（ルート＋プロファイル別。`SOUL.md` の中身は返さない） |
+| POST | `/api/pipeline/optimize` | `{ soul?, skills? }` … `SOUL.md`（ルート／プロファイル）へ冪等追記＋3 スキル配置 |
 | GET | `/api/telemetry/receipt?board=&spec=&hours=` | 完了レシート用の集計（コスト・キャッシュ率・節約見込・操作メトリクス）。欠損は `null` ＋ `missing` |
 
 ### カンバン・レビュー

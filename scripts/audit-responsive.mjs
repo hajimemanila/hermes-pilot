@@ -19,6 +19,9 @@
  * 受理済みのパターン（`tag.class1.class2`）を列挙し、**新しく増えたものだけ**落とす（ラチェット）。
  * 現行デザインには意図的に細いピル・チップ・リンクが多数あり、初日から全部赤にすると監査が
  * 読まれなくなるため。baseline から消えた項目（stale）も違反にするので、修正したら項目も消える。
+ * ただし `tap` は「新顔を落とす」ラチェットとして使い、baseline にあって今回測れなかった項目は
+ * `baseline-absent` / `baseline-stale` の**情報行**にする（ライブのデータ量で描画されない回があるため、
+ * そこを違反にすると verify がデータで揺れる）。整理は `--update-baseline` で行う。
  * 再生成は `--update-baseline`（差分をレビューすること）。
  *
  * 使い方:
@@ -305,7 +308,7 @@ async function waitFor(check, timeoutMs, stepMs = 100) {
  * @returns {object} 測定結果
  */
 async function measureInPage() {
-  const out = { doc: { scrollWidth: 0, clientWidth: 0 }, clip: [], tap: [], tabCount: 0 }
+  const out = { doc: { scrollWidth: 0, clientWidth: 0 }, clip: [], tap: [], tapPresent: [], tabCount: 0 }
   const de = document.documentElement
   out.doc.scrollWidth = de.scrollWidth
   out.doc.clientWidth = de.clientWidth
@@ -458,6 +461,10 @@ async function measureInPage() {
   }
 
   const tapSeen = new Map()
+  // 「この回に描画されていた」候補キー（サイズは問わない）。
+  // baseline の stale 判定に使う: **描画されていない**要素は「データが無くて測れない」だけなので
+  // 違反にせず、**描画されていて 44px 以上に直った**ものだけ stale（= ratified 済みの修正）とする。
+  const tapPresent = new Set()
   for (const el of document.querySelectorAll(
     'button, a[href], input:not([type=hidden]), select, textarea, summary, [role=button], [role=tab], [role=switch]',
   )) {
@@ -470,9 +477,10 @@ async function measureInPage() {
     // 実効のタップ対象は label なので、label の当たり判定で測る。
     const isToggle = el.tagName === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio')
     const target = (isToggle && el.closest('label')) || el
+    const key = clsKey(target)
+    if (tapPresent.size < 200) tapPresent.add(key)
     const hit = hitBox(target, target.getBoundingClientRect())
     if (hit.width >= 44 && hit.height >= 44) continue
-    const key = clsKey(target)
     if (tapSeen.has(key)) continue
     tapSeen.set(key, target)
   }
@@ -498,6 +506,7 @@ async function measureInPage() {
       const target = `${Math.round(hit.width)}x${Math.round(hit.height)}`
       return { key, detail: `${describe(el)} ${box}${target === box ? '' : ` (hit ${target})`}` }
     })
+  out.tapPresent = [...tapPresent]
   return out
 }
 
@@ -515,7 +524,7 @@ async function measureInPage() {
  *    44px 未満のタップ対象と文字切れの集約（key → 最初に見た詳細）
  * @returns {Promise<string[]>} `lang tab kind detail` 形式の違反行
  */
-async function auditCombo(cdp, sessionId, base, token, viewport, lang, tabs, noise, found) {
+async function auditCombo(cdp, sessionId, base, token, viewport, lang, tabs, noise, found, present) {
   const [w, h] = viewport.split('x').map(Number)
   const violations = []
   const errors = []
@@ -612,6 +621,7 @@ async function auditCombo(cdp, sessionId, base, token, viewport, lang, tabs, noi
         if (!found.tap.has(detail.key))
           found.tap.set(detail.key, { detail: detail.detail, where: `${viewport} ${lang} ${tab}` })
       }
+      for (const key of m.tapPresent ?? []) present.add(key)
       // 待つ間に増えた console/pageerror を集計（同じ文は 1 回だけ）
       for (const line of errors.slice(before)) noise.get(`${lang} ${tab}`).add(line)
       debug(`tab ${tab} done (t=${Date.now() - started}ms)`)
@@ -724,13 +734,14 @@ async function main() {
   const violations = []
   const noise = new Map()
   const found = { tap: new Map(), clip: new Map() }
+  const present = new Set()
   let combos = 0
   for (const viewport of args.viewports) {
     for (const lang of args.langs) {
       combos += 1
       debug(`combo ${viewport} ${lang}`)
       for (const tab of args.tabs) noise.set(`${lang} ${tab}`, new Set())
-      const rows = await auditCombo(cdp, sessionId, base, token, viewport, lang, args.tabs, noise, found)
+      const rows = await auditCombo(cdp, sessionId, base, token, viewport, lang, args.tabs, noise, found, present)
       for (const row of rows) violations.push(`${viewport} ${row}`)
     }
   }
@@ -741,6 +752,8 @@ async function main() {
 
   // タップ対象・文字切れは baseline と突き合わせる（新顔だけ落とす）
   const baseline = readBaseline()
+  /** この回に描画されなかった受理済み tap（データ依存。違反にせず情報行で出す）。 */
+  const absent = []
   if (args.updateBaseline) {
     const next = {
       _note: BASELINE_NOTE,
@@ -762,10 +775,24 @@ async function main() {
       if (!accepted.has(key)) violations.push(`- ${info.where} ${kind} ${info.detail} [key=${key}]`)
     }
     for (const key of accepted) {
-      if (!found[kind].has(key)) violations.push(`- baseline-stale ${kind} ${key}（もう測れないので baseline から消す）`)
+      if (found[kind].has(key)) continue
+      // `tap` の「もう測れない」は情報行にする（違反にしない）。受理リストは
+      // **新しく増えた小さいタップ対象を落とす**ためのラチェットで、ライブのデータ量で
+      // 描画されない回（メッセージ 0 件・レポート 0 件・バナー無しなど）まで赤にすると
+      // verify がデータで揺れる。整理したいときは `--update-baseline` で作り直す。
+      if (kind === 'tap') {
+        absent.push(
+          present.has(key)
+            ? `- baseline-stale tap ${key}（44px 以上に直った／この回は小さい実測が出ない。baseline から消してよい）`
+            : `- baseline-absent tap ${key}（この回は描画されず未測定。データ依存なので違反にしない）`,
+        )
+        continue
+      }
+      violations.push(`- baseline-stale ${kind} ${key}（もう測れないので baseline から消す）`)
     }
   }
   const acceptedCount = (baseline.tap?.length ?? 0) + (baseline.clip?.length ?? 0)
+  for (const line of absent) console.log(line)
 
   try {
     await cdp.send('Target.closeTarget', { targetId })

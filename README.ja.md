@@ -97,6 +97,33 @@ curl -s -H "x-client: mobile" \
      "http://127.0.0.1:4097/api/telemetry/receipt?board=<board>&hours=24&t=$(cat ~/.hermes/plugin-data/hermes-pilot/token)"
 ```
 
+## 抽象ロールとネイティブ委譲
+
+バッチを振り分けるのは**モデル名ではなくロール**です。パイプライン全体を 4 つの抽象ロールで覆い、
+リポジトリと同梱 3 スキルが使う語彙はこの 4 つだけです。
+
+- `role:planner` — 設計・仕様策定・影響分析・難所の原因究明。
+- `role:builder` — 実装・テスト修復・ビルド・定型のカンバン作業（既定）。
+- `role:visual-reviewer` — スクショ／赤入れ画像の読解と `390×844` / `820×1180` の視覚検収。
+- `role:decision-framer` — クイックレビューの設問設計とトレードオフ整理。
+
+バッチに `- **Recommended Role**: \`role:planner\`` と書けば、ブリッジがそれを抽出して起票タスク本文の
+`[Hermes Pilot Execution Contract]` にロール指針を注入します。書かない SPEC は従来どおりに動きます。
+
+委譲は**ネイティブ**（Hermes 自身の `delegate_task`）だけで、外部 AI CLI の子プロセス（`gemini -p` /
+`agy -p` など）は起動しません（`npm run check:oauth` がランタイム側の起動を検出すると失敗します）。
+しかも**止まりません**: 委譲先がエラー・レート制限・タイムアウト・未設定のいずれでも、親はプロファイルが
+宣言したフォールバック順で自分のモデルのまま続行し、バッチは最後まで完走します。委譲の失敗でタスクが
+止まったままになることはありません。
+
+**モデル名を書かない場所。** リポジトリと同梱 3 スキルは抽象ロールしか語りません。「どのロールをどの
+モデルに割り当て、失敗時にどこへ落とすか」の対応表は運用者のもので、Hermes プロファイル側（毎ターン読む
+短い契約は `~/.hermes/SOUL.md`、具体的な割当表はプロファイル自身の `SOUL.md` とメモリ）に置きます。この
+分離が、誰の環境にも入るプラグインでいるための条件です。`POST /api/pipeline/optimize` はマーカーブロックを
+`~/.hermes/SOUL.md` と、見つかった各 `~/.hermes/profiles/<name>/SOUL.md` へ冪等に書き込み（実行前に
+`.bak-<stamp>` を退避）、`GET /api/pipeline/status` はファイルの中身を返さずにプロファイルごとの適用状況
+だけを返します。
+
 ## 意思決定コックピット（v2）
 
 「エージェントが判断を待っている」から「また走り出した」までを最短にする 5 つ。スマホからも標準
@@ -145,8 +172,10 @@ curl -s -H "x-client: mobile" \
 - **スニペット帯トグル** — チャット入力欄の上、注釈ツールバー、端末キーのチップ帯はそれぞれ折りたためます。
   選択は帯ごとに記憶され、390px の画面で入力欄とキーボードが場所を取り合いません。
 - **1 タップ環境最適化** — *設定 → この Hermes を最適化*（`POST /api/pipeline/optimize`）が
-  `~/.hermes/SOUL.md` へ A2B の規律節を**冪等に**追記し、同梱 3 スキルを `~/.hermes/skills/` へ配置します。
-  `GET /api/pipeline/status` は適用済みかだけを返し、`SOUL.md` の中身は返しません。
+  `~/.hermes/SOUL.md` と各プロファイルの `~/.hermes/profiles/<name>/SOUL.md` へ A2B の規律節を**冪等に**
+  追記し（既存節は重複させず、実行前に `.bak-<stamp>` を退避）、同梱 3 スキルを `~/.hermes/skills/` へ
+  配置します。`GET /api/pipeline/status` はプロファイルごとの適用済み状況だけを返し、`SOUL.md` の中身は
+  返しません。
 - **旧 cron の自動片付け** — `migrate`（と `init`）は旧 `mobile-akapen-watch` / `mobile-review-watch` の
   cron を削除します。完了フィードはブリッジ内蔵の監視が書くようになり、2 者が書くと報告が二重になるためです。
   他の cron とストアのトップレベル構造は変更しません。
