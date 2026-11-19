@@ -3,9 +3,19 @@ import { api } from '../api.js'
 import { Icon, Loader, RefreshButton, Sheet } from '../components/Ui.jsx'
 import { useI18n } from '../i18n/index.js'
 import { haptic } from '../lib/haptic.js'
+import { draftSnapshot, hasDraftContent, isDraftDirty } from '../lib/memoDraft.js'
+import { memoMenuRows, showsCardButtons, showsListMenu } from '../lib/memoListMenu.js'
+import { checklistPreview, readMemosView, rememberMemosView } from '../lib/memoView.js'
 import { celebrate } from '../lib/vibe.js'
 
 const COLORS = ['default', 'teal', 'amber', 'violet']
+
+/** 表示切替セグメント（glyph は記号なので翻訳しない・読み上げは i18n）。 */
+const VIEW_OPTIONS = [
+  { view: 'one', glyph: '1', labelKey: 'notes.viewOne' },
+  { view: 'two', glyph: '2', labelKey: 'notes.viewTwo' },
+  { view: 'list', glyph: '☰', labelKey: 'notes.viewList' },
+]
 
 function parseTagsInput(raw) {
   return String(raw ?? '')
@@ -25,6 +35,15 @@ export function MemosPane({ notify, onOpenChat }) {
   const [editing, setEditing] = useState(null) // null | memo draft
   const [checkDraft, setCheckDraft] = useState('')
   const [saving, setSaving] = useState(false)
+  // 表示モードは端末保存（既定=二列・SPEC §2.2 / Q2=A）
+  const [view, setView] = useState(() => readMemosView(typeof localStorage === 'undefined' ? null : localStorage))
+  // リスト表示の `⋯` メニューを開いているメモ（null なら閉じている）
+  const [menuFor, setMenuFor] = useState(null)
+  // 開いた時点の下書きスナップショット（新規は null）と、閉じる前の 3 択の状態
+  const [baseline, setBaseline] = useState(null)
+  const [confirming, setConfirming] = useState(false)
+  // 「戻る」でシートの履歴を積み直すための番号（Sheet の historyKey）
+  const [sheetArm, setSheetArm] = useState(0)
 
   const loadAll = useCallback(async () => {
     try {
@@ -164,8 +183,9 @@ export function MemosPane({ notify, onOpenChat }) {
   const openEditor = (memo = null) => {
     haptic('tap')
     setCheckDraft('')
+    setConfirming(false)
     if (memo) {
-      setEditing({
+      const draft = {
         id: memo.id,
         title: memo.title || '',
         body: memo.body || '',
@@ -174,7 +194,9 @@ export function MemosPane({ notify, onOpenChat }) {
         color: memo.color || 'default',
         kind: memo.kind || 'note',
         checklist: [...(memo.checklist || [])],
-      })
+      }
+      setEditing(draft)
+      setBaseline(draftSnapshot(draft))
     } else {
       setEditing({
         id: null,
@@ -186,15 +208,19 @@ export function MemosPane({ notify, onOpenChat }) {
         kind: 'note',
         checklist: [],
       })
+      // 新規は保存済みの基準が無い（中身が 1 つでも入ったら未保存の変更とみなす）
+      setBaseline(null)
     }
   }
 
   const submitEditor = async () => {
-    if (!editing || saving) return
+    if (!editing || saving) return false
     const tags = parseTagsInput(editing.tagsText)
-    if (!editing.title.trim() && !editing.body.trim() && !editing.checklist.length) return
+    // 新規は中身が空なら保存しない（既存は本文を空にできる＝変更を保存できる）
+    if (!editing.id && !hasDraftContent(editing)) return false
     setSaving(true)
     try {
+      let saved = false
       if (editing.id) {
         const res = await api(`/api/memos/${encodeURIComponent(editing.id)}`, {
           method: 'PATCH',
@@ -211,6 +237,7 @@ export function MemosPane({ notify, onOpenChat }) {
           loadAll()
           celebrate('approve')
           notify?.(t('notes.saved'))
+          saved = true
         }
       } else {
         const res = await api('/api/memos', {
@@ -229,14 +256,55 @@ export function MemosPane({ notify, onOpenChat }) {
           loadAll()
           celebrate('approve')
           notify?.(t('notes.saved'))
+          saved = true
         }
       }
-      setEditing(null)
+      if (saved) {
+        setConfirming(false)
+        setBaseline(null)
+        setEditing(null)
+      }
+      return saved
     } catch (e) {
       notify?.(e?.message || 'Error')
+      return false
     } finally {
       setSaving(false)
     }
+  }
+
+  /** シートを閉じる唯一の入口（背景タップ・✕・端末の戻る）。未保存のときだけ 3 択。 */
+  const requestClose = useCallback(() => {
+    if (saving) return
+    if (!isDraftDirty(editing, baseline)) {
+      setConfirming(false)
+      setEditing(null)
+      return
+    }
+    haptic('tap')
+    setConfirming(true)
+  }, [editing, baseline, saving])
+
+  /** 「保存する」— 保存できたら閉じる。失敗時は入力を持ったまま編集へ戻す。 */
+  const saveAndClose = async () => {
+    setConfirming(false)
+    await submitEditor()
+  }
+
+  /** 「破棄する」— 下書きを捨てて閉じる（カードは保存済みの内容に戻る）。 */
+  const discardAndClose = () => {
+    haptic('tap')
+    setConfirming(false)
+    setCheckDraft('')
+    setBaseline(null)
+    setEditing(null)
+  }
+
+  /** 「戻る」— 入力を持ったまま編集画面へ戻る。戻るキーで消費した履歴を積み直す。 */
+  const keepEditing = () => {
+    haptic('tap')
+    setConfirming(false)
+    setSheetArm((n) => n + 1)
   }
 
   const deleteEditing = async () => {
@@ -245,6 +313,8 @@ export function MemosPane({ notify, onOpenChat }) {
     try {
       await api(`/api/memos/${encodeURIComponent(editing.id)}`, { method: 'DELETE' })
       setMemos((prev) => prev.filter((m) => m.id !== editing.id))
+      setConfirming(false)
+      setBaseline(null)
       setEditing(null)
       notify?.(t('notes.deleted'))
     } catch (e) {
@@ -273,6 +343,34 @@ export function MemosPane({ notify, onOpenChat }) {
       .join('\n')
       .trim()
     window.dispatchEvent(new CustomEvent('hm:open-seed', { detail: { seed, repo: memo.source?.repo, board: memo.source?.board } }))
+  }
+
+  /**
+   * リスト表示の `⋯` メニューから 1 行を実行する（シートは先に閉じる）。
+   * @param {string} action `pin` / `brainstorm` / `seed` / `chat`
+   * @param {object} memo
+   */
+  const runMenuAction = (action, memo) => {
+    setMenuFor(null)
+    if (!memo) return
+    if (action === 'pin') togglePin(memo)
+    else if (action === 'brainstorm') sendToBrainstorm(memo)
+    else if (action === 'seed') sendToSeed(memo)
+    else if (action === 'chat' && memo.source?.chatId) {
+      haptic('tap')
+      onOpenChat?.(memo.source.chatId)
+    }
+  }
+
+  /** 表示モードを切り替えて端末へ保存する。 */
+  const changeView = (next) => {
+    haptic('tap')
+    setView(next)
+    try {
+      rememberMemosView(window.localStorage, next)
+    } catch {
+      // 端末保存が使えない環境ではその場の表示だけ切り替える
+    }
   }
 
   const unreadReports = useMemo(
@@ -319,7 +417,7 @@ export function MemosPane({ notify, onOpenChat }) {
         </button>
       </div>
 
-      {/* 検索バー */}
+      {/* 検索バー（右端に 1 / 2 / ☰ の表示切替・Q2=A） */}
       <div className="memos-search-row">
         <input
           type="search"
@@ -328,6 +426,21 @@ export function MemosPane({ notify, onOpenChat }) {
           placeholder={t('notes.searchPlaceholder')}
           onChange={(e) => setQuery(e.target.value)}
         />
+        <div className="memos-view-seg" role="group" aria-label={t('notes.viewGroupAria')}>
+          {VIEW_OPTIONS.map((opt) => (
+            <button
+              key={opt.view}
+              type="button"
+              className={`memos-view-btn${view === opt.view ? ' on' : ''}`}
+              aria-pressed={view === opt.view}
+              aria-label={t(opt.labelKey)}
+              title={t(opt.labelKey)}
+              onClick={() => changeView(opt.view)}
+            >
+              {opt.glyph}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* タグ・種別フィルタ */}
@@ -380,10 +493,12 @@ export function MemosPane({ notify, onOpenChat }) {
 
       {!loading && !filteredMemos.length ? <div className="empty">{t('notes.empty')}</div> : null}
 
-      {/* Keep 風カードグリッド */}
-      <div className="memos-grid">
+      {/* Keep 風カードグリッド（view-one / view-two / view-list） */}
+      <div className={`memos-grid view-${view}`}>
         {filteredMemos.map((m) => {
           const meta = [m.source?.chatTitle, m.source?.repo, m.source?.board].filter(Boolean).join(' · ')
+          // 二列は高さ 220px 固定なので、チェックリストは先頭 3 件＋「+N」に畳む（Q4=A）
+          const check = checklistPreview(m.checklist, view)
           return (
             <article
               key={m.id}
@@ -392,19 +507,36 @@ export function MemosPane({ notify, onOpenChat }) {
             >
               <div className="memo-card-head">
                 <div className="memo-card-title">{m.title || (m.kind === 'report' ? '📬 Report' : '💡')}</div>
-                <button
-                  type="button"
-                  className={`memo-pin-btn${m.pinned ? ' on' : ''}`}
-                  aria-label={m.pinned ? t('notes.unpin') : t('notes.pin')}
-                  onClick={(e) => togglePin(m, e)}
-                >
-                  📌
-                </button>
+                {showsCardButtons(view) ? (
+                  <button
+                    type="button"
+                    className={`memo-pin-btn${m.pinned ? ' on' : ''}`}
+                    aria-label={m.pinned ? t('notes.unpin') : t('notes.pin')}
+                    onClick={(e) => togglePin(m, e)}
+                  >
+                    📌
+                  </button>
+                ) : null}
+                {showsListMenu(view) ? (
+                  <button
+                    type="button"
+                    className="memo-more-btn"
+                    aria-label={t('notes.more')}
+                    aria-haspopup="dialog"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      haptic('tap')
+                      setMenuFor(m)
+                    }}
+                  >
+                    ⋯
+                  </button>
+                ) : null}
               </div>
               {m.body ? <div className="memo-card-body">{m.body}</div> : null}
               {m.checklist?.length ? (
                 <div className="memo-checklist">
-                  {m.checklist.map((c) => (
+                  {check.visible.map((c) => (
                     <button
                       key={c.id}
                       type="button"
@@ -415,6 +547,12 @@ export function MemosPane({ notify, onOpenChat }) {
                       <span>{c.text}</span>
                     </button>
                   ))}
+                  {/* 二列は高さ 220px に収めるため残りを「+N」に畳む（タップはカード全体＝編集シート） */}
+                  {check.hidden ? (
+                    <span className="memo-check-more">
+                      {t('notes.moreItems', { n: check.hidden })}
+                    </span>
+                  ) : null}
                 </div>
               ) : null}
               {m.tags?.length ? (
@@ -427,36 +565,82 @@ export function MemosPane({ notify, onOpenChat }) {
                 </div>
               ) : null}
               {meta ? <div className="memo-source-meta">{t('notes.sourceMeta', { meta })}</div> : null}
-              <div className="memo-card-actions">
-                <button type="button" className="report-card-btn" onClick={(e) => sendToBrainstorm(m, e)}>
-                  {t('notes.brainstorm')}
-                </button>
-                <button type="button" className="report-card-btn primary" onClick={(e) => sendToSeed(m, e)}>
-                  {t('notes.toSeed')}
-                </button>
-                {m.source?.chatId && onOpenChat ? (
-                  <button
-                    type="button"
-                    className="report-card-btn"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      haptic('tap')
-                      onOpenChat(m.source.chatId)
-                    }}
-                  >
-                    {t('notes.openChat')}
+              {showsCardButtons(view) ? (
+                <div className="memo-card-actions">
+                  <button type="button" className="report-card-btn" onClick={(e) => sendToBrainstorm(m, e)}>
+                    {t('notes.brainstorm')}
                   </button>
-                ) : null}
-              </div>
+                  <button type="button" className="report-card-btn primary" onClick={(e) => sendToSeed(m, e)}>
+                    {t('notes.toSeed')}
+                  </button>
+                  {m.source?.chatId && onOpenChat ? (
+                    <button
+                      type="button"
+                      className="report-card-btn"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        haptic('tap')
+                        onOpenChat(m.source.chatId)
+                      }}
+                    >
+                      {t('notes.openChat')}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
             </article>
           )
         })}
       </div>
 
+      {/* リスト表示の `⋯` メニュー（タイトル = メモ名・行は §2.2 の 4 つ） */}
+      {menuFor ? (
+        <Sheet
+          title={menuFor.title || t('notes.menuTitle')}
+          onClose={() => setMenuFor(null)}
+        >
+          <div className="memo-menu">
+            {memoMenuRows(menuFor, { canOpenChat: Boolean(onOpenChat) }).map((row) => (
+              <button
+                key={row.action}
+                type="button"
+                className="memo-menu-row"
+                onClick={() => runMenuAction(row.action, menuFor)}
+              >
+                {t(row.labelKey)}
+              </button>
+            ))}
+          </div>
+        </Sheet>
+      ) : null}
+
       {/* 編集・作成シート */}
       {editing ? (
-        <Sheet title={editing.id ? t('notes.editTitle') : t('notes.createTitle')} onClose={() => setEditing(null)}>
-          <div className="memo-editor">
+        <Sheet
+          title={editing.id ? t('notes.editTitle') : t('notes.createTitle')}
+          onClose={requestClose}
+          historyKey={sheetArm}
+        >
+          {/* 未保存のときだけ出す 3 択（シートを重ねず本文へインラインで置く） */}
+          {confirming ? (
+            <div className="memo-unsaved" role="alertdialog" aria-label={t('notes.unsavedTitle')}>
+              <div className="memo-unsaved-title">{t('notes.unsavedTitle')}</div>
+              <div className="memo-unsaved-sub">{t('notes.unsavedSub')}</div>
+              <div className="memo-unsaved-actions">
+                <button type="button" className="btn primary" disabled={saving} onClick={saveAndClose}>
+                  {t('notes.saveAndClose')}
+                </button>
+                <button type="button" className="btn ghost" disabled={saving} onClick={discardAndClose}>
+                  {t('notes.discard')}
+                </button>
+                <button type="button" className="btn" onClick={keepEditing}>
+                  {t('notes.keepEditing')}
+                </button>
+              </div>
+            </div>
+          ) : null}
+          {/* 3 択のあいだは入力欄を隠す（下書きは state に残るので「戻る」で戻せる） */}
+          <div className="memo-editor" style={confirming ? { display: 'none' } : undefined}>
             <label className="memo-field-label">
               <span>{t('notes.fieldTitle')}</span>
               <input
@@ -559,7 +743,7 @@ export function MemosPane({ notify, onOpenChat }) {
               <button
                 type="button"
                 className="btn primary"
-                disabled={saving || (!editing.title.trim() && !editing.body.trim() && !editing.checklist.length)}
+                disabled={saving || (!editing.id && !hasDraftContent(editing))}
                 onClick={submitEditor}
               >
                 {t('notes.save')}

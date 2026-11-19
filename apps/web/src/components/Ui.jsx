@@ -189,8 +189,11 @@ function onGlobalSheetPop() {
  * スライドアップのシート。
  * マウント時にブラウザ履歴を 1 段積み、Android の「戻る」で閉じられるようにする
  * （`TasksPane` が `#inbox` で管理している場合は二重に積まない）。
+ *
+ * `historyKey` は任意。`onClose` がシートを閉じない場合（未保存の確認など）は
+ * 戻るキーで積んだ履歴が 1 段消費されるので、番号を進めると履歴を積み直す。
  */
-export function Sheet({ title, onClose, children }) {
+export function Sheet({ title, onClose, children, historyKey }) {
   const { t } = useI18n()
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
@@ -240,7 +243,7 @@ export function Sheet({ title, onClose, children }) {
         }, 0)
       }
     }
-  }, [])
+  }, [historyKey])
 
   const handleClose = () => {
     haptic('tap')

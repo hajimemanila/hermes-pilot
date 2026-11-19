@@ -3468,6 +3468,14 @@ html[data-vibe='dopamine'] .row-mode.resumable {
 }
 
 /*
+ * チャットの 2 カラム（SPEC-ver-0-2-1 §2.3 / 決定 Q1=A）。左 = セッション一覧＋下端スタック。
+ * チャットだけは 820px 以上のときだけ 2 カラムにする（680–819 は 1 ペインのまま）。
+ */
+.split-layout.chat {
+  --split-master-w: 380px;
+}
+
+/*
  * 狭い 2 ペイン（680–819px）。744/768（iPad mini 縦）では 820px に届かず、
  * 右半分が空いたまま 1 ペインだった（SPEC-i18n-resp §2 B3）。
  *
@@ -3705,6 +3713,105 @@ html[data-vibe='dopamine'] .row-mode.resumable {
 
   .split-master .ak-head {
     padding-top: 4px;
+  }
+
+  /* ------------------------------------------------------------------
+   * チャットの 2 カラム（SPEC-ver-0-2-1 §2.3 / 決定 Q1=A）
+   *
+   * 左 = セッション一覧＋下端スタック / 右 = タイムラインだけ。
+   * `.pane.chat` は元々 flex の縦積み（padding 0 / overflow hidden）なので、
+   * 2 カラムでは横並びに切り替えるだけでよい（1 ペインの見た目は変えない）。
+   * 右に置くのは最小ヘッダとタイムラインだけで、バナー・チップ・定型チップ帯・
+   * 入力欄はすべて左の下端スタック（`lib/chatSplit.js` の 4 グループ）に寄せる。
+   * ------------------------------------------------------------------ */
+  .pane.chat.split-layout {
+    flex-direction: row;
+    align-items: stretch;
+    gap: 0;
+  }
+
+  /* タイムラインの最大幅 840px は 1 ペイン用。2 カラムでは左右に分けるので外す */
+  .pane-host > .pane.chat.split-layout {
+    max-width: none;
+  }
+
+  .chat-split-master {
+    flex: 0 0 var(--split-master-w, 380px);
+    width: var(--split-master-w, 380px);
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--line);
+    background: var(--bg);
+    overflow: hidden;
+  }
+
+  /* 左の上 = セッション一覧（ここだけがスクロールする） */
+  .chat-split-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    padding: 6px 8px calc(8px + var(--safe-b));
+  }
+
+  /*
+   * 左の下端 = 固定スタック（バナー → チップ → 定型チップ帯 → 入力欄）。
+   * 段が増えても入力欄が画面外へ落ちないよう、スタックの高さは 62% で頭打ちにし、
+   * 超えた分だけ中でスクロールさせる（入力欄は常に触れる）。
+   */
+  .chat-split-stack {
+    flex: none;
+    max-height: 62%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-top: 1px solid var(--line);
+    background: var(--bg);
+  }
+
+  .chat-split-group {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* チップはヘッダに居たときと同じ「横 1 行」で積む */
+  .chat-split-stack [data-chat-group='chips'] {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+  }
+
+  /* 右 = 最小ヘッダ＋タイムライン（バナー・チップ・定型帯・入力欄は置かない） */
+  .chat-split-detail {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-elev);
+    overflow: hidden;
+  }
+
+  .chat-split-head {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .chat-split-head .chat-title {
+    flex: 1;
   }
 
   /*
@@ -6233,6 +6340,12 @@ html[data-vibe='dopamine'] details.history-row[open] > .history-body {
   margin-bottom: 8px;
 }
 
+/* 検索入力は潰れない（390px でも縮んで、右端の表示切替セグメントが残る） */
+.memos-search-row .memos-search-input {
+  flex: 1;
+  min-width: 0;
+}
+
 .memos-quick-bar .btn {
   flex: 0 0 auto;
   width: auto;
@@ -6408,6 +6521,14 @@ html[data-vibe='dopamine'] details.history-row[open] > .history-body {
   text-decoration: line-through;
 }
 
+/* 二列で先頭 3 件の後ろに出す「残り N 件」（タップはカード全体＝編集シートを開く） */
+.memo-check-more {
+  padding: 2px 0;
+  color: var(--accent);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
 .memo-tags {
   display: flex;
   flex-wrap: wrap;
@@ -6436,6 +6557,189 @@ html[data-vibe='dopamine'] details.history-row[open] > .history-body {
   gap: 5px;
   margin-top: auto;
   padding-top: 4px;
+}
+
+/* 表示切替セグメント（検索行の右端・1 / 2 / ☰・Q2=A） */
+.memos-view-seg {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.memos-view-btn {
+  /* タップ対象は 44px（監査の tap チェック・WCAG 2.5.5 の目安） */
+  min-width: 44px;
+  height: 44px;
+  padding: 0 8px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.memos-view-btn + .memos-view-btn {
+  border-left: 1px solid var(--line-strong);
+}
+
+.memos-view-btn.on {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 700;
+}
+
+/* 一列表示: 自動列をやめて 1 列に固定（Q2=A） */
+.memos-grid.view-one {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* 二列表示: 2 列固定（Q2=A）・カードは高さ 220px で行の下端を揃える（Q4=A） */
+.memos-grid.view-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.view-two .memo-card {
+  height: 220px;
+  overflow: hidden;
+  gap: 3px;
+  padding: 8px 10px;
+}
+
+/* 本文は 4 行＋「…」（Q4=A）。flex で潰れないよう shrink を止める */
+.view-two .memo-card-body {
+  -webkit-line-clamp: 4;
+  flex: 0 0 auto;
+}
+
+.view-two .memo-card-head,
+.view-two .memo-checklist,
+.view-two .memo-card-actions {
+  flex: 0 0 auto;
+}
+
+/* 220px に収めるため、二列では出典行とタグを落とす */
+.view-two .memo-source-meta,
+.view-two .memo-tags {
+  display: none;
+}
+
+/* 220px の予算に合わせてチェックリストとボタン列を詰める（ボタンは 1 行に固定） */
+.view-two .memo-checklist {
+  gap: 2px;
+}
+
+.view-two .memo-check-row {
+  padding: 1px 0;
+  font-size: 11.5px;
+  line-height: 1.3;
+}
+
+.view-two .memo-card-actions {
+  flex-wrap: nowrap;
+  padding-top: 0;
+}
+
+.view-two .report-card-btn {
+  font-size: 10.5px;
+  padding: 4px 6px;
+}
+
+/* リスト表示: カードを 1 行に畳む（SPEC §2.2） */
+.memos-grid.view-list {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+
+.view-list .memo-card {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+}
+
+.view-list .memo-card-head {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 46%;
+  align-items: center;
+}
+
+.view-list .memo-card-title {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.view-list .memo-card-body {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  -webkit-line-clamp: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* リスト行では本文以外を持たない（高さを 1 行に固定する） */
+.view-list .memo-checklist,
+.view-list .memo-tags,
+.view-list .memo-source-meta {
+  display: none;
+}
+
+/* カードの `⋯`（リスト表示だけ・44px タップ領域） */
+.memo-more-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin: -10px -8px -10px 0;
+  border: none;
+  border-radius: 10px;
+  background: none;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.memo-more-btn:active {
+  background: var(--line);
+}
+
+/* `⋯` メニューのシート本文 */
+.memo-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.memo-menu-row {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.memo-menu-row:active {
+  border-color: var(--accent);
 }
 
 .memo-editor {
@@ -6493,6 +6797,40 @@ html[data-vibe='dopamine'] details.history-row[open] > .history-body {
 
 .memo-editor-actions > .btn {
   flex: 1 1 0;
+}
+
+/* 未保存で閉じようとしたときの 3 択（シート本文へインライン・タップ領域 44px） */
+.memo-unsaved {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+}
+
+.memo-unsaved-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.memo-unsaved-sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.memo-unsaved-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.memo-unsaved-actions > .btn {
+  min-height: 44px;
+  width: 100%;
 }
 
 /* チャットバブルのコンテキストメニューボタン（本文選択を邪魔しない独立ボタン） */
