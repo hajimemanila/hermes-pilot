@@ -9,6 +9,8 @@ metadata:
     category: workflow
     phase: decide
     role: author
+    abstract_roles: [role:decision-framer, role:planner, role:visual-reviewer]
+    recommended_role: role:decision-framer
     quality_tier: decision-ready
 ---
 
@@ -32,6 +34,34 @@ metadata:
 - 正解が一意（テストが通る/通らない、型エラー、排他 1 択）
 - 事実確認だけで決まること（`file:line` を読めば分かる）
 - 多数の項目の一括検収（1 枚に詰め込むと答えられない）
+
+## 抽象ロールと委譲・フォールバック（Model-Agnostic Delegation）
+
+このスキルは**モデル非依存**。特定モデル名・プロバイダ名・課金プラン・個人環境のパスを
+ここに書かない。「どの抽象ロールをどの実モデルへ割り当てるか」は実機プロファイル側
+（プロファイルメモリ / `SOUL.md` の割当表）が持つ。
+
+- `role:decision-framer` — 設問設計・トレードオフ整理。**このスキルの主ロール**。
+  3±1 問への切り出し、選択肢 2〜3 と推奨理由（利点 / 代償）の構成。
+- `role:planner` — 複雑な設計分岐の選択肢抽出・トレードオフ比較（正解が一意でない設計判断）。
+- `role:visual-reviewer` — 見た目比較の挿絵（`thumbs/*.png`）チェック。絵を付けたときだけ。
+- `role:builder` — 回答の反映実装と `npm run verify`。
+
+### ネイティブ委譲とフォールバック
+
+1. 上記のロールに当たるサブタスクは **`delegate_task` で委譲できる**（`goal` / `context` に
+   ロール名と「設問 JSON に落とせる形で返す」を明記する）。
+2. 子は**読み取り専用の助言者**。シートの作成・起票・回答の反映は親が行う。
+3. 委譲が失敗した（エラー / レート制限 / タイムアウト / 未対応モデル / 委譲ツール未搭載）
+   場合は**停止しない**。主モデルへフォールバックし、設問 JSON を自分で完結させる。
+   シートが出ないままブロックするのが最悪なので、フォールバックして必ず 1 枚出す。
+4. フォールバックした事実は `comment` に 1 行残す。
+
+### 外部 AI CLI の禁止境界
+
+`gemini` CLI（`gemini -p` 等）・`agy -p` のような外部 AI CLI をサブプロセスで起動して
+設問案や挿絵を作る経路は使わない（`spawn` / `execFile` / `exec` も対象）。委譲は Hermes の
+ネイティブ API プロバイダ＋`delegate_task` のみ。ランタイムコード側は `npm run check:oauth` が機械検査する。
 
 ## 手順
 

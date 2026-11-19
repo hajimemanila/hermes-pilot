@@ -9,6 +9,8 @@ metadata:
     category: workflow
     phase: design
     role: architect
+    abstract_roles: [role:planner, role:builder, role:visual-reviewer, role:decision-framer]
+    recommended_role: role:planner
     quality_tier: decision-ready
 ---
 
@@ -111,6 +113,7 @@ hermes kanban block <task_id> "仕様インタビュー待ち（Q1〜Q3）" --ki
 ### Batch <SLUG>-1: <バッチ名>
 
 - **Execution Mode**: `[Mode: Zero-Stop]`
+- **Recommended Role**: `role:builder`
 - **目的**: <1〜3 行。何をどのファイルに実装するか>
 - **変更・新規ファイル**:
   - 新規: `<path>`
@@ -131,6 +134,9 @@ hermes kanban block <task_id> "仕様インタビュー待ち（Q1〜Q3）" --ki
 - 各バッチに必ず次の 3 行を置く: `- **Execution Mode**: ...` / `- **目的**: ...` /
   `- **受入条件（Verify）**: ...`。`Execution Mode` が無いバッチは起票時に
   行動契約（`[Hermes Pilot Execution Contract]`）が注入されず、自走が保証されない。
+- 任意行 `- **Recommended Role**: role:planner | role:builder | role:visual-reviewer`
+  を `Execution Mode` の直後に置ける（設計寄りは `role:planner`、実装・検証は `role:builder`、
+  見た目の検収を含むなら `role:visual-reviewer`）。未宣言でも起票は壊れない。
 
 ## Execution Mode の選び方
 
@@ -141,6 +147,51 @@ hermes kanban block <task_id> "仕様インタビュー待ち（Q1〜Q3）" --ki
 | `Visual Gate` | 見た目が変わる（UI・CSS・文言・レイアウト） | `npm run deploy` → 実画面 390×844 / 820×1180 を検証・撮影 → 必要なら `annotation` レビュー |
 
 迷ったら `Visual Gate`。見た目が変わらないと断言できないなら視覚検収を挟む。
+
+## 抽象ロールと委譲・フォールバック（Model-Agnostic Delegation）
+
+このスキルは**モデル非依存**。特定モデル名・プロバイダ名・課金プラン・個人環境のパスをここに書かない。
+「どの抽象ロールをどの実モデルへ割り当て、失敗時にどこへ落とすか」は**実機プロファイル側**
+（プロファイルメモリ / `SOUL.md` の割当表）が持つ。仕様書とスキルは抽象ロール名だけを扱う。
+
+### 4 つの抽象ロール
+
+- `role:planner` — 高度推論・設計・仕様策定・複雑な原因究明。Round 1 の問い設計、
+  Round 2 の影響分析・バッチ分割がここ。
+- `role:builder` — 通常実装・テスト修正・ビルド・定型作業。SPEC に沿った実装と
+  `npm test` / `npm run verify` の修復がここ。
+- `role:visual-reviewer` — スクショ差分・赤入れ画像（`.annotated.png`）の読解・
+  `390x844` / `820x1180` の視覚検収。**見た目の比較が論点のときだけ**使う。
+- `role:decision-framer` — 設問設計・トレードオフ整理。3±1 問への切り出しと
+  選択肢・推奨理由の構成がここ。
+
+推奨の当て方:
+
+- Round 1 / Round 2 の設計推論・影響分析・バッチ分割は **`role:planner`**。
+- 絵（モック・スクショ）を検証する場合のみ **`role:visual-reviewer` を併用**する。
+  絵の無い論点（API・保存形式・命名・ロジック）には付けない。
+- 各バッチ定義に任意行 `- **Recommended Role**: role:builder` を書ける
+  （`role:planner` / `role:visual-reviewer` / `role:decision-framer` も同様）。
+  未宣言なら Execution Mode から推定される。
+
+### ネイティブ委譲とフォールバック
+
+委譲は Hermes Agent 標準の **`delegate_task`** だけを使う。
+
+1. 親がロール条件に合うサブタスクを切り出し、`goal` / `context` にロール名を明記して 1 回だけ委譲する。
+2. 子は**読み取り専用の助言者**。ファイル編集・commit・install・`npm run verify` は親が行う。
+3. 委譲が失敗した（エラー / レート制限 / タイムアウト / 未対応モデル / 委譲ツール未搭載）
+   場合は**停止しない**。プロファイルの割当表どおりのフォールバック順（次点 → 主モデル）へ
+   切り替え、自分でそのまま完走する。
+4. フォールバックした事実は完了報告か comment に 1 行残す（黙って検証を落とさない）。
+5. 同じロールで 2 回失敗したら 3 回目を投げない。自分で完走する。
+
+### 外部 AI CLI の禁止境界
+
+`gemini` CLI（`gemini -p` 等）・`agy -p` のような**外部 AI CLI をサブプロセスで起動して
+推論させる経路は使わない**。`spawn` / `execFile` / `exec` での起動も、シェルからのパイプも対象。
+ランタイムコード側は `npm run check:oauth` が機械検査する。委譲は Hermes のネイティブ API
+プロバイダ＋`delegate_task` のみ。
 
 ## バッチ分割の目安
 

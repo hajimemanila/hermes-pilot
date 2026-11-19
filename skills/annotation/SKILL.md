@@ -9,6 +9,8 @@ metadata:
     category: workflow
     phase: fix
     role: author
+    abstract_roles: [role:visual-reviewer, role:builder]
+    recommended_role: role:visual-reviewer
     quality_tier: evidence-based
 ---
 
@@ -29,6 +31,36 @@ metadata:
 - PWA のスクショに赤を入れるのが最短（`390x844` の撮影が済んでいる）
 
 使わない: 一意に決まる不具合（テスト失敗、例外、型エラー）は自分で直す。
+
+## 抽象ロールと委譲・フォールバック（Model-Agnostic Delegation）
+
+このスキルは**モデル非依存**。特定モデル名・プロバイダ名・課金プラン・個人環境のパスを
+ここに書かない。「どの抽象ロールをどの実モデルへ割り当てるか」は実機プロファイル側
+（プロファイルメモリ / `SOUL.md` の割当表）が持つ。
+
+- `role:visual-reviewer` — 実装ロールとは別枠。スクショ差分（`.before.png` / `.after.png`）と
+  赤入れ画像（`.annotated.png`）の読解・座標の言語化・`390x844` / `820x1180` の視覚検収。
+  **このスキルの主ロール**。
+- `role:builder` — 特定された箇所の修正実装、`npm run deploy`、`npm run verify`。
+- `role:decision-framer` — 「どこまで直すか」が分岐するときの設問設計（`quick-review` へ渡す）。
+- `role:planner` — 赤の指摘が複数コンポーネント／状態に跨り、原因究明が複雑なとき。
+
+### ネイティブ委譲とフォールバック
+
+1. 手順 B の画像読解は **`role:visual-reviewer` へ `delegate_task` で委譲するのを推奨**。
+   `images` に画像パスを渡し、`goal` / `context` にロール名と「指摘箇所を領域名＋根拠で返す」を明記する。
+2. 子は**読み取り専用の助言者**。ファイル編集・commit・`npm run deploy` はしない。
+   適用と検証は親（`role:builder`）が行う。
+3. 委譲が失敗した（エラー / レート制限 / タイムアウト / マルチモーダル非対応 / 委譲ツール未搭載）
+   場合は**停止しない**。`.annotation.json` の `marks` 座標配列（0〜1 正規化）と `note` だけで
+   自分で特定し、修正まで完走する。座標があれば画像の読解は代替できる。
+4. フォールバックした事実は `comment` に 1 行残す。
+
+### 外部 AI CLI の禁止境界
+
+`gemini` CLI（`gemini -p` 等）・`agy -p` のような外部 AI CLI をサブプロセスで起動して
+画像を読ませる経路は使わない（`spawn` / `execFile` / `exec` も対象）。委譲は Hermes の
+ネイティブ API プロバイダ＋`delegate_task` のみ。ランタイムコード側は `npm run check:oauth` が機械検査する。
 
 ## 手順 A: 自分で注釈タスクを起票する（スクショを撮った側）
 
@@ -81,11 +113,14 @@ hermes kanban block <task_id> "注釈待ち（赤入れ）" --kind needs_input
 ので、座標 → 実画面の位置は `x * width`, `y * height` で戻す。
 
 1. `.annotation.json` の `note` を読む（ひとこと。ここに意図が書いてある）
-2. `annotated.png` を開いて赤の位置を確認する（画像が無く `marks` だけでも座標で読める）
+2. `annotated.png` を**`role:visual-reviewer` へ `delegate_task` で委譲して**読む
+   （`images` に `annotated.png` と `before` / `after` を渡し、指摘の領域・対象コンポーネント・
+   根拠を返させる）。委譲できないときは画像を無くても `marks` の座標だけで読める —
+   **止まらずに座標フォールバック**へ落ちる
 3. 赤の領域 → どのコンポーネントかを特定する（DOM なら `document.elementFromPoint`、
    React なら該当 CSS/JSX を `rg` で引く）
 4. **指摘された場所だけ**直す。周辺の「ついで改善」は混ぜない（差分が読めなくなる）
-5. `npm run deploy` → 撮り直して after を残す
+5. `npm run deploy` → 撮り直して after を残す（実装・デプロイ・`npm run verify` は `role:builder` の仕事＝親が行う）
 6. `hermes kanban comment <task_id> "反映: <どのファイルの何をどう直したか>"` を残す
 
 赤入れは `POST /api/review/<task_id>/annotation`
