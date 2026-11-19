@@ -3200,7 +3200,7 @@ html[data-vibe='dopamine'] .row-mode.resumable {
 .empty-recent-head { font-size: 10.5px; color: var(--muted); padding-left: 2px; }
 /* タイトルは途中で切らず 2 行まで見せる（18 文字スライスだと語の途中で切れていた） */
 .empty-recent-row {
-  display: flex; align-items: center; gap: 8px; width: 100%;
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px;
   padding: 9px 10px; border-radius: 10px; border: 1px solid var(--line-strong);
   background: var(--surface-2); color: var(--text); font: inherit;
   font-size: 12.5px; text-align: left;
@@ -6513,6 +6513,14 @@ html[data-vibe='dopamine'] details.history-row[open] > .history-body {
   font: inherit;
   font-size: 12px;
   line-height: 1.4;
+}
+
+/* 一列・リストでは行そのものが押せる（付け外し）ので当たり判定を 44px にする。
+   二列は 220px に 3 件を詰めるため行は span（表示専用）で、ここには当たらない。 */
+button.memo-check-row {
+  align-items: center;
+  min-height: 44px;
+  padding: 0;
   cursor: pointer;
 }
 

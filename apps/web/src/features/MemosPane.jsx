@@ -536,17 +536,27 @@ export function MemosPane({ notify, onOpenChat }) {
               {m.body ? <div className="memo-card-body">{m.body}</div> : null}
               {m.checklist?.length ? (
                 <div className="memo-checklist">
-                  {check.visible.map((c) => (
-                    <button
-                      key={c.id}
-                      type="button"
-                      className={`memo-check-row${c.done ? ' done' : ''}`}
-                      onClick={(e) => toggleChecklistItem(m, c.id, e)}
-                    >
-                      <span aria-hidden="true">{c.done ? '☑' : '☐'}</span>
-                      <span>{c.text}</span>
-                    </button>
-                  ))}
+                  {check.visible.map((c) =>
+                    view === 'two' ? (
+                      // 二列カード（高さ 220px 固定）では行は表示専用にする。1 行 17px の
+                      // 付け外しは誤タップで別の項目を反転させるため、44px を確保できない
+                      // ここではボタンにしない（付け外しはカード全体タップ→編集シート）。
+                      <span key={c.id} className={`memo-check-row${c.done ? ' done' : ''}`}>
+                        <span aria-hidden="true">{c.done ? '☑' : '☐'}</span>
+                        <span>{c.text}</span>
+                      </span>
+                    ) : (
+                      <button
+                        key={c.id}
+                        type="button"
+                        className={`memo-check-row${c.done ? ' done' : ''}`}
+                        onClick={(e) => toggleChecklistItem(m, c.id, e)}
+                      >
+                        <span aria-hidden="true">{c.done ? '☑' : '☐'}</span>
+                        <span>{c.text}</span>
+                      </button>
+                    ),
+                  )}
                   {/* 二列は高さ 220px に収めるため残りを「+N」に畳む（タップはカード全体＝編集シート） */}
                   {check.hidden ? (
                     <span className="memo-check-more">

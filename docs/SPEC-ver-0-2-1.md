@@ -49,6 +49,26 @@ Q1 が名指しする 4 つは、いま**チャットタブ**に実在する（`
 - 直前を残す部品は既にある: `lib/repoPicker.js:16` の `hm.repo`、`:81` の `readLastRepo`、`:133` の `rememberRepo`。**repo id を保存している**（`:138`）。
 - `.working-dot` は `styles.css:1352-1360`、アニメは `:1361-1369`（`opacity` 1→0.45 と `box-shadow` を同時に動かす）。他タブの `.dot.running` は `styles.css:903-907`（`--accent` ベタ＋淡いリングのみ）。
 
+### 1.4 実測後の値（ver-0-2-1-6・2026-11-19 12:3x・`npm run verify` 実測）
+
+「未検証」を残さないための追記。数値はすべて `scripts/audit-responsive.mjs` の構造チェックが
+ブラウザ内で測った値（`structure ... measured {...}` 行）で、捏造ではなく実行結果の転記。
+
+- **メモ二列**（820x1180 と 1180x820・ja/en の 4 組）: `gridClass="memos-grid view-two"` /
+  `columns=2` / カード高さ **220px**（撮影時 3 枚とも `[220,220,220]`）/ 本文 `-webkit-line-clamp: 4`。
+  撮影のため一時メモ 2 件を `POST /api/memos` で作り、撮影後に `DELETE /api/memos/:id` で消した
+  （残るのは既存 1 件なので、検証時の `cards` は 1 になる。**高さは変わらず 220**）。
+- **チャット 2 カラム**（820x1180 と 1180x820・ja/en の 4 組）: `split-layout=true` /
+  `.chat-split-master`・`.chat-split-detail` あり / 右カラムの `.chat-body` 以外の高さ
+  **61px**（上限 72px＝1 行ヘッダ）/ 右カラム内の `.banner` `.chat-report-banner` `.action-bar`
+  `.composer` `.composer-ro` `.prof-chip` はすべて **0 個** / 左カラムの会話行 41 件。
+- **タップ対象**: 実測で 2 件の違反が見つかり、どちらも**直した**（baseline に逃がしていない）。
+  - `button.memo-check-row` が **371x17px**（二列カード内の行）→ 二列では行を `span`（表示専用）にし、
+    付け外しはカード全体タップ→編集シートへ寄せた。一列・リストでは `min-height: 44px` を確保。
+  - `button.empty-recent-row` が **340x37px**（チャット空状態の最近の会話行）→ `min-height: 44px`。
+- **最終 verify**: `npm test` 894 pass / 0 fail、`check:dashboard`・`check:pwa`・`check:oauth` 通過、
+  `build` 成功、`audit:responsive` **0 violation / 14 combination**（7 viewport × 2 lang × 6 tab）。exit 0。
+
 ---
 
 ## 2. 設計
@@ -87,6 +107,24 @@ Q1 が名指しする 4 つは、いま**チャットタブ**に実在する（`
 - `npm run verify` が全件パスすること（`test` → `check:dashboard` → `check:pwa` → `check:oauth` → `build` → `audit:responsive`）。
 - `scripts/audit-responsive.mjs` の既存 viewport に `820x1180` と `1180x820` を**足さず**（すでにある場合）、**タブ別チェック**として「メモタブ: 二列カードの高さが 220px」「チャットタブ（2 ペイン）: `.chat-body` 以外の高さが ≤ ヘッダ 1 行」を追加する。足りなければ viewport を追加してよいが、違反 0 で exit 0 を維持する。
 - スクショ 2 枚を `shots/` に残す（`820x1180` メモ二列 / `1180x820` チャット 2 カラム）。
+
+**実装と実測（ver-0-2-1-6 完了時・2026-11-19）**
+
+- タブ別チェックは `STRUCTURE_CHECKS`（`820x1180:notes` / `1180x820:notes` / `820x1180:chat` / `1180x820:chat`）
+  として実装した。`checkStructureInPage(kind, opts)` がブラウザ内で測り、`failures` だけ違反に、
+  データ依存で測れない回（メモ 0 件など）は**情報行**にして verify を揺らさない。
+  値は §1.4 のとおり（カード 220px・右カラムのヘッダ 61px・右カラムに禁止要素 0）。
+- 同じスクリプトに**スクショのモード**を足した（npm 依存は増やしていない・CDP を使い回す）:
+  `node scripts/audit-responsive.mjs --shot 'WxH:tab:path[:lang[:click]]'`。
+  再現コマンド（`apps/web/dist` を `npm run build` した状態で、ブリッジが 4097 で動いていること）:
+  ```bash
+  node scripts/audit-responsive.mjs \
+    --shot "820x1180:notes:shots/ver-0-2-1-memos-820x1180.png" \
+    --shot "1180x820:chat:shots/ver-0-2-1-chat-1180x820.png:ja:.chat-split-master button.row.ro"
+  ```
+  2 枚目は左カラムの会話行を 1 回クリックしてから撮る（そうしないと右カラムが「接続中…」で空になる）。
+- 併せて直した計測バグ: `--tab notes` のように**タブを 1 つだけ**指定すると、クリック条件が
+  「2 個目以降」だったため tasks タブを測っていた（`TABS.indexOf(tab) > 0` に修正）。
 
 ---
 

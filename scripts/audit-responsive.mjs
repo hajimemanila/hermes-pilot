@@ -14,6 +14,10 @@
  *                 （見た目の箱に加えて、透明な `::before` / `::after` で広げた当たり判定も数える）
  *  - `console`     その組み合わせを見ている間の `console.error` / `console.warn` → 常に違反
  *  - `pageerror`   捕捉されなかった例外 → 常に違反
+ *  - `structure`   **タブ別の構造チェック**（`STRUCTURE_CHECKS`・SPEC-ver-0-2-1 §2.4）:
+ *                 メモタブ = 既定が二列でカード高さ 220px・本文 clamp 4（820x1180 / 1180x820）、
+ *                 チャットタブ = 2 カラムの右が「最小ヘッダ＋`.chat-body`」だけ（バナー・チップ・
+ *                 定型チップ帯・入力欄が右に無い）。**データ依存で測れない回は情報行**にして違反にしない。
  *
  * **44px 未満のタップ対象と文字切れは baseline 方式**: `scripts/audit-responsive.baseline.json` に
  * 受理済みのパターン（`tag.class1.class2`）を列挙し、**新しく増えたものだけ**落とす（ラチェット）。
@@ -100,12 +104,38 @@ const debug = process.env.AUDIT_DEBUG ? (msg) => console.error(`[audit] ${msg}`)
 const TAB_SETTLE_MS = 900
 
 /**
+ * タブ別の構造チェック（SPEC-ver-0-2-1 §2.4）。`<viewport>:<tab>` で 1 つ選ぶ。
+ *
+ * 文字切れ・タップ対象のラチェットでは表せない「並び」の契約を測る:
+ *  - メモタブ: 既定が二列で、二列カードの高さが 220px・本文 clamp 4 行（Q2=A / Q4=A）
+ *  - チャットタブ: 820px 以上で 2 カラムになり、右カラムが「最小ヘッダ＋タイムライン」だけ（Q1=A）
+ *
+ * データ依存の部分（メモが 0 件など）は違反にせず情報行にする。ライブのデータ量で
+ * `npm run verify` が揺れると監査が読まれなくなるため（`baseline-absent` と同じ扱い）。
+ */
+const STRUCTURE_CHECKS = {
+  '820x1180:notes': 'memos-two-column',
+  '1180x820:notes': 'memos-two-column',
+  '820x1180:chat': 'chat-split-chrome',
+  '1180x820:chat': 'chat-split-chrome',
+}
+
+/** 二列カードの高さ（Q4=A）。 */
+const MEMO_CARD_HEIGHT_PX = 220
+
+/** 右カラムで `.chat-body` 以外に許す高さ（最小ヘッダ 1 行＝44px タップ + 上下パディング）。 */
+const CHAT_DETAIL_CHROME_MAX_PX = 72
+
+/** 構造チェックの情報行（違反ではない）。main の最後にまとめて出す。 */
+const structureNotes = []
+
+/**
  * コマンドライン引数を読む。
  * @param {string[]} argv `process.argv.slice(2)`
  * @returns {{url: string, token: string, viewports: string[], langs: string[], tabs: string[]}}
  */
 function parseArgs(argv) {
-  const out = { url: DEFAULT_URL, token: '', viewports: [], langs: [], tabs: [], updateBaseline: false }
+  const out = { url: DEFAULT_URL, token: '', viewports: [], langs: [], tabs: [], updateBaseline: false, shots: [] }
   const take = (i, inline) => {
     if (inline !== undefined) return [inline, i]
     if (i + 1 >= argv.length) throw new Error(`${argv[i]} に値が無い`)
@@ -126,9 +156,13 @@ function parseArgs(argv) {
       i = next
     } else if (name === '--update-baseline') {
       out.updateBaseline = true
+    } else if (name === '--shot') {
+      const [value, next] = take(i, inline)
+      out.shots.push(parseShot(value))
+      i = next
     } else if (name === '--help' || name === '-h') {
       console.log(
-        'usage: node scripts/audit-responsive.mjs [--url <base>] [--token <t>] [--viewport WxH]... [--lang en|ja]... [--tab tasks|review|chat|term|settings]... [--update-baseline]',
+        'usage: node scripts/audit-responsive.mjs [--url <base>] [--token <t>] [--viewport WxH]... [--lang en|ja]... [--tab tasks|review|chat|notes|term|settings]... [--update-baseline] [--shot WxH:tab:path[:lang]]...',
       )
       process.exit(0)
     } else {
@@ -139,6 +173,25 @@ function parseArgs(argv) {
   if (!out.langs.length) out.langs = [...LANGS]
   if (!out.tabs.length) out.tabs = [...TABS]
   return out
+}
+
+/**
+ * `--shot WxH:tab:path[:lang[:click]]` を分解する（SPEC-ver-0-2-1 §2.4 の目視用スクショ）。
+ *
+ * `click` はタブを開いた後にその CSS セレクタを 1 回クリックする（会話を選んでタイムラインを
+ * 写したい時など）。**セレクタに `:` を含めると分解できない**ので、その場合は使わない。
+ *
+ * @param {string} spec 指定文字列
+ * @returns {{viewport: string, tab: string, out: string, lang: string, click: string}} 分解結果
+ */
+function parseShot(spec) {
+  const parts = String(spec).split(':')
+  if (parts.length < 3) throw new Error(`--shot の書式は WxH:tab:path[:lang[:click]]: ${spec}`)
+  const [viewport, tab, out, lang = 'ja', click = ''] = parts
+  if (!/^\d+x\d+$/.test(viewport)) throw new Error(`--shot の viewport が WxH でない: ${viewport}`)
+  if (!TABS.includes(tab)) throw new Error(`--shot の tab が未知: ${tab}（${TABS.join('|')}）`)
+  if (!LANGS.includes(lang)) throw new Error(`--shot の lang が未知: ${lang}（${LANGS.join('|')}）`)
+  return { viewport, tab, out: path.resolve(out), lang, click }
 }
 
 /**
@@ -295,6 +348,98 @@ async function waitFor(check, timeoutMs, stepMs = 100) {
     if (Date.now() > deadline) return false
     await sleep(stepMs)
   }
+}
+
+/**
+ * タブ別の構造を測る式（SPEC-ver-0-2-1 §2.4。戻り値は JSON）。
+ *
+ * `measureInPage` と同じく**関数を文字列化してブラウザ側で評価する**ので、モジュール定数は
+ * 参照できない。閾値は `opts` で受け取り、正本はスクリプト側に置く。
+ *
+ * @param {'memos-two-column'|'chat-split-chrome'} kind チェック種別
+ * @param {{cardHeight: number, chromeMax: number}} opts 閾値
+ * @returns {{kind: string, failures: string[], info: string[], measured: object}} 結果
+ */
+function checkStructureInPage(kind, opts) {
+  const round = (v) => Math.round(v * 10) / 10
+  const out = { kind, failures: [], info: [], measured: {} }
+  const fail = (msg) => out.failures.push(msg)
+
+  if (kind === 'memos-two-column') {
+    const grid = document.querySelector('.memos-grid')
+    if (!grid) {
+      out.info.push('memos-two-column: .memos-grid が無い（この回は描画されず未測定）')
+      return out
+    }
+    out.measured.gridClass = grid.className
+    if (!grid.classList.contains('view-two')) fail(`既定の二列になっていない（class="${grid.className}"）`)
+    const tracks = getComputedStyle(grid).gridTemplateColumns.trim().split(/\s+/).filter(Boolean)
+    out.measured.columns = tracks.length
+    if (tracks.length !== 2) fail(`二列グリッドでない（${tracks.length} 列: ${tracks.join(' ')}）`)
+    const cards = [...grid.querySelectorAll('.memo-card')]
+    out.measured.cards = cards.length
+    if (!cards.length) {
+      out.info.push('memos-two-column: .memo-card が 0 件（データ無し・高さは未測定）')
+      return out
+    }
+    const heights = cards.map((card) => round(card.getBoundingClientRect().height))
+    out.measured.heights = heights
+    const off = heights.filter((h) => Math.abs(h - opts.cardHeight) > 1)
+    if (off.length) fail(`カード高さが ${opts.cardHeight}px でない: ${heights.join(', ')}`)
+    const body = grid.querySelector('.memo-card .memo-card-body')
+    if (body) {
+      const clamp = getComputedStyle(body).webkitLineClamp || getComputedStyle(body).lineClamp
+      out.measured.bodyClamp = clamp
+      if (String(clamp) !== '4') fail(`二列の本文 clamp が 4 でない（${clamp}）`)
+    } else {
+      out.info.push('memos-two-column: 本文のある .memo-card が 0 件（clamp は未測定）')
+    }
+    return out
+  }
+
+  if (kind === 'chat-split-chrome') {
+    const pane = document.querySelector('.pane.chat')
+    if (!pane) {
+      out.info.push('chat-split-chrome: .pane.chat が無い（この回は描画されず未測定）')
+      return out
+    }
+    const master = pane.querySelector('.chat-split-master')
+    const detail = pane.querySelector('.chat-split-detail')
+    out.measured.splitLayout = pane.classList.contains('split-layout')
+    out.measured.master = Boolean(master)
+    out.measured.detail = Boolean(detail)
+    if (!pane.classList.contains('split-layout') || !master || !detail) {
+      fail(`2 カラムになっていない（split-layout=${out.measured.splitLayout} master=${out.measured.master} detail=${out.measured.detail}）`)
+      return out
+    }
+    // 右カラムに残ってはいけない 4 種（バナー・チップ・スニペット帯・入力欄）
+    const banned = ['.banner', '.chat-report-banner', '.action-bar', '.composer', '.composer-ro', '.prof-chip']
+    out.measured.detailForbidden = {}
+    for (const sel of banned) {
+      const n = detail.querySelectorAll(sel).length
+      out.measured.detailForbidden[sel] = n
+      if (n) fail(`右カラムに ${sel} が ${n} 個ある（左カラム下端へ移す契約）`)
+    }
+    const bodyEl = detail.querySelector('.chat-body')
+    if (!bodyEl) {
+      fail('右カラムに .chat-body（タイムライン）が無い')
+      return out
+    }
+    const chrome = round(detail.getBoundingClientRect().height - bodyEl.getBoundingClientRect().height)
+    out.measured.detailChromePx = chrome
+    if (chrome > opts.chromeMax) {
+      fail(`右カラムのタイムライン以外が ${chrome}px（1 行ヘッダの上限 ${opts.chromeMax}px 超）`)
+    }
+    // 左カラム: 一覧（行）と下端スタック（入力欄）が載っていること
+    const rows = master.querySelectorAll('button.row').length
+    out.measured.masterRows = rows
+    if (!rows) out.info.push('chat-split-chrome: 左カラムの会話行が 0 件（データ無し・未測定）')
+    if (!master.querySelector('.composer, .composer-ro')) fail('左カラムに入力欄（.composer）が無い')
+    return out
+  }
+
+  fail(`未知の構造チェック: ${kind}`)
+  return out
 }
 
 /**
@@ -579,7 +724,9 @@ async function auditCombo(cdp, sessionId, base, token, viewport, lang, tabs, noi
 
     for (let i = 0; i < tabs.length; i += 1) {
       const tab = tabs[i]
-      if (i > 0) {
+      // 既定タブ（`TABS[0]`）以外は毎回クリックする。以前は「2 個目以降だけ」押していたため
+      // `--tab notes` のように 1 つだけ指定すると tasks タブを測ってしまっていた。
+      if (TABS.indexOf(tab) > 0) {
         const clicked = await cdp.send(
           'Runtime.evaluate',
           {
@@ -622,6 +769,41 @@ async function auditCombo(cdp, sessionId, base, token, viewport, lang, tabs, noi
           found.tap.set(detail.key, { detail: detail.detail, where: `${viewport} ${lang} ${tab}` })
       }
       for (const key of m.tapPresent ?? []) present.add(key)
+      // タブ別の構造チェック（SPEC-ver-0-2-1 §2.4）。ペインは API 取得後に描画されるので、
+      // 対象の目印が出るまで待ってから測る（待たないと「未測定」で揺れる）
+      const structureKind = STRUCTURE_CHECKS[`${viewport}:${tab}`]
+      if (structureKind) {
+        const marker = structureKind === 'memos-two-column' ? '.memos-grid' : '.pane.chat.split-layout'
+        await waitFor(async () => {
+          const r = await cdp.send(
+            'Runtime.evaluate',
+            { expression: `!!document.querySelector(${JSON.stringify(marker)})`, returnByValue: true },
+            sessionId,
+          )
+          return r.result?.value === true
+        }, 6000, 200)
+        const sres = await cdp.send(
+          'Runtime.evaluate',
+          {
+            expression: `(${checkStructureInPage.toString()})(${JSON.stringify(structureKind)}, ${JSON.stringify({
+              cardHeight: MEMO_CARD_HEIGHT_PX,
+              chromeMax: CHAT_DETAIL_CHROME_MAX_PX,
+            })})`,
+            returnByValue: true,
+          },
+          sessionId,
+        )
+        const s = sres.result?.value
+        if (sres.exceptionDetails || !s) {
+          violations.push(
+            `${lang} ${tab} structure-error ${String(sres.exceptionDetails?.text ?? '結果が空').slice(0, 120)}`,
+          )
+        } else {
+          for (const line of s.failures) violations.push(`${lang} ${tab} [${s.kind}] ${line}`)
+          for (const line of s.info) structureNotes.push(`- ${viewport} ${lang} ${line}`)
+          structureNotes.push(`- ${viewport} ${lang} ${s.kind} measured ${JSON.stringify(s.measured)}`)
+        }
+      }
       // 待つ間に増えた console/pageerror を集計（同じ文は 1 回だけ）
       for (const line of errors.slice(before)) noise.get(`${lang} ${tab}`).add(line)
       debug(`tab ${tab} done (t=${Date.now() - started}ms)`)
@@ -630,6 +812,94 @@ async function auditCombo(cdp, sessionId, base, token, viewport, lang, tabs, noi
     off()
   }
   return violations
+}
+
+/**
+ * 1 枚のスクショを撮る（`--shot` 指定 1 件）。
+ *
+ * 監査と同じ CDP 経路を使う（npm 依存を足さない）。`deviceScaleFactor: 2` で撮るので
+ * PNG の画素数は指定 viewport の 2 倍になる（Retina 相当・目視確認用）。
+ *
+ * @param {Cdp} cdp CDP クライアント
+ * @param {string} sessionId ページセッション
+ * @param {string} base 基点 URL
+ * @param {{viewport: string, tab: string, out: string, lang: string}} shot 指示
+ * @returns {Promise<boolean>} 撮れたか
+ */
+async function takeShot(cdp, sessionId, base, shot) {
+  const [w, h] = shot.viewport.split('x').map(Number)
+  await cdp.send(
+    'Emulation.setDeviceMetricsOverride',
+    { width: w, height: h, deviceScaleFactor: 2, mobile: w < 1000, screenWidth: w, screenHeight: h },
+    sessionId,
+  )
+  await cdp.send(
+    'Runtime.evaluate',
+    { expression: `localStorage.setItem('hm.lang', ${JSON.stringify(shot.lang)})`, returnByValue: true },
+    sessionId,
+  )
+  await cdp.send('Page.navigate', { url: `${base}/?shot=${shot.viewport}-${shot.tab}` }, sessionId)
+  const booted = await waitFor(async () => {
+    const r = await cdp.send(
+      'Runtime.evaluate',
+      {
+        expression: `document.querySelectorAll('nav .nav-item').length === ${TABS.length} && document.readyState === 'complete'`,
+        returnByValue: true,
+      },
+      sessionId,
+    )
+    return r.result?.value === true
+  }, BOOT_TIMEOUT_MS)
+  if (!booted) return false
+  await sleep(TAB_SETTLE_MS)
+  const index = TABS.indexOf(shot.tab)
+  if (index > 0) {
+    const clicked = await cdp.send(
+      'Runtime.evaluate',
+      {
+        expression: `(() => { const b = document.querySelectorAll('nav .nav-item')[${index}]; if (!b) return false; b.click(); return true })()`,
+        returnByValue: true,
+      },
+      sessionId,
+    )
+    if (clicked.result?.value !== true) return false
+    await sleep(TAB_SETTLE_MS)
+  }
+  // `click` 指定があれば 1 回クリックし、タイムラインに中身が載るまで待つ（会話を選ぶ用途）
+  if (shot.click) {
+    const clicked = await cdp.send(
+      'Runtime.evaluate',
+      {
+        expression: `(() => { const el = document.querySelector(${JSON.stringify(shot.click)}); if (!el) return false; el.click(); return true })()`,
+        returnByValue: true,
+      },
+      sessionId,
+    )
+    if (clicked.result?.value !== true) return false
+    await sleep(TAB_SETTLE_MS)
+    await waitFor(async () => {
+      const r = await cdp.send(
+        'Runtime.evaluate',
+        {
+          expression: `(() => { const b = document.querySelector('.chat-body'); return !!b && (b.textContent || '').length > 200 })()`,
+          returnByValue: true,
+        },
+        sessionId,
+      )
+      return r.result?.value === true
+    }, 8000, 250)
+  }
+  // Web フォントの読み込みを待ってから撮る（文字の差し替わりで撮り直さないため）
+  await cdp.send(
+    'Runtime.evaluate',
+    { expression: 'document.fonts && document.fonts.ready ? document.fonts.ready.then(() => true) : true', awaitPromise: true, returnByValue: true },
+    sessionId,
+  )
+  const res = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }, sessionId)
+  if (!res?.data) return false
+  fs.mkdirSync(path.dirname(shot.out), { recursive: true })
+  fs.writeFileSync(shot.out, Buffer.from(res.data, 'base64'))
+  return true
 }
 
 /**
@@ -731,6 +1001,29 @@ async function main() {
     return r.result?.value === 'complete'
   }, 10000)
 
+  // `--shot` を指定したら監査はせず、スクショだけ撮って終わる（§2.4 の目視用 2 枚）
+  if (args.shots.length) {
+    let failed = 0
+    for (const shot of args.shots) {
+      const ok = await takeShot(cdp, sessionId, base, shot)
+      if (ok) {
+        const rel = path.relative(process.cwd(), shot.out) || shot.out
+        console.log(`shot ${shot.viewport} ${shot.lang} ${shot.tab} → ${rel}`)
+      } else {
+        console.error(`audit:responsive: shot 失敗 ${shot.viewport} ${shot.lang} ${shot.tab}`)
+        failed += 1
+      }
+    }
+    try {
+      await cdp.send('Target.closeTarget', { targetId })
+      socket.close()
+    } catch {
+      /* 終了処理の失敗は無視 */
+    }
+    cleanup()
+    process.exit(failed ? 1 : 0)
+  }
+
   const violations = []
   const noise = new Map()
   const found = { tap: new Map(), clip: new Map() }
@@ -793,6 +1086,7 @@ async function main() {
   }
   const acceptedCount = (baseline.tap?.length ?? 0) + (baseline.clip?.length ?? 0)
   for (const line of absent) console.log(line)
+  for (const line of structureNotes) console.log(line)
 
   try {
     await cdp.send('Target.closeTarget', { targetId })
