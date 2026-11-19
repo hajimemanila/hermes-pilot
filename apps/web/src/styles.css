@@ -2967,15 +2967,30 @@ html[data-vibe='dopamine'] .row-mode.resumable {
 .ak-worker { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
 .ak-worker summary { font-size: 12px; color: var(--muted); cursor: pointer; }
 .ak-worker-log {
-  max-height: 220px; overflow-y: auto; margin-top: 8px; display: flex; flex-direction: column; gap: 4px;
+  max-height: 220px; overflow-y: auto; margin-top: 8px; display: flex; flex-direction: column; gap: 6px;
 }
+/* 2 列 2 段（D67）: 1 行目 = 時刻 + ツール名 / 2 行目 = ログ本文。
+   旧 `40px 62px 1fr` の 3 列固定では `kanban_comment` 等の長いツール名が 62px 列から
+   はみ出して右隣の本文と重なった。時刻（HH:MM・5 文字）だけ固定幅にし、ツール名と
+   本文は同じ 1 列を共有させる（`minmax(0, 1fr)` なので長い 1 語でも列を押し広げない）。 */
 .ak-worker-row {
-  display: grid; grid-template-columns: 40px 62px 1fr; gap: 6px; font-size: 11px; line-height: 1.45;
+  display: grid; grid-template-columns: 42px minmax(0, 1fr);
+  column-gap: 8px; row-gap: 1px; font-size: 11px; line-height: 1.45;
 }
-.ak-worker-time { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.ak-worker-tag { color: var(--accent-2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.ak-worker-time {
+  grid-column: 1; grid-row: 1; color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums;
+}
+.ak-worker-tag {
+  grid-column: 2; grid-row: 1; min-width: 0;
+  color: var(--accent-2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .ak-worker-row.tool .ak-worker-tag { color: var(--warn); }
-.ak-worker-text { color: var(--text); opacity: .88; overflow-wrap: anywhere; }
+.ak-worker-text {
+  grid-column: 2; grid-row: 2; min-width: 0;
+  color: var(--text); opacity: .88; overflow-wrap: anywhere;
+}
 .ak-worker-empty { font-size: 11px; color: var(--muted); padding: 6px 0; }
 
 /* --------------------------------------------------------- 注釈エディタ */
