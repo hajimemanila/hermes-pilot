@@ -109,6 +109,45 @@ HTTP キャッシュが残っている。
 
 ---
 
+## P7. テーマ（Dark / Light）× Vibe の色漏れ（黒枠・黒ドット・読めない文字）
+
+**症状**: Light にするとナビの点・バッジに**黒いリング**が付く／「実行中」ピルのドットが
+**どちらの Vibe でも黒い**／設定タブの PWA 診断の ✓✗ が白カードの上で読めない。
+
+**原因**: コンポーネント側の**直書き**。面の色はテーマで変わるのに、個別セレクタに Dark の値を
+焼き込んでいた（実測 2026-11-19）:
+
+| 箇所 | 直書き | 正しい持ち方 |
+| --- | --- | --- |
+| `.nav-badge` / `.nav-dot` / `.drawer-btn-badge` | `box-shadow: 0 0 0 2px rgba(6,22,26,.96)` | `var(--badge-ring)`（Dark 暗色 / Light 白） |
+| `.t-dot.live`（実行中ピルの点） | `background: var(--on-warn)`（#1d1300 = 黒） | `var(--accent)`（文字用トークンを図形に流用しない） |
+| `.row-badge` / `.drawer-btn-badge` の文字 | `color: #06201a` / `#04202a` | `var(--on-good)` / `var(--on-accent)` |
+| `.ak-thumb-btn::after`（拡大ラベル） | `background: rgba(6,22,26,.78)` | `var(--glass-strong)`（Light で暗い面＋暗い文字になる） |
+| `.receipt-preview` | `background: #06181f` | `var(--code-bg)` |
+| `SettingsPane` の診断 ✓✗ | inline `#4ade80` / `#f87171` / `#fca5a5` | `var(--good)` / `var(--bad)` / `var(--danger-fg)` |
+
+Dopamine 側も `--vibe-badge-ring` に同じ値を二重定義していたので、
+`--vibe-badge-ring: var(--badge-ring)` の別名だけにした（重複を残さない）。
+
+**検出**: `apps/web/test/themeTokens.test.js`
+- `--badge-ring` が両テーマに定義されている
+- 点・バッジ類が `var(--badge-ring)` を使い、暗色を直書きしていない
+- `.t-dot.live` が `var(--accent)`（`--on-warn` を図形に使わない）
+- 宣言に `rgba(6, 22, 26` / `#06201a` / `#04202a` / `#06181f` の直書きが残っていない
+- `.jsx` の `style={{ … }}` に色（`#hex` / `rgba()`）を書かない
+
+実画面は Chrome で `html[data-theme]` と `html[data-vibe]` を切り替え、点・バッジの computed
+`boxShadow` に暗色が混ざっていないかを 4 通り（Dark/Light × dopamine/serotonin）で機械走査する。
+
+**対策の原則**: 面・文字・縁取りは必ずテーマトークン（`--badge-ring` / `--on-good` / `--on-accent` /
+`--glass-strong` / `--code-bg`）。**新しい小さい部品を足すとき、色を書くのは `:root` と
+`html[data-theme='light']` の 2 箇所だけ**にする。Vibe は既存トークンの別名を置くに留める。
+
+**測定の罠**: `transition` 中の computed は**中間色**を返す（`#5eead4`→`#0f766e` の途中を
+Light の漏れと誤判定した）。機械走査の前に `*{transition:none!important}` を挿す。
+
+---
+
 ## 再発防止の運用
 
 ```bash

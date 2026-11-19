@@ -1023,8 +1023,9 @@ export function SettingsPane({ overview, notify, refresh }) {
           <div className="diag" style={{ marginTop: 10, fontSize: 12, lineHeight: 1.5 }}>
             {diag.map((r) => (
               <div key={r.label} style={{ display: 'flex', gap: 8, padding: '2px 0' }}>
-                <span style={{ color: r.ok ? '#4ade80' : '#f87171', flex: '0 0 auto' }}>{r.ok ? '✓' : '✗'}</span>
-                <span style={{ flex: '1 1 auto', color: r.ok ? 'var(--text)' : '#fca5a5' }}>{r.label}</span>
+                {/* 色はトークン経由（直書きだと Light の白カード上で読めない） */}
+                <span style={{ color: r.ok ? 'var(--good)' : 'var(--bad)', flex: '0 0 auto' }}>{r.ok ? '✓' : '✗'}</span>
+                <span style={{ flex: '1 1 auto', color: r.ok ? 'var(--text)' : 'var(--danger-fg)' }}>{r.label}</span>
                 <span style={{ flex: '1 1 50%', color: 'var(--muted)', wordBreak: 'break-all', textAlign: 'right' }}>
                   {r.detail}
                 </span>

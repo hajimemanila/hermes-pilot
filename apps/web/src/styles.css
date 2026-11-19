@@ -48,6 +48,9 @@
      ＝白文字色に落ちて「白枠のボタン」になっていた（Dark のみ）。 */
   --danger-line: rgba(248, 113, 113, 0.42);
   --dot-done: #3f6b6a;
+  /* ナビの点・数字バッジの縁取り。ナビ面の色で塗るので、Light では白が正しい
+     （Dark の rgba(6,22,26,.96) 直書きだと Light で黒いリングになる・実測） */
+  --badge-ring: rgba(6, 22, 26, 0.96);
   --glint: #c7fff7;
   --user-bubble: linear-gradient(180deg, #11706c, #0d5a57);
   --bubble-fg: #eafefb;
@@ -113,6 +116,7 @@ html[data-theme='light'] {
   --discord: #4752c4;
   --danger-line: rgba(220, 38, 38, 0.35);
   --dot-done: #6d8785;
+  --badge-ring: rgba(255, 255, 255, 0.96);
   --glint: #0f766e;
   --user-bubble: linear-gradient(180deg, #0d9488, #0f766e);
   --bubble-fg: #ffffff;
@@ -430,7 +434,9 @@ button.t-pill:active {
   background: var(--good);
 }
 .t-dot.live {
-  background: var(--on-warn);
+  /* 文字用の --on-warn（#1d1300）を点に流用していたため、両テーマで黒い点になっていた。
+     実行中ピルは accent 系の面なので、点も accent にする */
+  background: var(--accent);
   animation: pulse 1.4s ease-in-out infinite;
 }
 
@@ -2583,7 +2589,7 @@ ol.md-list {
   text-align: center;
   font-variant-numeric: tabular-nums;
   /* ナビ背景に丸の縁を抜く（アイコンの線と重ねない） */
-  box-shadow: 0 0 0 2px rgba(6, 22, 26, 0.96);
+  box-shadow: 0 0 0 2px var(--badge-ring);
 }
 
 /* 進行中（青）と未読の完了（緑）は数字ではなく点で出す。
@@ -2595,7 +2601,7 @@ ol.md-list {
   width: 9px;
   height: 9px;
   border-radius: 999px;
-  box-shadow: 0 0 0 2px rgba(6, 22, 26, 0.96);
+  box-shadow: 0 0 0 2px var(--badge-ring);
 }
 
 .nav-dot.running { background: var(--accent); }
@@ -2629,13 +2635,13 @@ ol.md-list {
   line-height: 18px;
   text-align: center;
   font-variant-numeric: tabular-nums;
-  color: #06201a;
+  color: var(--on-good);
   margin-left: 6px;
 }
 .row-badge.done { background: var(--good); }
 .row-badge.new {
   background: var(--accent);
-  color: #04202a;
+  color: var(--on-accent);
 }
 
 /* 会話一覧の「継続可 / 閲覧専用」区別とメタ行。タイトル末尾（line-clamp で切れる）ではなく
@@ -2689,13 +2695,13 @@ html[data-vibe='dopamine'] .row-mode.resumable {
   padding: 0 4px;
   border-radius: 999px;
   background: var(--good);
-  color: #06201a;
+  color: var(--on-good);
   font-size: 10px;
   font-weight: 700;
   line-height: 16px;
   text-align: center;
   font-variant-numeric: tabular-nums;
-  box-shadow: 0 0 0 2px rgba(6, 22, 26, 0.96);
+  box-shadow: 0 0 0 2px var(--badge-ring);
 }
 
 /* チャットドロワー上部の操作バー（↻ 更新 / ✓ すべて既読・SPEC-PILOT-V4 §3.1 / D22③）。
@@ -2886,7 +2892,7 @@ html[data-vibe='dopamine'] .row-mode.resumable {
 .ak-thumb-btn::after {
   content: '拡大'; position: absolute; right: 3px; bottom: 3px;
   font-size: 9px; line-height: 1.4; padding: 0 4px; border-radius: 4px;
-  background: rgba(6, 22, 26, .78); color: var(--accent-2); pointer-events: none;
+  background: var(--glass-strong); color: var(--accent-2); pointer-events: none;
 }
 .ak-thumb-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ak-zoom {
@@ -4439,7 +4445,8 @@ html[data-vibe='dopamine'] {
   --vibe-card-bg: linear-gradient(160deg, rgba(20, 62, 78, 0.78), rgba(10, 32, 44, 0.95) 65%, rgba(24, 28, 54, 0.78));
   --vibe-card-shadow: 0 8px 22px rgba(0, 0, 0, 0.34), 0 0 16px rgba(34, 211, 238, 0.11);
   --vibe-glow: 0 0 18px rgba(34, 211, 238, 0.38);
-  --vibe-badge-ring: rgba(6, 22, 26, 0.96);
+  /* バッジの縁取りはテーマ共通トークンへ集約（vibe 側で別値を持たない） */
+  --vibe-badge-ring: var(--badge-ring);
   --vibe-topbar-grad: linear-gradient(110deg, rgba(34, 211, 238, 0.16) 0%, rgba(167, 139, 250, 0.12) 38%, rgba(251, 191, 36, 0.12) 72%, rgba(45, 212, 191, 0.14) 100%);
   --vibe-topbar-line: var(--accent);
 }
@@ -4458,7 +4465,7 @@ html[data-vibe='dopamine'][data-theme='light'] {
   --vibe-card-bg: linear-gradient(160deg, #ffffff 0%, #edf9fb 65%, #f5f3ff 100%);
   --vibe-card-shadow: 0 6px 18px rgba(6, 182, 212, 0.13), 0 2px 5px rgba(15, 36, 42, 0.06);
   --vibe-glow: 0 4px 16px rgba(6, 182, 212, 0.3);
-  --vibe-badge-ring: rgba(255, 255, 255, 0.96);
+  --vibe-badge-ring: var(--badge-ring);
   --vibe-topbar-grad: linear-gradient(110deg, rgba(6, 182, 212, 0.14) 0%, rgba(124, 58, 237, 0.09) 38%, rgba(245, 158, 11, 0.12) 72%, rgba(13, 148, 136, 0.12) 100%);
   --vibe-topbar-line: #06b6d4;
 }
@@ -5253,7 +5260,7 @@ html[data-vibe='dopamine'] .vibe-chip.on {
   object-fit: contain;
   border-radius: 12px;
   border: 1px solid var(--line-strong);
-  background: #06181f;
+  background: var(--code-bg);
 }
 
 .receipt-preview-empty {
@@ -5736,7 +5743,8 @@ html[data-vibe='serotonin'] .spec-receipt-btn {
 .snippet-chip,
 .btn,
 .hm-switch,
-.composer .plus {
+.composer .plus,
+.report-link {
   position: relative;
 }
 
@@ -5746,7 +5754,8 @@ html[data-vibe='serotonin'] .spec-receipt-btn {
 .snippet-chip::before,
 .btn::before,
 .hm-switch::before,
-.composer .plus::before {
+.composer .plus::before,
+.report-link::before {
   content: '';
   position: absolute;
   left: 50%;
