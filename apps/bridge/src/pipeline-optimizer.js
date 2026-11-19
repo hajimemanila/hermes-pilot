@@ -40,6 +40,10 @@ export const A2B_RULES = [
   '- 判断が必要になったら**長文の質問をチャットへ並べない**。`quick-review` シートを作り、',
   '  `[review] label=... round=...` 行付きのタスクを起票して `needs_input` で止める。',
   '- 見た目の検収は `annotation`（スクリーンショット＋赤）で受ける。文章で聞き返さない。',
+  // D60 / D61 / D63: 抽象ロール・ネイティブ委譲・外部 CLI 禁止（SOUL を太らせないため 3 行に抑える）
+  '- 抽象ロール（`role:planner` / `role:builder` / `role:visual-reviewer` / `role:decision-framer`）で捉え、',
+  '  ロールごとの実モデル割当とフォールバック順はプロファイルメモリの表に従い `delegate_task` で委譲する。',
+  '  委譲の失敗・レート制限・タイムアウト・未対応では止めずフォールバックへ回し、外部 AI CLI のサブプロセス起動はしない。',
   '- タスク本文に `Mode: zero-stop` / `fast-track-review` / `visual-gate` があればその契約に従う。',
   '  `zero-stop` は `npm run verify` が通るまで自律修復し、通過後に `done` にする。',
   '- 完了報告は「何をしたか / 検証コマンドと exit code / 未検証 / 次の一手」の 4 点に絞る。',
@@ -115,29 +119,42 @@ export function nextBackupPath(soulPath, stamp, exists = (p) => fs.existsSync(p)
 }
 
 /**
- * `<hermesHome>/SOUL.md` へ A2B 行動規範を冪等に適用する。
+ * `SOUL.md` 1 枚へ A2B 行動規範を冪等に適用する（本体。`optimizeHermesSoul` とプロファイル同期の共通処理）。
  *
  * 2 回目以降はブロックが同一なので**書き込みもバックアップもしない**（1 タップボタンの連打で
  * `SOUL.md.bak-*` が増えない）。内容が変わるときだけバックアップを 1 枚作ってから書く。
  *
- * @param {{hermesHome?: string, now?: number, block?: string}} [opts] 入力
- * @returns {{ok: boolean, path: string, mode: string, changed: boolean, backupPath: string|null, error?: string}} 結果
+ * @param {string} soulPath 対象ファイルの絶対パス
+ * @param {{now?: number, block?: string, create?: boolean}} [opts] 入力（`create:false` はファイルが無ければ作らない）
+ * @returns {{ok: boolean, path: string, mode: string, changed: boolean, backupPath: string|null, exists: boolean, applied: boolean, error?: string}} 結果
  */
-export function optimizeHermesSoul({ hermesHome, now = Date.now(), block = A2B_RULE_BLOCK } = {}) {
-  const home = String(hermesHome ?? process.env.HERMES_HOME ?? path.join(os.homedir(), '.hermes'))
-  const soulPath = path.join(home, 'SOUL.md')
+function applySoulFile(soulPath, { now = Date.now(), block = A2B_RULE_BLOCK, create = true } = {}) {
   let current = ''
+  let exists = false
   try {
     current = fs.readFileSync(soulPath, 'utf8')
+    exists = true
   } catch (err) {
     if (err?.code !== 'ENOENT') {
-      return { ok: false, path: soulPath, mode: 'error', changed: false, backupPath: null, error: String(err?.message ?? err) }
+      return {
+        ok: false,
+        path: soulPath,
+        mode: 'error',
+        changed: false,
+        backupPath: null,
+        exists: false,
+        applied: false,
+        error: String(err?.message ?? err),
+      }
     }
+    // `create:false` は既存 SOUL.md だけを対象にする（人の環境に勝手に作らない）。
+    if (!create) return { ok: true, path: soulPath, mode: 'skipped', changed: false, backupPath: null, exists: false, applied: false }
   }
 
   const merged = mergeSoul(current, block)
+  const applied = merged.text.includes(A2B_START) && merged.text.includes(A2B_END)
   if (!merged.changed) {
-    return { ok: true, path: soulPath, mode: 'unchanged', changed: false, backupPath: null }
+    return { ok: true, path: soulPath, mode: 'unchanged', changed: false, backupPath: null, exists, applied }
   }
 
   let backupPath = null
@@ -152,9 +169,145 @@ export function optimizeHermesSoul({ hermesHome, now = Date.now(), block = A2B_R
     fs.writeFileSync(tmp, merged.text, { encoding: 'utf8', mode: 0o600 })
     fs.renameSync(tmp, soulPath)
   } catch (err) {
-    return { ok: false, path: soulPath, mode: 'error', changed: false, backupPath, error: String(err?.message ?? err) }
+    return { ok: false, path: soulPath, mode: 'error', changed: false, backupPath, exists, applied, error: String(err?.message ?? err) }
   }
-  return { ok: true, path: soulPath, mode: merged.mode, changed: true, backupPath }
+  return { ok: true, path: soulPath, mode: merged.mode, changed: true, backupPath, exists: true, applied: true }
+}
+
+/**
+ * `<hermesHome>/SOUL.md` へ A2B 行動規範を冪等に適用する。
+ *
+ * 引数・戻り値は従来どおり（`{ ok, path, mode, changed, backupPath }`）。プロファイル配下の同期は
+ * `optimizeProfileSouls` が担う（D64）。
+ *
+ * @param {{hermesHome?: string, now?: number, block?: string}} [opts] 入力
+ * @returns {{ok: boolean, path: string, mode: string, changed: boolean, backupPath: string|null, error?: string}} 結果
+ */
+export function optimizeHermesSoul({ hermesHome, now = Date.now(), block = A2B_RULE_BLOCK } = {}) {
+  const home = String(hermesHome ?? process.env.HERMES_HOME ?? path.join(os.homedir(), '.hermes'))
+  const soulPath = path.join(home, 'SOUL.md')
+  const applied = applySoulFile(soulPath, { now, block, create: true })
+  // `exists` / `applied` は内部用の追加情報。従来の戻り値の形は変えない。
+  const { exists: _exists, applied: _applied, ...result } = applied
+  return result
+}
+
+/**
+ * プロファイル配下で `SOUL.md` を**新規作成してよい**名前（D64）。
+ *
+ * ディレクトリが既にある場合だけ、そして `mobile` だけ（実運用で毎ターン読ませたいプロファイル）。
+ * それ以外のプロファイルは既存 `SOUL.md` があるときだけ更新する＝人の環境を勝手に増やさない。
+ */
+export const PROFILE_SOUL_CREATE_IF_MISSING = ['mobile']
+
+/**
+ * `<hermesHome>/profiles` 配下のプロファイル名（ディレクトリのみ・隠しディレクトリ除外）。
+ *
+ * @param {string} hermesHome Hermes のホーム
+ * @returns {string[]} 昇順のプロファイル名
+ */
+export function listProfileNames(hermesHome) {
+  let entries = []
+  try {
+    entries = fs.readdirSync(path.join(String(hermesHome), 'profiles'), { withFileTypes: true })
+  } catch {
+    return []
+  }
+  return entries
+    .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+    .map((e) => e.name)
+    .sort()
+}
+
+/**
+ * プロファイル 1 つ分の `SOUL.md` 適用状況（**中身は返さない**）。
+ *
+ * @param {string} hermesHome Hermes のホーム
+ * @param {string} name プロファイル名
+ * @returns {{name: string, path: string, exists: boolean, applied: boolean, backups: number}} 状態
+ */
+function profileSoulState(hermesHome, name) {
+  const soulPath = path.join(String(hermesHome), 'profiles', name, 'SOUL.md')
+  let exists = false
+  let applied = false
+  try {
+    const text = fs.readFileSync(soulPath, 'utf8')
+    exists = true
+    applied = text.includes(A2B_START) && text.includes(A2B_END)
+  } catch {
+    exists = false
+  }
+  let backups = 0
+  try {
+    backups = fs.readdirSync(path.dirname(soulPath)).filter((n) => n.startsWith('SOUL.md.bak-')).length
+  } catch {
+    backups = 0
+  }
+  return { name, path: soulPath, exists, applied, backups }
+}
+
+/**
+ * `~/.hermes/profiles/<name>/SOUL.md` へ A2B 行動規範を**非破壊・冪等**に同期する（D64）。
+ *
+ * - 対象は `profiles` を渡せばその名前だけ、省略時は `<hermesHome>/profiles/*` を自動検出。
+ * - `SOUL.md` が既にある → マーカー間だけ置換し、内容が変わるときだけ `.bak-<stamp>` を 1 枚作る。
+ * - `SOUL.md` が無い → `PROFILE_SOUL_CREATE_IF_MISSING`（`mobile`）だけ最小構成で新規作成、
+ *   それ以外は `mode: 'skipped'`（ディレクトリを勝手に作らない）。
+ * - 内容（テキスト）は戻り値に載せない。`changed` / `mode` / `backupPath` / 件数だけ。
+ *
+ * @param {{hermesHome?: string, now?: number, block?: string, profiles?: string[]}} [opts] 入力
+ * @returns {{ok: boolean, profiles: Array<{name: string, path: string, exists: boolean, applied: boolean, changed: boolean, mode: string, backupPath: string|null, backups: number, error?: string}>}} 結果
+ */
+export function optimizeProfileSouls({ hermesHome, now = Date.now(), block = A2B_RULE_BLOCK, profiles } = {}) {
+  const home = String(hermesHome ?? process.env.HERMES_HOME ?? path.join(os.homedir(), '.hermes'))
+  const names = Array.isArray(profiles) && profiles.length
+    ? profiles.map((n) => String(n ?? '').trim()).filter(Boolean)
+    : listProfileNames(home)
+
+  const out = []
+  for (const name of names) {
+    // パス連結に使う名前だけを受け付ける（`../` 等の脱出を許さない）。
+    if (!/^[A-Za-z0-9._-]+$/.test(name) || name === '.' || name === '..') continue
+    const dir = path.join(home, 'profiles', name)
+    let dirExists = false
+    try {
+      dirExists = fs.statSync(dir).isDirectory()
+    } catch {
+      dirExists = false
+    }
+    if (!dirExists) {
+      out.push({
+        name,
+        path: path.join(dir, 'SOUL.md'),
+        exists: false,
+        applied: false,
+        changed: false,
+        mode: 'skipped',
+        backupPath: null,
+        backups: 0,
+      })
+      continue
+    }
+
+    const r = applySoulFile(path.join(dir, 'SOUL.md'), {
+      now,
+      block,
+      create: PROFILE_SOUL_CREATE_IF_MISSING.includes(name),
+    })
+    const state = profileSoulState(home, name)
+    out.push({
+      name,
+      path: r.path,
+      exists: r.exists,
+      applied: Boolean(r.applied),
+      changed: Boolean(r.changed),
+      mode: r.mode,
+      backupPath: r.backupPath ?? null,
+      backups: state.backups,
+      ...(r.error ? { error: r.error } : {}),
+    })
+  }
+  return { ok: out.every((p) => p.mode !== 'error'), profiles: out }
 }
 
 /**
@@ -351,6 +504,8 @@ export function getOptimizeStatus({
       backups: backups.length,
       latestBackup: backups.length ? backups[backups.length - 1] : null,
     },
+    // プロファイル配下（`profiles/<name>/SOUL.md`）も「適用済みか」だけを返す（中身は返さない）。
+    profiles: listProfileNames(hh).map((name) => profileSoulState(hh, name)),
     hermes: skillState(path.join(hh, 'skills')),
     bundled: { source: skillsSrcDir, names: BUNDLED_SKILLS },
     antigravity,

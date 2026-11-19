@@ -22,10 +22,12 @@ import {
   backupStamp,
   getOptimizeStatus,
   installSkill,
+  listProfileNames,
   mergeSoul,
   nextBackupPath,
   optimizeAntigravitySkills,
   optimizeHermesSoul,
+  optimizeProfileSouls,
 } from '../src/pipeline-optimizer.js'
 
 /** 一時ディレクトリ（後始末は呼び出し側）。 */
@@ -249,6 +251,118 @@ test('getOptimizeStatus は真偽値と件数だけを返す（SOUL の中身を
       assert.ok(Array.isArray(t.present))
       assert.ok(Array.isArray(t.missing))
     }
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+  }
+})
+
+/** `<hermesHome>/profiles/<name>/SOUL.md` を用意する（バックアップ件数の数え上げにも使う）。 */
+function writeProfileSoul(hermesHome, name, text) {
+  const file = path.join(hermesHome, 'profiles', name, 'SOUL.md')
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  if (text !== null) fs.writeFileSync(file, text, 'utf8')
+  return file
+}
+
+/** そのディレクトリの `SOUL.md.bak-*` の数。 */
+const countBackups = (dir) =>
+  fs.existsSync(dir) ? fs.readdirSync(dir).filter((n) => n.startsWith('SOUL.md.bak-')).length : 0
+
+test('optimizeProfileSouls はプロファイル配下の SOUL.md をバックアップ付きで冪等更新する', () => {
+  const home = tempHome()
+  try {
+    const hermesHome = path.join(home, '.hermes')
+    const original = '# MOBILE\n\n- 人が書いた行\n'
+    const mobileSoul = writeProfileSoul(hermesHome, 'mobile', original)
+    const workSoul = writeProfileSoul(hermesHome, 'work', '# WORK\n')
+
+    assert.deepEqual(listProfileNames(hermesHome), ['mobile', 'work'])
+
+    const now = Date.UTC(2026, 10, 19, 10, 0, 0)
+    const first = optimizeProfileSouls({ hermesHome, now })
+    assert.equal(first.ok, true)
+    const mobile = first.profiles.find((p) => p.name === 'mobile')
+    assert.equal(mobile.mode, 'appended')
+    assert.equal(mobile.changed, true)
+    assert.equal(mobile.exists, true)
+    assert.equal(mobile.applied, true)
+    assert.equal(mobile.backups, 1)
+    assert.match(path.basename(mobile.backupPath), /^SOUL\.md\.bak-20261119T100000Z$/)
+    assert.equal(fs.readFileSync(mobile.backupPath, 'utf8'), original, 'バックアップが元の内容と違う')
+    const afterFirst = fs.readFileSync(mobileSoul, 'utf8')
+    assert.equal(countBlocks(afterFirst), 1)
+    assert.ok(afterFirst.includes('- 人が書いた行'), '既存の行が消えた')
+    assert.match(fs.readFileSync(workSoul, 'utf8'), /hermes-pilot:a2b:end/, 'work プロファイルが同期されていない')
+
+    // 2 回目・3 回目は書き込みもバックアップもしない（1 タップ連打でファイルが増えない）
+    const second = optimizeProfileSouls({ hermesHome, now })
+    const third = optimizeProfileSouls({ hermesHome, now })
+    const m2 = second.profiles.find((p) => p.name === 'mobile')
+    assert.equal(m2.mode, 'unchanged')
+    assert.equal(m2.changed, false)
+    assert.equal(m2.backupPath, null)
+    assert.equal(third.profiles.find((p) => p.name === 'mobile').backups, 1)
+    assert.equal(fs.readFileSync(mobileSoul, 'utf8'), afterFirst, '2 回目以降で内容が変わった')
+    assert.equal(countBackups(path.join(hermesHome, 'profiles', 'mobile')), 1, 'バックアップが増えている')
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('optimizeProfileSouls は SOUL.md の無いプロファイルを作らない（mobile だけは作る）', () => {
+  const home = tempHome()
+  try {
+    const hermesHome = path.join(home, '.hermes')
+    // ディレクトリはあるが SOUL.md が無い 2 プロファイル
+    writeProfileSoul(hermesHome, 'mobile', null)
+    writeProfileSoul(hermesHome, 'work', null)
+
+    const r = optimizeProfileSouls({ hermesHome })
+    const mobile = r.profiles.find((p) => p.name === 'mobile')
+    const work = r.profiles.find((p) => p.name === 'work')
+    assert.equal(mobile.mode, 'created')
+    assert.equal(mobile.exists, true)
+    assert.equal(countBlocks(fs.readFileSync(path.join(hermesHome, 'profiles', 'mobile', 'SOUL.md'), 'utf8')), 1)
+    assert.equal(work.mode, 'skipped')
+    assert.equal(work.exists, false)
+    assert.equal(
+      fs.existsSync(path.join(hermesHome, 'profiles', 'work', 'SOUL.md')),
+      false,
+      'SOUL.md の無いプロファイルに勝手に作っている',
+    )
+
+    // ディレクトリごと無い名前は、明示指定でもディレクトリを作らない
+    const ghost = optimizeProfileSouls({ hermesHome, profiles: ['ghost'] })
+    assert.equal(ghost.profiles[0].mode, 'skipped')
+    assert.equal(fs.existsSync(path.join(hermesHome, 'profiles', 'ghost')), false)
+    // パス脱出する名前は黙って無視する
+    assert.deepEqual(optimizeProfileSouls({ hermesHome, profiles: ['../evil'] }).profiles, [])
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('getOptimizeStatus の profiles も真偽値と件数だけを返す（プロファイル SOUL の中身を載せない）', () => {
+  const home = tempHome()
+  try {
+    const hermesHome = path.join(home, '.hermes')
+    const empty = getOptimizeStatus({ hermesHome, home, skillsSrcDir: path.join(home, 'none') })
+    assert.deepEqual(empty.profiles, [], 'profiles ディレクトリが無いのに配列が空でない')
+
+    const secret = '«redacted:profile-soul-secret»'
+    const mobileSoul = writeProfileSoul(hermesHome, 'mobile', `# MOBILE\n\n${secret}\n`)
+    optimizeProfileSouls({ hermesHome })
+
+    const status = getOptimizeStatus({ hermesHome, home, skillsSrcDir: path.join(home, 'none') })
+    const mobile = status.profiles.find((p) => p.name === 'mobile')
+    assert.equal(mobile.exists, true)
+    assert.equal(mobile.applied, true)
+    assert.equal(mobile.backups, 1)
+    assert.equal(typeof mobile.path, 'string')
+    const json = JSON.stringify(status)
+    assert.equal(json.includes(secret), false, 'プロファイル SOUL の中身が API 応答に載っている')
+    assert.equal(json.includes('hermes-pilot:a2b:start'), false, 'マーカー本文が漏れている')
+    assert.match(fs.readFileSync(mobileSoul, 'utf8'), /hermes-pilot:a2b:start/)
   } finally {
     fs.rmSync(home, { recursive: true, force: true })
   }

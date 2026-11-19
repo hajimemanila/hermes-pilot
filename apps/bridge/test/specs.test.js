@@ -14,14 +14,17 @@ import {
   BATCH_ID_RE,
   BODY_MAX,
   CONTRACT_HEADER,
+  RECOMMENDED_ROLE_RE,
   SPEC_CONTENT_MAX,
   buildTaskBody,
   buildTaskTitle,
   createSpecs,
+  extractRecommendedRole,
   findOpenBatchTask,
   listSpecs,
   makeRunId,
   normalizeExecutionMode,
+  normalizeRecommendedRole,
   parseCreatedTask,
   parseSpec,
   pruneRuns,
@@ -701,4 +704,110 @@ test('readSpecContent は UTF-8 の途中で切れた文字を末尾に残さな
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
+})
+
+/** 推奨ロール（D64）付きの SPEC。ロールの有無 × モードの有無を 4 通りそろえる。 */
+const ROLE_SPEC = `# SPEC: Role (SPEC-ROLE)
+
+## 4. Batches
+
+### Batch RB1: Builder batch
+
+- **Execution Mode**: [Mode: Zero-Stop]
+- **Recommended Role**: \`role:builder\`
+- **目的**: build it
+
+### Batch RB2: Reviewer batch
+
+- **Execution Mode**: [Mode: Visual Gate]
+- **推奨ロール**: role:visual-reviewer
+
+### RB3: Legacy batch
+
+- **目的**: no role, no mode
+
+### Batch RB4: Unknown role
+
+- **Execution Mode**: [Mode: Fast-Track Review]
+- **Recommended Role**: role:ninja
+`
+
+test('extractRecommendedRole は抽象ロール 4 つを正規化し、未知・未宣言は null', () => {
+  assert.equal(extractRecommendedRole('- **Recommended Role**: `role:builder`'), 'role:builder')
+  assert.equal(extractRecommendedRole('- **Recommended Role**: role:visual-reviewer'), 'role:visual-reviewer')
+  assert.equal(extractRecommendedRole('- **推奨ロール**: `role:planner`'), 'role:planner')
+  // `role:` 接頭辞なしの表記も正規化して受け入れる
+  assert.equal(extractRecommendedRole('- **Recommended Role**: `builder`'), 'role:builder')
+  assert.equal(extractRecommendedRole('- **Recommended Role**: ROLE:Decision-Framer'), 'role:decision-framer')
+  // 抽象ロール 4 つ以外は推測しない
+  assert.equal(extractRecommendedRole('- **Recommended Role**: role:ninja'), null)
+  assert.equal(extractRecommendedRole('- **Recommended Role**: reviewer'), null)
+  assert.equal(extractRecommendedRole('- **目的**: do it'), null)
+  assert.equal(extractRecommendedRole(''), null)
+  assert.equal(normalizeRecommendedRole('  `role:planner`  '), 'role:planner')
+})
+
+test('parseSpec は各バッチへ recommendedRole を付ける（未宣言・未知は null）', () => {
+  const parsed = parseSpec(ROLE_SPEC)
+  assert.deepEqual(
+    parsed.batches.map((b) => b.id),
+    ['RB1', 'RB2', 'RB3', 'RB4'],
+  )
+  assert.deepEqual(
+    parsed.batches.map((b) => b.recommendedRole),
+    ['role:builder', 'role:visual-reviewer', null, null],
+  )
+  // Execution Mode の抽出は従来どおり（後方互換）
+  assert.deepEqual(
+    parsed.batches.map((b) => b.mode),
+    ['zero-stop', 'visual-gate', null, 'fast-track-review'],
+  )
+  assert.equal(RECOMMENDED_ROLE_RE.test('- **Recommended Role**: `role:builder`'), true)
+})
+
+test('buildTaskBody は Recommended Role を [Hermes Pilot Execution Contract] に注入する', () => {
+  const [rb1, rb2, rb3, rb4] = parseSpec(ROLE_SPEC).batches
+
+  const body = buildTaskBody({ specRelPath: 'docs/SPEC-ROLE.md', repoPath: '/tmp/repo', board: 'b', batch: rb1 })
+  assert.ok(body.includes(CONTRACT_HEADER), '行動契約ブロックが無い')
+  assert.ok(body.includes('Recommended role: `role:builder`'), 'ロール指針が契約に無い')
+  assert.ok(body.includes('fallback chain'), 'フォールバック指示が無い')
+  assert.ok(body.includes('external AI CLI'), '外部 AI CLI 禁止が無い')
+  assert.ok(body.includes('Do not ask confirmation questions'), 'zero-stop の契約が消えている')
+  assert.equal(body.length <= BODY_MAX, true, `本文が上限超過: ${body.length}`)
+  assert.equal(body.indexOf(CONTRACT_HEADER) > 0, true, '契約は本文の末尾に置く')
+
+  // visual-gate はロール未宣言でも `role:visual-reviewer` 併用を勧める（既存挙動＋1 行）
+  const visual = buildTaskBody({ specRelPath: 'docs/SPEC-ROLE.md', repoPath: '/tmp/repo', board: 'b', batch: rb2 })
+  assert.ok(visual.includes('`role:visual-reviewer`'))
+  assert.ok(visual.includes('npm run deploy'))
+
+  // 後方互換: モードもロールも無ければ契約を足さない
+  const legacy = buildTaskBody({ specRelPath: 'docs/SPEC-ROLE.md', repoPath: '/tmp/repo', board: 'b', batch: rb3 })
+  assert.equal(legacy.includes(CONTRACT_HEADER), false)
+
+  // 未知のロール宣言は推測せず、モード契約だけを出す
+  const fast = buildTaskBody({ specRelPath: 'docs/SPEC-ROLE.md', repoPath: '/tmp/repo', board: 'b', batch: rb4 })
+  assert.ok(fast.includes('Mode: fast-track-review'))
+  assert.equal(fast.includes('Recommended role:'), false, '未知のロールを推測して書いている')
+  assert.ok(fast.includes('quick-review'))
+})
+
+test('docs/SPEC-ROLE-DELEGATION-ROUTING.md の Batch R1〜R4 と推奨ロールを抽出できる', () => {
+  const root = path.resolve(import.meta.dirname, '../../..')
+  const file = path.join(root, 'docs', 'SPEC-ROLE-DELEGATION-ROUTING.md')
+  if (!fs.existsSync(file)) return // 仕様書が無い環境ではスキップ相当
+  const parsed = parseSpec(fs.readFileSync(file, 'utf8'))
+  assert.deepEqual(
+    parsed.batches.map((b) => b.id),
+    ['R1', 'R2', 'R3', 'R4'],
+  )
+  assert.deepEqual(
+    parsed.batches.map((b) => b.recommendedRole),
+    ['role:planner', 'role:builder', 'role:planner', 'role:builder'],
+  )
+  assert.deepEqual(
+    parsed.batches.map((b) => b.mode),
+    ['zero-stop', 'zero-stop', 'fast-track-review', 'zero-stop'],
+  )
 })

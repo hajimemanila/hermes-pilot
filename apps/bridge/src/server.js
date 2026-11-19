@@ -38,6 +38,7 @@ import {
   getOptimizeStatus,
   optimizeAgentSkills,
   optimizeHermesSoul,
+  optimizeProfileSouls,
 } from './pipeline-optimizer.js'
 import { createPairCodes } from './pair-codes.js'
 import { createMemosStore } from './memos.js'
@@ -695,19 +696,25 @@ async function handleApi(req, res, url) {
       // 既定は SOUL とスキル配置の両方。片方だけ試したいときは明示的に false を渡す。
       const doSoul = body?.soul !== false
       const doSkills = body?.skills !== false
+      // プロファイル別 `SOUL.md`（`profiles/<name>/SOUL.md`）も同じ 1 タップで冪等同期する（D64）。
+      const doProfiles = doSoul && body?.profiles !== false
       const soul = doSoul ? optimizeHermesSoul({ hermesHome: cfg.hermesHome }) : null
+      const profiles = doProfiles ? optimizeProfileSouls({ hermesHome: cfg.hermesHome }) : null
       const skills = doSkills ? optimizeAgentSkills({ home: cfg.home, skillsSrcDir: DEFAULT_SKILLS_SRC }) : null
-      const ok = (soul?.ok ?? true) && (skills?.ok ?? true)
+      const ok = (soul?.ok ?? true) && (profiles?.ok ?? true) && (skills?.ok ?? true)
       auth.audit({
         kind: 'pipeline.optimize',
         soul: soul?.mode ?? null,
         soulChanged: Boolean(soul?.changed),
+        profileTargets: profiles?.profiles?.length ?? 0,
+        profileChanged: profiles?.profiles?.filter((p) => p.changed).length ?? 0,
         skillTargets: skills?.targets?.length ?? 0,
         ok,
       })
       return sendJson(res, ok ? 200 : 500, {
         ok,
         soul,
+        profiles,
         skills,
         status: getOptimizeStatus({ hermesHome: cfg.hermesHome, home: cfg.home, skillsSrcDir: DEFAULT_SKILLS_SRC }),
       })
