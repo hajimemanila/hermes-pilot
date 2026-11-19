@@ -4791,11 +4791,38 @@ html[data-vibe='dopamine'] .composer textarea:focus {
 
 html[data-vibe='dopamine'] .seed-seg-btn:not(.on):not(:disabled),
 html[data-vibe='dopamine'] .receipt-btn:not(.primary):not(:disabled),
-html[data-vibe='dopamine'] .spec-banner-btn.ghost:not(:disabled),
-html[data-vibe='dopamine'] .job-bar-btn:not(:disabled) {
+html[data-vibe='dopamine'] .spec-banner-btn.ghost:not(:disabled) {
   background: var(--vibe-btn-bg);
   border-color: var(--vibe-border);
   box-shadow: inset 0 1px 0 var(--vibe-hi), 0 3px 0 var(--vibe-bevel);
+}
+
+/*
+ * 動作中カード（ArchitectJobBar）のボタン — SPEC-UI-POLISH-V22 U1。
+ *
+ * `.job-bar-btn` の素の文字色は `--on-accent`（アクセント面に載せる暗いインク）。
+ * Dopamine で面を `--vibe-btn-bg` に差し替えると、Dark では #14485a→#0b2a38 の
+ * 暗い面に #04191c が乗り **1.2〜1.8:1** まで落ちて読めなくなる。面の明度に
+ * 追随する `--text` を明示する（Dark #e8f4f6 = 8.9〜13.3:1 / Light #0f242a = 14.1〜16.1:1）。
+ *
+ * `:not(.failed)` は必須。この面ルールは特異度 (0,5,1) で
+ * `.job-bar.failed .job-bar-btn` (0,3,0) に勝つため、除外しないと
+ * 失敗カードの「赤面＋白文字」を `--vibe-btn-bg` で潰してしまう。
+ */
+html[data-vibe='dopamine'] .job-bar:not(.failed) .job-bar-btn:not(:disabled) {
+  background: var(--vibe-btn-bg);
+  border-color: var(--vibe-border);
+  box-shadow: inset 0 1px 0 var(--vibe-hi), 0 3px 0 var(--vibe-bevel);
+  color: var(--text);
+}
+
+/*
+ * ghost も同じ `--vibe-btn-bg` 面に乗る。素の `--accent` は Light の白面で
+ * 3.3〜3.7:1 しかないため、面の明度に合う `--accent-2`（Dark #5eead4 /
+ * Light #0f766e）へ寄せる。Dopamine 限定なので Serotonin の見た目は不変。
+ */
+html[data-vibe='dopamine'] .spec-banner-btn.ghost:not(:disabled) {
+  color: var(--accent-2, var(--accent));
 }
 
 html[data-vibe='dopamine'] .chip.on,
