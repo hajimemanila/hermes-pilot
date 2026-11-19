@@ -29,8 +29,16 @@ import { useI18n } from './i18n/index.js'
 import { t as tGlobal } from './i18n/lang.js'
 import { initTheme } from './lib/theme.js'
 import { consumePairToken } from './lib/pairing.js'
+import { isChunkLoadError, reloadForChunkError, retryImport } from './lib/lazyRetry.js'
 
-const TermPane = lazy(() => import('./features/TermPane.jsx').then((m) => ({ default: m.TermPane })))
+/*
+ * ターミナルは初回にしか読み込まない（起動を速くするため）。ただしスリープ復帰や
+ * 再デプロイの後は古いハッシュの `TermPane-<hash>.js` を取りに行って失敗するので、
+ * `retryImport` で数回刺し直してから諦める（`lib/lazyRetry.js`）。
+ */
+const TermPane = lazy(() =>
+  retryImport(() => import('./features/TermPane.jsx')).then((m) => ({ default: m.TermPane })),
+)
 
 const TABS = [
   { id: 'tasks', key: 'nav.tasks', icon: 'grid' },
@@ -93,7 +101,7 @@ function TabError({ error, onRetry }) {
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props)
-    this.state = { error: null }
+    this.state = { error: null, retryKey: 0 }
   }
 
   static getDerivedStateFromError(error) {
@@ -120,11 +128,24 @@ class ErrorBoundary extends React.Component {
     }
   }
 
+  /**
+   * 「再試行」の中身。チャンクが取れなかっただけの失敗は `React.lazy` が reject を
+   * 握ったままなので、state を戻して描き直しても同じ失敗を即座に再生する。
+   * その場合だけページを 1 回読み直す（30 秒クールダウン中なら読み直さず、
+   * 下の再描画に任せる＝無限リロードにしない）。実装バグは `retryKey` を上げて
+   * 子を作り直すだけにする。
+   */
+  retry() {
+    if (isChunkLoadError(this.state.error) && reloadForChunkError()) return
+    this.setState((prev) => ({ error: null, retryKey: prev.retryKey + 1 }))
+  }
+
   render() {
     if (this.state.error) {
-      return <TabError error={this.state.error} onRetry={() => this.setState({ error: null })} />
+      return <TabError error={this.state.error} onRetry={() => this.retry()} />
     }
-    return this.props.children
+    // `retryKey` を key に載せ、再試行で子（reject 済み lazy を含む）を作り直す
+    return <React.Fragment key={`${this.props.tab}:${this.state.retryKey}`}>{this.props.children}</React.Fragment>
   }
 }
 
@@ -139,6 +160,21 @@ export function App() {
    * `<meta name="theme-color">` の更新も内部で行う。
    */
   useEffect(() => initTheme(), [])
+
+  /*
+   * Vite の動的 import 失敗（再デプロイ・スリープ復帰で古いハッシュを掴んだ時）は
+   * `vite:preloadError` として飛んでくる。`ErrorBoundary` まで落ちる前に、
+   * 30 秒クールダウン付きの単発リロードで拾う（`lib/lazyRetry.js`）。
+   * リロードしない（＝クールダウン中）ときは preventDefault せず、例外を
+   * そのまま `ErrorBoundary` に渡してタブ内のエラー表示に落とす。
+   */
+  useEffect(() => {
+    const onPreloadError = (event) => {
+      if (reloadForChunkError()) event.preventDefault?.()
+    }
+    window.addEventListener('vite:preloadError', onPreloadError)
+    return () => window.removeEventListener('vite:preloadError', onPreloadError)
+  }, [])
 
   /*
    * Vibe Mode（Dopamine ⇄ Serotonin・SPEC-PILOT-V5 §3.1 / D24）。

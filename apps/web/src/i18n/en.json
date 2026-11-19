@@ -671,7 +671,7 @@
   "diag.empty": "(none)",
   "diag.decodeError": "cannot decode",
   "app.tabError": "Something went wrong in this tab",
-  "app.tabErrorLog": "The report is written to ~/.hermes/mobile-pwa/client-errors.log",
+  "app.tabErrorLog": "The report is written to ~/.hermes/plugin-data/hermes-pilot/client-errors.log",
   "app.reviewDone": "Review done",
   "app.reviewDoneLabel": "Review done: {label}",
   "app.loginPrompt": "Enter the app token",

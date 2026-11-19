@@ -671,7 +671,7 @@
   "diag.empty": "(なし)",
   "diag.decodeError": "デコード不能",
   "app.tabError": "このタブでエラーが発生しました",
-  "app.tabErrorLog": "記録は ~/.hermes/mobile-pwa/client-errors.log",
+  "app.tabErrorLog": "記録は ~/.hermes/plugin-data/hermes-pilot/client-errors.log",
   "app.reviewDone": "レビュー完了",
   "app.reviewDoneLabel": "レビュー完了: {label}",
   "app.loginPrompt": "アプリトークンを入力してください",
