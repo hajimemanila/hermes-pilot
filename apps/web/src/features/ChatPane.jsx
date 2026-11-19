@@ -14,6 +14,10 @@ import {
   writePendingRepo,
 } from '../lib/repoPicker.js'
 import { isReadonlySession, pickResumeTarget, recentSessions } from '../lib/chatResume.js'
+// 820px 以上のチャットを 2 カラムにする判定（境界の正本は lib/layout.js）
+import { useSplitLayout } from '../lib/useSplitLayout.js'
+// 左カラム下端へ移す 4 グループの名前（JSX とテストで二重管理しない）
+import { chatSplitChrome } from '../lib/chatSplit.js'
 import { orderProfiles } from '../lib/profileOrder.js'
 import { foldTranscriptMessages, mergeProgress, shortenPath } from '../lib/toolProgress.js'
 import { renderMarkdown } from '../lib/markdown.js'
@@ -206,6 +210,163 @@ const DRAWER_REFRESH_THROTTLE_MS = 1500
  *
  * 定型スニペットは `GET /api/snippets`（組み込み + マイ）。タップで挿入、長押しで即送信。
  */
+/**
+ * セッション一覧（会話ドロワーの中身）。
+ *
+ * 1 ペインでは `Sheet` の中、820px 以上の 2 カラムでは左カラムの上に**同じもの**を出す
+ * （行の見た目・バッジ・未読は現行のまま・SPEC-ver-0-2-1 §2.3）。中身を 2 箇所へ
+ * 書き分けないため、ここに 1 つだけ置いて props で受け取る。
+ */
+function ChatSessionList({
+  sessions,
+  sessionBadges,
+  pipelineSessionIds,
+  readonlySessionId,
+  orphanReports,
+  refreshing,
+  markDisabled,
+  onRefresh,
+  onMarkAllRead,
+  onOpenOrphan,
+  onNewChat,
+  onOpenSession,
+}) {
+  return (
+    <>
+      {/* ドロワー上部の操作バー（D22③）: ↻ 更新 / ✓ すべて既読 */}
+      <div className="drawer-actions">
+        <RefreshButton
+          variant="btn"
+          label={t('chat.drawerRefresh')}
+          busy={refreshing}
+          onRefresh={onRefresh}
+        />
+        <button
+          type="button"
+          className="btn drawer-mark-read"
+          disabled={markDisabled}
+          onClick={() => {
+            haptic('tap')
+            onMarkAllRead()
+          }}
+        >
+          <span aria-hidden="true">✓</span> {t('chat.markAllRead')}
+        </button>
+      </div>
+      {/* 会話一覧に宛先が無い完了レポート（worker/UI セッション宛て）は
+          専用行として先頭に出す。タップで該当 repo の会話を開いて相談文を置く。 */}
+      {orphanReports.map((u) => (
+        <button
+          key={`report:${u.sessionId}`}
+          className="row drawer-report-row"
+          title={t('chat.unreadReportTitle')}
+          onClick={() => onOpenOrphan(u)}
+        >
+          <span className="row-main">
+            <span className="row-title">
+              <span aria-hidden="true">📋</span> {u.label || t('chat.pipelineReport')}
+            </span>
+            <span className="row-sub">
+              {u.board ? `${u.board} · ` : ''}
+              {t('chat.reportNoSession')}
+            </span>
+          </span>
+          <span className="row-badge done" aria-hidden="true">
+            {'!'}
+          </span>
+        </button>
+      ))}
+      <button className="row" onClick={onNewChat}>
+        <span className="row-main">
+          <span className="row-title">{t('chat.newChat')}</span>
+          <span className="row-sub">{t('chat.newChatRowSub')}</span>
+        </span>
+        <Icon name="plus" size={16} />
+      </button>
+      {sessions.map((s) => {
+        const foreign = s.profile && s.profile !== DEFAULT_PROFILE
+        const key = `${s.profile ?? 'default'}:${s.id}`
+        // 行のバッジは純関数（`lib/sessionUnread.js`）で決める。表示中・実行中・
+        // 未読の完了報告（件数）・返信の新着（NEW / +N）を 1 行に出す（D16②）。
+        const badge = sessionBadges[key] ?? {
+          isActive: false,
+          isRunning: false,
+          unreadReports: 0,
+          unreadReplies: 0,
+        }
+        const isRo = isReadonlySession(s, readonlySessionId)
+        const replyLabel = unreadRepliesLabel(badge.unreadReplies)
+        return (
+          <button
+            key={key}
+            className={`row${badge.isActive ? ' on' : ''}${isRo ? ' ro' : ''}${
+              badge.unreadReports || pipelineSessionIds.has(String(s.id)) ? ' has-report' : ''
+            }`}
+            title={
+              badge.unreadReports
+                ? t('chat.unreadReportTitle')
+                : replyLabel
+                  ? t('chat.newReplyTitle')
+                  : isRo
+                    ? t('chat.readonlyTitle')
+                    : t('chat.resumableTitle')
+            }
+            onClick={() => onOpenSession(s)}
+          >
+            <span className="row-main">
+              <span className="row-title">
+                {pipelineSessionIds.has(String(s.id)) ? (
+                  <span className="row-report-mark" title={t('chat.pipelineReport')} aria-label={t('chat.pipelineReport')}>
+                    📋
+                  </span>
+                ) : null}
+                {s.title || s.id}
+              </span>
+              <span className="row-sub session-meta">
+                <span
+                  className={`row-mode ${isRo ? 'ro' : 'resumable'}`}
+                  title={isRo ? t('chat.readonlyTitle') : t('chat.resumableTitle')}
+                >
+                  {isRo ? t('chat.readonlyShort') : t('chat.resumableShort')}
+                </span>
+                {foreign ? (
+                  <span className="prof-chip on">{s.profile}</span>
+                ) : null}
+                <span>
+                  {s.source ?? 'cli'} ・ {s.message_count ?? 0} msg ・ {relTime((s.started_at ?? 0) * 1000)}
+                  {s.is_active ? t('chat.runningSuffix') : ''}
+                </span>
+              </span>
+            </span>
+            {badge.isRunning ? (
+              <span
+                className="row-dot running"
+                title={t('chat.runningTitle')}
+                aria-label={t('chat.runningTitle')}
+              />
+            ) : null}
+            {badge.unreadReports ? (
+              <span
+                className="row-badge done"
+                title={t('chat.unreadReportTitle')}
+                aria-label={t('chat.reportAria')}
+              >
+                {badge.unreadReports}
+              </span>
+            ) : null}
+            {replyLabel ? (
+              <span className="row-badge new" title={t('chat.newReplyTitle')}>
+                {replyLabel}
+              </span>
+            ) : null}
+            <Icon name="chevron" size={16} />
+          </button>
+        )
+      })}
+    </>
+  )
+}
+
 export function ChatPane({
   notify,
   chatReports = [],
@@ -219,6 +380,8 @@ export function ChatPane({
 }) {
   // 言語切替で再描画させるための購読（翻訳はモジュール側の t が現在の言語を読む）
   const { lang } = useI18n()
+  // 820px 以上（`wide`）のときだけ 2 カラムにする（SPEC-ver-0-2-1 §2.3）
+  const { wide } = useSplitLayout()
   const [sessions, setSessions] = useState([])
   const [sid, setSid] = useState(null)
   const [storedSid, setStoredSid] = useState(null)
@@ -1940,71 +2103,94 @@ export function ChatPane({
   /** シートに直接並べるリポジトリ 4 行（前回が先頭・残りは「すべて」から）。 */
   const pinned = useMemo(() => pinnedRepos(repos, readRecent()), [repos, profileSheet])
 
-  return (
-    <div className="pane chat" data-conn={connState}>
-      <div className="chat-head">
+  /*
+   * タブレット横持ちの 2 カラム（SPEC-ver-0-2-1 §2.3 / 決定 Q1=A）。
+   *
+   * `wide`（820px 以上）のときだけ「左 = セッション一覧＋下端スタック / 右 = タイムラインだけ」
+   * にする。右カラムへ置くのは最小ヘッダとタイムラインだけで、バナー・チップ・定型チップ帯・
+   * 入力欄はすべて左カラムの下端へ寄せる（右の縦を全部本文に使う）。
+   * 境界は `lib/layout.js` の 820 を再利用し、`@media` は増やさない
+   * （`web/test/layoutBreakpoints.test.js` が `min-width` の集合一致を見ている）。
+   * 820px 未満は今までどおり 1 ペインで、DOM の順も変えない。
+   */
+  const splitChat = wide
+
+  /* プロファイル札・リポジトリ札（1 ペインはヘッダ内・2 カラムは左の下端スタック） */
+  const chipsNode = (
+    <>
+      <span
+        className={`prof-chip${profile !== DEFAULT_PROFILE ? ' on' : ''}`}
+        title={t('chat.profileTitle', { profile })}
+      >
+        {profile}
+      </span>
+      {repo ? (
         <button
-          className="icon-btn"
-          onClick={() => {
-            haptic('tap')
-            openDrawer()
-          }}
-          aria-label={drawerUnread ? t('chat.sessionsAria', { n: drawerUnread }) : t('chat.sessions')}
-        >
-          <Icon name="grid" size={18} />
-          {drawerUnread ? (
-            <span className="drawer-btn-badge" aria-hidden="true">
-              {drawerUnread}
-            </span>
-          ) : null}
-          {!drawerUnread && otherUnreads.length ? <span className="nav-dot done" aria-hidden="true" /> : null}
-        </button>
-        <span className="chat-title">{title || t('chat.title')}</span>
-        <span
-          className={`prof-chip${profile !== DEFAULT_PROFILE ? ' on' : ''}`}
-          title={t('chat.profileTitle', { profile })}
-        >
-          {profile}
-        </span>
-        {repo ? (
-          <button
-            className="prof-chip repo-chip"
-            title={t('chat.repoTitle', { id: repo.id, path: repo.path })}
-            aria-label={t('chat.repoTitleShort', { id: repo.id })}
-            onClick={() => {
-              haptic('tap')
-              openProfileSheet()
-            }}
-          >
-            {repo.id}
-          </button>
-        ) : null}
-        {dcLink?.url ? (
-          <button
-            className="icon-btn dc-icon"
-            title={`Discord: ${dcLink.chatName ?? ''}`}
-            aria-label={t('chat.discordAria')}
-            onClick={() => {
-              haptic('tap')
-              window.open(dcLink.url, '_blank', 'noopener')
-            }}
-          >
-            <span aria-hidden="true">#</span>
-          </button>
-        ) : null}
-        <RefreshButton variant="icon" ariaLabel={t('chat.refreshChatAria')} onRefresh={refreshChat} />
-        <button
-          className="icon-btn"
+          className="prof-chip repo-chip"
+          title={t('chat.repoTitle', { id: repo.id, path: repo.path })}
+          aria-label={t('chat.repoTitleShort', { id: repo.id })}
           onClick={() => {
             haptic('tap')
             openProfileSheet()
           }}
-          aria-label={t('chat.newChatAria')}
         >
-          <Icon name="plus" size={18} />
+          {repo.id}
         </button>
-      </div>
+      ) : null}
+    </>
+  )
 
+  /* 1 ペインのヘッダ（2 カラムでは出さない: 一覧は左カラムが持つ） */
+  const chatHeadNode = (
+    <div className="chat-head">
+      <button
+        className="icon-btn"
+        onClick={() => {
+          haptic('tap')
+          openDrawer()
+        }}
+        aria-label={drawerUnread ? t('chat.sessionsAria', { n: drawerUnread }) : t('chat.sessions')}
+      >
+        <Icon name="grid" size={18} />
+        {drawerUnread ? (
+          <span className="drawer-btn-badge" aria-hidden="true">
+            {drawerUnread}
+          </span>
+        ) : null}
+        {!drawerUnread && otherUnreads.length ? <span className="nav-dot done" aria-hidden="true" /> : null}
+      </button>
+      <span className="chat-title">{title || t('chat.title')}</span>
+      {chipsNode}
+      {dcLink?.url ? (
+        <button
+          className="icon-btn dc-icon"
+          title={`Discord: ${dcLink.chatName ?? ''}`}
+          aria-label={t('chat.discordAria')}
+          onClick={() => {
+            haptic('tap')
+            window.open(dcLink.url, '_blank', 'noopener')
+          }}
+        >
+          <span aria-hidden="true">#</span>
+        </button>
+      ) : null}
+      <RefreshButton variant="icon" ariaLabel={t('chat.refreshChatAria')} onRefresh={refreshChat} />
+      <button
+        className="icon-btn"
+        onClick={() => {
+          haptic('tap')
+          openProfileSheet()
+        }}
+        aria-label={t('chat.newChatAria')}
+      >
+        <Icon name="plus" size={18} />
+      </button>
+    </div>
+  )
+
+  /* オフライン・完了レポート・読み取り専用のバナー（Q1=A: 2 カラムでは左の下端へ） */
+  const bannerNode = (
+    <>
       {/* 切断直後（2秒未満）は出さない */}
       {showBanner ? <div className="banner">{t('chat.recovering')}</div> : null}
       {otherUnreads.length ? (
@@ -2074,7 +2260,12 @@ export function ChatPane({
             : t('chat.readonlyBoardSuffix')}
         </div>
       ) : null}
+    </>
+  )
 
+  /* タイムライン（両レイアウト共通。右カラムではこれが縦を全部使う） */
+  const timelineNode = (
+    <>
       {/* 「↓ 最新へ」ピルをスクロール領域の下端に留める箱（spec-chat-jump-pos Q1=A）。
           .chat-scroll の伸長はこの箱が持ち、ピルはこの箱の下端 8px を基準に置く。 */}
       <div className="chat-body">
@@ -2425,7 +2616,12 @@ export function ChatPane({
           </button>
         ) : null}
       </div>
+    </>
+  )
 
+  /* 添付レール（入力欄のすぐ上） */
+  const attachNode = (
+    <>
       {attached.length ? (
         <div className="attach-rail">
           {attached.map((a) => (
@@ -2454,7 +2650,12 @@ export function ChatPane({
           ))}
         </div>
       ) : null}
+    </>
+  )
 
+  /* Architect の進行バー（SPEC V6 §3.3 ②） */
+  const jobBarNode = (
+    <>
       {/* Architect の進行バー（SPEC V6 §3.3 ②）: Seed のあと「今どこか」を画面上部に残す */}
       <ArchitectJobBar
         job={activeJob}
@@ -2471,7 +2672,12 @@ export function ChatPane({
         }}
         notify={notify}
       />
+    </>
+  )
 
+  /* A2B クイック起票カード（SPEC V5 §3.2 D23） */
+  const specBannerNode = (
+    <>
       {/* A2B クイック起票カード（SPEC V5 §3.2 D23）: 仕様書ができた瞬間に 1 タップで起票 */}
       <SpecReadyBanner
         banner={specBanner}
@@ -2480,18 +2686,12 @@ export function ChatPane({
         onDismiss={(b) => setSpecDismissed((prev) => [...prev, b.path])}
         onPreview={(b) => setSpecMd({ path: b.path, title: b.title, board: b.board ?? null })}
       />
+    </>
+  )
 
-      {/* 仕様書(MD)プレビュー（SPEC-PILOT-V6 §3.4 ② / D30）。バナーと同じ 1 枚をここでも開く */}
-      {specMd ? (
-        <SpecMarkdownSheet
-          board={specMd.board ?? seedBoard}
-          repo={repo?.id ?? null}
-          path={specMd.path}
-          title={specMd.title}
-          onClose={() => setSpecMd(null)}
-        />
-      ) : null}
-
+  /* 定型チップ帯（SPEC-PILOT-V7 §3.4） */
+  const actionBarNode = (
+    <>
       {/* 定型チップ帯（設定タブで非表示にできる・SPEC-PILOT-V7 §3.4）。隠したときは
           入力欄の ＋ →「定型文」から同じスニペット一覧を開ける */}
       {bars.chat && (hotSnippets.length || !readonly) ? (
@@ -2531,7 +2731,12 @@ export function ChatPane({
           </button>
         </div>
       ) : null}
+    </>
+  )
 
+  /* 入力欄（読み取り専用のときは .composer-ro） */
+  const composerNode = (
+    <>
       {readonly ? <div className="composer-ro">{t('chat.readonlyComposer')}</div> : null}
       <div className="composer" style={readonly ? { display: 'none' } : undefined}>
         <button
@@ -2582,6 +2787,98 @@ export function ChatPane({
           </button>
         )}
       </div>
+    </>
+  )
+
+  /* 右カラムの最小ヘッダ（タイトル・↻・＋だけ。バナーもチップも置かない） */
+  const minimalHeadNode = (
+    <div className="chat-split-head">
+      <span className="chat-title">{title || t('chat.title')}</span>
+      <RefreshButton variant="icon" ariaLabel={t('chat.refreshChatAria')} onRefresh={refreshChat} />
+      <button
+        className="icon-btn"
+        onClick={() => {
+          haptic('tap')
+          openProfileSheet()
+        }}
+        aria-label={t('chat.newChatAria')}
+      >
+        <Icon name="plus" size={18} />
+      </button>
+    </div>
+  )
+
+  /* セッション一覧（1 ペインはドロワー・2 カラムは左カラムの上） */
+  const sessionListNode = (
+    <ChatSessionList
+      sessions={sessions}
+      sessionBadges={sessionBadges}
+      pipelineSessionIds={pipelineSessionIds}
+      readonlySessionId={readonly?.sessionId}
+      orphanReports={drawerOrphanReports}
+      refreshing={drawerRefreshing}
+      markDisabled={!drawerUnread && !otherUnreads.length}
+      onRefresh={() => refreshDrawerData({ force: true })}
+      onMarkAllRead={markAllDrawerRead}
+      onOpenOrphan={openOrphanReport}
+      onNewChat={openProfileSheet}
+      onOpenSession={(s) => openSessionSafe(s.id, null, s.profile ?? 'default')}
+    />
+  )
+
+  /*
+   * 左カラム下端の固定スタック。グループ名と順番の正本は `lib/chatSplit.js` の
+   * `chatSplitChrome()`（JSX とテストで二重管理しない）。
+   */
+  const splitStackNodes = {
+    banners: (
+      <>
+        {bannerNode}
+        {jobBarNode}
+        {specBannerNode}
+      </>
+    ),
+    chips: chipsNode,
+    snippets: actionBarNode,
+    composer: (
+      <>
+        {attachNode}
+        {composerNode}
+      </>
+    ),
+  }
+
+  return (
+    <div className={splitChat ? 'pane chat split-layout' : 'pane chat'} data-conn={connState}>
+      {splitChat ? (
+        <>
+          <div className="chat-split-master">
+            <div className="chat-split-list">{sessionListNode}</div>
+            <div className="chat-split-stack">
+              {chatSplitChrome().map((group) => (
+                <div className="chat-split-group" data-chat-group={group} key={group}>
+                  {splitStackNodes[group]}
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="chat-split-detail">
+            {minimalHeadNode}
+            {timelineNode}
+          </div>
+        </>
+      ) : (
+        <>
+          {chatHeadNode}
+          {bannerNode}
+          {timelineNode}
+          {attachNode}
+          {jobBarNode}
+          {specBannerNode}
+          {actionBarNode}
+          {composerNode}
+        </>
+      )}
 
       <input
         ref={imgInputRef}
@@ -2894,136 +3191,7 @@ export function ChatPane({
 
       {drawer ? (
         <Sheet title={t('chat.drawerTitle')} onClose={() => setDrawer(false)}>
-          {/* ドロワー上部の操作バー（D22③）: ↻ 更新 / ✓ すべて既読 */}
-          <div className="drawer-actions">
-            <RefreshButton
-              variant="btn"
-              label={t('chat.drawerRefresh')}
-              busy={drawerRefreshing}
-              onRefresh={() => refreshDrawerData({ force: true })}
-            />
-            <button
-              type="button"
-              className="btn drawer-mark-read"
-              disabled={!drawerUnread && !otherUnreads.length}
-              onClick={() => {
-                haptic('tap')
-                markAllDrawerRead()
-              }}
-            >
-              <span aria-hidden="true">✓</span> {t('chat.markAllRead')}
-            </button>
-          </div>
-          {/* 会話一覧に宛先が無い完了レポート（worker/UI セッション宛て）は
-              専用行として先頭に出す。タップで該当 repo の会話を開いて相談文を置く。 */}
-          {drawerOrphanReports.map((u) => (
-            <button
-              key={`report:${u.sessionId}`}
-              className="row drawer-report-row"
-              title={t('chat.unreadReportTitle')}
-              onClick={() => openOrphanReport(u)}
-            >
-              <span className="row-main">
-                <span className="row-title">
-                  <span aria-hidden="true">📋</span> {u.label || t('chat.pipelineReport')}
-                </span>
-                <span className="row-sub">
-                  {u.board ? `${u.board} · ` : ''}
-                  {t('chat.reportNoSession')}
-                </span>
-              </span>
-              <span className="row-badge done" aria-hidden="true">
-                {'!'}
-              </span>
-            </button>
-          ))}
-          <button className="row" onClick={openProfileSheet}>
-            <span className="row-main">
-              <span className="row-title">{t('chat.newChat')}</span>
-              <span className="row-sub">{t('chat.newChatRowSub')}</span>
-            </span>
-            <Icon name="plus" size={16} />
-          </button>
-          {sessions.map((s) => {
-            const foreign = s.profile && s.profile !== DEFAULT_PROFILE
-            const key = `${s.profile ?? 'default'}:${s.id}`
-            // 行のバッジは純関数（`lib/sessionUnread.js`）で決める。表示中・実行中・
-            // 未読の完了報告（件数）・返信の新着（NEW / +N）を 1 行に出す（D16②）。
-            const badge = sessionBadges[key] ?? {
-              isActive: false,
-              isRunning: false,
-              unreadReports: 0,
-              unreadReplies: 0,
-            }
-            const isRo = isReadonlySession(s, readonly?.sessionId)
-            const replyLabel = unreadRepliesLabel(badge.unreadReplies)
-            return (
-              <button
-                key={key}
-                className={`row${badge.isActive ? ' on' : ''}${isRo ? ' ro' : ''}${
-                  badge.unreadReports || pipelineSessionIds.has(String(s.id)) ? ' has-report' : ''
-                }`}
-                title={
-                  badge.unreadReports
-                    ? t('chat.unreadReportTitle')
-                    : replyLabel
-                      ? t('chat.newReplyTitle')
-                      : isRo
-                        ? t('chat.readonlyTitle')
-                        : t('chat.resumableTitle')
-                }
-                onClick={() => openSessionSafe(s.id, null, s.profile ?? 'default')}
-              >
-                <span className="row-main">
-                  <span className="row-title">
-                    {pipelineSessionIds.has(String(s.id)) ? (
-                      <span className="row-report-mark" title={t('chat.pipelineReport')} aria-label={t('chat.pipelineReport')}>
-                        📋
-                      </span>
-                    ) : null}
-                    {s.title || s.id}
-                  </span>
-                  <span className="row-sub session-meta">
-                    <span
-                      className={`row-mode ${isRo ? 'ro' : 'resumable'}`}
-                      title={isRo ? t('chat.readonlyTitle') : t('chat.resumableTitle')}
-                    >
-                      {isRo ? t('chat.readonlyShort') : t('chat.resumableShort')}
-                    </span>
-                    {foreign ? (
-                      <span className="prof-chip on">{s.profile}</span>
-                    ) : null}
-                    <span>
-                      {s.source ?? 'cli'} ・ {s.message_count ?? 0} msg ・ {relTime((s.started_at ?? 0) * 1000)}
-                      {s.is_active ? t('chat.runningSuffix') : ''}
-                    </span>
-                  </span>
-                </span>
-                {badge.isRunning ? (
-                  <span
-                    className="row-dot running"
-                    title={t('chat.runningTitle')}
-                    aria-label={t('chat.runningTitle')}
-                  />
-                ) : null}
-                {badge.unreadReports ? (
-                  <span
-                    className="row-badge done"
-                    title={t('chat.unreadReportTitle')}
-                    aria-label={t('chat.reportAria')}
-                  >
-                    {badge.unreadReports}
-                  </span>
-                ) : null}
-                {replyLabel ? (
-                  <span className="row-badge new" title={t('chat.newReplyTitle')}>
-                    {replyLabel}
-                  </span>
-                ) : null}
-                <Icon name="chevron" size={16} />
-              </button>
-            )
-          })}
+          {sessionListNode}
         </Sheet>
       ) : null}
 

@@ -17,7 +17,7 @@ export const SPLIT_MIN = 680
 export const SPLIT_WIDE_MIN = 820
 
 /** 左ペイン（一覧）の幅。`styles.css` の `--split-master-w` と同じ値。 */
-export const MASTER_W = { narrow: 280, wide: { review: 380, tasks: 360 } }
+export const MASTER_W = { narrow: 280, wide: { review: 380, tasks: 360, chat: 380 } }
 
 /**
  * `@media` 用のクエリ文字列。
