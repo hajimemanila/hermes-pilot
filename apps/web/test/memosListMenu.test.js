@@ -93,3 +93,45 @@ test('MemosPane は ⋯ をリスト表示の分岐の中だけで描く（一�
   assert.ok(moreBtn > listGate, '⋯ ボタンは showsListMenu(view) の後に置く')
   assert.equal(src.split('memo-more-btn').length - 1, 1, '⋯ ボタンは 1 箇所だけ')
 })
+
+// ---------------------------------------------------------------- D69（Batch U4）
+const css = stripComments(fs.readFileSync(path.join(here, '..', 'src', 'styles.css'), 'utf8'))
+
+test('D69: ⋯ は .memo-card-head の外・本文の後ろ（カード末尾）に置く', () => {
+  const src = readSource('features/MemosPane.jsx')
+  const head = src.indexOf('className="memo-card-head"')
+  const body = src.indexOf('className="memo-card-body"')
+  const more = src.indexOf('className="memo-more-btn"')
+  assert.ok(head > -1 && body > -1 && more > -1, 'head / body / ⋯ のどれかが見つからない')
+  assert.ok(body < more, '⋯ が本文より前にある（カード末尾＝右端に出せない）')
+  assert.ok(src.indexOf('</article>', more) > more, '⋯ が </article> より後ろ＝カードの外にある')
+  // ヘッダ開始〜本文開始のあいだに ⋯ が残っていない＝ヘッダの内側から出ている
+  assert.ok(!src.slice(head, body).includes('memo-more-btn'), '⋯ がまだ .memo-card-head の内側にある')
+})
+
+test('D69: 本文の有無で has-body を付け外しする（本文なし＝タイトル全幅）', () => {
+  const src = readSource('features/MemosPane.jsx')
+  assert.match(src, /m\.body \? ' has-body' : ''/, 'has-body クラスが本文の有無に連動していない')
+})
+
+test('D69 CSS: リスト行は本文あり=タイトル 46% / 本文なし=タイトル全幅', () => {
+  const head = css.match(/\.view-list \.memo-card-head\s*\{([^}]*)\}/)
+  assert.ok(head, '.view-list .memo-card-head が無い')
+  assert.match(head[1], /flex:\s*1 1 auto/, '本文なしのときヘッダが伸びない（タイトルが全幅にならない）')
+  assert.match(head[1], /max-width:\s*none/, '本文なしでもタイトルが 46% で切られる')
+  const withBody = css.match(/\.view-list \.memo-card\.has-body \.memo-card-head\s*\{([^}]*)\}/)
+  assert.ok(withBody, '.view-list .memo-card.has-body .memo-card-head が無い')
+  assert.match(withBody[1], /max-width:\s*46%/, '本文ありのときタイトルが 46% に収まらない')
+  // 本文は残り幅を取って 1 行で省略する
+  assert.match(css, /\.view-list \.memo-card-body\s*\{[^}]*flex:\s*1 1 auto/, '本文が残り幅を取っていない')
+})
+
+test('D69 CSS: ⋯ は本文の有無に関わらず右端固定・44×44px のタップ領域', () => {
+  const block = css.match(/\.memo-more-btn\s*\{([^}]*)\}/)
+  assert.ok(block, '.memo-more-btn が無い')
+  const body = block[1]
+  assert.match(body, /width:\s*44px/, '幅が 44px でない')
+  assert.match(body, /height:\s*44px/, '高さが 44px でない')
+  assert.match(body, /margin:\s*-?\d+px\s+-?\d+px\s+-?\d+px\s+auto/, 'margin-left: auto が無い（右端へ寄らない）')
+  assert.match(body, /flex:\s*none/, '⋯ が縮む設定になっている（右端からずれる）')
+})

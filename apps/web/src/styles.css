@@ -6686,11 +6686,19 @@ button.memo-check-row {
   padding: 8px 10px;
 }
 
+/* リスト行の並びは `[タイトル] [本文] [⋯]`（本文なしは `[タイトル全幅] [⋯]`）。
+   `⋯` をヘッダの外＝カード末尾へ出したので、ヘッダは本文なしのとき全幅を取る。 */
 .view-list .memo-card-head {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
-  max-width: 46%;
+  max-width: none;
   align-items: center;
+}
+
+/* 本文があるときだけタイトルを 46% に抑え、残りを本文へ渡す */
+.view-list .memo-card.has-body .memo-card-head {
+  flex: 0 1 auto;
+  max-width: 46%;
 }
 
 .view-list .memo-card-title {
@@ -6717,7 +6725,7 @@ button.memo-check-row {
   display: none;
 }
 
-/* カードの `⋯`（リスト表示だけ・44px タップ領域） */
+/* カードの `⋯`（リスト表示だけ・44px タップ領域・本文の有無に関わらず右端固定） */
 .memo-more-btn {
   flex: none;
   display: inline-flex;
@@ -6725,7 +6733,8 @@ button.memo-check-row {
   justify-content: center;
   width: 44px;
   height: 44px;
-  margin: -10px -8px -10px 0;
+  /* 左余白 auto で右端へ寄せる（本文が伸びても押し出されない） */
+  margin: -10px -6px -10px auto;
   border: none;
   border-radius: 10px;
   background: none;

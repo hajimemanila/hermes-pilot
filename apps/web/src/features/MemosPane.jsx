@@ -502,7 +502,11 @@ export function MemosPane({ notify, onOpenChat }) {
           return (
             <article
               key={m.id}
-              className={`card memo-card color-${m.color || 'default'}${m.pinned ? ' is-pinned' : ''}`}
+              // `has-body` はリスト表示の幅配分だけに使う（本文あり = タイトル 46% /
+              // 本文なし = タイトル全幅）。D69
+              className={`card memo-card color-${m.color || 'default'}${m.pinned ? ' is-pinned' : ''}${
+                m.body ? ' has-body' : ''
+              }`}
               onClick={() => openEditor(m)}
             >
               <div className="memo-card-head">
@@ -515,21 +519,6 @@ export function MemosPane({ notify, onOpenChat }) {
                     onClick={(e) => togglePin(m, e)}
                   >
                     📌
-                  </button>
-                ) : null}
-                {showsListMenu(view) ? (
-                  <button
-                    type="button"
-                    className="memo-more-btn"
-                    aria-label={t('notes.more')}
-                    aria-haspopup="dialog"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      haptic('tap')
-                      setMenuFor(m)
-                    }}
-                  >
-                    ⋯
                   </button>
                 ) : null}
               </div>
@@ -597,6 +586,23 @@ export function MemosPane({ notify, onOpenChat }) {
                     </button>
                   ) : null}
                 </div>
+              ) : null}
+              {/* リスト表示の `⋯` はカード末尾（本文の後）＝右端固定。本文あり・なしの
+                  どちらでも同じ位置に来るよう、ヘッダの外へ出している（D69）。 */}
+              {showsListMenu(view) ? (
+                <button
+                  type="button"
+                  className="memo-more-btn"
+                  aria-label={t('notes.more')}
+                  aria-haspopup="dialog"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    haptic('tap')
+                    setMenuFor(m)
+                  }}
+                >
+                  ⋯
+                </button>
               ) : null}
             </article>
           )
