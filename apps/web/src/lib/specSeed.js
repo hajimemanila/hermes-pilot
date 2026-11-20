@@ -10,6 +10,8 @@
  * 必ず失敗していた。SPEC V7 §1.3）。
  */
 
+import { getLocale } from './format.js'
+
 /** 種の最大文字数（ブリッジの `SEED_MAX` と一致させる）。 */
 export const SEED_MAX = 4000
 
@@ -83,7 +85,9 @@ export function buildSeedPayload({
   board,
   repo = null,
   chat = null,
-  lang = 'ja',
+  // 既定は**現在の UI 言語**。`'ja'` 固定だと、lang を渡し忘れた呼び出し元が
+  // 英語 UI でも日本語のインタビューを始めてしまう（言語の既定は 1 か所に揃える）。
+  lang = getLocale(),
 }) {
   const body = {
     seedText: String(seedText ?? '').trim().slice(0, SEED_MAX),

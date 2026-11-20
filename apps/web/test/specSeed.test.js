@@ -64,7 +64,7 @@ test('実行方針のラベル・説明は i18n キーへ写像される', () =>
 })
 
 test('buildSeedPayload は runner を hermes 固定にし、任意項目だけ載せる', () => {
-  assert.deepEqual(buildSeedPayload({ seedText: '  a  ', board: 'demo' }), {
+  assert.deepEqual(buildSeedPayload({ seedText: '  a  ', board: 'demo', lang: 'ja' }), {
     seedText: 'a',
     autoStart: false,
     executionPolicy: 'zero-stop',

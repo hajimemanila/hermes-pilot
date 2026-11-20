@@ -463,7 +463,9 @@ export function reportSummaryLine(report, max = 96, lang = getLocale()) {
  * @returns {string}
  */
 export function followUpPromptFor(report, fallback = '', opts = {}) {
-  const { t = null, lang = 'ja' } = opts ?? {}
+  // 既定は**現在の UI 言語**（`getLocale()`）。`'ja'` 固定にすると、lang を渡し忘れた
+  // 将来の呼び出し元が英語 UI でも日本語の旧文面を出してしまう。
+  const { t = null, lang = getLocale() } = opts ?? {}
   // 構造化データ（`followUp`）があれば **UI の言語で組み立てる**。
   // ブリッジは報告行に `follow_up_prompt`（日本語の完成文）も書くが、多言語 UI では
   // それをそのまま入れると英語設定なのに日本語が入力欄へ入る（実測）。

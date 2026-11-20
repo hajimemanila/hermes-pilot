@@ -25,6 +25,7 @@ import {
   toEpochMs,
   unreadSessions,
 } from '../src/lib/chatReports.js'
+import { setLocale } from '../src/lib/format.js'
 
 /** 監視 cron が書く 1 行（`/api/review/chat-reports` の items）。 */
 const rep = (at, sessionId, taskId, text = '完了') => ({
@@ -273,10 +274,21 @@ test('reportSummaryLine は Markdown 記号を落とした 1 行を返す（長�
   assert.equal(reportSummaryLine(null), '')
 })
 
-test('followUpPromptFor はレポートの相談文を優先し、無ければ訳文に落とす', () => {
-  assert.equal(followUpPromptFor({ followUpPrompt: ' 次は？ ' }, 'fallback'), '次は？')
-  assert.equal(followUpPromptFor({}, 'fallback'), 'fallback')
-  assert.equal(followUpPromptFor(null, 'fallback'), 'fallback')
+test('followUpPromptFor はレポートの相談文を優先し、無ければ訳文に落とす（ja 明示）', () => {
+  assert.equal(followUpPromptFor({ followUpPrompt: ' 次は？ ' }, 'fallback', { lang: 'ja' }), '次は？')
+  assert.equal(followUpPromptFor({}, 'fallback', { lang: 'ja' }), 'fallback')
+  assert.equal(followUpPromptFor(null, 'fallback', { lang: 'ja' }), 'fallback')
+})
+
+test('followUpPromptFor の既定言語は現在の UI 言語（英語なら旧日本語文面を出さない）', () => {
+  const legacy = { followUpPrompt: '先ほどのパイプライン「X」の結果を確認してください。' }
+  // 既定（lang 省略）: en ロケールなら訳文へ落ちる
+  setLocale('en')
+  assert.equal(followUpPromptFor(legacy, 'Summarise the report.'), 'Summarise the report.')
+  // ja ロケールなら従来どおり旧文面
+  setLocale('ja')
+  assert.match(followUpPromptFor(legacy, 'fb'), /の結果を確認/)
+  setLocale('en') // 後続テストへ影響させない
 })
 
 test('otherUnreadReports は __latest__ バナー用に board / repoPath / followUpPrompt を運ぶ', () => {
