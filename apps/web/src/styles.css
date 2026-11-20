@@ -1534,6 +1534,16 @@ ol.md-list {
   overflow-wrap: anywhere;
 }
 
+/*
+ * 完了サマリのカードは左ペイン（280–450px）の中に出すので、箇条書きのぶら下げを
+ * 少し詰める。20px のままだと「トークン数: …（キャッシュ読取 4197.6M）)」のような
+ * 行が 6px はみ出して `overflow: hidden` で切られていた（実測 744px / li 219px で 225px）。
+ * マークダウン全体（`.md-list`）は 20px のまま。
+ */
+.pipeline-summary-body .md-list {
+  padding-left: 14px;
+}
+
 .md-quote {
   margin: 6px 0;
   padding: 3px 10px;
