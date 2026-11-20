@@ -3485,7 +3485,8 @@ html[data-vibe='dopamine'] .row-mode.resumable {
 }
 
 .split-layout.tasks {
-  --split-master-w: 360px;
+  /* レビューと同じ幅にする（タスクだけ狭いと一覧の密度が変わって見える） */
+  --split-master-w: 380px;
 }
 
 /*
@@ -3756,6 +3757,17 @@ html[data-vibe='dopamine'] .row-mode.resumable {
     max-width: none;
   }
 
+  /*
+   * タスク / レビューの 2 ペインも同じ扱いにする（SPEC-ver-0-2-2 §2.1 / 案A+）。
+   * 820px 以上の共通規則 `.pane-host > * { max-width: 840px }` は「1 ペインの読み物」用で、
+   * 2 ペインに当てると 1920px で左右 540px ずつが空白になり、詳細が 480px しか残らなかった（実測）。
+   * 面は全幅にし、行長は下の `@media (min-width: 1200px)` で本文だけ抑える。
+   */
+  .pane-host > .pane.split-layout.tasks,
+  .pane-host > .pane.split-layout.review {
+    max-width: none;
+  }
+
   .chat-split-master {
     flex: 0 0 var(--split-master-w, 380px);
     width: var(--split-master-w, 380px);
@@ -3870,6 +3882,25 @@ html[data-vibe='dopamine'] .row-mode.resumable {
 
   .split-detail .ak-anno-canvas-wrap {
     min-height: 0;
+  }
+}
+
+/*
+ * 広い画面の 2 ペイン（SPEC-ver-0-2-2 §2.1 / 案A+）。
+ *
+ * - 面は全幅、**本文だけ**行長を 1040px で頭打ちにする（12.5px で約 83 字/行）。
+ *   見出しの罫線（`.split-detail-head`）は全幅のまま。カードや表も 1040px に揃う。
+ * - 1440px 以上はマスターを 420px に広げる（一覧のタイトル省略を減らす）。
+ *   狭い 2 ペイン（680–819）の 280px と、820–1439 の 360/380px は現行のまま。
+ */
+@media (min-width: 1180px) {
+  .split-layout.tasks,
+  .split-layout.review {
+    --split-master-w: 450px;
+  }
+
+  .split-detail .split-detail-body {
+    max-width: 1040px;
   }
 }
 
@@ -5744,7 +5775,8 @@ html[data-vibe='serotonin'] .spec-receipt-btn {
 .btn,
 .hm-switch,
 .composer .plus,
-.report-link {
+.report-link,
+.chat-older {
   position: relative;
 }
 
@@ -5755,7 +5787,8 @@ html[data-vibe='serotonin'] .spec-receipt-btn {
 .btn::before,
 .hm-switch::before,
 .composer .plus::before,
-.report-link::before {
+.report-link::before,
+.chat-older::before {
   content: '';
   position: absolute;
   left: 50%;

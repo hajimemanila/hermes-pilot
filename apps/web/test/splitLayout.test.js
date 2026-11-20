@@ -11,6 +11,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { SPLIT_QUERY, WIDE_QUERY, isSplitLayout } from '../src/lib/useSplitLayout.js'
+import { MASTER_W } from '../src/lib/layout.js'
 
 const CSS_PATH = path.resolve(import.meta.dirname, '../src/styles.css')
 const css = fs.readFileSync(CSS_PATH, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
@@ -47,9 +48,10 @@ test('CSS: 820px 以上のブロックに 2 ペインの 3 クラスがある', 
   assert.match(SPLIT_CSS, /\.split-detail\s*\{[^}]*overflow-y:\s*auto/)
 })
 
-test('CSS: 左ペインの幅は Review 380px / Tasks 360px（SPEC §7.2）', () => {
-  assert.match(css, /\.split-layout\.review\s*\{\s*--split-master-w:\s*380px/)
-  assert.match(css, /\.split-layout\.tasks\s*\{\s*--split-master-w:\s*360px/)
+test('CSS: 左ペインの幅はタスク / レビュー共通（SPEC §7.2 / SPEC-ver-0-2-2 §2.1）', () => {
+  assert.match(css, new RegExp(`\\.split-layout\\.review\\s*\\{\\s*--split-master-w:\\s*${MASTER_W.wide.review}px`))
+  assert.match(css, new RegExp(`\\.split-layout\\.tasks\\s*\\{\\s*--split-master-w:\\s*${MASTER_W.wide.tasks}px`))
+  assert.equal(MASTER_W.wide.tasks, MASTER_W.wide.review, 'タスクだけ幅が違うと一覧の密度が変わって見える')
 })
 
 test('JS と CSS の閾値が一致する（split 680px / wide 820px）', () => {

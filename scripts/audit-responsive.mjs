@@ -756,6 +756,24 @@ async function auditCombo(cdp, sessionId, base, token, viewport, lang, tabs, noi
         violations.push(`${lang} ${tab} measure-empty 測定結果が空`)
         continue
       }
+      // 2 ペイン（タスク / レビュー）が広い画面で痩せていないか（SPEC-ver-0-2-2 §2.1 / 案A+）。
+      // 820px 以上の共通規則 `max-width: 840px` が 2 ペインにも効いていて、1920px で
+      // 左右 540px ずつが空白・詳細は 480px しか無かった（実測）。1200px 以上は 75% 以上を使う。
+      if (tab === 'tasks' || tab === 'review') {
+        const sp = await cdp.send(
+          'Runtime.evaluate',
+          {
+            expression:
+              "(() => { const e = document.querySelector('.pane-host:not(.is-hidden) .pane.split-layout'); if (!e) return null; const r = e.getBoundingClientRect(); return { w: Math.round(r.width), vw: innerWidth } })()",
+            returnByValue: true,
+          },
+          sessionId,
+        )
+        const sv = sp.result?.value
+        if (sv && sv.vw >= 1180 && sv.w < sv.vw * 0.75) {
+          violations.push(`${lang} ${tab} split-underfilled 2 ペインが画面幅を使っていない (${sv.w}/${sv.vw}px)`)
+        }
+      }
       const overflow = m.doc.scrollWidth - m.doc.clientWidth
       if (overflow > 0) {
         violations.push(`${lang} ${tab} h-overflow scrollWidth=${m.doc.scrollWidth} clientWidth=${m.doc.clientWidth}`)
