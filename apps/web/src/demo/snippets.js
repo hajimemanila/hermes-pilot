@@ -24,7 +24,7 @@ export const DEMO_BUILTIN = [
     en: {
       label: '📝 Spec Seed',
       text:
-        'Start a spec interview from this one-line note: put the 2-3 open design decisions on a Quick Review sheet (each with recommended: true), wait for my 1-tap answer, then write docs/SPEC-<SLUG>.md with Execution Mode, 目的, 変更ファイル and 受入条件 per batch.',
+        'Start a spec interview from this one-line note: put the 2-3 open design decisions on a Quick Review sheet (each with recommended: true), wait for my 1-tap answer, then write docs/SPEC-<SLUG>.md with Execution Mode, Objective, Changed files and Acceptance criteria per batch.',
     },
     ja: {
       label: '📝 仕様策定',

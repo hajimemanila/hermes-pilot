@@ -27,6 +27,18 @@ test('スニペット: id と hot は言語で変わらず、文面だけが変�
   assert.equal(ja.some((s) => s.label.includes('仕様の種')), false, '旧表記「仕様の種」が残っている')
 })
 
+test('英語のスニペット文面に日本語が混ざらない（English 設定は完全英語で出す）', () => {
+  // 指示文はそのままエージェントへの発話になるので、en 側に日本語の見出しが残ると
+  // 英語設定なのに日本語の SPEC を書かせる（実測: spec-seed の en に 目的/変更ファイル/受入条件 が残っていた）
+  const JP = /[\u3040-\u30ff\u4e00-\u9fff]/
+  for (const s of listSnippets([], 'en')) {
+    assert.equal(JP.test(s.label), false, `en の label に日本語: ${s.id} → ${s.label}`)
+    assert.equal(JP.test(s.text), false, `en の text に日本語: ${s.id} → ${s.text}`)
+  }
+  // ja 側は日本語のまま（対で検査しないと「両方英語」にしても通ってしまう）
+  assert.ok(listSnippets([], 'ja').some((s) => JP.test(s.text)), 'ja の文面まで英語になっている')
+})
+
 test('スニペット: プレースホルダ情報は両言語で保たれる', () => {
   for (const lang of ['en', 'ja']) {
     const cause = listSnippets([], lang).find((s) => s.id === 'cause')

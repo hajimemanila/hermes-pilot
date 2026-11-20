@@ -264,6 +264,11 @@ test('demo snippets: 定型チップ帯とツールチップが埋まる形で�
   assert.equal(en.snippets[0].label, '📝 Spec Seed', '英語は "Spec Seed" を維持する')
   assert.match(en.snippets[1].label, /Quick Review/)
   assert.notEqual(en.snippets[1].label, ja.snippets[1].label, '言語で切り替わっていない')
+  // 英語設定の指示文は完全英語（見出しだけ日本語だと en 設定で日本語の SPEC を書かせる）
+  const JP_CHAR = /[\u3040-\u30ff\u4e00-\u9fff]/
+  for (const s of en.snippets) {
+    assert.equal(JP_CHAR.test(s.text), false, `en の text に日本語: ${s.id} → ${s.text}`)
+  }
 })
 
 test('demo snippets: 本番の組み込み（bridge/src/snippets.js）と 1 文字も違わない', () => {
