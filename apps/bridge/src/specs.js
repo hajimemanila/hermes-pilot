@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process'
 import { ApiError } from './api-errors.js'
 import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'
 import { DEFAULT_LANG, normalizeLang } from './lang.js'
+import { languageRule } from './language-rule.js'
 
 /**
  * Spec Launchpad — `docs/SPEC-*.md` を検出し、バッチ見出しをカンバンへ一括起票する。
@@ -398,6 +399,9 @@ export function buildTaskBody({ specRelPath, repoPath, board, batch, chat, lang 
     `Batch: ${batch?.id ?? ''} — ${batch?.title ?? ''}`,
     ...(chatId ? [`Chat: ${chatId}`] : []),
     ...(mode ? [`Mode: ${mode}`] : []),
+    '',
+    // 出力言語の規則（`language-rule.js` の 1 文をそのまま置く。スキル側と同じ文＝D2）。
+    languageRule(lang),
     '',
     h.objective,
     '',

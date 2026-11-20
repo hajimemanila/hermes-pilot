@@ -46,12 +46,19 @@ git clone から入れる場合も 2) 以降は同じ（`git clone https://githu
 
 | コマンド | 内容 | このツリーでの実測 |
 |---|---|---|
-| `npm test` | 単体・結合テスト（`node:test`） | **933 件 / 0 fail** |
+| `npm test` | 単体・結合テスト（`node:test`） | **971 件 / 0 fail** |
 | `npm run check:pwa` | PWA 34 項目（manifest・アイコン・マスカブル・Service Worker・viewport） | **34/34** |
 | `npm run check:oauth` | OAuth / 資格情報の境界検査 | **0 違反** |
 | `npm run build` | Vite 本番ビルド（`demo/` 非混入） | exit 0 |
 | `npm run audit:responsive` | `390×844` / `844×390` / `820×1180` のレイアウト監査 | 0 違反 |
 | `npm run verify` | 上記 5 つを直列実行（変更時の関門） | exit 0 |
+
+## 出力言語（生成物）
+
+- 出力言語の決定点は 1 か所: `apps/bridge/src/lang.js` の `resolveLang()`（`server.js` は `langOf(req, url)` 経由で 1 リクエスト 1 回だけ解決する）。
+- 優先順は `?lang=` → `Accept-Language` ヘッダ → 既定 `en`（PWA の `api()` は `accept-language` を送る。iframe は自力 GET なので `?lang=` を付ける）。
+- 機械トークン（`label=` / `sheet=` / `mode=` / `round=` / `target=` / タスク id / パス / `**Execution Mode**` などの SPEC キー）は **ASCII 固定**。人が読む散文だけが言語に従う（規則は `apps/bridge/src/language-rule.js` の 1 文を 3 スキルと共有）。
+- この規約は `apps/bridge/test/reviewI18n.test.js` と `apps/bridge/test/languageRule.test.js` が機械で固定する（en 出力の CJK 0 文字・ja ラベル・既定値の逆戻り）。
 
 ## デモビルドと Google Sites 公開
 

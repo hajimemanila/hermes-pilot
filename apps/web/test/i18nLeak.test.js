@@ -20,9 +20,16 @@
  * allowlist は**行番号ではなくパターン**で許可する（行がずれても壊れない）。
  * 許可してよいのは運用文・生成物・同梱データだけで、画面に出るエラー文言は不可:
  *  - `runKanban()` に渡す `--reason` / `--summary`（カンバンに残り人と worker が読む）
- *  - シート HTML・spec の生成文（Q1=C で対象外と決定済み）
+ *  - シート HTML・spec の生成文（画面辞書ではないが、**`SPEC-i18n-gen` 以降は
+ *    `apps/bridge/src/lang.js` の実行時言語に追従する**。日本語が残っていないことは
+ *    `reviewI18n.test.js` が出力そのものを検査して固定する。ここでの対象外は
+ *    「画面の i18n 辞書を通らない」という意味だけ）
  *  - `term-snippets.js` / `snippets.js` の同梱データ（端末に打ち込む定型文）
  * 逆に、allowlist の項目が 1 件も当たらなくなったら失敗させる（allowlist の腐敗検出）。
+ *
+ * 末尾の 1 本は**状態判定の言語依存**の静的検査。カンバンの状態は機械マーカー
+ * （`[review]` / `[akapen]`）だけで決め、生成側の散文（`注釈:` / `レビュー回答`）の
+ * 前方一致では判定しない（SPEC-i18n-gen §3.6-3。散文は en / ja で切り替わるため）。
  */
 
 import test from 'node:test'
@@ -243,4 +250,90 @@ test('検出器の自己検証: コメント内と英字だけの文言は違反
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
+})
+
+/**
+ * 状態判定に使ってはいけない**生成側の散文ラベル**（SPEC-i18n-gen §3.3 / §3.6-3）。
+ *
+ * 回答サマリ・unblock 理由・注釈サマリは en / ja で切り替わる。カンバンの状態は
+ * `[review]` / `[akapen]` の機械マーカーだけで判定する（履歴が混在していても壊れない）。
+ */
+const STATUS_PROSE = ['注釈[:：]', 'レビュー回答', '赤ペン回答']
+
+/** 状態判定に使う関数呼び出し（この直後のリテラル／正規表現が判定の材料になる）。 */
+const DECISION_CALLS = ['startsWith', 'endsWith', 'includes', 'indexOf', 'lastIndexOf', 'test']
+
+/**
+ * 「散文ラベルの前方一致で状態を判定している」箇所を集める。
+ *
+ * 生成（`summary` / `--reason`）で文字列を作るのは自由。禁じるのは
+ * **その文字列を読んで状態を決める**こと（`startsWith('注釈:')` など）。
+ *
+ * @param {string} src ソース（呼び側でコメント除去済み）
+ * @param {string} rel `bridge/x.js` 形式の相対名
+ * @returns {string[]} 検出（空なら合格）
+ */
+export function findProseDecisions(src, rel) {
+  const out = []
+  const calls = DECISION_CALLS.join('|')
+  for (const label of STATUS_PROSE) {
+    // (a) 呼び出しの引数が散文リテラル: `startsWith('注釈:')`
+    const argRe = new RegExp(`(?:${calls})\\s*\\(\\s*(?:['"\`]\\^?【?${label}|\\/\\^?【?${label})`, 'g')
+    // (b) 正規表現リテラルをレシーバにする形: `/^注釈:/.test(body)`
+    const recvRe = new RegExp(`\\/\\^?【?${label}[^/\\n]*\\/\\s*\\.\\s*(?:test|exec|match)\\s*\\(`, 'g')
+    for (const re of [argRe, recvRe]) {
+      for (const m of src.matchAll(re)) {
+        const line = src.slice(0, m.index).split('\n').length
+        out.push(`${rel}:${line} ${m[0].replace(/\s+/g, ' ').trim()}`)
+      }
+    }
+  }
+  return [...new Set(out)]
+}
+
+test('状態判定に生成側の散文（注釈: / レビュー回答）の前方一致を使っていない', () => {
+  const files = [
+    ...fs.readdirSync(BRIDGE).filter((f) => f.endsWith('.js')).map((f) => [`bridge/${f}`, path.join(BRIDGE, f)]),
+    ...walk(WEB_SRC).map((f) => [`web/${path.relative(WEB_SRC, f).split(path.sep).join('/')}`, f]),
+  ]
+  assert.ok(files.length > 20, `走査対象が少なすぎる（${files.length} 件）`)
+  const hits = []
+  for (const [rel, file] of files) hits.push(...findProseDecisions(stripComments(fs.readFileSync(file, 'utf8')), rel))
+  assert.deepEqual(
+    hits,
+    [],
+    `状態判定が散文の前方一致に依存しています（機械マーカー [review] / [akapen] で判定してください）:\n${hits.join('\n')}`,
+  )
+})
+
+test('監視役は生成側の散文を一切見ない（状態は機械マーカーだけ）', () => {
+  for (const name of ['review-watcher.js', 'pipeline-watcher.js']) {
+    const src = stripComments(fs.readFileSync(path.join(BRIDGE, name), 'utf8'))
+    const hit = /注釈[:：]|レビュー回答|赤ペン回答/.exec(src)
+    assert.equal(
+      hit,
+      null,
+      `${name} が生成側の散文を見ています（${hit?.[0] ?? ''}）。en / ja で切り替わる文字列は状態判定に使えません`,
+    )
+  }
+})
+
+test('自己検証: findProseDecisions は生成と判定を区別する', () => {
+  const gen = stripComments(
+    [
+      "const summary = `注釈: ${n} ストローク`",
+      "await runKanban(['unblock', id, '--reason', '注釈を受領'])",
+    ].join('\n'),
+  )
+  assert.deepEqual(findProseDecisions(gen, 'probe.js'), [], '生成（summary / reason）は違反ではない')
+
+  const judge = stripComments(
+    [
+      "if (line.startsWith('注釈:')) status = 'ready'",
+      "if (text.includes('レビュー回答')) moved = true",
+      "if (/^注釈:/.test(body)) return 'annotation'",
+      "if (body.startsWith('【赤ペン回答】')) legacy = true",
+    ].join('\n'),
+  )
+  assert.equal(findProseDecisions(judge, 'probe.js').length, 4, '前方一致の判定は 4 件すべて拾う')
 })
