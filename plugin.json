@@ -1,7 +1,7 @@
 {
   "name": "hermes-pilot",
   "displayName": "Hermes Pilot",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "The A2B pipeline for an autonomous Hermes Agent, in your pocket: turn a one-line Spec Seed into a Quick Review interview, a spec the batch runner can execute, filed kanban batches, live monitoring and a Mission Receipt — plus annotation, chat, terminal and usage in one installable PWA.",
   "author": "Hermes Pilot contributors",
   "license": "MIT",
