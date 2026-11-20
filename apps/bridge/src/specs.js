@@ -3,6 +3,7 @@ import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { ApiError } from './api-errors.js'
 import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'
+import { DEFAULT_LANG, normalizeLang } from './lang.js'
 
 /**
  * Spec Launchpad — `docs/SPEC-*.md` を検出し、バッチ見出しをカンバンへ一括起票する。
@@ -354,14 +355,42 @@ export function buildTaskTitle(batch) {
 }
 
 /**
+ * タスク本文の見出し（`lang` ごと・キー集合は両言語で同一）。機械キーは ASCII のまま。
+ * 読み取り側（`parseSpec` の `OBJECTIVE_RE` / `EXECUTION_MODE_RE`）は両言語を受ける。
+ */
+const BODY_HEADINGS = {
+  en: {
+    objective: '## Objective',
+    excerpt: '## Excerpt (acceptance criteria + Verify)',
+    objectiveFallback: '(see the excerpt of the batch body below)',
+  },
+  ja: {
+    objective: '## 目的',
+    excerpt: '## 抜粋（受入条件 / Verify を含む）',
+    objectiveFallback: '（バッチ本文の抜粋を参照）',
+  },
+}
+
+/**
+ * タスク本文の見出し表を返す（未知・未指定は既定 `en`）。
+ *
+ * @param {unknown} lang 言語（`en` / `ja` / `ja-JP` など）
+ * @returns {{objective: string, excerpt: string, objectiveFallback: string}} 見出し
+ */
+export function bodyHeadings(lang) {
+  return BODY_HEADINGS[normalizeLang(lang) ?? DEFAULT_LANG] ?? BODY_HEADINGS[DEFAULT_LANG]
+}
+
+/**
  * 起票するタスクの本文（spec パス・target・抜粋・受入条件）。
  *
- * @param {{specRelPath: string, repoPath: string, board: string, batch: {id: string, title: string, objective: string, section: string}, chat?: string}} input 入力
+ * @param {{specRelPath: string, repoPath: string, board: string, batch: {id: string, title: string, objective: string, section: string}, chat?: string, lang?: string}} input 入力
  * @returns {string} 本文
  */
-export function buildTaskBody({ specRelPath, repoPath, board, batch, chat }) {
+export function buildTaskBody({ specRelPath, repoPath, board, batch, chat, lang }) {
   const chatId = sanitizeSpecChat(chat)
   const mode = normalizeExecutionMode(batch?.mode)
+  const h = bodyHeadings(lang)
   const head = [
     `Spec: ${specRelPath}`,
     `Target: ${repoPath}`,
@@ -370,11 +399,11 @@ export function buildTaskBody({ specRelPath, repoPath, board, batch, chat }) {
     ...(chatId ? [`Chat: ${chatId}`] : []),
     ...(mode ? [`Mode: ${mode}`] : []),
     '',
-    '## 目的',
+    h.objective,
     '',
-    batch?.objective || '（バッチ本文の抜粋を参照）',
+    batch?.objective || h.objectiveFallback,
     '',
-    '## 抜粋（受入条件 / Verify を含む）',
+    h.excerpt,
     '',
   ].join('\n')
   // 契約ブロックは**末尾に必ず残す**（抜粋だけを切り詰める）。6000 字上限で契約が消えると
@@ -720,6 +749,8 @@ export function createSpecs(cfg = {}, deps = {}) {
     const dryRun = Boolean(input.dryRun)
     // 起票元チャット（`Chat:` 行＋ラン記録の originSessionId）。書式外は黙って捨てる。
     const chat = sanitizeSpecChat(input.chat)
+    // 本文の見出し言語（未指定は既定 `en`。§3.5）。散文だけが従い、機械キーは ASCII 固定。
+    const lang = normalizeLang(input.lang) ?? DEFAULT_LANG
 
     let existing = []
     try {
@@ -738,7 +769,7 @@ export function createSpecs(cfg = {}, deps = {}) {
         continue
       }
       const title = buildTaskTitle(batch)
-      const body = buildTaskBody({ specRelPath, repoPath, board, batch, chat })
+      const body = buildTaskBody({ specRelPath, repoPath, board, batch, chat, lang })
       if (dryRun) {
         created.push({ id: batch.id, title, taskId: null, dryRun: true })
         continue

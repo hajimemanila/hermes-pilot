@@ -18,6 +18,7 @@ import {
   SPEC_CONTENT_MAX,
   buildTaskBody,
   buildTaskTitle,
+  bodyHeadings,
   createSpecs,
   extractRecommendedRole,
   findOpenBatchTask,
@@ -517,8 +518,8 @@ test('buildTaskBody は Mode 行と [Hermes Pilot Execution Contract] を注入�
   assert.ok(body.includes(CONTRACT_HEADER), '行動契約ブロックが無い')
   assert.ok(body.includes('npm run deploy'), 'visual-gate の契約（deploy）が入っていない')
   assert.ok(body.includes('390×844'), 'visual-gate の実画面検証が入っていない')
-  assert.ok(body.includes('受入条件'), '抜粋が消えている')
-  assert.equal(body.indexOf(CONTRACT_HEADER) > body.indexOf('受入条件'), true, '契約は本文の末尾に置く')
+  assert.ok(body.includes('## Excerpt (acceptance criteria + Verify)'), '抜粋が消えている')
+  assert.equal(body.indexOf(CONTRACT_HEADER) > body.indexOf('## Excerpt'), true, '契約は本文の末尾に置く')
 })
 
 test('buildTaskBody の契約はモードごとに違う（zero-stop / fast-track-review）', () => {
@@ -810,4 +811,117 @@ test('docs/SPEC-ROLE-DELEGATION-ROUTING.md の Batch R1〜R4 と推奨ロール�
     parsed.batches.map((b) => b.mode),
     ['zero-stop', 'zero-stop', 'fast-track-review', 'zero-stop'],
   )
+})
+
+// --- GEN-4: SPEC 見出しと worker タスク本文を言語で書く（§3.5） ----------------
+
+test('buildTaskBody は en で `## Objective` / `## Excerpt (acceptance criteria + Verify)`、ja で `## 目的`', () => {
+  const batch = parseSpec(SPEC).batches[0]
+  const en = buildTaskBody({ specRelPath: 'docs/SPEC-A.md', repoPath: '/tmp/repo', board: 'mobile', batch, lang: 'en' })
+  assert.ok(en.includes('## Objective'), 'en の目的見出しが無い')
+  assert.ok(en.includes('## Excerpt (acceptance criteria + Verify)'), 'en の抜粋見出しが無い')
+  assert.equal(en.includes('## 目的'), false, 'en に `## 目的` が混ざっている')
+  assert.equal(en.includes('## 抜粋'), false, 'en に ja の抜粋見出しが混ざっている')
+
+  const ja = buildTaskBody({ specRelPath: 'docs/SPEC-A.md', repoPath: '/tmp/repo', board: 'mobile', batch, lang: 'ja' })
+  assert.ok(ja.includes('## 目的'), 'ja の目的見出しが無い')
+  assert.ok(ja.includes('## 抜粋（受入条件 / Verify を含む）'), 'ja の抜粋見出しが無い')
+  assert.equal(ja.includes('## Objective'), false, 'ja に `## Objective` が混ざっている')
+  assert.equal(ja.includes('## Excerpt'), false, 'ja に en の抜粋見出しが混ざっている')
+})
+
+test('buildTaskBody の既定は en（未指定で `## 目的` を出さない）', () => {
+  const batch = parseSpec(SPEC).batches[0]
+  const body = buildTaskBody({ specRelPath: 'docs/SPEC-A.md', repoPath: '/tmp/repo', board: 'mobile', batch })
+  assert.ok(body.includes('## Objective'))
+  assert.equal(body.includes('## 目的'), false)
+})
+
+test('buildTaskBody は目的が空のときの代替文も言語に合わせる', () => {
+  const batch = { id: 'X1', title: 'no objective', objective: '', section: '- nothing\n' }
+  const en = buildTaskBody({ specRelPath: 'docs/SPEC-X.md', repoPath: '/tmp/repo', board: 'b', batch, lang: 'en' })
+  const ja = buildTaskBody({ specRelPath: 'docs/SPEC-X.md', repoPath: '/tmp/repo', board: 'b', batch, lang: 'ja' })
+  assert.ok(en.includes('(see the excerpt of the batch body below)'))
+  assert.equal(en.includes('（バッチ本文の抜粋を参照）'), false)
+  assert.ok(ja.includes('（バッチ本文の抜粋を参照）'))
+  assert.equal(ja.includes('(see the excerpt of the batch body below)'), false)
+})
+
+test('bodyHeadings は en / ja で同じキーを持ち、`ja-JP` は ja・未知は en に落ちる', () => {
+  assert.deepEqual(Object.keys(bodyHeadings('en')).sort(), Object.keys(bodyHeadings('ja')).sort())
+  assert.equal(bodyHeadings('ja-JP').objective, '## 目的')
+  assert.equal(bodyHeadings('en-US').objective, '## Objective')
+  assert.equal(bodyHeadings(undefined).objective, '## Objective', '未指定は既定 en')
+  assert.equal(bodyHeadings('fr').objective, '## Objective', '未知は既定 en')
+  for (const h of [bodyHeadings('en'), bodyHeadings('ja')]) {
+    for (const v of Object.values(h)) assert.ok(typeof v === 'string' && v.length > 0)
+  }
+})
+
+test('パーサは見出し 4 変種を受ける（目的 / Objective × Execution Mode / 実行モード）', () => {
+  const variants = [
+    ['- **目的**: 目的ジャ', '- **Execution Mode**: [Mode: Zero-Stop]'],
+    ['- **Objective**: english goal', '- **Execution Mode**: [Mode: Zero-Stop]'],
+    ['- **目的**: 目的ジャ', '- **実行モード**: [Mode: Zero-Stop]'],
+    ['- **Objective**: english goal', '- **実行モード**: [Mode: Zero-Stop]'],
+  ]
+  for (const [objectiveLine, modeLine] of variants) {
+    const text = `# SPEC: variants\n\n### V1: parser both\n\n${modeLine}\n${objectiveLine}\n- **Verify**:\n  - \`npm test\` passes\n`
+    const [b] = parseSpec(text).batches
+    assert.equal(b.id, 'V1')
+    assert.equal(b.mode, 'zero-stop', `${objectiveLine} / ${modeLine} のモードが読めない`)
+    assert.ok(b.objective.includes(objectiveLine.includes('Objective') ? 'english goal' : '目的ジャ'), `${objectiveLine} の目的が読めない`)
+  }
+})
+
+test('launchSpec は lang を本文へ渡す（en / ja、未指定は en）', async () => {
+  const root = tempDir()
+  try {
+    writeFile(root, 'docs/SPEC-A.md', SPEC)
+    const bodies = []
+    const runner = async (args) => {
+      bodies.push(args[args.indexOf('--body') + 1])
+      return { code: 0, stdout: JSON.stringify({ id: `t_${bodies.length}`, status: 'ready' }), stderr: '' }
+    }
+    const specs = createSpecs({}, { runner, tasks: () => [], recordRun: () => {} })
+
+    const en = await specs.launchSpec({ repoPath: root, board: 'mobile', specRelPath: 'docs/SPEC-A.md', batchIds: ['P1'], lang: 'en' })
+    assert.equal(en.ok, true, JSON.stringify(en))
+    assert.ok(bodies[0].includes('## Objective'))
+    assert.equal(bodies[0].includes('## 目的'), false)
+
+    const ja = await specs.launchSpec({ repoPath: root, board: 'mobile', specRelPath: 'docs/SPEC-A.md', batchIds: ['P2'], lang: 'ja' })
+    assert.equal(ja.ok, true, JSON.stringify(ja))
+    assert.ok(bodies[1].includes('## 目的'))
+    assert.equal(bodies[1].includes('## Objective'), false)
+
+    const dflt = await specs.launchSpec({ repoPath: root, board: 'mobile', specRelPath: 'docs/SPEC-A.md', batchIds: ['P1'] })
+    assert.equal(dflt.ok, true, JSON.stringify(dflt))
+    assert.ok(bodies[2].includes('## Objective'), '未指定は en（DEFAULT_LANG）')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('既存の ja SPEC を ja で起票した本文に `## 目的` が残る（後方互換）', () => {
+  const root = path.resolve(import.meta.dirname, '../../..')
+  // `docs/SPEC-i18n-resp.md` は表形式で `### Batch` 見出しを持たない（起票対象外）ため、
+  // 実在する ja SPEC のうちバッチを持つもの（`docs/SPEC-i18n-gen.md` など）で固定する。
+  const files = ['docs/SPEC-i18n-gen.md', 'docs/SPEC-i18n-resp.md', 'docs/SPEC-PILOT-V5.md']
+  let checked = 0
+  for (const rel of files) {
+    const file = path.join(root, rel)
+    if (!fs.existsSync(file)) continue // 仕様書が無い環境ではスキップ相当
+    const parsed = parseSpec(fs.readFileSync(file, 'utf8'))
+    for (const batch of parsed.batches) {
+      const body = buildTaskBody({ specRelPath: rel, repoPath: '/tmp/repo', board: 'mobile', batch, lang: 'ja' })
+      // 抜粋（SPEC 本文の引用）には `## Objective` 等の文字列がそのまま入り得るので、
+      // 見出し部分（`## 目的` から抜粋見出しの直前まで）だけを見る。
+      const head = body.slice(0, body.indexOf('## 抜粋（受入条件 / Verify を含む）'))
+      assert.ok(head.includes('## 目的'), `${rel} ${batch.id} に ja の見出しが無い`)
+      assert.equal(head.includes('## Objective'), false, `${rel} ${batch.id} が en の見出しになっている`)
+      checked += 1
+    }
+  }
+  assert.ok(checked > 0, 'ja SPEC のバッチが 1 件も読めていない')
 })

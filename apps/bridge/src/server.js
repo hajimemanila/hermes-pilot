@@ -656,6 +656,8 @@ async function handleApi(req, res, url) {
         assignee: String(body?.assignee ?? 'mobile').trim() || 'mobile',
         // 起票元チャット（`Chat:` 行 ＋ ラン記録の originSessionId）。書式外は specs 側で捨てる。
         chat: body?.chat,
+        // 本文の見出し言語（`?lang=` → `Accept-Language` → en）。散文だけが従う。
+        lang: langOf(req, url),
         dryRun: Boolean(body?.dryRun),
       })
       auth.audit({
