@@ -1073,5 +1073,15 @@
   "refactor.targetPh": "Optional target path or module (e.g. apps/web/src/styles.css)…",
   "refactor.launch": "🛠 Start audit / refactor task",
   "refactor.launched": "Refactor task filed",
-  "refactor.failed": "Could not file refactor task"
+  "refactor.failed": "Could not file refactor task",
+  "err.NO_GIT_RECORD": "This task has no Git record (it may not have gone through kanban-sop)",
+  "err.NO_COMMITS": "No commits yet",
+  "err.GIT_REPO_MISSING": "The Git repository directory was not found",
+  "err.GIT_SHOW_FAILED": "git show failed",
+  "err.FILE_NOT_IN_COMMIT": "That file is not part of this commit",
+  "err.DB_NOT_FOUND": "Hermes state.db was not found",
+  "err.AGG_FAILED": "Could not aggregate the usage data",
+  "err.SCOPE_MISSING": "No aggregation scope was specified",
+  "err.SEARCH_FAILED": "Search failed",
+  "err.READ_FAILED": "Could not read the data"
 }

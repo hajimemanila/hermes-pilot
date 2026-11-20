@@ -84,7 +84,7 @@ export function createUsage(cfg = {}) {
           tools: Number(t?.tools ?? 0),
         },
         models: models.map((m) => ({
-          model: m.model ?? '(不明)',
+          model: m.model ?? '—',
           input: Number(m.input ?? 0),
           output: Number(m.output ?? 0),
           cacheRead: Number(m.cacheRead ?? 0),
@@ -120,7 +120,7 @@ export function createUsage(cfg = {}) {
     const hours = Math.min(Math.max(Number(opts.hours ?? 24) || 24, 1), 24 * 30)
     const rawDbs = Array.isArray(opts.dbs) && opts.dbs.length ? opts.dbs : [{ profile: 'default', path: dbPath }]
     const targets = rawDbs.filter((d) => d?.path && fs.existsSync(d.path))
-    if (!targets.length) return { ok: false, reason: 'state.db が見つかりません' }
+    if (!targets.length) return { ok: false, code: 'DB_NOT_FOUND', reason: 'state.db が見つかりません' }
 
     const cacheKey = `${hours}:${targets.map((d) => d.path).join('|')}`
     if (cache.data && cache.key === cacheKey && Date.now() - cache.at < CACHE_MS) return cache.data
@@ -164,7 +164,7 @@ export function createUsage(cfg = {}) {
     }
 
     if (!succeeded && firstErr) {
-      return { ok: false, reason: `集計に失敗しました: ${firstErr.message}` }
+      return { ok: false, code: 'AGG_FAILED', reason: `集計に失敗しました: ${firstErr.message}` }
     }
 
     const denom = totals.input + totals.cacheRead
@@ -210,8 +210,8 @@ export function createUsage(cfg = {}) {
     const untilMs = Number(opts.untilMs) || 0
     const rawDbs = Array.isArray(opts.dbs) && opts.dbs.length ? opts.dbs : [{ profile: 'default', path: dbPath }]
     const targets = rawDbs.filter((d) => d?.path && fs.existsSync(d.path))
-    if (!targets.length) return { ok: false, reason: 'state.db が見つかりません' }
-    if (!ids.length && !sinceMs) return { ok: false, reason: 'スコープが指定されていません' }
+    if (!targets.length) return { ok: false, code: 'DB_NOT_FOUND', reason: 'state.db が見つかりません' }
+    if (!ids.length && !sinceMs) return { ok: false, code: 'SCOPE_MISSING', reason: 'スコープが指定されていません' }
 
     const totals = { sessions: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, calls: 0 }
     let succeeded = 0
@@ -272,7 +272,7 @@ export function createUsage(cfg = {}) {
         }
       }
     }
-    if (!succeeded && firstErr) return { ok: false, reason: `スコープ集計に失敗しました: ${firstErr.message}` }
+    if (!succeeded && firstErr) return { ok: false, code: 'AGG_FAILED', reason: `スコープ集計に失敗しました: ${firstErr.message}` }
 
     const denom = totals.input + totals.cacheRead
     return {

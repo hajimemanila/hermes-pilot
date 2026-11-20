@@ -153,7 +153,7 @@ test('close(done) は complete を理由つきで呼び、status を読み戻す
     },
     fakeKanban,
   )
-  const r = await inbox.close('b1', 't_a1', 'done', 'もう不要', 'mobile')
+  const r = await inbox.close('b1', 't_a1', 'done', 'もう不要', 'mobile', 'ja')
   assert.equal(r.ok, true)
   assert.equal(r.action, 'done')
   assert.equal(calls.length, 1)
@@ -177,7 +177,7 @@ test('close(cancel) は理由をコメントしてから archive する', async 
     },
     fakeKanban,
   )
-  const r = await inbox.close('b1', 't_a3', 'cancel', '別Issueで扱う', 'mobile')
+  const r = await inbox.close('b1', 't_a3', 'cancel', '別Issueで扱う', 'mobile', 'ja')
   assert.equal(r.ok, true)
   assert.equal(r.action, 'cancel')
   assert.equal(calls.length, 2)
@@ -246,7 +246,7 @@ test('unblock はメモなしでも unblock CLI を呼ぶ', async () => {
     },
     fakeKanban,
   )
-  const r = await inbox.unblock('b1', 't_a3', '', 'mobile')
+  const r = await inbox.unblock('b1', 't_a3', '', 'mobile', 'ja')
   assert.equal(r.ok, true)
   assert.equal(calls.length, 1)
   assert.deepEqual(calls[0], ['kanban', '--board', 'b1', 'unblock', 't_a3', '--reason', 'PWAから再開'])

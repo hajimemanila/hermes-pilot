@@ -148,11 +148,11 @@ export function createTranscript(cfg) {
    */
   function read(sessionId, opts = {}) {
     const id = String(sessionId ?? '').slice(0, 128)
-    if (!id) return { ok: false, sessionId: id, messages: [], oldestId: null, hasMore: false, reason: 'session_id が必要です' }
+    if (!id) return { ok: false, sessionId: id, messages: [], oldestId: null, hasMore: false, code: 'SESSION_REQUIRED', reason: 'session_id が必要です' }
     // プロファイル横断表示のため、呼び出し側が対象 DB を指定できる
     const effectivePath = opts.dbPath || dbPath
     if (!fs.existsSync(effectivePath))
-      return { ok: false, sessionId: id, messages: [], oldestId: null, hasMore: false, reason: 'state.db が見つかりません' }
+      return { ok: false, sessionId: id, messages: [], oldestId: null, hasMore: false, code: 'DB_NOT_FOUND', reason: 'state.db が見つかりません' }
     const asked = Number(opts.limit)
     const limit = Number.isFinite(asked) ? Math.min(Math.max(Math.trunc(asked), 1), MAX_LIMIT) : DEFAULT_LIMIT
     const before = Number(opts.before ?? 0) || 0
@@ -217,7 +217,7 @@ export function createTranscript(cfg) {
       // messages[0] は最古（reverse 後）— ページングの `before` にそのまま渡せる
       return { ok: true, sessionId: id, title, messages, oldestId: messages[0]?.id ?? null, hasMore }
     } catch (e) {
-      return { ok: false, sessionId: id, messages: [], oldestId: null, hasMore: false, reason: `読み取りに失敗しました: ${e.message}` }
+      return { ok: false, sessionId: id, messages: [], oldestId: null, hasMore: false, code: 'READ_FAILED', reason: `読み取りに失敗しました: ${e.message}` }
     } finally {
       try {
         db?.close()

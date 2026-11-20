@@ -19,6 +19,7 @@ import { fmtCost, sep } from '../lib/format.js'
 import { followUpPromptFor, readActiveChatId, reportBodyFor, reportSummaryLine, toEpochMs } from '../lib/chatReports.js'
 import { renderMarkdown } from '../lib/markdown.js'
 import { batchIdOf, specProgress } from '../lib/specProgress.js'
+import { localizeError } from '../i18n/lang.js'
 import { useI18n } from '../i18n/index.js'
 import { useSplitLayout } from '../lib/useSplitLayout.js'
 import { collapseTaskEvents } from '../lib/tasksView.js'
@@ -1018,7 +1019,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
                               <pre className="patch">{patch.text}</pre>
                             ) : (
                               <div className="row-sub" style={{ padding: '6px 10px' }}>
-                                {patch.reason}
+                                {localizeError(patch)}
                               </div>
                             )
                           ) : null}
@@ -1030,7 +1031,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
                     </div>
                   ) : (
                     <div className="row-sub" style={{ padding: '6px 4px' }}>
-                      {diff.reason}
+                      {localizeError(diff)}
                     </div>
                   )
                 ) : null}

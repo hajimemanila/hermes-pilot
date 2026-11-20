@@ -70,7 +70,7 @@ import {
 import { Icon, Loader, RefreshButton, Sheet, fmtBytes, fmtDateTime, relTime } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
 import { useI18n } from '../i18n/index.js'
-import { t } from '../i18n/lang.js'
+import { localizeError, t } from '../i18n/lang.js'
 import { sep } from '../lib/format.js'
 
 /** 入力欄を内容に合わせて伸ばす（枠の分を足さないと 2px 溢れて縦棒が出る）。 */
@@ -769,7 +769,7 @@ export function ChatPane({
       if (meta.profile && meta.profile !== 'default') q.set('profile', meta.profile)
       const d = await api(`/api/sessions/${encodeURIComponent(meta.sessionId)}/transcript?${q}`)
       if (!d?.ok) {
-        notify(d?.reason ?? t('chat.cannotOpen'))
+        notify(localizeError(d) || t('chat.cannotOpen'))
         prependAnchorRef.current = null
         setTranscriptMeta((m) => (m ? { ...m, loadingMore: false } : m))
         return
@@ -1828,7 +1828,7 @@ export function ChatPane({
         if (profile && profile !== 'default') q.set('profile', profile)
         const d = await api(`/api/sessions/${encodeURIComponent(sessionId)}/transcript?${q}`)
         if (!d.ok) {
-          notify(d.reason ?? t('chat.cannotOpen'))
+          notify(localizeError(d) || t('chat.cannotOpen'))
           return false
         }
         setSid(null)

@@ -102,6 +102,18 @@ export const ERROR_MESSAGES = {
   WRITE_FAILED: 'Could not write the output',
   MEMO_EMPTY: 'Note text or checklist is required',
   MEMO_NOT_FOUND: 'Note not found',
+
+  // --- git / usage / search / live / transcript（PWA の各シート・差分表示） ---
+  NO_GIT_RECORD: 'This task has no Git record (it may not have gone through kanban-sop)',
+  NO_COMMITS: 'No commits yet',
+  GIT_REPO_MISSING: 'The Git repository directory was not found',
+  GIT_SHOW_FAILED: 'git show failed',
+  FILE_NOT_IN_COMMIT: 'That file is not part of this commit',
+  DB_NOT_FOUND: 'Hermes state.db was not found',
+  AGG_FAILED: 'Could not aggregate the usage data',
+  SCOPE_MISSING: 'No aggregation scope was specified',
+  SEARCH_FAILED: 'Search failed',
+  READ_FAILED: 'Could not read the data',
 }
 
 /**

@@ -1073,5 +1073,15 @@
   "refactor.targetPh": "対象パスやモジュール（任意・例: apps/web/src/styles.css）…",
   "refactor.launch": "🛠 監査・リファクタタスクを起票",
   "refactor.launched": "リファクタリングタスクを起票しました",
-  "refactor.failed": "起票できませんでした"
+  "refactor.failed": "起票できませんでした",
+  "err.NO_GIT_RECORD": "このタスクの git 記録がありません（kanban-sop 経由でない可能性）",
+  "err.NO_COMMITS": "コミットがまだありません",
+  "err.GIT_REPO_MISSING": "git リポジトリのディレクトリが見つかりません",
+  "err.GIT_SHOW_FAILED": "git show に失敗しました",
+  "err.FILE_NOT_IN_COMMIT": "そのコミットに含まれないファイルです",
+  "err.DB_NOT_FOUND": "state.db が見つかりません",
+  "err.AGG_FAILED": "集計に失敗しました",
+  "err.SCOPE_MISSING": "スコープが指定されていません",
+  "err.SEARCH_FAILED": "検索に失敗しました",
+  "err.READ_FAILED": "読み取りに失敗しました"
 }

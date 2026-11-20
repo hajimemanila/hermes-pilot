@@ -379,18 +379,58 @@ function readAllowed(bucket = 'default', max = 240, windowMs = 60_000) {
   return true
 }
 
+/**
+ * ログイン画面の文言（`Accept-Language` / `?lang=` で切り替える）。
+ * 既定は英語 — PWA 本体の既定言語（`en`）と揃える。
+ */
+const LOGIN_TEXT = {
+  en: {
+    title: 'Hermes Pilot — Sign in',
+    placeholder: 'App token',
+    submit: 'Enter',
+    hint: 'Find the token in <code>~/.hermes/plugin-data/hermes-pilot/token</code>.',
+  },
+  ja: {
+    title: 'Hermes Pilot — ログイン',
+    placeholder: 'アプリトークン',
+    submit: '入る',
+    hint: 'トークンは <code>~/.hermes/plugin-data/hermes-pilot/token</code>（トークンファイル）を確認してください。',
+  },
+}
+
+/**
+ * ログイン画面の HTML を要求言語で組み立てる。
+ * @param {import('node:http').IncomingMessage} req 要求
+ * @returns {string} HTML
+ */
+function loginPage(req) {
+  // 言語判定は `langOf()`（`?lang=` → `Accept-Language` → en）に一本化する
+  let url
+  try {
+    url = new URL(String(req?.url ?? '/'), 'http://x')
+  } catch {
+    url = new URL('/', 'http://x')
+  }
+  const L = LOGIN_TEXT[langOf(req, url)] ?? LOGIN_TEXT.en
+  return LOGIN_HTML
+    .replace('__TITLE__', L.title)
+    .replace('__PLACEHOLDER__', L.placeholder)
+    .replace('__SUBMIT__', L.submit)
+    .replace('__HINT__', L.hint)
+}
+
 const LOGIN_HTML = `<!doctype html><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Hermes Pilot — ログイン</title>
+<title>__TITLE__</title>
 <style>body{background:#07171b;color:#e6f4f1;font:15px/1.6 system-ui;margin:0;display:grid;place-items:center;height:100vh}
 form{background:#0d242a;padding:24px;border-radius:16px;border:1px solid #1d3a41;width:min(88vw,360px)}
 h1{font-size:16px;margin:0 0 12px}input{width:100%;padding:12px;border-radius:10px;border:1px solid #24515a;background:#081e23;color:#e6f4f1;font-size:15px;box-sizing:border-box}
 button{margin-top:12px;width:100%;padding:12px;border-radius:10px;border:0;background:#13807f;color:#fff;font-size:15px}
 p{color:#7fa6a3;font-size:12px;margin:10px 0 0}</style>
 <form method="get" action="/auth"><h1>Hermes Pilot</h1>
-<input name="t" placeholder="アプリトークン" autocomplete="off" autocapitalize="off" spellcheck="false">
-<button>入る</button>
-<p>トークンは <code>~/.hermes/plugin-data/hermes-pilot/token</code>（トークンファイル）を確認してください。</p></form>`
+<input name="t" placeholder="__PLACEHOLDER__" autocomplete="off" autocapitalize="off" spellcheck="false">
+<button>__SUBMIT__</button>
+<p>__HINT__</p></form>`
 
 /**
  * 静的配信。`dist` が無い／ビルド途中なら直前の正常ビルド（`dist.prev`）で配る。
@@ -870,7 +910,7 @@ async function handleApi(req, res, url) {
         return sendError(res, 429, 'RATE_LIMITED')
       }
       const body = await readJson(req)
-      const out = await inbox.close(b, d, body?.action, body?.note ?? body?.reason ?? '', String(body?.by ?? 'mobile'))
+      const out = await inbox.close(b, d, body?.action, body?.note ?? body?.reason ?? '', String(body?.by ?? 'mobile'), langOf(req, url))
       auth.audit({
         kind: 'kanban.close',
         board: b,
@@ -886,7 +926,7 @@ async function handleApi(req, res, url) {
         return sendError(res, 429, 'RATE_LIMITED')
       }
       const body = await readJson(req)
-      const out = await inbox.unblock(b, d, body?.note ?? body?.reason ?? '', String(body?.by ?? 'mobile'))
+      const out = await inbox.unblock(b, d, body?.note ?? body?.reason ?? '', String(body?.by ?? 'mobile'), langOf(req, url))
       auth.audit({
         kind: 'kanban.unblock',
         board: b,
@@ -916,7 +956,7 @@ async function handleApi(req, res, url) {
       }
       const body = await readJson(req)
       const reason = String(body?.reason ?? 'mobile kill switch').slice(0, 200)
-      const out = await kanban.abort(b, d, reason)
+      const out = await kanban.abort(b, d, reason, langOf(req, url))
       auth.audit({ kind: 'kanban.abort', board: b, task: d, reason, result: out })
       return sendJson(res, 200, out)
     }
@@ -1448,7 +1488,7 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/auth') {
     const value = auth.exchange(url.searchParams.get('t'))
     if (!value) {
-      res.writeHead(401, { 'content-type': 'text/html; charset=utf-8' }).end(LOGIN_HTML)
+      res.writeHead(401, { 'content-type': 'text/html; charset=utf-8' }).end(loginPage(req))
       return
     }
     res.writeHead(302, { 'set-cookie': auth.cookieHeader(value), location: '/' }).end()
@@ -1486,7 +1526,7 @@ const server = http.createServer(async (req, res) => {
 
   if (!isPublicPath(url.pathname) && !auth.authorized(req)) {
     if (url.pathname.startsWith('/api/')) return sendError(res, 401, 'AUTH_REQUIRED')
-    res.writeHead(401, { 'content-type': 'text/html; charset=utf-8' }).end(LOGIN_HTML)
+    res.writeHead(401, { 'content-type': 'text/html; charset=utf-8' }).end(loginPage(req))
     return
   }
 

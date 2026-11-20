@@ -190,6 +190,7 @@ export function createLive(cfg, kanban, deps = {}) {
     const targets = rawDbs.filter((d) => d?.path && fs.existsSync(d.path))
     if (!targets.length) {
       out.ok = false
+      out.code = 'DB_NOT_FOUND'
       out.reason = 'state.db が見つかりません'
       return out
     }
@@ -206,6 +207,7 @@ export function createLive(cfg, kanban, deps = {}) {
     }
     if (!succeeded && firstErr) {
       out.ok = false
+      out.code = 'READ_FAILED'
       out.reason = `読み取りに失敗しました: ${firstErr.message}`
       return out
     }

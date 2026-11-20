@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
 import { Sheet, Spinner, relTime } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
+import { localizeError } from '../i18n/lang.js'
 import { useI18n } from '../i18n/index.js'
 import { sep } from '../lib/format.js'
 
@@ -79,7 +80,7 @@ export function SearchSheet({ onClose, onOpenSession, notify }) {
         ) : res?.ok ? (
           t('search.resultCount', { count: hits.length, ms: Math.round(res.tookMs) })
         ) : (
-          (res?.reason ?? t('search.hint'))
+          localizeError(res) || t('search.hint')
         )}
       </div>
 

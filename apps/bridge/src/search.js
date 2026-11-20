@@ -130,11 +130,11 @@ export function createSearch(cfg) {
     const limit = Math.min(Math.max(Number(opts.limit ?? 30), 1), MAX_LIMIT)
     const hours = Number(opts.hours ?? 0)
     const out = { ok: true, q, tookMs: 0, total: 0, hits: [] }
-    if (!q) return { ...out, ok: false, reason: '検索語がありません' }
+    if (!q) return { ...out, ok: false, code: 'QUERY_REQUIRED', reason: '検索語がありません' }
 
     const rawDbs = Array.isArray(opts.dbs) && opts.dbs.length ? opts.dbs : [{ profile: 'default', path: dbPath }]
     const targets = rawDbs.filter((d) => d?.path && fs.existsSync(d.path))
-    if (!targets.length) return { ...out, ok: false, reason: 'state.db が見つかりません' }
+    if (!targets.length) return { ...out, ok: false, code: 'DB_NOT_FOUND', reason: 'state.db が見つかりません' }
 
     const since = hours > 0 ? Date.now() / 1000 - hours * 3600 : 0
     const merged = []
@@ -149,7 +149,7 @@ export function createSearch(cfg) {
       }
     }
     if (!succeeded && firstErr) {
-      return { ...out, ok: false, reason: `検索に失敗しました: ${firstErr.message}` }
+      return { ...out, ok: false, code: 'SEARCH_FAILED', reason: `検索に失敗しました: ${firstErr.message}` }
     }
     merged.sort((a, b) => b.at - a.at)
     out.hits = merged.slice(0, limit)

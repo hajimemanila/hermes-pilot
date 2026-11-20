@@ -49,6 +49,23 @@ function assertTaskId(id) {
  * @param {unknown} raw 入力
  * @returns {string} 正規化済み本文
  */
+/**
+ * カンバンへ書き込む運用メモ（人の目にも触れる）。
+ * 英語 UI のときに日本語を残さないため、UI 言語で選ぶ（既定 en）。
+ */
+const CLOSE_TEXT = {
+  en: {
+    cancel: 'Archived from PWA',
+    done: 'Completed from PWA (no extra work)',
+    resume: 'Resumed from PWA',
+  },
+  ja: {
+    cancel: 'PWAから取消（アーカイブ）',
+    done: 'PWAから完了（追加作業なし）',
+    resume: 'PWAから再開',
+  },
+}
+
 export function normalizeComment(raw) {
   const body = String(raw ?? '').trim()
   if (!body) throw new ApiError('COMMENT_REQUIRED', {}, 400)
@@ -240,7 +257,7 @@ export function createInbox(cfg, kanban) {
    * @param {string} [by] 実行者
    * @returns {Promise<object>} 結果
    */
-  async function close(board, id, action, note = '', by = 'mobile') {
+  async function close(board, id, action, note = '', by = 'mobile', lang = 'en') {
     const b = assertBoard(board)
     const tid = assertTaskId(id)
     const act = String(action ?? '')
@@ -253,6 +270,8 @@ export function createInbox(cfg, kanban) {
     }
     const actor = String(by ?? 'mobile').slice(0, 40)
     const text = String(note ?? '').trim().slice(0, 400)
+    // カンバンに残す運用メモも UI 言語に合わせる（英語 UI に日本語のコメントを残さない）
+    const L = CLOSE_TEXT[lang] ?? CLOSE_TEXT.en
     if (act === 'done' && before === 'done') {
       return { ok: true, board: b, id: tid, action: act, status: before, noop: true, at: Date.now() }
     }
@@ -264,7 +283,7 @@ export function createInbox(cfg, kanban) {
     if (act === 'cancel') {
       await run(cfg, [
         'kanban', '--board', b, 'comment', tid,
-        `PWAから取消（アーカイブ）${text ? `: ${text}` : ''}`,
+        `${L.cancel}${text ? `: ${text}` : ''}`,
         '--author', actor,
       ])
     }
@@ -273,7 +292,7 @@ export function createInbox(cfg, kanban) {
       act === 'done'
         ? [
             'kanban', '--board', b, 'complete', tid,
-            '--result', text || 'PWAから完了（追加作業なし）',
+            '--result', text || L.done,
             '--metadata', JSON.stringify({ closed_from: 'mobile', closed_by: actor, closed_at: new Date().toISOString() }),
           ]
         : ['kanban', '--board', b, 'archive', tid]
@@ -303,7 +322,7 @@ export function createInbox(cfg, kanban) {
    * @param {string} [by] 実行者
    * @returns {Promise<object>} 結果
    */
-  async function unblock(board, id, note = '', by = 'mobile') {
+  async function unblock(board, id, note = '', by = 'mobile', lang = 'en') {
     const b = assertBoard(board)
     const tid = assertTaskId(id)
     const before = statusOf(b, tid)
@@ -318,6 +337,8 @@ export function createInbox(cfg, kanban) {
     }
     const actor = String(by ?? 'mobile').slice(0, 40)
     const text = String(note ?? '').trim().slice(0, 400)
+    // カンバンに残す運用メモも UI 言語に合わせる（英語 UI に日本語のコメントを残さない）
+    const L = CLOSE_TEXT[lang] ?? CLOSE_TEXT.en
     if (text) {
       const cRes = await run(cfg, ['kanban', '--board', b, 'comment', tid, text, '--author', actor])
       if (cRes.code !== 0) {
@@ -326,7 +347,7 @@ export function createInbox(cfg, kanban) {
     }
     const res = await run(cfg, [
       'kanban', '--board', b, 'unblock', tid,
-      '--reason', text || 'PWAから再開',
+      '--reason', text || (CLOSE_TEXT[lang] ?? CLOSE_TEXT.en).resume,
     ])
     if (res.code !== 0) {
       throw new ApiError('CLI_FAILED', {}, 502)

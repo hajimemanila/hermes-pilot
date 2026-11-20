@@ -13,6 +13,7 @@ import { parsePastedReply } from '../lib/reviewPaste.js'
 import { t } from '../i18n/lang.js'
 import { useI18n } from '../i18n/index.js'
 import { useSplitLayout } from '../lib/useSplitLayout.js'
+import { sep } from '../lib/format.js'
 
 export { parsePastedReply }
 
@@ -79,7 +80,7 @@ function progressText(item) {
     const at = ago(pr.lastEventAt)
     return t('review.progress.waiting') + (at ? t('review.progress.presented', { ago: at }) : '')
   }
-  if (item.status === 'done') return t('review.progress.done') + (pr.lastEventAt ? ` ・ ${ago(pr.lastEventAt)}` : '')
+  if (item.status === 'done') return t('review.progress.done') + (pr.lastEventAt ? ` ${sep()} ${ago(pr.lastEventAt)}` : '')
   return ''
 }
 

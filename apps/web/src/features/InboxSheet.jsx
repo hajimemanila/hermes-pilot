@@ -4,6 +4,7 @@ import { CloseActions } from '../components/CloseActions.jsx'
 import { Sheet, Spinner, relTime } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
 import { isAnswered } from '../lib/reviewView.js'
+import { localizeError } from '../i18n/lang.js'
 import { useI18n } from '../i18n/index.js'
 import { sep } from '../lib/format.js'
 
@@ -180,7 +181,7 @@ export function InboxSheet({ onClose, notify, onChanged, focusTaskId = null }) {
 
   return (
     <Sheet title={title} onClose={onClose}>
-      {data && !data.ok ? <div className="empty">{data.reason ?? t('inbox.failed')}</div> : null}
+      {data && !data.ok ? <div className="empty">{localizeError(data) || t('inbox.failed')}</div> : null}
       {!allItems.length && data?.ok ? <div className="empty">{t('inbox.empty')}</div> : null}
       {focused ? (
         <div className="row-sub" style={{ marginBottom: 8 }}>

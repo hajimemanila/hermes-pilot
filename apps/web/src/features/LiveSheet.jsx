@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { HoldButton, Sheet, relTime } from '../components/Ui.jsx'
+import { localizeError } from '../i18n/lang.js'
 import { useI18n } from '../i18n/index.js'
 import { sep } from '../lib/format.js'
 
@@ -137,7 +138,7 @@ export function LiveSheet({ onClose, notify, onAbortTask }) {
 
   return (
     <Sheet title={t('live.title')} onClose={onClose}>
-      {data && !data.ok ? <div className="empty">{data.reason}</div> : null}
+      {data && !data.ok ? <div className="empty">{localizeError(data) || t('live.failed')}</div> : null}
 
       <div
         className="strip"

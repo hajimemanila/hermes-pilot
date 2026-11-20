@@ -293,13 +293,14 @@ export function createKanban(cfg) {
    * @param {string} reason 理由（監査・イベントに残る）
    * @returns {Promise<{ok: boolean, reclaimed: boolean, blocked: boolean, output: string}>} 結果
    */
-  async function abort(slug, id, reason = 'mobile kill switch') {
+  async function abort(slug, id, reason = 'mobile kill switch', lang = 'en') {
     const detail = task(slug, id)
     if (detail.status !== 'running' && !detail.workerPid) {
       throw new ApiError('TASK_STATE_LOCKED', { status: detail.status }, 409)
     }
     const reclaim = await runKanban(slug, ['reclaim', id, '--reason', reason])
-    const block = await runKanban(slug, ['block', id, `モバイルから中断: ${reason}`, '--kind', 'needs_input'])
+    const note = lang === 'ja' ? `モバイルから中断: ${reason}` : `Interrupted from mobile: ${reason}`
+    const block = await runKanban(slug, ['block', id, note, '--kind', 'needs_input'])
     return {
       ok: reclaim.code === 0,
       reclaimed: reclaim.code === 0,

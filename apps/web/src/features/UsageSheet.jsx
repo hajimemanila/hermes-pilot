@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { Sheet, fmtNumber, relTime } from '../components/Ui.jsx'
 import { fmtCost, fmtPct, fmtTokens, sep } from '../lib/format.js'
+import { localizeError } from '../i18n/lang.js'
 import { useI18n } from '../i18n/index.js'
 import { haptic } from '../lib/haptic.js'
 import { MissionReceiptSheet } from './MissionReceiptSheet.jsx'
@@ -22,7 +23,7 @@ export function UsageSheet({ data, hours = 24, onClose, board = null, spec = nul
     <>
     <Sheet title={t('usage.title', { hours })} onClose={onClose}>
       {!ok ? (
-        <div className="empty">{data?.reason ?? t('usage.failed')}</div>
+        <div className="empty">{localizeError(data) || t('usage.failed')}</div>
       ) : (
         <>
           <button
