@@ -337,3 +337,30 @@ test('自己検証: findProseDecisions は生成と判定を区別する', () =>
   )
   assert.equal(findProseDecisions(judge, 'probe.js').length, 4, '前方一致の判定は 4 件すべて拾う')
 })
+
+test('メタ行の区切りは sep() 経由（`・` を直書きしない）', () => {
+  // 英語 UI では `·`（U+00B7）を出す。直書きの `・`（U+30FB）は英語画面に日本語記号が残る。
+  const roots = ['features', 'components', 'lib']
+  const srcDir = path.resolve(import.meta.dirname, '../src')
+  const bad = []
+  const walk = (dir) => {
+    for (const name of fs.readdirSync(dir)) {
+      const p = path.join(dir, name)
+      if (fs.statSync(p).isDirectory()) {
+        walk(p)
+        continue
+      }
+      if (!/\.(jsx?|mjs)$/.test(name)) continue
+      if (path.basename(p) === 'format.js') continue // `sep()` の定義そのもの
+      const src = stripComments(fs.readFileSync(p, 'utf8'))
+      for (const m of src.matchAll(/(['"`])((?:(?!\1).)*・(?:(?!\1).)*)\1/g)) {
+        bad.push(`${path.relative(srcDir, p)}: ${m[2].slice(0, 40)}`)
+      }
+    }
+  }
+  for (const r of roots) {
+    const dir = path.join(srcDir, r)
+    if (fs.existsSync(dir)) walk(dir)
+  }
+  assert.deepEqual(bad, [], `sep() を使うこと: ${bad.join(' / ')}`)
+})
