@@ -64,6 +64,7 @@ import {
 } from '../src/architect.js'
 import { createKanban } from '../src/kanban.js'
 import { parseCreatedTask } from '../src/specs.js'
+import { LANGUAGE_RULE_EN, LANGUAGE_RULE_JA, LANGUAGE_RULE_MARKER } from '../src/language-rule.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const SRC = path.join(here, '..', 'src')
@@ -740,7 +741,8 @@ test('buildArchitectTaskBody は Round 1 を JSON ファーストにし、既定
   assert.match(body, /Board: demo/)
   assert.match(body, /Repository: \/tmp\/x/)
   assert.match(body, /### Batch <ID>: <Title>/)
-  assert.match(body, /受入条件（Verify）/)
+  // 既定は en（SPEC-i18n-gen §3.1）。ja の見出しは lang='ja' のときだけ（下部の GEN-3 テスト）
+  assert.match(body, /\*\*Objective\*\*.*\*\*Files\*\*.*\*\*Verify\*\*/)
 })
 
 test('ランナー設定は dataDir に保存され、壊れた JSON も未知の値も既定へ戻る', async () => {
@@ -1212,4 +1214,41 @@ test('publicJob は phase / stalled / sheetPath / reviewBoard を返す（D42）
   assert.equal(fresh.phase, 'spawning')
   assert.equal(fresh.sheetPath, null)
   assert.equal(fresh.reviewBoard, null)
+})
+
+// ── 出力言語の規則（SPEC-i18n-gen §3.4 / Batch GEN-3） ──────────────────────
+
+test('buildSeedPrompt は lang に合った言語規則を差し込み、Round 2 の見出しを切り替える', () => {
+  const base = { jobId: 'arch-1', seedText: '通知をまとめる', board: 'demo', repoPath: '/tmp/x' }
+
+  const en = buildSeedPrompt({ ...base, lang: 'en' })
+  assert.ok(en.includes(LANGUAGE_RULE_MARKER), 'en の seed プロンプトに marker が無い（「その言語で書け」が抜けている）')
+  assert.ok(en.includes(LANGUAGE_RULE_EN), 'en は EN 規則の全文を持つ')
+  assert.match(en, /UI language: en/)
+  assert.match(en, /- \*\*Objective\*\*: one paragraph of intent/)
+  assert.doesNotMatch(en, /\*\*目的\*\*/, 'en に ja の見出しが残っている')
+
+  const ja = buildSeedPrompt({ ...base, lang: 'ja' })
+  assert.ok(ja.includes(LANGUAGE_RULE_JA), 'ja の seed プロンプトに JA 規則文が無い')
+  assert.match(ja, /UI language: ja/)
+  assert.match(ja, /- \*\*目的\*\*: /)
+  // JA 規則文は機械トークンの一覧（**Objective** 等）を保つので、見出し行だけで判定する
+  assert.doesNotMatch(ja, /- \*\*Objective\*\*: one paragraph/, 'ja に en の見出しが混ざっている')
+
+  // 未指定は既定 en（ja へは戻さない・§3.1）
+  const fallback = buildSeedPrompt(base)
+  assert.ok(fallback.includes(LANGUAGE_RULE_EN))
+  assert.doesNotMatch(fallback, /\*\*目的\*\*/)
+})
+
+test('[ARCH] タスク本文も lang で Round 2 の見出しを切り替える', () => {
+  const base = { prompt: 'P', board: 'demo', repoPath: '/tmp/x', jobId: 'arch-1' }
+  assert.match(
+    buildArchitectTaskBody({ ...base, lang: 'en' }),
+    /\*\*Execution Mode\*\* \/ \*\*Objective\*\* \/ \*\*Files\*\* \/ \*\*Verify\*\*/,
+  )
+  assert.match(
+    buildArchitectTaskBody({ ...base, lang: 'ja' }),
+    /\*\*目的\*\* \/ \*\*変更・新規ファイル\*\* \/ \*\*受入条件（Verify）\*\*/,
+  )
 })

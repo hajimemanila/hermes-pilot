@@ -49,6 +49,8 @@ import { execFile } from 'node:child_process'
 import { listSpecs as scanSpecs, parseCreatedTask } from './specs.js'
 import { appendChatReport } from './pipeline-watcher.js'
 import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'
+import { DEFAULT_LANG } from './lang.js'
+import { isJaLang, languageRule } from './language-rule.js'
 
 /** `chat-reports.jsonl` の行種別（仕様書が完成した）。 */
 export const SPEC_READY_KIND = 'spec_ready'
@@ -282,6 +284,44 @@ export function recentSpecPaths(listSpecsFn, repoPath, limit = EXISTING_SPECS_MA
 }
 
 /**
+ * Round 2 で SPEC の各バッチに要求する見出し（`lang` ごと・SPEC-i18n-gen D3）。
+ *
+ * 機械キー（`**Execution Mode**`）は ASCII 固定、人が読む見出しだけを言語に追従させる。
+ * パーサ（`specs.js` の `OBJECTIVE_RE` / `EXECUTION_MODE_RE`）は両言語を受けるので、
+ * ここを切り替えても読み取りは壊れない。
+ */
+const ROUND2_HEADINGS = {
+  en: {
+    inline: 'each carrying **Execution Mode** / **Objective** / **Files** / **Verify**.',
+    lines: [
+      '  - **Execution Mode**: [Mode: Zero-Stop | Fast-Track Review | Visual Gate]',
+      '  - **Objective**: one paragraph of intent',
+      '  - **Files**: the exact paths to touch',
+      '  - **Verify**: the command that proves it works',
+    ],
+  },
+  ja: {
+    inline: 'each carrying **Execution Mode** / **目的** / **変更・新規ファイル** / **受入条件（Verify）**.',
+    lines: [
+      '  - **Execution Mode**: [Mode: Zero-Stop | Fast-Track Review | Visual Gate]',
+      '  - **目的**: one paragraph of intent',
+      '  - **変更・新規ファイル**: the exact paths to touch',
+      '  - **受入条件（Verify）**: the command that proves it works',
+    ],
+  },
+}
+
+/**
+ * 言語に合った Round 2 の見出しを返す（未知・未指定は既定 `en`）。
+ *
+ * @param {unknown} [lang] 言語
+ * @returns {{inline: string, lines: string[]}} 見出し（1 行要約と箇条書き）
+ */
+function round2Headings(lang) {
+  return isJaLang(lang) ? ROUND2_HEADINGS.ja : ROUND2_HEADINGS.en
+}
+
+/**
  * [`[ARCH]` タスクの本文]（spec-architect プロトコル＋実行契約）。
  *
  * カンバン起票に載せるので、ワーカーが**チャットを見なくても**完走できる内容にする。
@@ -291,7 +331,7 @@ export function recentSpecPaths(listSpecsFn, repoPath, limit = EXISTING_SPECS_MA
  * SPEC V11 D54: `suggestedSlug` / `existingSpecs` を渡すと、ファイル名の衝突回避と
  * Round 1 の探索コスト削減の指示が本文に入る。
  *
- * @param {{prompt: string, board: string, repoPath: string, jobId: string, executionPolicy?: string, suggestedSlug?: string, existingSpecs?: string[]}} input 入力
+ * @param {{prompt: string, board: string, repoPath: string, jobId: string, executionPolicy?: string, suggestedSlug?: string, existingSpecs?: string[], lang?: string}} input 入力
  * @returns {string} 本文
  */
 export function buildArchitectTaskBody({
@@ -302,6 +342,7 @@ export function buildArchitectTaskBody({
   executionPolicy = DEFAULT_EXECUTION_POLICY,
   suggestedSlug,
   existingSpecs,
+  lang = DEFAULT_LANG,
 }) {
   const policy = normalizeExecutionPolicy(executionPolicy)
   const slug = String(suggestedSlug ?? '').trim() || suggestSpecSlug(prompt, jobId)
@@ -327,7 +368,7 @@ export function buildArchitectTaskBody({
     'Round 1 speed: skip bespoke HTML sheets and browser mockups (browser_exec screenshots) unless',
     'the question itself is a visual UI layout comparison; the JSON alone renders the native form.',
     'Round 2: after the answers arrive, write `docs/SPEC-<SLUG>.md` with `### Batch <ID>: <Title>` sections,',
-    'each carrying **Execution Mode** / **目的** / **変更・新規ファイル** / **受入条件（Verify）**.',
+    round2Headings(lang).inline,
     ...executionPolicyLines(policy),
     'Stay inside the official local CLI: the only runner is `hermes kanban create` (no external AI CLI is launched).',
     `Board: ${board}`,
@@ -425,7 +466,7 @@ export function buildSeedPrompt({
   repoPath,
   autoStart = false,
   executionPolicy = DEFAULT_EXECUTION_POLICY,
-  lang = 'ja',
+  lang = DEFAULT_LANG,
   suggestedSlug,
   existingSpecs,
 }) {
@@ -446,6 +487,8 @@ export function buildSeedPrompt({
     `Repository: ${repoPath}`,
     `Board: ${board}`,
     `UI language: ${lang}`,
+    // 「その言語で書け」の規則本体（3 スキルと同じ 1 文・SPEC-i18n-gen §3.4 D2）
+    languageRule(lang),
     `Suggested slug: ${slug}`,
     specs.length
       ? `Existing specs: ${specs.join(', ')}`
@@ -468,9 +511,7 @@ export function buildSeedPrompt({
     'Round 2 — after the answers arrive, write docs/SPEC-<SLUG>.md. Every batch heading',
     '`### Batch <ID>: <Title>` must be followed by:',
     '  - **Execution Mode**: [Mode: Zero-Stop | Fast-Track Review | Visual Gate]',
-    '  - **目的**: one paragraph of intent',
-    '  - **変更・新規ファイル**: the exact paths to touch',
-    '  - **受入条件（Verify）**: the command that proves it works',
+    ...round2Headings(lang).lines.slice(1),
     '',
     'Execution policy for the batches you generate:',
     ...executionPolicyLines(executionPolicy),
@@ -498,6 +539,7 @@ export function createCliRunner(cfg = {}) {
     seedText = '',
     jobId = '',
     executionPolicy = DEFAULT_EXECUTION_POLICY,
+    lang = DEFAULT_LANG,
     suggestedSlug,
     existingSpecs,
     timeoutMs = RUNNER_TIMEOUT_MS,
@@ -514,6 +556,7 @@ export function createCliRunner(cfg = {}) {
         executionPolicy,
         suggestedSlug: slug,
         existingSpecs,
+        lang,
       })
       const args = buildKanbanCreateArgs({ board, title, body })
       execFile(
@@ -951,6 +994,7 @@ export function createArchitect(cfg = {}, deps = {}) {
           seedText,
           jobId: job.id,
           executionPolicy,
+          lang: job.lang,
           suggestedSlug,
           existingSpecs,
         }),

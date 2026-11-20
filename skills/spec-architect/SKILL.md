@@ -23,6 +23,14 @@ Architect の仕事は「仕様書を書くこと」ではなく、**Builder（�
 このスキルは **`hermes-pilot` プラグイン同梱**。`hermes-pilot init` が
 `~/.hermes/skills/spec-architect/` へ配置する。
 
+## Language
+
+Write user-facing prose in the run's UI language — sheet title/topic/question/option text, SPEC prose, and the comments and summaries you post.
+Keep machine tokens ASCII and unchanged: `label=`, `sheet=`, `mode=`, `round=`, `target=`, task ids, file paths, and the SPEC keys **Execution Mode** / **Objective** / **Files** / **Verify**.
+This is `LANGUAGE_RULE_MARKER` / `LANGUAGE_RULE_EN` in `apps/bridge/src/language-rule.js`; `apps/bridge/test/languageRule.test.js` keeps this section and the bridge prompt identical.
+When the run's language is Japanese, only the prose switches to Japanese (JA variant in the same module); the machine line and paths stay ASCII.
+The rule covers the sheet you write and every prose line you post to the board, including the 1-line `complete --summary`.
+
 ## いつ使うか
 
 使う:

@@ -24,6 +24,14 @@ metadata:
 このスキルは **`hermes-pilot` プラグイン同梱**。データの置き場は
 `~/.hermes/plugin-data/hermes-pilot/review/`（環境変数 `HP_DATA_DIR` で上書き可）。
 
+## Language
+
+Write user-facing prose in the run's UI language — sheet title/topic/question/option text, SPEC prose, and the comments and summaries you post.
+Keep machine tokens ASCII and unchanged: `label=`, `sheet=`, `mode=`, `round=`, `target=`, task ids, file paths, and the SPEC keys **Execution Mode** / **Objective** / **Files** / **Verify**.
+This is `LANGUAGE_RULE_MARKER` / `LANGUAGE_RULE_EN` in `apps/bridge/src/language-rule.js`; `apps/bridge/test/languageRule.test.js` keeps this section and the bridge prompt identical.
+When the run's language is Japanese, only the prose switches to Japanese (JA variant in the same module); the machine line and paths stay ASCII.
+The rule covers the sheet you write and every prose line you post to the board, including the 1-line `complete --summary`.
+
 ## いつ使うか
 
 - 実装後の見た目（間隔・折返し・色・重なり）を人の目で確定したい
