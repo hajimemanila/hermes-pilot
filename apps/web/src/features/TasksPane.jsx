@@ -16,7 +16,7 @@ import { LiveSheet } from './LiveSheet.jsx'
 import { InboxSheet } from './InboxSheet.jsx'
 import { pendingCount } from '../lib/reviewView.js'
 import { fmtCost, sep } from '../lib/format.js'
-import { followUpPromptFor, readActiveChatId, reportSummaryLine, toEpochMs } from '../lib/chatReports.js'
+import { followUpPromptFor, readActiveChatId, reportBodyFor, reportSummaryLine, toEpochMs } from '../lib/chatReports.js'
 import { renderMarkdown } from '../lib/markdown.js'
 import { batchIdOf, specProgress } from '../lib/specProgress.js'
 import { useI18n } from '../i18n/index.js'
@@ -583,8 +583,9 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
 
   /* バナーの本文（統合 Markdown サマリ）は Markdown として読ませる。 */
   const latestReportBody = useMemo(
-    () => (latestReport?.markdown ? renderMarkdown(latestReport.markdown) : null),
-    [latestReport],
+    () => (latestReport?.markdown ? renderMarkdown(reportBodyFor(latestReport)) : null),
+    // lang を依存に入れる（言語を切り替えたら本文も選び直す）
+    [latestReport, lang],
   )
 
   /** バナーの「💬 チャットで次の一手を相談」: App 経由でチャットタブへ渡す（§3.3 ③）。 */

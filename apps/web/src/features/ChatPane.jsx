@@ -49,6 +49,7 @@ import {
   readSeenMap,
   reportIdsFor,
   reportLines,
+  reportBodyFor,
   reportSummaryLine,
   setSeen,
   toEpochMs,
@@ -116,7 +117,7 @@ function MarkdownBody({ text, onCopyCode, copyLabel }) {
  */
 function PipelineReportCard({ report, open, onToggle, onDiscuss, onOpenBoard, onCopyCode, onReceipt }) {
   const halted = String(report?.status ?? '') === 'halted'
-  const body = String(report?.markdown || report?.text || '')
+  const body = reportBodyFor(report)
   return (
     <div className={`msg report-card${halted ? ' is-halted' : ''}`} title={fmtDateTime(report?.at)}>
       <button type="button" className="report-card-head" onClick={onToggle} aria-expanded={Boolean(open)}>

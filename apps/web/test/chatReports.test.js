@@ -17,6 +17,7 @@ import {
   otherUnreadReports,
   readActiveChatId,
   readSeenMap,
+  reportBodyFor,
   reportIdsFor,
   reportLines,
   reportSummaryLine,
@@ -383,4 +384,22 @@ test('followUpPromptFor: 旧い報告行（日本語の完成文のみ）を英�
   const legacy = { followUpPrompt: '先ほどのパイプライン「X」の結果を確認してください。' }
   assert.equal(followUpPromptFor(legacy, 'Summarise the report.', { lang: 'en' }), 'Summarise the report.')
   assert.match(followUpPromptFor(legacy, 'fb', { lang: 'ja' }), /の結果を確認/)
+})
+
+test('reportBodyFor: 英語 UI は markdownEn を選び、履歴（英語版なし）は原文へ落とす', () => {
+  const r = {
+    markdown: '### 🎉 X\n- 実稼働 14 分',
+    markdownEn: '### 🎉 X\n- active 14m',
+    text: '🎉 X · ⏱ 実稼働 14 分',
+    textEn: '🎉 X · ⏱ active 14m',
+  }
+  assert.match(reportBodyFor(r, 'ja'), /実稼働/)
+  assert.match(reportBodyFor(r, 'en'), /active 14m/)
+  // 英語対応前の履歴（markdownEn なし）は原文を出す（空にしない）
+  assert.equal(reportBodyFor({ markdown: 'old ja', text: 'old' }, 'en'), 'old ja')
+  assert.equal(reportBodyFor({ textEn: 'en only' }, 'en'), 'en only')
+  // 折りたたみの 1 行サマリも同じ規則（先頭行を出す）
+  const oneLine = { markdown: '🎉 X · 実稼働 14 分', markdownEn: '🎉 X · active 14m' }
+  assert.match(reportSummaryLine(oneLine, 96, 'en'), /active 14m/)
+  assert.match(reportSummaryLine(oneLine, 96, 'ja'), /実稼働/)
 })

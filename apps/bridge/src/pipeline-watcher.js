@@ -168,7 +168,8 @@ export function extractIssuesAndRemaining(tasks, opts = {}) {
   for (const t of list) {
     const status = String(t?.status ?? '')
     if (status !== 'blocked' && status !== 'failed') continue
-    const reason = oneLine(t.result) || `${status}（理由の記録なし）`
+    // 理由の記録が無いときは言語非依存の記号にする（ja/en 両方の本文に載るため）
+    const reason = oneLine(t.result) || '—'
     push(String(t.id), t.title, status, reason)
   }
   // 2) result 本文の残課題・警告行
@@ -191,23 +192,36 @@ export function extractIssuesAndRemaining(tasks, opts = {}) {
  * @param {{status: string, board?: string, specRelPath?: string|null, tasks?: Array<object>, issues?: Array<object>, counts?: object}} input 入力
  * @returns {string[]} 次の一手
  */
-export function buildNextSteps({ status, board, specRelPath, tasks = [], issues = [], counts } = {}) {
+export function buildNextSteps({ status, board, specRelPath, tasks = [], issues = [], counts, lang = 'ja' } = {}) {
   const c = counts ?? countStatuses(tasks)
+  const en = lang === 'en'
   const out = []
   if (status === 'halted') {
     const stuck = c.blocked + c.failed
-    out.push(`⚠ ${stuck} 件の blocked/failed タスクの理由を確認し、指示を出して再開する（board: ${board}）`)
+    out.push(en
+      ? `⚠ Review the reasons for the ${stuck} blocked/failed task(s), then send instructions and resume (board: ${board})`
+      : `⚠ ${stuck} 件の blocked/failed タスクの理由を確認し、指示を出して再開する（board: ${board}）`)
   }
   if (issues.length > 0) {
-    out.push(`抽出された残課題 ${issues.length} 件を確認し、着手可能なものを次のタスクにする`)
+    out.push(en
+      ? `Review the ${issues.length} extracted remaining item(s) and turn the actionable ones into the next tasks`
+      : `抽出された残課題 ${issues.length} 件を確認し、着手可能なものを次のタスクにする`)
   }
   if (specRelPath) {
-    out.push(`${specRelPath} の残バッチを Spec Launchpad から起動する（${board}）`)
+    out.push(en
+      ? `Launch the remaining batches of ${specRelPath} from the Spec Launchpad (${board})`
+      : `${specRelPath} の残バッチを Spec Launchpad から起動する（${board}）`)
   }
   if (status !== 'halted') {
-    out.push('`npm run verify` と実機/画面の最終確認を行い、リリース判断をする')
+    out.push(en
+      ? 'Run `npm run verify` and the final device/screen check, then decide on release'
+      : '`npm run verify` と実機/画面の最終確認を行い、リリース判断をする')
   }
-  if (out.length < 2) out.push(`変更内容をレビューし、次の一手を相談する（board: ${board}）`)
+  if (out.length < 2) {
+    out.push(en
+      ? `Review the changes and discuss the next step (board: ${board})`
+      : `変更内容をレビューし、次の一手を相談する（board: ${board}）`)
+  }
   return out.slice(0, 3)
 }
 
@@ -226,15 +240,63 @@ function gitLine(git) {
 }
 
 /**
- * 分を「42 分」「1 時間 5 分」へ整形する（レポート用・0 は null）。
+ * レポート本文のラベル（言語別）。`ja` は従来の文言と 1 文字も変えない。
+ *
+ * 統合レポートは「その時点の言語」で 1 回だけ保存されるため、保存後に UI 言語を
+ * 変えると日本語が残る（実測: 英語 UI に「所要時間・使用量」「実稼働 … 14 分」）。
+ * そこで本文を **両言語で生成**し、UI が `markdownEn` / `textEn` を選ぶ。
+ */
+const REPORT_LABELS = {
+  ja: {
+    headHalted: 'Action Required',
+    headDone: 'Pipeline Completed',
+    activeShort: '実稼働',
+    wallShort: '経過',
+    hTime: '所要時間・使用量 / Time & Usage',
+    hDone: '完了タスク / Completed Tasks',
+    hIssues: '未実施項目・発見課題 / Issues & Remaining Items',
+    hNext: '次のステップ / Recommended Next Steps',
+    activeLine: '実稼働（重複区間をマージ）',
+    wallLine: '経過時間',
+    callsLine: 'API コール数',
+    tokensLine: 'トークン数',
+    tokensValue: (t, i, o, c) => `${t}（入力 ${i} · 出力 ${o} · キャッシュ読取 ${c}）`,
+    emptyDone: '（完了タスクなし）',
+    emptyIssues: '無し（全項目クリーン完走）',
+  },
+  en: {
+    headHalted: 'Action Required',
+    headDone: 'Pipeline Completed',
+    activeShort: 'active',
+    wallShort: 'wall',
+    hTime: 'Time & Usage',
+    hDone: 'Completed Tasks',
+    hIssues: 'Issues & Remaining Items',
+    hNext: 'Recommended Next Steps',
+    activeLine: 'Active time (overlapping spans merged)',
+    wallLine: 'Wall time',
+    callsLine: 'API calls',
+    tokensLine: 'Tokens',
+    tokensValue: (t, i, o, c) => `${t} (in ${i} · out ${o} · cache read ${c})`,
+    emptyDone: '(no completed tasks)',
+    emptyIssues: 'None (all items completed cleanly)',
+  },
+}
+
+/**
+ * 分を「42 分」「1 時間 5 分」/ 英語なら「42m」「1h 5m」へ整形する（0 は null）。
  * @param {number|null|undefined} min 分
+ * @param {'ja'|'en'} [lang] 表示言語
  * @returns {string|null} 表示文字列
  */
-export function fmtDurationMin(min) {
+export function fmtDurationMin(min, lang = 'ja') {
   const n = Number(min)
   if (!Number.isFinite(n) || n <= 0) return null
+  const h = Math.floor(n / 60)
+  const m = Math.round(n % 60)
+  if (lang === 'en') return n < 60 ? `${Math.round(n)}m` : `${h}h ${m}m`
   if (n < 60) return `${Math.round(n)} 分`
-  return `${Math.floor(n / 60)} 時間 ${Math.round(n % 60)} 分`
+  return `${h} 時間 ${m} 分`
 }
 
 /**
@@ -280,77 +342,100 @@ export function buildPipelineReport({
   startedAt = 0,
   now: nowMs = Date.now(),
   usage = null,
+  lang = 'ja',
 } = {}) {
   const counts = countStatuses(tasks)
-  const elapsed = elapsedLabel(startedAt, nowMs)
   const issues = extractIssuesAndRemaining(tasks)
-  const nextSteps = buildNextSteps({ status, board, specRelPath, tasks, issues, counts })
   const title = String(label || board || specRelPath || 'pipeline')
   const halted = status === 'halted'
 
   // 時間は Spec / Run スコープのタスク区間から（重なりはマージして二重計上しない）
   const timing = summarizeTasks(tasks, { now: nowMs })
-  const activeLabel = fmtDurationMin(timing.durationMin)
-  const wallLabel = fmtDurationMin(timing.wallDurationMin)
   const callsLabel = usage && Number.isFinite(Number(usage.apiCalls)) ? Number(usage.apiCalls) : null
   const tokensLabel = usage && Number.isFinite(Number(usage.totalTokens)) ? Number(usage.totalTokens) : null
-  const usageBits = [
-    callsLabel === null ? null : `🔌 ${callsLabel} API`,
-    tokensLabel === null ? null : `🪙 ${fmtTokenCount(tokensLabel)} tokens`,
-  ].filter(Boolean)
-  const timeBits = [
-    activeLabel ? `⏱ 実稼働 ${activeLabel}` : null,
-    wallLabel ? `経過 ${wallLabel}` : null,
-  ].filter(Boolean)
-  const summaryBits = [...timeBits, ...usageBits]
 
-  const headBase = halted
-    ? `### ⚠️ Action Required: ${title} (${counts.done} done · ${counts.blocked} blocked` +
-      `${counts.failed ? ` · ${counts.failed} failed` : ''}${elapsed ? ` · ${elapsed}` : ''})`
-    : `### 🎉 Pipeline Completed: ${title} (${counts.done}/${counts.total} done${elapsed ? ` · ${elapsed}` : ''})`
-  const head = summaryBits.length ? `${headBase} · ${summaryBits.join(' · ')}` : headBase
+  /**
+   * 本文を **指定言語で** 組み立てる。
+   *
+   * `ja` は従来と同一の文字列になる（既存の Discord 通知・保存済み行と互換）。
+   * `en` は英語 UI 用で、UI 側が `markdownEn` / `textEn` を選ぶ。
+   */
+  const render = (l) => {
+    const L = REPORT_LABELS[l] ?? REPORT_LABELS.ja
+    const elapsed = elapsedLabel(startedAt, nowMs)
+    const activeLabel = fmtDurationMin(timing.durationMin, l)
+    const wallLabel = fmtDurationMin(timing.wallDurationMin, l)
+    const nextSteps = buildNextSteps({ status, board, specRelPath, tasks, issues, counts, lang: l })
 
-  const doneLines = []
-  for (const t of tasks) {
-    if (String(t?.status ?? '') !== 'done') continue
-    const summary = oneLine(t.result, 200)
-    doneLines.push(`- **${oneLine(t.title, 120)}**${gitLine(gitMap[String(t.id)])}`)
-    if (summary) doneLines.push(`  - ${summary}`)
+    const usageBits = [
+      callsLabel === null ? null : `🔌 ${callsLabel} API`,
+      tokensLabel === null ? null : `🪙 ${fmtTokenCount(tokensLabel)} tokens`,
+    ].filter(Boolean)
+    const timeBits = [
+      activeLabel ? `⏱ ${L.activeShort} ${activeLabel}` : null,
+      wallLabel ? `${L.wallShort} ${wallLabel}` : null,
+    ].filter(Boolean)
+    const summaryBits = [...timeBits, ...usageBits]
+
+    const headBase = halted
+      ? `### ⚠️ ${L.headHalted}: ${title} (${counts.done} done · ${counts.blocked} blocked` +
+        `${counts.failed ? ` · ${counts.failed} failed` : ''}${elapsed ? ` · ${elapsed}` : ''})`
+      : `### 🎉 ${L.headDone}: ${title} (${counts.done}/${counts.total} done${elapsed ? ` · ${elapsed}` : ''})`
+    const head = summaryBits.length ? `${headBase} · ${summaryBits.join(' · ')}` : headBase
+
+    const doneLines = []
+    for (const t of tasks) {
+      if (String(t?.status ?? '') !== 'done') continue
+      const summary = oneLine(t.result, 200)
+      doneLines.push(`- **${oneLine(t.title, 120)}**${gitLine(gitMap[String(t.id)])}`)
+      if (summary) doneLines.push(`  - ${summary}`)
+    }
+
+    const issueLines = issues.length
+      ? issues.map((i) => `- **[${i.kind}] ${i.title}** — ${i.text}`)
+      : [`- **${L.emptyIssues}**`]
+
+    const nextLines = nextSteps.map((s) => `- ${s}`)
+
+    const usageLines = [
+      `- ${L.activeLine}: ${activeLabel ?? '—'}`,
+      `- ${L.wallLine}: ${wallLabel ?? '—'}`,
+      `- ${L.callsLine}: ${callsLabel === null ? '—' : String(callsLabel)}`,
+      `- ${L.tokensLine}: ${tokensLabel === null ? '—' : L.tokensValue(
+        fmtTokenCount(tokensLabel),
+        fmtTokenCount(usage?.totals?.input ?? 0),
+        fmtTokenCount(usage?.totals?.output ?? 0),
+        fmtTokenCount(usage?.totals?.cacheRead ?? 0),
+      )}`,
+    ]
+
+    const markdown = [
+      head,
+      '',
+      `#### ⏱ ${L.hTime}`,
+      ...usageLines,
+      '',
+      `#### ✅ ${L.hDone}`,
+      ...(doneLines.length ? doneLines : [`- ${L.emptyDone}`]),
+      '',
+      `#### ⚠️ ${L.hIssues}`,
+      ...issueLines,
+      '',
+      `#### 🚀 ${L.hNext}`,
+      ...nextLines,
+    ].join('\n')
+
+    const textBase = halted
+      ? `⚠️ ${title} (${counts.done} done · ${counts.blocked} blocked)`
+      : `🎉 ${title} (${counts.done}/${counts.total} done)`
+    const text = summaryBits.length ? `${textBase} · ${summaryBits.join(' · ')}` : textBase
+
+    return { markdown, text, nextSteps }
   }
 
-  const issueLines = issues.length
-    ? issues.map((i) => `- **[${i.kind}] ${i.title}** — ${i.text}`)
-    : ['- **無し（全項目クリーン完走）**']
-
-  const nextLines = nextSteps.map((s) => `- ${s}`)
-
-  const usageLines = [
-    `- 実稼働（重複区間をマージ）: ${activeLabel ?? '—'}`,
-    `- 経過時間: ${wallLabel ?? '—'}`,
-    `- API コール数: ${callsLabel === null ? '—' : String(callsLabel)}`,
-    `- トークン数: ${tokensLabel === null ? '—' : `${fmtTokenCount(tokensLabel)}（入力 ${fmtTokenCount(usage?.totals?.input ?? 0)} · 出力 ${fmtTokenCount(usage?.totals?.output ?? 0)} · キャッシュ読取 ${fmtTokenCount(usage?.totals?.cacheRead ?? 0)}）`}`,
-  ]
-
-  const markdown = [
-    head,
-    '',
-    '#### ⏱ 所要時間・使用量 / Time & Usage',
-    ...usageLines,
-    '',
-    '#### ✅ 完了タスク / Completed Tasks',
-    ...(doneLines.length ? doneLines : ['- （完了タスクなし）']),
-    '',
-    '#### ⚠️ 未実施項目・発見課題 / Issues & Remaining Items',
-    ...issueLines,
-    '',
-    '#### 🚀 次のステップ / Recommended Next Steps',
-    ...nextLines,
-  ].join('\n')
-
-  const textBase = halted
-    ? `⚠️ ${title} (${counts.done} done · ${counts.blocked} blocked)`
-    : `🎉 ${title} (${counts.done}/${counts.total} done)`
-  const text = summaryBits.length ? `${textBase} · ${summaryBits.join(' · ')}` : textBase
+  const ja = render('ja')
+  // 既定（ja）以外の言語版。`lang: 'en'` のときは無駄な二重生成をしない。
+  const en = lang === 'en' ? ja : render('en')
 
   const promptLines = [
     `先ほどのパイプライン「${title}」（board: ${board}${specRelPath ? ` / ${specRelPath}` : ''}）の結果を確認してください。`,
@@ -360,8 +445,11 @@ export function buildPipelineReport({
   ]
 
   return {
-    text,
-    markdown,
+    text: ja.text,
+    markdown: ja.markdown,
+    // UI 言語で選ぶための英語版（ja の `text` / `markdown` は従来と同一）
+    textEn: en.text,
+    markdownEn: en.markdown,
     followUpPrompt: promptLines.join('\n').slice(0, 1200),
     /*
      * 相談文の**材料**（言語非依存）。UI 側が `chat.followUpPrompt` で組み立てる。
@@ -382,7 +470,7 @@ export function buildPipelineReport({
       total: counts.total,
     },
     issues,
-    nextSteps,
+    nextSteps: ja.nextSteps,
     timing: {
       activeDurationMin: timing.durationMin,
       wallDurationMin: timing.wallDurationMin,
@@ -434,6 +522,8 @@ export function readPipelineReports(rootDir, opts = {}) {
         repoPath: j.repo_path ?? null,
         text: String(j.text ?? ''),
         markdown: String(j.markdown ?? ''),
+        textEn: String(j.text_en ?? ''),
+        markdownEn: String(j.markdown_en ?? ''),
         followUpPrompt: String(j.follow_up_prompt ?? ''),
         counts: j.counts ?? null,
       })
@@ -936,6 +1026,9 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
         repo_path: boardWorkdir(g.board) ?? g.run?.repoPath ?? null,
         text: report.text,
         markdown: report.markdown,
+        // UI 言語で選ぶための英語版（旧クライアントは markdown / text を使い続ける）
+        text_en: report.textEn,
+        markdown_en: report.markdownEn,
         follow_up_prompt: report.followUpPrompt,
         follow_up: report.followUp,
         counts: report.counts,

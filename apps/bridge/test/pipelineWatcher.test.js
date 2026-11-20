@@ -221,6 +221,14 @@ test('② Spec 全件 done で統合 Markdown（Git 情報・followUpPrompt・co
   assert.equal(row.follow_up.board, BOARD)
   assert.deepEqual(row.follow_up.counts, { done: 2, blocked: 0, failed: 0, total: 2 })
   assert.ok(Array.isArray(row.follow_up.issues), 'issues は配列')
+  // 英語 UI 用の本文（日本語 UI 用の markdown は従来どおり残す）
+  assert.match(row.markdown_en, /#### ⏱ Time & Usage/, '英語版の見出しが入る')
+  assert.match(row.markdown_en, /#### ✅ Completed Tasks/)
+  // ラベル（自前の文言）に日本語が残らない。タスク名は利用者データなので対象外
+  for (const jp of ['実稼働', '経過時間', '所要時間', '完了タスク', '次のステップ', 'トークン数']) {
+    assert.ok(!row.markdown_en.includes(jp), `英語版に「${jp}」が残っている`)
+  }
+  assert.match(row.text_en, /⏱ active /, 'text の英語版も active 表記')
   assert.match(row.at, /^2026-11-15T/, 'ISO 時刻')
 
   assert.equal(readJsonl(path.join(env.reviewDir, 'pipeline-reports.jsonl')).length, 1, '直近レポートにも追記')

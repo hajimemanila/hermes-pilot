@@ -1,3 +1,5 @@
+import { getLocale } from './format.js'
+
 /**
  * レビューの完了報告（起票した会話に戻る 1 行）の未読判定。
  *
@@ -38,6 +40,8 @@ export const PIPELINE_KEYS = [
   'markdown',
   'followUpPrompt',
   'followUp',
+  'markdownEn',
+  'textEn',
   'counts',
 ]
 
@@ -411,8 +415,33 @@ export function reportIdsFor(currentIds, items, repoPath = '') {
  * @param {number} [max] 最大文字数
  * @returns {string}
  */
-export function reportSummaryLine(report, max = 96) {
-  const raw = String(report?.summary ?? report?.markdown ?? report?.text ?? '')
+/**
+ * レポートカードに出す本文を UI 言語で選ぶ。
+ *
+ * 統合レポートは生成時の言語で保存されるため、ブリッジは両言語を書く
+ * （`markdown` / `markdownEn`）。英語 UI では英語版を優先し、無ければ原文へ落とす
+ * （英語版が無いのは英語対応前の履歴だけ）。
+ *
+ * @param {{markdown?: string, markdownEn?: string, text?: string, textEn?: string}|null|undefined} report
+ * @param {'en'|'ja'} [lang] 省略時は現在の表示言語
+ * @returns {string} 本文（無ければ空文字）
+ */
+export function reportBodyFor(report, lang = getLocale()) {
+  const md = String(report?.markdown ?? '')
+  const tx = String(report?.text ?? '')
+  if (lang === 'ja') return md || tx
+  return String(report?.markdownEn ?? '') || md || String(report?.textEn ?? '') || tx
+}
+
+/**
+ * 1 行サマリ（折りたたみ時の見出し・バナー用）。本文と同じ言語規則で選ぶ。
+ * @param {{summary?: string, markdown?: string, markdownEn?: string, text?: string, textEn?: string}|null|undefined} report
+ * @param {number} [max] 最大文字数
+ * @param {'en'|'ja'} [lang] 省略時は現在の表示言語
+ * @returns {string} 1 行
+ */
+export function reportSummaryLine(report, max = 96, lang = getLocale()) {
+  const raw = String(report?.summary ?? reportBodyFor(report, lang))
   const limit = Math.max(8, Number(max) || 96)
   for (const line of raw.split('\n')) {
     const s = line

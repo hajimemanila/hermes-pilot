@@ -1782,6 +1782,8 @@ export function createReview(cfg, opts = {}) {
           spec: j.spec ? String(j.spec) : null,
           repoPath: j.repo_path ? String(j.repo_path) : null,
           markdown: typeof j.markdown === 'string' ? j.markdown : '',
+          markdownEn: typeof j.markdown_en === 'string' ? j.markdown_en : '',
+          textEn: typeof j.text_en === 'string' ? j.text_en : '',
           followUpPrompt: typeof j.follow_up_prompt === 'string' ? j.follow_up_prompt : '',
           followUp: j.follow_up && typeof j.follow_up === 'object' && !Array.isArray(j.follow_up) ? j.follow_up : null,
           counts: j.counts && typeof j.counts === 'object' && !Array.isArray(j.counts) ? j.counts : null,
