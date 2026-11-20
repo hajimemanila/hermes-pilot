@@ -6,25 +6,30 @@ Hermes Pilot は **PWA**（`apps/web/dist`）と **ブリッジ**（`apps/bridge
 
 ## 導入手順
 
-npm へはまだ公開していないため、**`npx hermes-pilot …` は使わない**。取得 → 依存 → 初期化の 3 手。
+**npm に公開済み**（<https://www.npmjs.com/package/hermes-pilot>）。最短は `npx` / グローバル導入。
 
 ```bash
-# 1) 取得（sha で固定。--ref を省くと既定ブランチ）
-hermes plugins install hajimemanila/hermes-pilot --ref <sha>
+# A) npm から（clone 不要・最速。データ・トークン・同梱スキル・ペアリング QR。冪等）
+npx hermes-pilot@0.2.3 init
+npx hermes-pilot@0.2.3 start        # ブリッジ起動（必要なら UI をビルド）
 
-# 2) 依存（ws と、ネイティブアドオンの node-pty。postinstall が spawn-helper の exec bit を直す）
+# 常駐させる場合（launchd / systemd --user）
+npm i -g hermes-pilot@0.2.3 && hermes-pilot service install
+```
+
+```bash
+# B) Hermes のプラグインとして入れる（ダッシュボードのタブも使う場合）: 取得 → 依存 → 初期化の 3 手
+hermes plugins install hajimemanila/hermes-pilot --ref v0.2.3   # タグ／sha で固定。省略すると既定ブランチ
 cd ~/.hermes/plugins/hermes-pilot
-npm ci
-
-# 3) 初期化（データ・トークン・同梱スキル・ペアリング QR。冪等）
+npm ci                              # ws と node-pty。postinstall が spawn-helper の exec bit を直す
 node bin/hermes-pilot.mjs init
 ```
 
 git clone から入れる場合も 2) 以降は同じ（`git clone https://github.com/hajimemanila/hermes-pilot.git`）。
-以降のコマンドは**カレントディレクトリがリポジトリ／プラグインルート**である前提。
-短縮形が欲しいときは一度 `npm link` してから `hermes-pilot …` を使う。
+**B のコマンドはカレントディレクトリがリポジトリ／プラグインルートである前提**（A は不要）。
+`node bin/hermes-pilot.mjs …` は `hermes-pilot …` と同じ CLI で、npm 導入なら後者でよい。
 
-## CLI（`node bin/hermes-pilot.mjs …`）
+## CLI（`hermes-pilot …` / `node bin/hermes-pilot.mjs …`）
 
 | コマンド | 用途 |
 |---|---|
@@ -41,7 +46,7 @@ git clone から入れる場合も 2) 以降は同じ（`git clone https://githu
 
 | コマンド | 内容 | このツリーでの実測 |
 |---|---|---|
-| `npm test` | 単体・結合テスト（`node:test`） | **808 件 / 0 fail** |
+| `npm test` | 単体・結合テスト（`node:test`） | **933 件 / 0 fail** |
 | `npm run check:pwa` | PWA 34 項目（manifest・アイコン・マスカブル・Service Worker・viewport） | **34/34** |
 | `npm run check:oauth` | OAuth / 資格情報の境界検査 | **0 違反** |
 | `npm run build` | Vite 本番ビルド（`demo/` 非混入） | exit 0 |

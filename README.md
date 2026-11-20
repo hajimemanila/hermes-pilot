@@ -34,7 +34,8 @@ kanban, chat, terminal and usage into a single installable PWA.
 - **Persistent tab state** — all six tabs (Tasks, Review, Chat, Memos, Terminal, Settings) stay mounted in the background so switching tabs preserves scroll position, drafts, and loaded state without reload lag.
 - **English and Japanese** (`en` is the fallback, `ja` is bundled), **Dark / Light / System** themes and two
   two-pane layouts: a **narrow master-detail from 680 px** (280 px master, for portrait tablets such as the
-  iPad mini) and the **wide two-pane from 820 px** (380 px review master / 360 px tasks master). Below 680 px
+  iPad mini) and the **wide two-pane from 820 px** (380 px master for both Tasks and Review, 450 px
+  from 1180 px, with the detail column full-bleed and its text capped at 1040 px). Below 680 px
   every detail opens as a full-height sheet.
 - **No external plugins required** — repositories are found by scanning your project folders, and system
   status uses only the standard Hermes APIs.
@@ -240,20 +241,37 @@ check, so a broken file cannot reach the site.
 
 ## Install
 
-Two routes, same three steps after the first one: **get the code → `npm ci` → `init`**.
-There is no published npm release yet, so every command below runs the checked-in CLI
-(`node bin/hermes-pilot.mjs …`) from the repository or plugin directory instead of `npx`.
+Three routes. **A** is the shortest (one command, no clone); **B/C** install it as a Hermes plugin
+so the dashboard tab and the bundled skills are wired up for you.
 
-**A. From the Hermes plugin catalog (recommended)**
+**A. From npm (published package)**
 
 ```bash
-hermes plugins install hajimemanila/hermes-pilot --ref <sha>   # pin a commit; omit --ref to track the default branch
+npx hermes-pilot@0.2.3 init      # data dirs, token, bundled skills, pairing QR (idempotent)
+npx hermes-pilot@0.2.3 start     # bridge on http://127.0.0.1:4097
+```
+
+To keep it running across logins instead, install it once and use the `service` subcommand:
+
+```bash
+npm i -g hermes-pilot@0.2.3
+hermes-pilot service install     # launchd on macOS, systemd --user on Linux
+```
+
+`hermes-pilot` on npm: <https://www.npmjs.com/package/hermes-pilot> (pin the version; `@latest`
+tracks the newest release). The package `postinstall` restores the `spawn-helper` exec bit that
+npm's tarball extraction drops, so the terminal tab works without extra steps.
+
+**B. From the Hermes plugin catalog**
+
+```bash
+hermes plugins install hajimemanila/hermes-pilot --ref v0.2.3   # pin a tag/commit; omit --ref to track the default branch
 cd ~/.hermes/plugins/hermes-pilot
 npm ci
 node bin/hermes-pilot.mjs init
 ```
 
-**B. From a clone of this repository**
+**C. From a clone of this repository**
 
 ```bash
 git clone https://github.com/hajimemanila/hermes-pilot.git
@@ -262,12 +280,10 @@ npm ci
 node bin/hermes-pilot.mjs init
 ```
 
-`npm ci` is not optional: the bridge needs `ws` and the **native** addon `node-pty`, and the
-`postinstall` step restores the `spawn-helper` exec bit that npm's tarball extraction drops
-(without it the terminal tab fails with `posix_spawnp failed`).
-
-Every `node bin/hermes-pilot.mjs …` below assumes the current directory is that repository /
-plugin directory. If you prefer the short form, run `npm link` once and use `hermes-pilot …`.
+For **B/C**, `npm ci` is not optional: the bridge needs `ws` and the **native** addon `node-pty`,
+and the `postinstall` step restores the `spawn-helper` exec bit (without it the terminal tab fails
+with `posix_spawnp failed`). Every `node bin/hermes-pilot.mjs …` below assumes the current
+directory is that repository / plugin directory; with route **A** use `hermes-pilot …` instead.
 
 `init` is idempotent and does five things:
 
@@ -388,7 +404,7 @@ review/        sheets/, shots/, library/, feed.jsonl, chat-reports.jsonl, task-c
 ```bash
 npm install                 # postinstall fixes node-pty permissions
 npm run dev                 # Vite on :4098, proxies /api and /ws to :4097
-npm test                    # unit tests (808)
+npm test                    # unit tests (933)
 npm run verify              # test + check:pwa (34 checks) + check:oauth + production build + audit:responsive
 npm run build:demo          # static interactive demo -> apps/web/dist-demo (+ google-sites-embed.html)
 npm run deploy              # atomic, verified swap of apps/web/dist
@@ -400,7 +416,7 @@ node bin/hermes-pilot.mjs --help
 
 | Step | What it proves |
 |---|---|
-| `npm test` | **808** unit / integration tests, 0 fail (node:test, no framework). |
+| `npm test` | **933** unit / integration tests, 0 fail (node:test, no framework). |
 | `check:pwa` | **34/34** PWA checks against `apps/web/public` (manifest, icons, maskable, service worker, viewport). |
 | `check:oauth` | **0** violations: no device credential or OAuth token is readable from the browser bundle. |
 | `build` | Vite production build succeeds and contains no `demo/` code. |

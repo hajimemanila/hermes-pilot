@@ -114,9 +114,15 @@
 
 ---
 
-## 3. 人間の介在が必要な作業（npm パッケージ初回公開を行う場合）
+## 3. 人間の介在が必要な作業（npm パッケージ公開）
 
-Hermes Agent はセキュリティ上、あなたの npm アカウント認証・2FA（OTP）を代行できません。`npx hermes-pilot` を使えるように初回パッケージ公開も行う場合は、Batch C1〜C5 完了後に以下の手順を手元ターミナルで実施してください（`node bin/hermes-pilot.mjs` のまま進める場合は不要です）：
+> **実施済み（2026-11-20）**: `hermes-pilot@0.2.2` を npm へ公開（`dist-tags.latest`）。以降の版は同じ手順で更新する。
+> アカウントの 2FA が `auth-and-writes` のため、publish のたびに OTP（またはブラウザ承認）が要る。
+> なお 0.2.2 には「`node_modules/.bin` のシンボリックリンク経由だと CLI が無言で終わる」不具合があり、
+> 0.2.3 で修正した（`bin/hermes-pilot.mjs` の直接実行判定を `realpath` 比較へ）。**0.2.3 以降を案内すること。**
+
+Hermes Agent はセキュリティ上、あなたの npm アカウント認証・2FA（OTP）を代行できません。
+`npx hermes-pilot` を使えるように公開する場合は、Batch C1〜C5 完了後に以下の手順を手元ターミナルで実施してください（`node bin/hermes-pilot.mjs` のまま進める場合は不要です）：
 
 1. **npm ログイン**:
    ```bash

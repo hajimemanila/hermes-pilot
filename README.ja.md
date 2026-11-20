@@ -33,7 +33,8 @@ English README: [`README.md`](README.md)
 - **全タブ状態保持**: タスク・レビュー・チャット・メモ・ターミナル・設定のすべてのタブを裏で保持し、タブ往復時の再読み込みタイムラグや入力ロスを防止
 - **英語・日本語**（既定フォールバックは `en`、`ja` 同梱）、**Dark / Light / System** テーマ、そして 2 段階の
   2 ペイン: **680px から狭幅マスター・ディテール**（左 280px。iPad mini 縦などの 744/768px 用）と
-  **820px から広幅 2 ペイン**（レビュー左 380px / タスク左 360px）。680px 未満は詳細が全画面シートで開きます
+  **820px から広幅 2 ペイン**（タスク・レビューとも左 380px、1180px 以上は 450px。詳細は全幅で本文だけ 1040px 上限）。
+  680px 未満は詳細が全画面シートで開きます
 - **外部プラグイン不要** — リポジトリはプロジェクトフォルダの 1 階層スキャンで見つけ、システム状態は
   Hermes 標準 API だけで組み立てます
 
@@ -231,20 +232,36 @@ data URL として組み立てるため、デモは外部ネットワークに�
 
 ## インストール
 
-ルートは 2 つ。最初の 1 手が違うだけで、そのあとは同じ **コードを取る → `npm ci` → `init`** の 3 手です。
-まだ npm へ公開していないため、以下のコマンドはすべて `npx` ではなくリポジトリ（またはプラグイン
-ディレクトリ）の CLI を直接叩く `node bin/hermes-pilot.mjs …` で書いています。
+ルートは 3 つ。**A が最短**（clone 不要・コマンド 1 本）。**B / C** は Hermes のプラグインとして
+入れるので、ダッシュボードのタブと同梱スキルまで一緒に設定されます。
 
-**A. Hermes のプラグインカタログから（推奨）**
+**A. npm から（公開パッケージ）**
 
 ```bash
-hermes plugins install hajimemanila/hermes-pilot --ref <sha>   # sha で固定。--ref を省くと既定ブランチ
+npx hermes-pilot@0.2.3 init      # データ・トークン・同梱スキル・ペアリング QR（冪等）
+npx hermes-pilot@0.2.3 start     # ブリッジ起動（http://127.0.0.1:4097）
+```
+
+ログインをまたいで常駐させるなら、一度だけ入れて `service` を使います。
+
+```bash
+npm i -g hermes-pilot@0.2.3
+hermes-pilot service install     # macOS は launchd、Linux は systemd --user
+```
+
+npm のパッケージ: <https://www.npmjs.com/package/hermes-pilot>（版は固定を推奨。`@latest` は最新）。
+`postinstall` が npm の tarball 展開で落ちる `spawn-helper` の実行ビットを戻すので、端末タブもそのまま動きます。
+
+**B. Hermes のプラグインカタログから**
+
+```bash
+hermes plugins install hajimemanila/hermes-pilot --ref v0.2.3   # タグ／sha で固定。--ref を省くと既定ブランチ
 cd ~/.hermes/plugins/hermes-pilot
 npm ci
 node bin/hermes-pilot.mjs init
 ```
 
-**B. このリポジトリを clone して**
+**C. このリポジトリを clone して**
 
 ```bash
 git clone https://github.com/hajimemanila/hermes-pilot.git
@@ -253,12 +270,10 @@ npm ci
 node bin/hermes-pilot.mjs init
 ```
 
-`npm ci` は省略できません。ブリッジは `ws` と**ネイティブアドオン**の `node-pty` を使い、
-`postinstall` が npm の tarball 展開で落ちる `spawn-helper` の実行ビットを戻しています
-（これが無いと端末タブが `posix_spawnp failed` で落ちます）。
-
-以下の `node bin/hermes-pilot.mjs …` はすべて、カレントディレクトリがそのリポジトリ／プラグイン
-ディレクトリである前提です。短く打ちたければ一度 `npm link` してから `hermes-pilot …` を使ってください。
+**B / C** では `npm ci` は省略できません。ブリッジは `ws` と**ネイティブアドオン**の `node-pty` を使い、
+`postinstall` が `spawn-helper` の実行ビットを戻しています（無いと端末タブが `posix_spawnp failed` で落ちます）。
+以下の `node bin/hermes-pilot.mjs …` はカレントディレクトリがそのリポジトリ／プラグインである前提です。
+**A** の場合は同じコマンドを `hermes-pilot …` で打てます。
 
 `init` は何度実行しても安全で、次の 5 つを行います。
 
@@ -378,7 +393,7 @@ review/        sheets/, shots/, library/, feed.jsonl, chat-reports.jsonl, task-c
 ```bash
 npm install                 # postinstall が node-pty の権限を直す
 npm run dev                 # Vite :4098（/api・/ws は 4097 へプロキシ）
-npm test                    # 単体テスト（808 件）
+npm test                    # 単体テスト（933 件）
 npm run verify              # test + check:pwa（34 項目）+ check:oauth + 本番ビルド + audit:responsive
 npm run build:demo          # バックエンド不要の静的デモ → apps/web/dist-demo（+ google-sites-embed.html）
 npm run deploy              # 検証付きで dist を原子的に切替（無停止）
@@ -390,7 +405,7 @@ node bin/hermes-pilot.mjs --help
 
 | 手順 | 何を保証するか |
 |---|---|
-| `npm test` | **808 件**の単体・結合テストが 0 fail（node:test、フレームワーク無し） |
+| `npm test` | **933 件**の単体・結合テストが 0 fail（node:test、フレームワーク無し） |
 | `check:pwa` | `apps/web/public` に対する **34/34** 項目（マニフェスト・アイコン・マスカブル・Service Worker・viewport） |
 | `check:oauth` | **0 違反**: 端末の資格情報や OAuth トークンがブラウザ側バンドルから読めないこと |
 | `build` | Vite 本番ビルドが通り、`demo/` のコードが混入していないこと |
