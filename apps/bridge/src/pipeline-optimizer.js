@@ -32,21 +32,33 @@ export const DEFAULT_SKILLS_SRC = path.join(REPO_ROOT, 'skills')
 export const A2B_START = '<!-- hermes-pilot:a2b:start -->'
 export const A2B_END = '<!-- hermes-pilot:a2b:end -->'
 
-/** マーカー内に入れる行動規範（短く保つ。SOUL は毎ターン読まれる）。 */
+/**
+ * マーカー内に入れる行動規範（短く保つ。SOUL は毎ターン読まれる）。
+ *
+ * **英語で書く**（意図的）。ここは利用者向けの散文ではなく**機械向けの指示**で、
+ * 読み手はモデル。混在言語の指示は出力の言語を引きずる（日本語の規範を置くと
+ * 英語運用でも summary / comment が日本語に寄る・実測）。日本語で読みたい利用者には
+ * プロファイル側（SOUL のマーカー外・メモリ）で書いてもらう。
+ *
+ * **言語の指定はここに置かない**。人が読む散文の言語はプロファイル設定と
+ * `language-rule.js`（`LANGUAGE_RULE_EN` / `LANGUAGE_RULE_JA`）が決める。
+ * 機械トークン（`[review] label=` / `needs_input` / `Mode:` / パス）は ASCII のまま。
+ */
 export const A2B_RULES = [
   '## Hermes Pilot A2B pipeline',
   '',
-  '- 仕様化の依頼は `spec-architect` スキルの 2 ラウンド手順に従う（設問シート → SPEC）。',
-  '- 判断が必要になったら**長文の質問をチャットへ並べない**。`quick-review` シートを作り、',
-  '  `[review] label=... round=...` 行付きのタスクを起票して `needs_input` で止める。',
-  '- 見た目の検収は `annotation`（スクリーンショット＋赤）で受ける。文章で聞き返さない。',
+  '- For specification work, follow the two-round `spec-architect` skill (question sheet → SPEC).',
+  '- When a decision is needed, do not dump long questions into chat. Build a `quick-review` sheet,',
+  '  file a task with a `[review] label=... round=...` line, and stop with `needs_input`.',
+  '- Take visual sign-off through `annotation` (screenshot + red marks). Do not ask back in prose.',
   // D60 / D61 / D63: 抽象ロール・ネイティブ委譲・外部 CLI 禁止（SOUL を太らせないため 3 行に抑える）
-  '- 抽象ロール（`role:planner` / `role:builder` / `role:visual-reviewer` / `role:decision-framer`）で捉え、',
-  '  ロールごとの実モデル割当とフォールバック順はプロファイルメモリの表に従い `delegate_task` で委譲する。',
-  '  委譲の失敗・レート制限・タイムアウト・未対応では止めずフォールバックへ回し、外部 AI CLI のサブプロセス起動はしない。',
-  '- タスク本文に `Mode: zero-stop` / `fast-track-review` / `visual-gate` があればその契約に従う。',
-  '  `zero-stop` は `npm run verify` が通るまで自律修復し、通過後に `done` にする。',
-  '- 完了報告は「何をしたか / 検証コマンドと exit code / 未検証 / 次の一手」の 4 点に絞る。',
+  '- Reason in abstract roles (`role:planner` / `role:builder` / `role:visual-reviewer` / `role:decision-framer`)',
+  '  and delegate with `delegate_task` using the per-role model assignment and fallback order in profile memory.',
+  '  On delegation failure, rate limit, timeout or an unsupported model, fall back instead of stopping; never',
+  '  spawn an external AI CLI subprocess.',
+  '- If the task body carries `Mode: zero-stop` / `fast-track-review` / `visual-gate`, follow that contract.',
+  '  `zero-stop` self-repairs until `npm run verify` passes, then marks the task `done`.',
+  '- Keep completion reports to four points: what changed / verification command and exit code / unverified / next step.',
 ].join('\n')
 
 /** マーカー付きのルールブロック全体。 */

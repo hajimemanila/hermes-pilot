@@ -17,6 +17,7 @@ import path from 'node:path'
 import {
   A2B_END,
   A2B_RULE_BLOCK,
+  A2B_RULES,
   A2B_START,
   BUNDLED_SKILLS,
   backupStamp,
@@ -365,5 +366,17 @@ test('getOptimizeStatus の profiles も真偽値と件数だけを返す（プ�
     assert.match(fs.readFileSync(mobileSoul, 'utf8'), /hermes-pilot:a2b:start/)
   } finally {
     fs.rmSync(home, { recursive: true, force: true })
+  }
+})
+
+
+test('A2B_RULES は英語（機械向け指示）で、CJK を含まない', () => {
+  const CJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]/
+  assert.doesNotMatch(A2B_RULES, CJK, 'SOUL へ入れる規範に日本語が混ざっている')
+  // 言語の指定はブロックに置かない（プロファイル設定と language-rule.js が持つ）
+  assert.doesNotMatch(A2B_RULES, /write (user-facing )?prose in|in Japanese|日本語で/, '言語指定を SOUL ブロックに置かない')
+  // 機械トークンは ASCII のまま残す
+  for (const token of ['`spec-architect`', '`quick-review`', 'needs_input', '`Mode: zero-stop`', '`npm run verify`']) {
+    assert.ok(A2B_RULES.includes(token), `機械トークンが消えた: ${token}`)
   }
 })

@@ -1009,3 +1009,12 @@ test('V10-B3: /ws/term の擬似ソケットはバナーと疑似標準出力を
   sock.close()
   assert.equal(sock.readyState, 3)
 })
+
+test('デモの定型スニペットは英語版が用意され、en 側に日本語を含まない', () => {
+  // デモの既定言語は en（`?lang=` 省略時）。英語訪問者が日本語のチップを見ないための固定。
+  const CJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]/
+  assert.ok(DEMO_SNIPPETS.en.length >= 7, `en スニペットが少ない: ${DEMO_SNIPPETS.en.length}`)
+  assert.equal(DEMO_SNIPPETS.en.length, DEMO_SNIPPETS.ja.length, 'en / ja の件数が揃っていない')
+  const bad = DEMO_SNIPPETS.en.filter((s) => CJK.test(`${s.label} ${s.text}`))
+  assert.deepEqual(bad.map((s) => s.id), [], 'en のスニペットに日本語が混ざっている')
+})
