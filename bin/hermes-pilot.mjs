@@ -948,10 +948,26 @@ export async function main(argv = process.argv.slice(2)) {
   return 2
 }
 
-const invokedDirectly =
-  process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))
+/**
+ * このファイルが「直接実行された」か。
+ *
+ * `npm i -g hermes-pilot` / `npx hermes-pilot` は `node_modules/.bin/hermes-pilot` という
+ * **シンボリックリンク**経由で起動する。素の `path.resolve(argv[1])` 比較だと、リンク側の
+ * パスと実体（`bin/hermes-pilot.mjs`）が一致せず **main() が呼ばれずに無言で exit 0** する
+ * （実測: npm から入れた 0.2.2 で `hermes-pilot --help` が何も出力しない）。
+ * 実体パスに解決してから比べる。
+ */
+function invokedDirectly() {
+  if (!process.argv[1]) return false
+  const self = fileURLToPath(import.meta.url)
+  try {
+    return fs.realpathSync(path.resolve(process.argv[1])) === fs.realpathSync(path.resolve(self))
+  } catch {
+    return path.resolve(process.argv[1]) === path.resolve(self)
+  }
+}
 
-if (invokedDirectly) {
+if (invokedDirectly()) {
   main()
     .then((code) => {
       if (code) process.exit(code)
