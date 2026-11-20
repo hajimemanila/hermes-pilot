@@ -5,6 +5,7 @@ import { Sheet, Spinner, relTime } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
 import { isAnswered } from '../lib/reviewView.js'
 import { useI18n } from '../i18n/index.js'
+import { sep } from '../lib/format.js'
 
 /** `blockKind` → 辞書キー（未知は生の値）。 */
 const KIND_KEY = {
@@ -111,10 +112,10 @@ export function InboxSheet({ onClose, notify, onChanged, focusTaskId = null }) {
         {it.title}
       </div>
       <div className="row-sub" style={{ marginTop: 4 }}>
-        {it.boardName} ・ {KIND_KEY[it.blockKind ?? 'untyped'] ? t(KIND_KEY[it.blockKind ?? 'untyped']) : it.blockKind}
-        {it.recurrences ? ` ・ ${t('inbox.recurrences', { n: it.recurrences })}` : ''}
-        {it.blockedAt ? ` ・ ${relTime(it.blockedAt)}` : ''}
-        {done ? ` ・ ${t('inbox.answeredWaiting')}` : ''}
+        {it.boardName} ${sep()} {KIND_KEY[it.blockKind ?? 'untyped'] ? t(KIND_KEY[it.blockKind ?? 'untyped']) : it.blockKind}
+        {it.recurrences ? ` ${sep()} ${t('inbox.recurrences', { n: it.recurrences })}` : ''}
+        {it.blockedAt ? ` ${sep()} ${relTime(it.blockedAt)}` : ''}
+        {done ? ` ${sep()} ${t('inbox.answeredWaiting')}` : ''}
       </div>
 
       {it.reason ? <div className="body-text" style={{ marginTop: 8 }}>{it.reason}</div> : null}

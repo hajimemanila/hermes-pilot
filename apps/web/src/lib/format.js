@@ -17,6 +17,19 @@ export function getLocale() {
 }
 
 /**
+ * メタ行の区切り記号。日本語の `・`（U+30FB 中黒）を英語 UI でも使うと、
+ * 英語設定なのに日本語の記号が混ざって見える（実測: `cli ・ 12 msg ・ 2h ago`）。
+ * 言語に合わせて `・` / `·`（U+00B7）を返す。
+ *
+ * @param {'en'|'ja'} [lang] 省略時は現在の表示言語
+ * @returns {string} 区切り記号
+ */
+export function sep(lang) {
+  const l = lang ?? activeLocale
+  return l === 'ja' ? '・' : '·'
+}
+
+/**
  * 表示言語を設定する（Intl の各フォーマッタが従う）。
  * @param {string} lang `en` / `ja`
  * @returns {string} 反映後の言語

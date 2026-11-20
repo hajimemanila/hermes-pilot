@@ -363,6 +363,18 @@ export function buildPipelineReport({
     text,
     markdown,
     followUpPrompt: promptLines.join('\n').slice(0, 1200),
+    /*
+     * 相談文の**材料**（言語非依存）。UI 側が `chat.followUpPrompt` で組み立てる。
+     * `followUpPrompt` は日本語の完成文で、旧クライアント/Discord 向けに残す。
+     * これを渡さないと英語 UI でも日本語の相談文が入力欄に入る（実測）。
+     */
+    followUp: {
+      title,
+      board,
+      spec: specRelPath || '',
+      counts: { done: counts.done, blocked: counts.blocked, failed: counts.failed, total: counts.total },
+      issues: issues.slice(0, 3).map((i) => ({ kind: i.kind, text: i.text })),
+    },
     counts: {
       done: counts.done,
       blocked: counts.blocked,
@@ -925,6 +937,7 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
         text: report.text,
         markdown: report.markdown,
         follow_up_prompt: report.followUpPrompt,
+        follow_up: report.followUp,
         counts: report.counts,
       }
       appendJsonl(chatReportsPath, row)

@@ -188,6 +188,7 @@
   "chat.discussNextSteps": "💬 次の一手を相談",
   "chat.openBoard": "📋 ボードを見る",
   "chat.discussFallback": "上の統合レポートを要約して、次にやるべきことを提案して。",
+  "chat.followUpPrompt": "先ほどのパイプライン「{title}」（board: {board}{spec}）の結果を確認してください。\n完了 {done} 件 / blocked {blocked} 件 / failed {failed} 件（全 {total} 件）。{issues}\n次の一手（実装・検証・リリース判断）を一緒に決めたいです。具体的な手順とコマンドを提示してください。",
   "chat.attachedImage": "添付画像",
   "chat.toolProgress": "ツール {n} 件",
   "chat.lastTool": "直近: {name}",

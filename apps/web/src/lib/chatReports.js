@@ -37,6 +37,7 @@ export const PIPELINE_KEYS = [
   'repoPath',
   'markdown',
   'followUpPrompt',
+  'followUp',
   'counts',
 ]
 
@@ -432,9 +433,36 @@ export function reportSummaryLine(report, max = 96) {
  * @param {string} [fallback] 訳文（レポートに相談文が無いとき）
  * @returns {string}
  */
-export function followUpPromptFor(report, fallback = '') {
+export function followUpPromptFor(report, fallback = '', opts = {}) {
+  const { t = null, lang = 'ja' } = opts ?? {}
+  // 構造化データ（`followUp`）があれば **UI の言語で組み立てる**。
+  // ブリッジは報告行に `follow_up_prompt`（日本語の完成文）も書くが、多言語 UI では
+  // それをそのまま入れると英語設定なのに日本語が入力欄へ入る（実測）。
+  const fu = report?.followUp
+  if (t && fu && typeof fu === 'object') {
+    const issues = Array.isArray(fu.issues) && fu.issues.length
+      ? '\n' + fu.issues
+        .slice(0, 3)
+        .map((i) => `- [${String(i?.kind ?? 'issue')}] ${String(i?.text ?? '').trim()}`)
+        .join('\n')
+      : ''
+    const text = t('chat.followUpPrompt', {
+      title: String(fu.title ?? ''),
+      board: String(fu.board ?? ''),
+      spec: fu.spec ? ` / ${fu.spec}` : '',
+      done: Number(fu.counts?.done ?? 0),
+      blocked: Number(fu.counts?.blocked ?? 0),
+      failed: Number(fu.counts?.failed ?? 0),
+      total: Number(fu.counts?.total ?? 0),
+      issues,
+    })
+    if (String(text ?? '').trim()) return String(text).trim()
+  }
   const own = String(report?.followUpPrompt ?? '').trim()
-  return own || String(fallback ?? '').trim()
+  // 旧い報告行（構造化データが無い）は日本語の完成文しか持たない。
+  // UI が日本語のときだけ使い、英語のときは訳文（fallback）に落として日本語を出さない。
+  if (own && lang === 'ja') return own
+  return String(fallback ?? '').trim() || own
 }
 
 /**

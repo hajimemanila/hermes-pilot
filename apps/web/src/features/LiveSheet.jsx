@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { HoldButton, Sheet, relTime } from '../components/Ui.jsx'
 import { useI18n } from '../i18n/index.js'
+import { sep } from '../lib/format.js'
 
 /** 秒を「12m34s」形式に。 */
 function fmtElapsed(sec) {
@@ -172,7 +173,7 @@ export function LiveSheet({ onClose, notify, onAbortTask }) {
               <span className="row-sub">
                 {[job.runnerLabel, job.board, phaseLabel(t, job.phase), fmtElapsed(job.elapsedSec)]
                   .filter(Boolean)
-                  .join(' ・ ')}
+                  .join(' ${sep()} ')}
               </span>
               {job.stalled ? (
                 <span className="row-sub" style={{ color: 'var(--bad)' }}>
@@ -211,13 +212,13 @@ export function LiveSheet({ onClose, notify, onAbortTask }) {
               <span className="row-title">{turn.title}</span>
               <span className="row-sub">
                 {turn.platform || turn.source || '—'}
-                {turn.profile && turn.profile !== 'default' ? ` ・ ${turn.profile}` : ''} ・ {fmtElapsed(turn.elapsedSec)}
-                {turn.lastTool ? ` ・ tool: ${turn.lastTool.name}` : turn.lastActivity ? ` ・ ${turn.lastActivity}` : ''}
+                {turn.profile && turn.profile !== 'default' ? ` ${sep()} ${turn.profile}` : ''} ${sep()} {fmtElapsed(turn.elapsedSec)}
+                {turn.lastTool ? ` ${sep()} tool: ${turn.lastTool.name}` : turn.lastActivity ? ` ${sep()} ${turn.lastActivity}` : ''}
               </span>
               {turn.lastTool?.at ? (
                 <span className="row-sub" style={{ opacity: 0.75 }}>
                   {t('live.lastTool', { time: relTime(turn.lastTool.at) })}
-                  {turn.expiresInSec != null ? ` ・ ${t('live.lease', { time: fmtElapsed(turn.expiresInSec) })}` : ''}
+                  {turn.expiresInSec != null ? ` ${sep()} ${t('live.lease', { time: fmtElapsed(turn.expiresInSec) })}` : ''}
                 </span>
               ) : null}
             </span>
@@ -245,8 +246,8 @@ export function LiveSheet({ onClose, notify, onAbortTask }) {
             <span className="row-main" style={{ minWidth: 0 }}>
               <span className="row-title">{task.title}</span>
               <span className="row-sub">
-                {task.boardName || task.board} ・ {fmtElapsed(task.elapsedSec)}
-                {task.workerPid ? ` ・ pid ${task.workerPid}` : ''}
+                {task.boardName || task.board} ${sep()} {fmtElapsed(task.elapsedSec)}
+                {task.workerPid ? ` ${sep()} pid ${task.workerPid}` : ''}
               </span>
             </span>
           </div>

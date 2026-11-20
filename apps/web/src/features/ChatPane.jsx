@@ -70,6 +70,7 @@ import { Icon, Loader, RefreshButton, Sheet, fmtBytes, fmtDateTime, relTime } fr
 import { haptic } from '../lib/haptic.js'
 import { useI18n } from '../i18n/index.js'
 import { t } from '../i18n/lang.js'
+import { sep } from '../lib/format.js'
 
 /** 入力欄を内容に合わせて伸ばす（枠の分を足さないと 2px 溢れて縦棒が出る）。 */
 function fitComposer(el, cap = 120) {
@@ -333,7 +334,7 @@ function ChatSessionList({
                   <span className="prof-chip on">{s.profile}</span>
                 ) : null}
                 <span>
-                  {s.source ?? 'cli'} ・ {s.message_count ?? 0} msg ・ {relTime((s.started_at ?? 0) * 1000)}
+                  {s.source ?? 'cli'} ${sep()} {s.message_count ?? 0} msg ${sep()} {relTime((s.started_at ?? 0) * 1000)}
                   {s.is_active ? t('chat.runningSuffix') : ''}
                 </span>
               </span>
@@ -1486,7 +1487,7 @@ export function ChatPane({
   const discussReport = useCallback(
     (report) => {
       haptic('tap')
-      prefillComposer(followUpPromptFor(report, t('chat.discussFallback')))
+      prefillComposer(followUpPromptFor(report, t('chat.discussFallback'), { t, lang }))
     },
     [prefillComposer],
   )
@@ -1507,7 +1508,7 @@ export function ChatPane({
               sessionId: report.sessionId ?? null,
               repoPath: report.repoPath ?? null,
               board: report.board ?? null,
-              prompt: followUpPromptFor(report, t('chat.discussFallback')),
+              prompt: followUpPromptFor(report, t('chat.discussFallback'), { t, lang }),
               title: report.label ?? null,
             },
           }),
@@ -1808,7 +1809,7 @@ export function ChatPane({
       if (chosen) {
         rememberRepo(globalThis.localStorage, { id: chosen.id, board: boardSlug ? { slug: boardSlug } : null })
         writePendingRepo(globalThis.localStorage, { repoId: chosen.id, profile: next })
-        notify(t('chat.newChatWith', { target: `${repoLabel(chosen)}${boardSlug ? ` ・ ${boardSlug}` : ''}` }))
+        notify(t('chat.newChatWith', { target: `${repoLabel(chosen)}${boardSlug ? ` ${sep()} ${boardSlug}` : ''}` }))
       } else {
         writePendingRepo(globalThis.localStorage, null)
       }
@@ -1950,7 +1951,8 @@ export function ChatPane({
           discussRequest.board ? { slug: discussRequest.board } : null,
         )
       }
-      prefillComposer(followUpPromptFor({ followUpPrompt: discussRequest.prompt }, t('chat.discussFallback')))
+      // 送り手（Tasks / レポート一覧）が既に UI 言語で組み立てた文面。ここで言語判定はしない
+      prefillComposer(String(discussRequest.prompt ?? '').trim() || t('chat.discussFallback'))
       onConsumedDiscuss?.()
     }
     run()
@@ -2227,7 +2229,7 @@ export function ChatPane({
                   return
                 }
                 markReportsSeen(LATEST_REPORT_ID)
-                prefillComposer(followUpPromptFor(u, t('chat.discussFallback')))
+                prefillComposer(followUpPromptFor(u, t('chat.discussFallback'), { t, lang }))
                 findRepoByPath(u.repoPath).then((matched) => {
                   startSession(profile || DEFAULT_PROFILE, matched ?? null, u.board ? { slug: u.board } : null)
                 })
@@ -2235,7 +2237,7 @@ export function ChatPane({
               }
               const found = sessions.find((s) => String(s.id) === u.sessionId)
               openSessionSafe(u.sessionId, null, found?.profile || profile || DEFAULT_PROFILE)
-              prefillComposer(followUpPromptFor(u, ''))
+              prefillComposer(followUpPromptFor(u, t('chat.discussFallback'), { t, lang }))
             }}
           >
             {t('chat.open')}

@@ -14,6 +14,7 @@ import { LANGS } from '../i18n/lang.js'
 import { useTheme } from '../lib/useTheme.js'
 import { PipelinePanel } from './PipelinePanel.jsx'
 import { BOARD_KEY } from '../lib/repoPicker.js'
+import { sep } from '../lib/format.js'
 
 /**
  * 設定タブ。状態の参照・ログ末尾・監査ログ（キルスイッチの履歴）を置く。
@@ -901,9 +902,9 @@ export function SettingsPane({ overview, notify, refresh }) {
                 <span className="row-title">{a.kind}</span>
                 <span className="row-sub">
                   {fmtDateTime(a.at)}
-                  {a.task ? ` ・ ${a.task}` : ''}
-                  {a.action ? ` ・ ${a.action}` : ''}
-                  {a.ok === false ? ` ・ ${t('settings.auditFailed')}` : ''}
+                  {a.task ? ` ${sep()} ${a.task}` : ''}
+                  {a.action ? ` ${sep()} ${a.action}` : ''}
+                  {a.ok === false ? ` ${sep()} ${t('settings.auditFailed')}` : ''}
                 </span>
               </span>
             </div>
@@ -1064,7 +1065,7 @@ export function SettingsPane({ overview, notify, refresh }) {
               <span className="row-main">
                 <span className="row-title">{s.title ?? s.id}</span>
                 <span className="row-sub">
-                  {s.source} ・ {s.messages} msg ・ {s.lastActivity ?? ''}
+                  {s.source} ${sep()} {s.messages} msg ${sep()} {s.lastActivity ?? ''}
                 </span>
               </span>
             </div>

@@ -1,5 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import path from 'node:path'
 import {
   ACTIVE_CHAT_KEY,
   LATEST_REPORT_ID,
@@ -329,4 +331,56 @@ test('recentPipelineReports: 直近 24 時間の報告を宛先ごとに最新 1
   assert.deepEqual(r.map((x) => x.sessionId), ['a'])
   assert.equal(r[0].text, 'new')
   assert.equal(recentPipelineReports(items, { now, maxAgeMs: 60 * 60 * 1000 }).length, 1)
+})
+
+// ---------------------------------------------------------------- i18n（相談文）
+
+const i18nDir = path.resolve(import.meta.dirname, '../src/i18n')
+const dict = (lang) => JSON.parse(fs.readFileSync(path.join(i18nDir, `${lang}.json`), 'utf8'))
+/** 本物の辞書で `t()` を再現する（{name} を差し替えるだけ）。 */
+const tFor = (lang) => (key, vars = {}) =>
+  String(dict(lang)[key] ?? key).replace(/\{(\w+)\}/g, (_, k) => (vars[k] === undefined ? '' : String(vars[k])))
+
+const JP = /[\u3040-\u30ff\u4e00-\u9fff]/
+
+test('followUpPromptFor: 構造化データ（followUp）から UI 言語で相談文を組み立てる', () => {
+  const report = {
+    followUp: {
+      title: 'SPEC-ROLE-DELEGATION-ROUTING',
+      board: 'hermes-pilot',
+      spec: 'docs/SPEC-ROLE-DELEGATION-ROUTING.md',
+      counts: { done: 4, blocked: 0, failed: 0, total: 4 },
+      issues: [],
+    },
+    // ブリッジが書く日本語の完成文（英語 UI では使ってはいけない）
+    followUpPrompt: '先ほどのパイプライン「SPEC-ROLE」の結果を確認してください。',
+  }
+  const en = followUpPromptFor(report, 'fb', { t: tFor('en'), lang: 'en' })
+  assert.match(en, /Check the results of the pipeline "SPEC-ROLE-DELEGATION-ROUTING"/)
+  assert.match(en, /4 done \/ 0 blocked \/ 0 failed \(4 total\)/)
+  assert.doesNotMatch(en, JP, '英語 UI の相談文に日本語が混ざっている')
+
+  const ja = followUpPromptFor(report, 'fb', { t: tFor('ja'), lang: 'ja' })
+  assert.match(ja, /の結果を確認してください/)
+  assert.match(ja, /完了 4 件 \/ blocked 0 件 \/ failed 0 件/)
+})
+
+test('followUpPromptFor: issues は箇条書きで差し込まれる', () => {
+  const report = {
+    followUp: {
+      title: 'SPEC: X',
+      board: 'b',
+      spec: '',
+      counts: { done: 1, blocked: 1, failed: 0, total: 2 },
+      issues: [{ kind: 'blocked', text: 't_1 が判断待ち' }],
+    },
+  }
+  const en = followUpPromptFor(report, 'fb', { t: tFor('en'), lang: 'en' })
+  assert.match(en, /- \[blocked\] t_1 が判断待ち/)
+})
+
+test('followUpPromptFor: 旧い報告行（日本語の完成文のみ）を英語 UI では出さない', () => {
+  const legacy = { followUpPrompt: '先ほどのパイプライン「X」の結果を確認してください。' }
+  assert.equal(followUpPromptFor(legacy, 'Summarise the report.', { lang: 'en' }), 'Summarise the report.')
+  assert.match(followUpPromptFor(legacy, 'fb', { lang: 'ja' }), /の結果を確認/)
 })

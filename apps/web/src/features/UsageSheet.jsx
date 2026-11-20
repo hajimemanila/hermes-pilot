@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { Sheet, fmtNumber, relTime } from '../components/Ui.jsx'
-import { fmtCost, fmtTokens, fmtPct } from '../lib/format.js'
+import { fmtCost, fmtPct, fmtTokens, sep } from '../lib/format.js'
 import { useI18n } from '../i18n/index.js'
 import { haptic } from '../lib/haptic.js'
 import { MissionReceiptSheet } from './MissionReceiptSheet.jsx'
@@ -103,7 +103,7 @@ export function UsageSheet({ data, hours = 24, onClose, board = null, spec = nul
                   <span className="row-sub">
                     {t('usage.sessionLine', {
                       source: s.source || '—',
-                      profile: s.profile && s.profile !== 'default' ? ` ・ ${s.profile}` : '',
+                      profile: s.profile && s.profile !== 'default' ? ` ${sep()} ${s.profile}` : '',
                       input: fmtTokens(s.input),
                       output: fmtTokens(s.output),
                       at: relTime(s.at),

@@ -15,7 +15,7 @@ import { countRunningArchitect, jobPollMs, pickActiveArchitectJob, pickSpecBanne
 import { LiveSheet } from './LiveSheet.jsx'
 import { InboxSheet } from './InboxSheet.jsx'
 import { pendingCount } from '../lib/reviewView.js'
-import { fmtCost } from '../lib/format.js'
+import { fmtCost, sep } from '../lib/format.js'
 import { followUpPromptFor, readActiveChatId, reportSummaryLine, toEpochMs } from '../lib/chatReports.js'
 import { renderMarkdown } from '../lib/markdown.js'
 import { batchIdOf, specProgress } from '../lib/specProgress.js'
@@ -148,7 +148,7 @@ function readStoredBoard() {
 }
 
 export function TasksPane({ overview, refresh, notify, initialInbox = null, focusBoard = null, onConsumedFocusBoard, taskToolRequest = null, onConsumedTaskTool, active = true }) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [boards, setBoards] = useState([])
   const [board, setBoard] = useState(null)
   const [tasks, setTasks] = useState([])
@@ -598,7 +598,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
             sessionId: latestReport.sessionId ?? null,
             repoPath: latestReport.repoPath ?? null,
             board: latestReport.board ?? board,
-            prompt: followUpPromptFor(latestReport, ''),
+            prompt: followUpPromptFor(latestReport, t('chat.discussFallback'), { t, lang }),
             title: latestReport.label ?? null,
           },
         }),
@@ -935,7 +935,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
               <span>{t('tasks.status')}</span>
               <b>
                 {STATUS_KEY[detail.status] ? t(STATUS_KEY[detail.status]) : detail.status}
-                {detail.workerPid ? ` ・ pid ${detail.workerPid}` : ''}
+                {detail.workerPid ? ` ${sep()} pid ${detail.workerPid}` : ''}
               </b>
             </div>
             <div className="kv">
@@ -1105,7 +1105,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
       <div className={split ? 'split-master' : undefined}>
       {paused.engaged ? (
         <div className="banner paused">
-          {t('tasks.pausedBanner', { reason: paused.reason ? ` ・ ${paused.reason}` : '' })}
+          {t('tasks.pausedBanner', { reason: paused.reason ? ` ${sep()} ${paused.reason}` : '' })}
           <button onClick={resumeAction} disabled={busy}>
             {t('tasks.resume')}
           </button>
@@ -1621,10 +1621,10 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
               <span className="row-sub">
                 {STATUS_KEY[task.status] ? t(STATUS_KEY[task.status]) : task.status}
                 {task.status === 'running' && task.elapsedSec != null
-                  ? ` ・ ${t('tasks.elapsedMin', { n: Math.floor(task.elapsedSec / 60) })}`
+                  ? ` ${sep()} ${t('tasks.elapsedMin', { n: Math.floor(task.elapsedSec / 60) })}`
                   : ''}
-                {task.failures ? ` ・ ${t('tasks.failures', { n: task.failures })}` : ''}
-                {task.completedAt ? ` ・ ${relTime(task.completedAt)}` : ''}
+                {task.failures ? ` ${sep()} ${t('tasks.failures', { n: task.failures })}` : ''}
+                {task.completedAt ? ` ${sep()} ${relTime(task.completedAt)}` : ''}
               </span>
               {task.git?.head ? (
                 <span className="git-badge">

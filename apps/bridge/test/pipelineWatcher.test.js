@@ -216,6 +216,11 @@ test('② Spec 全件 done で統合 Markdown（Git 情報・followUpPrompt・co
   assert.match(row.markdown, /`abc1234`, \+84\/-12, 2 files/, 'Git の SHA・増減・ファイル数が入る')
   assert.match(row.markdown, /未読バッジを直した/, 'result の要約が入る')
   assert.match(row.follow_up_prompt, /次の一手/, 'followUpPrompt が付く')
+  // UI 側が言語ごとに組み立てるための材料（日本語を焼き込まない）
+  assert.equal(row.follow_up.title, 'SPEC: Hermes Pilot v4')
+  assert.equal(row.follow_up.board, BOARD)
+  assert.deepEqual(row.follow_up.counts, { done: 2, blocked: 0, failed: 0, total: 2 })
+  assert.ok(Array.isArray(row.follow_up.issues), 'issues は配列')
   assert.match(row.at, /^2026-11-15T/, 'ISO 時刻')
 
   assert.equal(readJsonl(path.join(env.reviewDir, 'pipeline-reports.jsonl')).length, 1, '直近レポートにも追記')

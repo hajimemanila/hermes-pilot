@@ -188,6 +188,7 @@
   "chat.discussNextSteps": "💬 Discuss next steps",
   "chat.openBoard": "📋 Open board",
   "chat.discussFallback": "Summarise the pipeline report above and propose the next steps we should take.",
+  "chat.followUpPrompt": "Check the results of the pipeline \"{title}\" (board: {board}{spec}).\n{done} done / {blocked} blocked / {failed} failed ({total} total).{issues}\nLet's decide the next step together (implement / verify / release). Give me the concrete steps and commands.",
   "chat.attachedImage": "Attached image",
   "chat.toolProgress": "Tools {n}",
   "chat.lastTool": "Latest: {name}",

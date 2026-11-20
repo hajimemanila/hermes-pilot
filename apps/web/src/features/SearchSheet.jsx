@@ -3,6 +3,7 @@ import { api } from '../api.js'
 import { Sheet, Spinner, relTime } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
 import { useI18n } from '../i18n/index.js'
+import { sep } from '../lib/format.js'
 
 /**
  * 全セッション横断検索。
@@ -99,10 +100,10 @@ export function SearchSheet({ onClose, onOpenSession, notify }) {
               </span>
               <span className="row-sub">
                 {h.role === 'user' ? t('search.you') : h.role === 'assistant' ? 'Hermes' : h.role}
-                {` ・ ${relTime(h.at)}`}
-                {h.sessionTitle ? ` ・ ${String(h.sessionTitle).slice(0, 28)}` : ''}
-                {h.profile && h.profile !== 'default' ? ` ・ ${h.profile}` : ''}
-                {h.source ? ` ・ ${h.source}` : ''}
+                {` ${sep()} ${relTime(h.at)}`}
+                {h.sessionTitle ? ` ${sep()} ${String(h.sessionTitle).slice(0, 28)}` : ''}
+                {h.profile && h.profile !== 'default' ? ` ${sep()} ${h.profile}` : ''}
+                {h.source ? ` ${sep()} ${h.source}` : ''}
               </span>
             </span>
           </button>
