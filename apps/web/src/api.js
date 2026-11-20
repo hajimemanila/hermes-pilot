@@ -84,6 +84,20 @@ export async function api(path, { method = 'GET', body } = {}) {
 }
 
 /**
+ * URL に現在の表示言語を `?lang=` で付ける。
+ *
+ * `api()` は `Accept-Language` を送るが、`<iframe src>` と `<a href>` はブラウザが直接 GET するので
+ * ヘッダが付かない。生成 HTML の文言を合わせるにはクエリが要る（SPEC-i18n-gen §3.1）。
+ * @param {string} path パス（既存のクエリがあってもよい）
+ * @returns {string} `?lang=` 付きのパス
+ */
+export function withLang(path) {
+  const p = String(path)
+  const sep = p.includes('?') ? '&' : '?'
+  return `${p}${sep}lang=${encodeURIComponent(getLang())}`
+}
+
+/**
  * WebSocket を開く（Cookie 認証なので URL にトークンを載せない）。
  * @param {string} path `/ws/...`
  * @returns {WebSocket} ソケット

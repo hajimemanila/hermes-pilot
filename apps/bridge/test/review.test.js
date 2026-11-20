@@ -16,6 +16,7 @@ import {
   reviewSheetHeaders,
   reviewViewHeaders,
   reviewViewHtml,
+  renderSheetHtmlFromData,
   createReview,
 } from '../src/review.js'
 
@@ -79,6 +80,7 @@ test('toReplyText は【レビュー回答】契約の形になる', () => {
     ],
     '全体はこれで',
     [{ id: 'q1', text: '既定位置は？' }, { id: 'q2', text: '表示は？' }],
+    'ja',
   )
   assert.match(txt, /^【レビュー回答】cockpit-03\n/)
   assert.match(txt, /Q1\. 既定位置は？: A \/ 補足: 映像を隠さない範囲で/)
@@ -234,8 +236,8 @@ test('list は .json だけでも exists: true、sheetHtml は .json からエ�
     assert.ok(r.html.includes('&quot;quoted&quot;'), 'ダブルクォートをエスケープ')
     assert.ok(r.html.includes('it&#39;s'), 'シングルクォートをエスケープ')
     assert.ok(r.html.includes('A &amp; B の比較'), 'topic もエスケープする')
-    // 推奨バッジは推奨の 1 件だけ（「非推奨」は推奨にしない）
-    assert.equal((r.html.match(/<span class="rec-badge">推奨<\/span>/g) || []).length, 1)
+    // 推奨バッジは推奨の 1 件だけ（「非推奨」は推奨にしない）。既定 lang は en（SPEC-i18n-gen §3.1）
+    assert.equal((r.html.match(/<span class="rec-badge">Recommended<\/span>/g) || []).length, 1)
     // 回答はアプリのドロワー（StandardForm）で行うので、生成 HTML に送信欄は置かない
     assert.ok(!r.html.includes('id="out"'))
   }
@@ -261,7 +263,7 @@ test('answer は保存して comment + unblock を呼び、二重投稿を弾く
   )
   const payload = { answers: [{ id: 'q1', choice: 'A', note: 'これで' }], global: 'お願いします', by: 'alice' }
 
-  const first = await api.answer('t_test1', payload)
+  const first = await api.answer('t_test1', payload, 'ja')
   assert.equal(first.ok, true)
   assert.equal(first.duplicate, false)
   const answerFile = path.join(workdir, 'sheets', 'cockpit-03-1.answer.json')
@@ -426,7 +428,7 @@ test('createFromImage は assignee と target を付けて起票し、blocked �
   const createArgs = calls.find((a) => a[0] === 'create')
   assert.ok(createArgs.includes('--assignee'), 'assignee が無いと dispatcher が拾わない')
   assert.ok(createArgs.join(' ').includes(`target=${repoA}`))
-  assert.deepEqual(calls.find((a) => a[0] === 'block').slice(0, 3), ['block', 't_abcdef12', '注釈待ち（画像から作成）'])
+  assert.deepEqual(calls.find((a) => a[0] === 'block').slice(0, 3), ['block', 't_abcdef12', 'Awaiting annotation (from image)'])
 })
 
 test('targets は渡された登録リポジトリだけを返し、未登録の target は拒否する', async () => {
@@ -747,7 +749,7 @@ test('toReplyText は en 指定で英語見出しになり、parseReplyText と�
   assert.equal(back.answers[0].choice, 'A')
   assert.equal(back.global, 'ok')
 
-  const ja = toReplyText('strip-01', [{ id: 'q1', choice: 'A' }], 'ok')
+  const ja = toReplyText('strip-01', [{ id: 'q1', choice: 'A' }], 'ok', [], 'ja')
   assert.match(ja, /^【レビュー回答】strip-01\n/)
   assert.match(ja, /全体へのレビュー: ok/)
 })
@@ -757,8 +759,9 @@ test('injectReviewBridge は window.__reviewSubmit と互換エイリアス __ak
   assert.ok(html.includes('window.__reviewSubmit = submit;'))
   assert.ok(html.includes('window.__akapenSubmit = submit;'))
   assert.ok(html.includes("type: 'review:reply'"))
-  // 旧シートが吐く【赤ペン回答】でも送信できる（判定は両対応）
-  assert.ok(html.includes('レビュー|赤ペン'))
+  // 旧シートが吐く【赤ペン回答】でも送信できる（判定は両対応。CJK は \u エスケープで埋める）
+  assert.ok(html.includes('u3010'), '旧マーカーの正規表現が入っている')
+  assert.ok(html.includes('u30ec') && html.includes('u8d64'), 'レビュー / 赤ペンの両方を受ける')
 })
 
 // --- D57: レビューシートの常時サンドボックス化 & ラッパー経由 postMessage ---------
@@ -789,28 +792,35 @@ test('シートの CSP は sec-fetch-dest で分岐せず、常に sandbox を�
   // 単体タブ用ラッパーのルートが存在する
   assert.match(
     SERVER_SRC,
-    /if \(c === 'view' && req\.method === 'GET'\)[\s\S]{0,400}reviewViewHtml\(b\)/,
-    '/api/review/:id/view がラッパー HTML を返す',
+    /if \(c === 'view' && req\.method === 'GET'\)[\s\S]{0,400}reviewViewHtml\(b, lang\)/,
+    '/api/review/:id/view がラッパー HTML を lang つきで返す',
   )
   // 存在判定は sheetHtml（.json を持たない HTML だけのシートでも 409 にしない）
   assert.match(
     SERVER_SRC,
-    /if \(c === 'view' && req\.method === 'GET'\)[\s\S]{0,200}review\.sheetHtml\(b\)/,
+    /if \(c === 'view' && req\.method === 'GET'\)[\s\S]{0,200}review\.sheetHtml\(b, lang\)/,
     'view は sheetData（DATA_MISSING）ではなく sheetHtml で存在を判定する',
   )
 })
 
 test('injectReviewBridge はシート内から直接 fetch せず、postMessage 一本にする', () => {
-  const html = injectReviewBridge('<html><body><div id="akForm"></div></body></html>', 't_1')
+  const html = injectReviewBridge('<html><body><div id="akForm"></div></body></html>', 't_1', 'ja')
   assert.equal(html.includes("fetch('/api/review/"), false, 'sandbox 下では same-origin fetch が通らない')
   assert.ok(html.includes("window.parent.postMessage({ type: 'review:reply'"))
   // 単体で開かれたときは「/view から開け」と案内する（無言で失敗させない）
-  assert.ok(html.includes('/view から開いてください'))
+  assert.ok(html.includes('から開いてください'), 'ja の案内文')
+  assert.ok(html.includes("'/api/review/' + TASK + '/view'"), '案内に /view の URL を差し込む')
+  // 既定（en）は同じ導線を英語で案内する（SPEC-i18n-gen §3.2）
+  const en = injectReviewBridge('<html><body><div id="akForm"></div></body></html>', 't_1')
+  assert.ok(en.includes('or from {view}'), 'en の案内文')
+  assert.ok(en.includes("'/api/review/' + TASK + '/view'"), 'en でも /view の URL を差し込む')
+  assert.equal(en.includes('から開いてください'), false, 'en に日本語の案内を出さない')
 })
 
 test('/api/review/:id/view ラッパーは sandbox iframe を埋め、回答を同じオリジンから中継する', () => {
   const html = reviewViewHtml('t_test1')
-  assert.match(html, /<iframe[^>]+src="\/api\/review\/t_test1\/sheet"[^>]*sandbox="allow-scripts allow-forms"/)
+  // 内側の iframe はブラウザが直接 GET するので、言語はクエリで渡す（§3.1）
+  assert.match(html, /<iframe[^>]+src="\/api\/review\/t_test1\/sheet\?lang=en"[^>]*sandbox="allow-scripts allow-forms"/)
   assert.ok(html.includes("window.addEventListener('message'"))
   assert.ok(html.includes("d.type !== 'review:reply' && d.type !== 'akapen:reply'"))
   assert.ok(html.includes("'/api/review/' + encodeURIComponent(TASK) + '/answer'"))
@@ -1375,4 +1385,83 @@ test('pickFeed は messages のある最初の結果を選び、無ければ先�
   assert.equal(pickFeed([empty, full]), full)
   assert.equal(pickFeed([empty]), empty)
   assert.deepEqual(pickFeed([]), { feed: null, db: null, profile: null })
+})
+
+// --- SPEC-i18n-gen GEN-1: 生成 HTML を ?lang= に追従させる ---------------------
+
+/** ASCII だけのシート（データの日本語と生成文の日本語を混ぜない）。 */
+const I18N_FIXTURE = {
+  title: 'Sheet title',
+  topic: 'Topic text',
+  questions: [
+    {
+      id: 'q1',
+      text: 'Which option?',
+      options: [
+        { id: 'A', label: 'Option A', recommended: true },
+        { id: 'B', label: 'Option B' },
+      ],
+    },
+  ],
+}
+
+test('renderSheetHtmlFromData は lang で文言を切り替える（en=Recommended / ja=推奨）', () => {
+  const en = renderSheetHtmlFromData(I18N_FIXTURE, { label: 'demo-01' }, 'en')
+  assert.ok(en.includes('<html lang="en">'), 'en は <html lang="en">')
+  assert.ok(en.includes('<span class="rec-badge">Recommended</span>'), 'en のバッジは Recommended')
+  assert.equal(en.includes('<html lang="ja">'), false, 'en に ja の lang 属性を出さない')
+  assert.equal(en.includes('推奨'), false, 'en に「推奨」を出さない')
+
+  const ja = renderSheetHtmlFromData(I18N_FIXTURE, { label: 'demo-01' }, 'ja')
+  assert.ok(ja.includes('<html lang="ja">'), 'ja は <html lang="ja">')
+  assert.ok(ja.includes('<span class="rec-badge">推奨</span>'), 'ja のバッジは「推奨」')
+  assert.equal(ja.includes('Recommended'), false, 'ja に Recommended を出さない')
+
+  // 空状態・注記も言語に従う（データの設問が無いとき）
+  const emptyEn = renderSheetHtmlFromData({ title: 'S', questions: [] }, {}, 'en')
+  assert.ok(emptyEn.includes('No questions.'), 'en の空状態')
+  assert.ok(emptyEn.includes('<title>S</title>'), 'title はデータのまま（訳さない）')
+  const emptyJa = renderSheetHtmlFromData({ title: 'S', questions: [] }, {}, 'ja')
+  assert.ok(emptyJa.includes('設問がありません。'), 'ja の空状態')
+})
+
+test('reviewViewHtml は lang で title / lang 属性 / 内側 iframe の言語を切り替える', () => {
+  const en = reviewViewHtml('t_demo1', 'en')
+  assert.ok(en.includes('<html lang="en">'))
+  assert.ok(en.includes('<title>Review sheet t_demo1</title>'), 'en の title は英語')
+  assert.ok(en.includes('title="Review sheet"'), 'iframe の title も英語')
+  assert.ok(en.includes('/api/review/t_demo1/sheet?lang=en'), '内側 iframe へ言語を渡す')
+
+  const ja = reviewViewHtml('t_demo1', 'ja')
+  assert.ok(ja.includes('<html lang="ja">'))
+  assert.ok(ja.includes('<title>レビューシート t_demo1</title>'))
+  assert.ok(ja.includes('title="レビューシート"'))
+  assert.ok(ja.includes('/api/review/t_demo1/sheet?lang=ja'))
+})
+
+test("injectReviewBridge の可視文言は lang で切り替わり、en に CJK が残らない", () => {
+  const en = injectReviewBridge('<html><body><div id="akForm"></div></body></html>', 't_demo1', 'en')
+  assert.ok(en.includes('Send answer'), 'en のボタン文言')
+  assert.equal(/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uff01-\uff60]/.test(en), false, 'en に CJK が残る')
+
+  const ja = injectReviewBridge('<html><body><div id="akForm"></div></body></html>', 't_demo1', 'ja')
+  assert.ok(ja.includes('回答を送信'))
+  assert.ok(ja.includes('アプリに回答を送りました'), 'ja は従来の文言')
+  // 受理マーカーは両表記を受ける（出力は ASCII エスケープでも実行時は CJK に一致する）
+  assert.ok(ja.includes('u3010'), '旧【赤ペン回答】のマーカーはエスケープで埋める')
+})
+
+test('sheetHtml は lang を受けて .json から en / ja の HTML を返す', () => {
+  const { root } = tempJsonOnlyBoard()
+  const api = createReview({ kanbanRoot: path.join(root, 'kanban') })
+  const en = api.sheetHtml('t_sheetjson', 'en')
+  assert.equal(en.generated, true)
+  assert.ok(en.html.includes('<html lang="en">'))
+  assert.ok(en.html.includes('Recommended'))
+  const ja = api.sheetHtml('t_sheetjson', 'ja')
+  assert.ok(ja.html.includes('<html lang="ja">'))
+  assert.ok(ja.html.includes('推奨'))
+  // .html があるシートは従来どおり中身をそのまま返す（生成しない）
+  const raw = api.sheetHtml('t_test1')
+  assert.equal(raw.generated, undefined)
 })

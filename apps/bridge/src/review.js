@@ -29,7 +29,93 @@ const LABEL_RE = /^[a-z0-9][a-z0-9._-]{0,40}$/i
 
 /** 旧名（`【赤ペン回答】` / `全体への赤ペン:`）も移行前のシート資産のために受ける。 */
 const REPLY_HEAD_RE = /^【(?:レビュー|赤ペン)回答】/
+/**
+ * シートの回答テキストに付く見出し（移行前の `【赤ペン回答】` も受ける）。
+ *
+ * 注入スクリプトへは `asciiScriptString()` で埋める（`?lang=en` の出力から CJK を消すため）。
+ */
+const REPLY_MARK_SOURCE = '【(?:レビュー|赤ペン)回答】|\\[Review Answer\\]'
 const GLOBAL_LABEL_RE = /^(?:全体への(?:レビュー|赤ペン)|Overall Note):\s*(.*)$/
+
+/**
+ * 回答テキストの表記（`lang` ごと・キー集合は両言語で同一）。
+ *
+ * ここは**外部と共有するデータ形式**でもある（貼り付け・`answer.txt`・シート HTML の出力）。
+ * だから `parseReplyText` / `reviewPaste.js` は**両表記を受ける**。片側だけ変えると往復が壊れる。
+ */
+const REPLY_TEXT = {
+  en: {
+    head: '[Review Answer] ',
+    unselected: '(unselected = take recommended)',
+    noteMark: 'note:',
+    globalLabel: 'Overall Note',
+    tail: 'Apply the answers above and continue. Items left unselected are settled by the recommended option.',
+  },
+  ja: {
+    head: '【レビュー回答】',
+    unselected: '(未選択 = お任せ)',
+    noteMark: '補足:',
+    globalLabel: '全体へのレビュー',
+    tail: '上の回答を反映して作業を続けてください。お任せの項目は推奨案で確定してください。',
+  },
+}
+
+/**
+ * 回答テキストの表記を返す（未知の言語は en）。
+ * @param {'ja'|'en'} [lang] 言語
+ * @returns {typeof REPLY_TEXT.en} 表
+ */
+export function replyTextOf(lang) {
+  return lang === 'ja' ? REPLY_TEXT.ja : REPLY_TEXT.en
+}
+
+/**
+ * カンバンに残す運用 1 行（回答サマリ・unblock 理由・注釈・起票タイトル）の表。
+ *
+ * worker はこの 1 行を入力として読むので、実行時言語で出す（SPEC-i18n-gen §3.3）。
+ * パスやタスク id などの機械トークンは**訳さない**（呼び出し側が ASCII のまま足す）。
+ */
+const OPS_TEXT = {
+  en: {
+    answered: 'Review answers received',
+    answeredAgain: 'Review answers received (resend)',
+    /** @param {number} total @param {number} chosen @param {number} defaulted @param {string} rel */
+    answerSummary: (total, chosen, defaulted, rel) =>
+      `Review answers: ${total} (chosen ${chosen} / defaulted ${defaulted}) — ${rel}`,
+    /** @param {number} strokes @param {string} note @param {string} rel */
+    annotationSummary: (strokes, note, rel) => `Annotation: ${strokes} strokes${note ? ` / note: ${note}` : ''} — ${rel}`,
+    annotationReceived: 'Annotation received',
+    annotationReceivedAgain: 'Annotation received (resend)',
+    annotationTitle: 'Annotation (from image)',
+    annotationWaiting: 'Awaiting annotation (from image)',
+    /** @param {string} note @param {boolean} again */
+    approved: (note, again) => `Visual check OK${note ? `: ${note}` : ''}${again ? ' (resend)' : ''}`,
+  },
+  ja: {
+    answered: 'レビュー回答を受領',
+    answeredAgain: 'レビュー回答を受領（再送）',
+    answerSummary: (total, chosen, defaulted, rel) =>
+      `レビュー回答: ${total}問 (選択 ${chosen} / お任せ ${defaulted}) — ${rel}`,
+    annotationSummary: (strokes, note, rel) => `注釈: ${strokes} ストローク${note ? ` / メモ: ${note}` : ''} — ${rel}`,
+    annotationReceived: '注釈を受領',
+    annotationReceivedAgain: '注釈を受領（再送）',
+    annotationTitle: '注釈（画像から作成）',
+    annotationWaiting: '注釈待ち（画像から作成）',
+    approved: (note, again) => `検収 OK（Visual check passed）${note ? `: ${note}` : ''}${again ? '（再送）' : ''}`,
+  },
+}
+
+/**
+ * 運用 1 行の表を返す（未知の言語は en）。
+ * @param {'ja'|'en'} [lang] 言語
+ * @returns {typeof OPS_TEXT.en} 表
+ */
+export function opsText(lang) {
+  return lang === 'ja' ? OPS_TEXT.ja : OPS_TEXT.en
+}
+
+/** 未選択を表す接頭辞（`(未選択 = お任せ)` / `(unselected = take recommended)` の両方）。 */
+const UNSELECTED_RE = /^\(\s*(?:未選択|unselected)/i
 
 /** タスク本文から `[review] label=... round=... mode=... sheet=...` を取り出す。 */
 export function parseReviewLine(body) {
@@ -140,8 +226,10 @@ export function answerHash({ answers = [], global = '', annotations = [] }) {
 /**
  * 回答テキストを構造化する（シートが直接送ってきた場合に使う）。
  *
- * EN 見出し（`[Review Answer]` / `Overall Note:`）と JA 見出しの両方、および旧
- * `【赤ペン回答】` / `全体への赤ペン:` を受理する（SPEC §4.1）。
+ * EN 見出し（`[Review Answer]` / `Overall Note:` / `note:` / `(unselected`）と JA 見出し
+ * （`【レビュー回答】` / `全体へのレビュー:` / `補足:` / `(未選択`）、および旧
+ * `【赤ペン回答】` / `全体への赤ペン:` を受理する（SPEC §4.1 / SPEC-i18n-gen §3.3）。
+ * 履歴が言語混在なので、**片方だけに寄せない**のが契約。
  */
 export function parseReplyText(text) {
   const out = { answers: [], global: '' }
@@ -152,11 +240,11 @@ export function parseReplyText(text) {
     const q = /^Q(\d+)\.\s*(.*?):\s*(.*)$/.exec(line)
     if (q) {
       const rest = q[3]
-      const m = /^(.*?)(?:\s*\/\s*補足:\s*(.*))?$/.exec(rest)
+      const m = /^(.*?)(?:\s*\/\s*(?:補足|[Nn]ote):\s*(.*))?$/.exec(rest)
       const choice = (m?.[1] || '').trim()
       out.answers.push({
         id: `q${q[1]}`,
-        choice: choice.startsWith('(未選択') ? null : choice,
+        choice: UNSELECTED_RE.test(choice) ? null : choice,
         note: (m?.[2] || '').trim(),
       })
       inGlobal = false
@@ -181,21 +269,21 @@ export function parseReplyText(text) {
  * @param {Array<{id: string, choice: string|null, note?: string}>} answers 回答
  * @param {string} global 全体コメント
  * @param {Array<{id: string, text?: string}>} [questions] 設問（見出しに使う）
- * @param {'ja'|'en'} [lang] 見出しの言語（既定は日本語）
+ * @param {'ja'|'en'} [lang] 見出しの言語（既定は `en`・SPEC-i18n-gen D4）
  */
-export function toReplyText(label, answers, global, questions = [], lang = 'ja') {
+export function toReplyText(label, answers, global, questions = [], lang = 'en') {
   const title = new Map(questions.map((q) => [String(q.id), String(q.text ?? '')]))
-  const en = lang === 'en'
-  const lines = [en ? `[Review Answer] ${label}` : `【レビュー回答】${label}`]
+  const t = replyTextOf(lang)
+  const lines = [`${t.head}${label}`]
   for (const a of answers) {
     const q = title.get(String(a.id)) || String(a.id)
-    const choice = a.choice === null || a.choice === undefined ? '(未選択 = お任せ)' : String(a.choice)
-    const note = a.note ? ` / 補足: ${String(a.note).replace(/\n/g, ' ')}` : ''
+    const choice = a.choice === null || a.choice === undefined ? t.unselected : String(a.choice)
+    const note = a.note ? ` / ${t.noteMark} ${String(a.note).replace(/\n/g, ' ')}` : ''
     lines.push(`Q${String(a.id).replace(/^q/i, '')}. ${q}: ${choice}${note}`)
   }
-  lines.push(`${en ? 'Overall Note' : '全体へのレビュー'}: ${String(global ?? '').replace(/\r/g, '')}`)
+  lines.push(`${t.globalLabel}: ${String(global ?? '').replace(/\r/g, '')}`)
   lines.push('---')
-  lines.push('上の回答を反映して作業を続けてください。お任せの項目は推奨案で確定してください。')
+  lines.push(t.tail)
   return `${lines.join('\n')}\n`
 }
 
@@ -215,6 +303,68 @@ export function escapeHtmlText(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;')
+}
+
+/**
+ * 生成 HTML の文言（`lang` ごと・キー集合は両言語で同一／SPEC-i18n-gen §3.2）。
+ *
+ * シート・単体タブのラッパー・アプリ内ブリッジが**人が読む**文だけをここに集める。
+ * 設問・選択肢・`topic`・`title` はデータそのままで訳さない。機械トークン
+ * （`sheet.json` / `/api/review/…` / `[Review Answer]`）は ASCII のまま動かさない。
+ */
+export const HTML_TEXT = {
+  en: {
+    recBadge: 'Recommended',
+    note: 'This sheet was generated from <code>sheet.json</code>. Send your answers from the Review tab in the app (quick answer form).',
+    empty: 'No questions.',
+    viewTitle: 'Review sheet',
+    iframeTitle: 'Review sheet',
+    sending: 'Sending…',
+    sent: 'Answer sent (task is now {moved}).',
+    sendFailed: 'Could not send: {detail}',
+    sendError: 'Send error: {detail}',
+    sheetLoadFailed: 'Could not load the sheet: {src}',
+    bridgeSent: 'Sent the answer to the app (you can close this screen).',
+    bridgeManual: "This screen cannot send directly. Open it from the app's Review tab, or from {view}.",
+    bridgeButton: 'Send answer',
+    bridgeNote:
+      'Pick your options and press [Send answer] and it goes straight to the app (unselected items settle on the recommended option).',
+  },
+  ja: {
+    recBadge: '推奨',
+    note: 'このシートは <code>sheet.json</code> から自動生成した閲覧ビューです。回答はアプリのレビュータブ（簡易回答フォーム）から送ってください。',
+    empty: '設問がありません。',
+    viewTitle: 'レビューシート',
+    iframeTitle: 'レビューシート',
+    sending: '送信中…',
+    sent: '回答を送信しました（タスクは {moved}）',
+    sendFailed: '送信できませんでした: {detail}',
+    sendError: '送信エラー: {detail}',
+    sheetLoadFailed: 'シートを読み込めません: {src}',
+    bridgeSent: 'アプリに回答を送りました（この画面は閉じてOK）',
+    bridgeManual: 'この画面からは直接送信できません。アプリのレビュータブ、または {view} から開いてください',
+    bridgeButton: '回答を送信',
+    bridgeNote: '選んで［回答を送信］を押すと、そのままアプリに送られます（未選択は推奨案で確定）。',
+  },
+}
+
+/**
+ * `lang` に対応する生成 HTML の文言表（未知の言語は `en`）。
+ * @param {string} [lang] 言語
+ * @returns {(typeof HTML_TEXT)['en']} 文言表
+ */
+export function htmlText(lang) {
+  return lang === 'ja' ? HTML_TEXT.ja : HTML_TEXT.en
+}
+
+/**
+ * `{name}` プレースホルダを埋める（値はエスケープしない — 呼び出し側の方針に任せる）。
+ * @param {string} template 雛形
+ * @param {Record<string, unknown>} [vars] 値
+ * @returns {string} 埋めた文字列
+ */
+function fillTemplate(template, vars = {}) {
+  return String(template).replace(/\{(\w+)\}/g, (m, k) => (vars[k] == null ? m : String(vars[k])))
 }
 
 /**
@@ -242,9 +392,12 @@ function isRecommendedDataOption(option) {
  *
  * @param {object} data `sheet.json`（`{title, topic, questions:[{id,text,options}]}`）
  * @param {{label?: string, round?: number|string, target?: string}} [ak] レビュー行の情報
+ * @param {'en'|'ja'} [lang] 文言の言語（既定 `en`・SPEC-i18n-gen §3.1）
  * @returns {string} `<!DOCTYPE html>` で始まる完全な HTML
  */
-export function renderSheetHtmlFromData(data, ak = {}) {
+export function renderSheetHtmlFromData(data, ak = {}, lang = 'en') {
+  const L = lang === 'ja' ? 'ja' : 'en'
+  const T = htmlText(L)
   const esc = escapeHtmlText
   const title = esc(data?.title ?? ak?.title ?? ak?.label ?? 'Review')
   const label = esc(ak?.label ?? data?.label ?? '')
@@ -262,7 +415,7 @@ export function renderSheetHtmlFromData(data, ak = {}) {
       return [
         `        <li class="opt${rec ? ' rec' : ''}">`,
         `          <span class="oid">${esc(o?.id ?? '')}</span>`,
-        `          <span class="olabel">${esc(o?.label ?? '')}${rec ? '<span class="rec-badge">推奨</span>' : ''}</span>`,
+        `          <span class="olabel">${esc(o?.label ?? '')}${rec ? `<span class="rec-badge">${T.recBadge}</span>` : ''}</span>`,
         detail ? `          <span class="odetail">${detail}</span>` : '',
         '        </li>',
       ]
@@ -288,7 +441,7 @@ export function renderSheetHtmlFromData(data, ak = {}) {
     .join('')
 
   return `<!DOCTYPE html>
-<html lang="ja">
+<html lang="${L}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -331,9 +484,9 @@ export function renderSheetHtmlFromData(data, ak = {}) {
 <main id="akForm">
   <h1>${title}</h1>
   <div class="meta">${meta}</div>
-  <p class="note">このシートは <code>sheet.json</code> から自動生成した閲覧ビューです。回答はアプリのレビュータブ（簡易回答フォーム）から送ってください。</p>
+  <p class="note">${T.note}</p>
 ${topic ? `  <div class="topic">${topic}</div>` : ''}
-${sections.length ? sections.join('\n') : '  <p class="empty">設問がありません。</p>'}
+${sections.length ? sections.join('\n') : `  <p class="empty">${T.empty}</p>`}
 </main>
 </body>
 </html>
@@ -393,6 +546,22 @@ function scriptJson(value) {
 }
 
 /**
+ * JS の文字列リテラルを作る（非 ASCII は `\uXXXX` へ）。
+ *
+ * 生成するスクリプトを **ASCII だけ**に保つため（`?lang=en` の出力に CJK を残さない・
+ * SPEC-i18n-gen §3.2）。`【レビュー回答】` のような受理マーカーもこれで埋める。
+ *
+ * @param {string} value 値
+ * @returns {string} `"..."` 形式のリテラル
+ */
+function asciiScriptString(value) {
+  return JSON.stringify(String(value)).replace(
+    /[\u0080-\uffff]/g,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  )
+}
+
+/**
  * 単体タブ用のラッパー HTML（D57）。
  *
  * `/api/review/:id/sheet` は常に sandbox なので、シート単体では回答を POST できない。
@@ -400,18 +569,30 @@ function scriptJson(value) {
  * シートからの `postMessage` を `POST /api/review/:id/answer` へ中継する。
  *
  * @param {string} taskId タスク id
+ * @param {'en'|'ja'} [lang] 文言の言語（既定 `en`・SPEC-i18n-gen §3.1）
  * @returns {string} HTML
  */
-export function reviewViewHtml(taskId) {
+export function reviewViewHtml(taskId, lang = 'en') {
+  const L = lang === 'ja' ? 'ja' : 'en'
+  const T = htmlText(L)
   const id = String(taskId)
   const jsTask = scriptJson(id)
-  const jsSrc = scriptJson(`/api/review/${encodeURIComponent(id)}/sheet`)
+  // iframe はブラウザが直接 GET するので、言語はクエリで渡す（親のヘッダは付かない）。
+  const sheetHref = `/api/review/${encodeURIComponent(id)}/sheet?lang=${L}`
+  const jsSrc = scriptJson(sheetHref)
+  const jsText = {
+    sending: scriptJson(T.sending),
+    sent: scriptJson(T.sent),
+    sendFailed: scriptJson(T.sendFailed),
+    sendError: scriptJson(T.sendError),
+    sheetLoadFailed: scriptJson(T.sheetLoadFailed),
+  }
   return `<!doctype html>
-<html lang="ja">
+<html lang="${L}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>レビューシート ${escapeHtmlText(id)}</title>
+<title>${escapeHtmlText(T.viewTitle)} ${escapeHtmlText(id)}</title>
 <style>
 html,body{margin:0;height:100%;background:#f6f4ef;color:#1b1a17;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif}
 #akViewSheet{display:block;width:100%;height:100%;border:0;background:#f6f4ef}
@@ -422,19 +603,28 @@ html,body{margin:0;height:100%;background:#f6f4ef;color:#1b1a17;font-family:-app
 </style>
 </head>
 <body>
-<iframe id="akViewSheet" src="${escapeHtmlText(`/api/review/${encodeURIComponent(id)}/sheet`)}" sandbox="allow-scripts allow-forms" title="レビューシート"></iframe>
+<iframe id="akViewSheet" src="${escapeHtmlText(sheetHref)}" sandbox="allow-scripts allow-forms" title="${escapeHtmlText(T.iframeTitle)}"></iframe>
 <div id="akViewStatus" role="status" aria-live="polite"></div>
 <script>
 (function () {
   var TASK = ${jsTask};
   var SHEET = ${jsSrc};
+  var TXT = {
+    sending: ${jsText.sending},
+    sent: ${jsText.sent},
+    sendFailed: ${jsText.sendFailed},
+    sendError: ${jsText.sendError},
+    sheetLoadFailed: ${jsText.sheetLoadFailed}
+  };
+  // Fills one placeholder without a regex (keeps the generated script small)
+  function fill(s, k, v) { return String(s).split('{' + k + '}').join(v == null ? '' : String(v)); }
   var box = document.getElementById('akViewStatus');
   var timer = 0;
   function note(ok, msg) {
     box.textContent = msg;
     box.className = 'show ' + (ok ? 'ok' : 'ng');
     clearTimeout(timer);
-    // 成功は控えめに消す。失敗は読ませたいので残す。
+    // Hide a success notice quickly; keep failures on screen so they can be read.
     if (ok) timer = setTimeout(function () { box.className = ''; }, 4000);
   }
   function title(el) {
@@ -443,12 +633,12 @@ html,body{margin:0;height:100%;background:#f6f4ef;color:#1b1a17;font-family:-app
   window.addEventListener('message', function (ev) {
     var d = ev.data;
     if (!d) return;
-    // 旧シート（akapen:reply）も受ける。新しい注入スクリプトは review:reply を送る。
+    // Accept the legacy sheet message (akapen:reply) as well; new sheets send review:reply.
     if (d.type !== 'review:reply' && d.type !== 'akapen:reply') return;
     if (String(d.taskId) !== TASK) return;
     var text = String(d.text || '');
     if (!text) return;
-    note(true, '送信中…');
+    note(true, TXT.sending);
     fetch('/api/review/' + encodeURIComponent(TASK) + '/answer', {
       method: 'POST',
       credentials: 'same-origin',
@@ -458,14 +648,14 @@ html,body{margin:0;height:100%;background:#f6f4ef;color:#1b1a17;font-family:-app
       return r.json().then(function (j) { return { ok: r.ok, j: j }; }, function () { return { ok: r.ok, j: null }; });
     }).then(function (res) {
       var ok = Boolean(res.ok && res.j && res.j.ok);
-      note(ok, ok ? '回答を送信しました（タスクは ' + (res.j.moved || '—') + '）' : '送信できませんでした: ' + title(res.j));
+      note(ok, ok ? fill(TXT.sent, 'moved', res.j.moved || '—') : fill(TXT.sendFailed, 'detail', title(res.j)));
     }).catch(function (e) {
-      note(false, '送信エラー: ' + (e && e.message ? e.message : e));
+      note(false, fill(TXT.sendError, 'detail', e && e.message ? e.message : e));
     });
   });
-  // シートが読めなかったとき（404 など）に無言の白画面を出さない
+  // Do not show a blank white screen when the sheet cannot be loaded (404 and so on)
   var frame = document.getElementById('akViewSheet');
-  if (frame) frame.addEventListener('error', function () { note(false, 'シートを読み込めません: ' + SHEET); });
+  if (frame) frame.addEventListener('error', function () { note(false, fill(TXT.sheetLoadFailed, 'src', SHEET)); });
 })();
 </script>
 </body>
@@ -478,8 +668,23 @@ html,body{margin:0;height:100%;background:#f6f4ef;color:#1b1a17;font-family:-app
  *
  * アプリ内で開いたときだけ、設問見出し (Q1…) をマーカーで装飾する（レビュー注釈の指摘）。
  * 保存済みのシート（file:// で開く原本）は書き換えないので、装飾はアプリ表示の担当。
+ *
+ * @param {string} html シート HTML
+ * @param {string} taskId タスク id
+ * @param {'en'|'ja'} [lang] 文言の言語（既定 `en`・SPEC-i18n-gen §3.1）
+ * @returns {string} 注入後の HTML
  */
-export function injectReviewBridge(html, taskId) {
+export function injectReviewBridge(html, taskId, lang = 'en') {
+  const L = lang === 'ja' ? 'ja' : 'en'
+  const T = htmlText(L)
+  // 受理マーカーは CJK を含むので ASCII エスケープで埋める（`?lang=en` の出力に CJK を残さない）。
+  const jsMark = asciiScriptString(REPLY_MARK_SOURCE)
+  const jsText = {
+    sent: scriptJson(T.bridgeSent),
+    manual: scriptJson(T.bridgeManual),
+    button: scriptJson(T.bridgeButton),
+    note: scriptJson(T.bridgeNote),
+  }
   const style = `
 <style id="akBridgeStyle">
 #akForm .q h3{
@@ -499,6 +704,10 @@ export function injectReviewBridge(html, taskId) {
 <script>
 (function () {
   var TASK = ${JSON.stringify(String(taskId))};
+  var MARK = new RegExp(${jsMark});
+  var TXT = { sent: ${jsText.sent}, manual: ${jsText.manual}, button: ${jsText.button}, note: ${jsText.note} };
+  // Fills one placeholder
+  function fill(s, k, v) { return String(s).split('{' + k + '}').join(v == null ? '' : String(v)); }
   function replyText() { var o = document.getElementById('out'); return o ? o.value : ''; }
   function report(ok, msg) {
     var el = document.getElementById('akBridgeStatus');
@@ -514,28 +723,23 @@ export function injectReviewBridge(html, taskId) {
   }
   function submit() {
     var text = replyText();
-    // 移行前のシートは【赤ペン回答】を、新しいシートは【レビュー回答】を出す。
-    if (!text || !/【(?:レビュー|赤ペン)回答】|\[Review Answer\]/.test(text)) return;
+    // Legacy sheets emit the old Japanese header; current ones emit "[Review Answer]" (MARK accepts both).
+    if (!text || !MARK.test(text)) return;
     if (window.parent && window.parent !== window) {
       window.parent.postMessage({ type: 'review:reply', taskId: TASK, text: text }, '*');
-      report(true, 'アプリに回答を送りました（この画面は閉じてOK）');
+      report(true, TXT.sent);
       return;
     }
-    // シートは常に sandbox（不透明オリジン）で配信されるので、自分では API を叩けない。
-    // 回答は必ず親（PWA の iframe / /api/review/:id/view ラッパー）へ postMessage する。
-    report(
-      false,
-      'この画面からは直接送信できません。アプリのレビュータブ、または /api/review/' +
-        TASK +
-        '/view から開いてください'
-    );
+    // The sheet is always served as sandbox (opaque origin), so it cannot call the API itself.
+    // Answers always go to the parent (the PWA iframe or the /api/review/:id/view wrapper) via postMessage.
+    report(false, fill(TXT.manual, 'view', '/api/review/' + TASK + '/view'));
   }
-  // アプリ経由で開いているときは「貼り付ける」ではなく「送信」として見せる
+  // Inside the app, show this as "send" rather than "paste"
   function relabel() {
     var b = document.getElementById('genBtn');
-    if (b) b.textContent = '回答を送信';
+    if (b) b.textContent = TXT.button;
     var note = document.querySelector('#akForm p.m');
-    if (note) note.textContent = '選んで［回答を送信］を押すと、そのままアプリに送られます（未選択は推奨案で確定）。';
+    if (note) note.textContent = TXT.note;
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', relabel);
   else relabel();
@@ -545,7 +749,7 @@ export function injectReviewBridge(html, taskId) {
     if (t && (t.id === 'genBtn' || (t.closest && t.closest('#genBtn')))) setTimeout(submit, 80);
   }, true);
   window.__reviewSubmit = submit;
-  // 互換エイリアス: 移行前のシート資産はこちらを直接呼ぶ（SPEC §4.1）
+  // Compatibility alias: pre-migration sheet assets call this directly (SPEC §4.1)
   window.__akapenSubmit = submit;
 })();
 </script>
@@ -889,8 +1093,11 @@ export function createReview(cfg, opts = {}) {
    * `.html` があればそれをそのまま返す（後方互換）。無い（または `.json` を指している）
    * ときは同じ場所の `.json` から閲覧用 HTML を動的生成して返す — JSON ファーストで
    * 起票されたシートでも「シート全体を開く ↗」が常に動くようにするため（D38）。
+   *
+   * @param {string} id タスク id
+   * @param {'en'|'ja'} [lang] 文言の言語（既定 `en`・`?lang=` は呼び出し側が解決する）
    */
-  function sheetHtml(id) {
+  function sheetHtml(id, lang = 'en') {
     const b = bodyOf(id)
     if (!b) return { ok: false, code: 'NOT_FOUND' }
     const ak = parseReviewLine(b.body)
@@ -901,7 +1108,7 @@ export function createReview(cfg, opts = {}) {
     const dataAbs = isJson ? abs : resolveInside(sheetPaths(ak.sheet).dataRel)
     const data = dataAbs ? readJsonIfExists(dataAbs) : null
     if (!data) return { ok: false, code: 'SHEET_MISSING' }
-    return { ok: true, html: renderSheetHtmlFromData(data, ak), path: dataAbs, generated: true }
+    return { ok: true, html: renderSheetHtmlFromData(data, ak, lang), path: dataAbs, generated: true }
   }
 
   /** シートの構造化データ（PWA のネイティブフォーム用）。 */
@@ -946,8 +1153,10 @@ export function createReview(cfg, opts = {}) {
    *
    * @param {string} id タスク ID
    * @param {{answers: Array, global?: string, annotations?: Array, by?: string}} payload
+   * @param {'ja'|'en'} [lang] 運用 1 行の言語（`answer.txt` の見出しも同じ・既定 en）
    */
-  async function answer(id, payload) {
+  async function answer(id, payload, lang = 'en') {
+    const ops = opsText(lang)
     const b = bodyOf(id)
     if (!b) return { ok: false, code: 'NOT_FOUND' }
     const ak = parseReviewLine(b.body)
@@ -980,7 +1189,7 @@ export function createReview(cfg, opts = {}) {
       let moved = { code: 0, out: '' }
       let status = b.status
       if (b.status === 'blocked') {
-        moved = await runKanban(['unblock', id, '--reason', 'レビュー回答を受領（再送）'])
+        moved = await runKanban(['unblock', id, '--reason', ops.answeredAgain])
         if (moved.code === 0) status = 'ready'
       }
       return {
@@ -1020,16 +1229,19 @@ export function createReview(cfg, opts = {}) {
     }
     fs.mkdirSync(answerDir, { recursive: true })
     fs.writeFileSync(answerFile, JSON.stringify(record, null, 2), 'utf8')
-    fs.writeFileSync(textFile, toReplyText(ak.label ?? id, record.answers, global, questions), 'utf8')
+    fs.writeFileSync(textFile, toReplyText(ak.label ?? id, record.answers, global, questions, lang), 'utf8')
 
-    const summary = `レビュー回答: ${questions.length || answers.length}問 ` +
-      `(選択 ${answers.filter((a) => a?.choice).length} / お任せ ${answers.filter((a) => !a?.choice).length}) ` +
-      `— ${path.relative(workdir(), answerFile)}`
+    const summary = ops.answerSummary(
+      questions.length || answers.length,
+      answers.filter((a) => a?.choice).length,
+      answers.filter((a) => !a?.choice).length,
+      path.relative(workdir(), answerFile),
+    )
     const comment = await runKanban(['comment', id, summary, '--author', String(payload?.by ?? 'mobile')])
     let moved = { code: 0, out: '' }
     let status = b.status
     if (b.status === 'blocked') {
-      moved = await runKanban(['unblock', id, '--reason', 'レビュー回答を受領'])
+      moved = await runKanban(['unblock', id, '--reason', ops.answered])
       if (moved.code === 0) status = 'ready'
     }
     /*
@@ -1110,8 +1322,10 @@ export function createReview(cfg, opts = {}) {
    *
    * @param {string} id タスク ID
    * @param {{note?: string, by?: string, chat?: string}} [payload]
+   * @param {'ja'|'en'} [lang] unblock 理由の言語（既定 en）
    */
-  async function approve(id, payload = {}) {
+  async function approve(id, payload = {}, lang = 'en') {
+    const ops = opsText(lang)
     const b = bodyOf(id)
     if (!b) return { ok: false, code: 'NOT_FOUND' }
     const ak = parseReviewLine(b.body)
@@ -1122,12 +1336,12 @@ export function createReview(cfg, opts = {}) {
     const by = String(payload?.by ?? 'mobile').slice(0, 40)
     const rel = ak.image.replace(/\.(png|jpe?g|webp)$/i, '.approval.json')
     const abs = path.join(path.resolve(workdir(), rel))
-    const reason = `検収 OK（Visual check passed）${note ? `: ${note}` : ''}`
+    const reason = ops.approved(note, false)
 
     const existing = readJsonIfExists(abs)
     if (existing) {
       // 冪等: 記録済みならコメントは増やさない（遷移だけ補完）
-      const adv = await approveAdvance(id, b, `${reason}（再送）`)
+      const adv = await approveAdvance(id, b, ops.approved(note, true))
       return {
         ok: adv.code === 0,
         duplicate: true,
@@ -1242,8 +1456,13 @@ export function createReview(cfg, opts = {}) {
   /**
    * 注釈の送信。annotated_image は data URL（JPEG/PNG）。
    * 冪等: 同じ画像（sha256）の再送は duplicate を返し、遷移だけ補完する。
+   *
+   * @param {string} id タスク ID
+   * @param {{annotated_image?: string, marks?: Array, note?: string, by?: string}} payload
+   * @param {'ja'|'en'} [lang] 運用 1 行の言語（既定 en）
    */
-  async function saveAnnotation(id, payload) {
+  async function saveAnnotation(id, payload, lang = 'en') {
+    const ops = opsText(lang)
     const b = bodyOf(id)
     if (!b) return { ok: false, code: 'NOT_FOUND' }
     const ak = parseReviewLine(b.body)
@@ -1275,7 +1494,7 @@ export function createReview(cfg, opts = {}) {
       let moved = { code: 0, out: '' }
       let status = b.status
       if (b.status === 'blocked') {
-        moved = await runKanban(['unblock', id, '--reason', '注釈を受領（再送）'])
+        moved = await runKanban(['unblock', id, '--reason', ops.annotationReceivedAgain])
         if (moved.code === 0) status = 'ready'
       }
       return { ok: moved.code === 0, duplicate: true, status, moved: status, sha256: sha }
@@ -1302,12 +1521,12 @@ export function createReview(cfg, opts = {}) {
     }
     fs.writeFileSync(jsonAbs, JSON.stringify(record, null, 2), 'utf8')
 
-    const summary = `注釈: ${marks.length} ストローク${note ? ` / メモ: ${note.slice(0, 60)}` : ''} — ${relAnnotated}`
+    const summary = ops.annotationSummary(marks.length, note ? note.slice(0, 60) : '', relAnnotated)
     const comment = await runKanban(['comment', id, summary, '--author', String(payload?.by ?? 'mobile')])
     let moved = { code: 0, out: '' }
     let status = b.status
     if (b.status === 'blocked') {
-      moved = await runKanban(['unblock', id, '--reason', '注釈を受領'])
+      moved = await runKanban(['unblock', id, '--reason', ops.annotationReceived])
       if (moved.code === 0) status = 'ready'
     }
     return {
@@ -1638,10 +1857,14 @@ export function createReview(cfg, opts = {}) {
   /**
    * 画像から注釈タスクを1件作る（upload の dataURL / library・shots の既存ファイル）。
    * 成功したら taskId を返すので、PWA はそのまま注釈エディタを開ける。
+   *
+   * @param {{source?: string, image?: string, path?: string, title?: string, slug?: string, target?: string, chat?: string}} payload
+   * @param {'ja'|'en'} [lang] カード title と block 理由の言語（既定 en）
    */
-  async function createFromImage(payload) {
+  async function createFromImage(payload, lang = 'en') {
+    const ops = opsText(lang)
     const source = String(payload?.source || 'upload')
-    const title = String(payload?.title || '').slice(0, 120) || '注釈（画像から作成）'
+    const title = String(payload?.title || '').slice(0, 120) || ops.annotationTitle
     let buf = null
     let ext = '.png'
 
@@ -1699,7 +1922,7 @@ export function createReview(cfg, opts = {}) {
     }
     const taskId = m[0]
     if (chat) rememberTaskChat(taskId, chat)
-    const blocked = await runKanban(['block', taskId, '注釈待ち（画像から作成）', '--kind', 'needs_input'])
+    const blocked = await runKanban(['block', taskId, ops.annotationWaiting, '--kind', 'needs_input'])
     return {
       ok: blocked.code === 0,
       taskId,

@@ -1016,7 +1016,7 @@ async function handleApi(req, res, url) {
         return sendError(res, 429, 'RATE_LIMITED')
       }
       const body = await readJson(req, 12_000_000)
-      const r = await review.createFromImage(body || {})
+      const r = await review.createFromImage(body || {}, langOf(req, url))
       auth.audit({ kind: 'review.from_image', task: r.taskId ?? null, source: body?.source ?? 'upload', ok: Boolean(r.ok) })
       return r.ok ? sendJson(res, 201, r) : sendFailure(res, 400, r)
     }
@@ -1040,7 +1040,7 @@ async function handleApi(req, res, url) {
       }
       // 画像は base64 で来るので、この経路だけ上限を上げる（既定は 1MB）
       const body = await readJson(req, 12_000_000)
-      const r = await review.saveAnnotation(b, body || {})
+      const r = await review.saveAnnotation(b, body || {}, langOf(req, url))
       auth.audit({
         kind: 'review.annotation',
         task: b,
@@ -1051,22 +1051,24 @@ async function handleApi(req, res, url) {
       return r.ok ? sendJson(res, 200, r) : sendFailure(res, 400, r)
     }
     if (c === 'sheet' && req.method === 'GET') {
-      const r = review.sheetHtml(b)
+      const lang = langOf(req, url)
+      const r = review.sheetHtml(b, lang)
       if (!r.ok) return sendFailure(res, r.code === 'NOT_FOUND' ? 404 : 409, r)
       // D57: 埋め込みでも単体タブでも**同じ**厳格な CSP（sandbox = 不透明オリジン）で返す。
       // シート内のスクリプトは same-origin Cookie にも /ws/term にも /api/* にも届かない。
       // 回答は postMessage で親（PWA の iframe / :id/view ラッパー）へ渡し、親が POST する。
       res.writeHead(200, reviewSheetHeaders())
-      return res.end(injectReviewBridge(r.html, b))
+      return res.end(injectReviewBridge(r.html, b, lang))
     }
     // /api/review/:id/view … 単体タブ用のラッパー（D57）。
     // シートを sandbox iframe で囲み、postMessage を受けて same-origin で回答を POST する。
     // 存在判定は sheetHtml（.html が無くても .json から生成できる）に合わせる。
     if (c === 'view' && req.method === 'GET') {
-      const r = review.sheetHtml(b)
+      const lang = langOf(req, url)
+      const r = review.sheetHtml(b, lang)
       if (!r.ok) return sendFailure(res, r.code === 'NOT_FOUND' ? 404 : 409, r)
       res.writeHead(200, reviewViewHeaders())
-      return res.end(reviewViewHtml(b))
+      return res.end(reviewViewHtml(b, lang))
     }
     if (c === 'thumb' && req.method === 'GET') {
       const rel = url.pathname.split('/').slice(5).join('/')
@@ -1084,7 +1086,7 @@ async function handleApi(req, res, url) {
         return sendError(res, 429, 'RATE_LIMITED')
       }
       const body = await readJson(req)
-      const r = await review.answer(b, body || {})
+      const r = await review.answer(b, body || {}, langOf(req, url))
       auth.audit({
         kind: 'review.answer',
         task: b,
@@ -1111,7 +1113,7 @@ async function handleApi(req, res, url) {
         return sendError(res, 429, 'RATE_LIMITED')
       }
       const body = await readJson(req)
-      const r = await review.approve(b, body || {})
+      const r = await review.approve(b, body || {}, langOf(req, url))
       auth.audit({
         kind: 'review.approve',
         task: b,

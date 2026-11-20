@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { api } from '../api.js'
+import { api, withLang } from '../api.js'
 import { CloseActions } from '../components/CloseActions.jsx'
 import { Icon, Loader, RefreshButton, Sheet, Spinner, fmtTime, relTime } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
@@ -123,7 +123,7 @@ function ItemRow({ item, onOpen }) {
 
 /**
  * 貼り付け回答の解析は `lib/reviewPaste.js` に移した（形式は外部と共有するデータなので
- * 日本語のまま。互換のためここから再エクスポートする）。
+ * ja / en の両表記を受ける。互換のためここから再エクスポートする）。
  */
 
 
@@ -412,7 +412,7 @@ function IframeForm({ item, onSubmitted, notify }) {
       <iframe
         className="ak-iframe"
         title={t('review.sheetIframeTitle')}
-        src={`/api/review/${item.id}/sheet`}
+        src={withLang(`/api/review/${item.id}/sheet`)}
         sandbox="allow-scripts allow-forms"
       />
       <details className="ak-paste">
@@ -457,7 +457,7 @@ function SheetLink({ item }) {
   const { t } = useI18n()
   return (
     <div className="ak-sheetlink">
-      <a className="ak-link" href={`/api/review/${item.id}/view`} target="_blank" rel="noreferrer">
+      <a className="ak-link" href={withLang(`/api/review/${item.id}/view`)} target="_blank" rel="noreferrer">
         {t('review.openSheet')}
       </a>
     </div>
