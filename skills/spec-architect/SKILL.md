@@ -14,14 +14,14 @@ metadata:
     quality_tier: decision-ready
 ---
 
-# Spec Architect（1 行の種から自走できる仕様書を作る）
+# Spec Architect (turn one line into a spec a runner can finish alone)
 
-Architect の仕事は「仕様書を書くこと」ではなく、**Builder（カンバン自走ワーカー）が
-追加の質問をせずに完走できる仕様書を 2 ラウンドで作ること**。長文の質問をチャットへ
-並べない。判断は設問シートに載せ、人が 1 タップで答える形にする。
+The Architect's job is not "writing a spec"; it is **producing, in two rounds, a spec that the
+Builder (the autonomous kanban worker) can finish without asking anything extra**. Do not line up
+long questions in chat. Put decisions on a question sheet so a human answers with one tap.
 
-このスキルは **`hermes-pilot` プラグイン同梱**。`hermes-pilot init` が
-`~/.hermes/skills/spec-architect/` へ配置する。
+This skill ships with the **`hermes-pilot` plugin**. `hermes-pilot init` installs it into
+`~/.hermes/skills/spec-architect/`.
 
 ## Language
 
@@ -31,204 +31,208 @@ This is `LANGUAGE_RULE_MARKER` / `LANGUAGE_RULE_EN` in `apps/bridge/src/language
 When the run's language is Japanese, only the prose switches to Japanese (JA variant in the same module); the machine line and paths stay ASCII.
 The rule covers the sheet you write and every prose line you post to the board, including the 1-line `complete --summary`.
 
-## いつ使うか
+## When to use it
 
-使う:
-- 1 行メモ / 音声ディクテーション（`Spec Seed`）から実装計画を作るとき
-- 既存リポジトリに新しい機能群（複数バッチ）を足すとき
-- 人が「何を作るか」は言えるが「どう作るか」は決めていないとき
+Use it:
+- Turning a one-line note / voice dictation (`Spec Seed`) into an implementation plan
+- Adding a new group of features (several batches) to an existing repository
+- The human can say "what to build" but has not decided "how to build it"
 
-使わない:
-- 変更が 1 ファイルで正解が一意（そのまま実装して `npm run verify` を通す）
-- すでに `docs/SPEC-*.md` があり、`hermes-pilot` の仕様ランチャーで起票するだけのとき
+Do not use it:
+- The change is one file with a unique answer (implement it and pass `npm run verify`)
+- `docs/SPEC-*.md` already exists and you only need to file it through the hermes-pilot spec launcher
 
-## 2 ラウンド・プロトコル
+## Two-round protocol
 
-### Round 1 — Quick Review 直結インタビュー
+### Round 1 — interview straight into Quick Review
 
-チャットに箇条書きの質問を並べる代わりに、**設問シートを 1 枚だけ**作る。
-**第一推奨は構造化 JSON（`mode=standard`）**。手書き HTML とヘッドレスブラウザ撮影は
-「見た目の比較そのものが論点」のときだけの任意拡張。
+Instead of listing questions in chat, build **exactly one question sheet**.
+**The first choice is structured JSON (`mode=standard`)**. Hand-written HTML and headless-browser
+captures are an optional extension for "the visual comparison itself is the question".
 
-1. 質問は **3±1 問**。各問は「人が決めること 1 つ」。事実（`file:line`・実行結果）は
-   本文に書き、人には決定だけを残す。根拠は**該当箇所の最小確認だけ**で足りる
-   （リポジトリ全体の作り込みやモック構築をしない。決まったら即シート）。
-   **Round 1 では `npm test` / `npm run verify` を走らせない**。探索は `rg` / `grep` で
-   該当シンボルだけを引き、依存関係の全量確認やビルドで時間を使わない。テストとビルドは
-   Round 2 で SPEC（各バッチの Verify）に書けばよい。シートを書いたら**即ブロック**する。
-2. 各問に選択肢 2〜3・`recommended: true` を 1 つ。理由（利点 / 代償）を必ず添える。
-3. 見た目の論点（配置・情報密度・配色の比較そのもの）**だけ**両案を絵にする。
-   それ以外（仕様・ロジック・文言・API・データ設計）は `.json` のみで起票して即ブロックする
-   — `browser_exec` での撮影も 300 行級の HTML 生成も行わない。
-   既存画面への追加で絵が要るときは、現行 UI の忠実な再現を先に撮る。
-4. 出力先は `quick-review` スキルと同じ場所・同じ形式。**主成果物は `.json`**:
+1. **3±1 questions.** Each question is "one thing a human decides". Put the facts (`file:line`,
+   command output) in the body and leave only the decision to the human. Evidence needs only a
+   **minimal check of the relevant spot** (do not build out the whole repo or mock things up; file the
+   sheet as soon as it is decided).
+   **Do not run `npm test` / `npm run verify` in Round 1.** Explore with `rg` / `grep` for the specific
+   symbols; do not spend time checking every dependency or building. Tests and builds belong in
+   Round 2, written into the SPEC (each batch's Verify). Once the sheet is written, **block immediately**.
+2. Two or three options per question, one `recommended: true`. Always give the reason (gain / cost).
+3. Draw both options **only** for visual questions (placement, information density, colour comparison).
+   Everything else (spec, logic, wording, API, data design) is filed as `.json` alone and blocked
+   immediately — no `browser_exec` capture and no 300-line HTML. When a picture is needed for an
+   existing screen, first capture a faithful shot of the current UI.
+4. Same location and format as the `quick-review` skill. **The primary artefact is `.json`:**
 
 ```text
-~/.hermes/plugin-data/hermes-pilot/review/sheets/spec-<slug>-1.json   ← これが主（mode=standard）
-~/.hermes/plugin-data/hermes-pilot/review/sheets/spec-<slug>-1.html   ← 見た目の論点のときだけ任意
+~/.hermes/plugin-data/hermes-pilot/review/sheets/spec-<slug>-1.json   <- primary (mode=standard)
+~/.hermes/plugin-data/hermes-pilot/review/sheets/spec-<slug>-1.html   <- only for visual questions
 ```
 
-5. カンバンへ起票して **blocked** にする（回答が来るまで実装しない）:
+5. File it on kanban and set it **blocked** (do not implement until the answer arrives):
 
 ```bash
-hermes kanban create "Q1〜Q3: <プロジェクト名>の設計方針" --assignee <profile> --body "$(cat <<'BODY'
-<何が決まれば仕様書を書き始められるか。いま何が止まっているか。>
+hermes kanban create "Q1-Q3: design direction for <project>" --assignee <profile> --body "$(cat <<'BODY'
+<What unblocks writing the spec. What is stuck right now.>
 
 [review] label=spec-<slug> round=1 mode=standard sheet=sheets/spec-<slug>-1.json target=<repo_path> chat=<session_id>
 BODY
 )"
-hermes kanban block <task_id> "仕様インタビュー待ち（Q1〜Q3）" --kind needs_input
+hermes kanban block <task_id> "Waiting for the spec interview (Q1-Q3)" --kind needs_input
 ```
 
-`.json` だけで PWA のネイティブフォーム（`<StandardForm>`）と「シート全体を開く ↗」の
-両方が動く（`.html` が無ければブリッジが `.json` から安全な HTML を動的生成する）。
+With the `.json` alone both the PWA native form (`<StandardForm>`) and "open the whole sheet ↗" work
+(when `.html` is missing the bridge generates safe HTML from the `.json`).
 
-待つ間は別のタスクを進める。**自分で回答を捏造しない。**
+While waiting, work on other tasks. **Never invent answers.**
 
-### Round 2 — SPEC 生成
+### Round 2 — generate the SPEC
 
-回答（`.answer.json` / `.answer.txt` / コメントの `【レビュー回答】`）を読み、
-`docs/SPEC-<SLUG>.md` を書く。`(未選択 = お任せ)` は推奨案で確定してよい。
+Read the answers (`.answer.json` / `.answer.txt` / the `[Review Answer]` comment) and write
+`docs/SPEC-<SLUG>.md`. `(unselected = take recommended)` may be settled with the recommendation.
 
-必須フォーマット（`apps/bridge/src/specs.js` が機械的に読む。**形を変えない**）:
+Required format (`apps/bridge/src/specs.js` parses it mechanically. **Do not change the shape**):
 
 ```markdown
-# SPEC: <プロジェクト名> (`SPEC-<SLUG>`)
+# SPEC: <project name> (`SPEC-<SLUG>`)
 
-状態: 仕様確定（<日付>・インタビュー Q1〜Q3 合意済み）
-前提仕様: <前バージョンの SPEC があればリンク>
+Status: decided (<date>, interview Q1-Q3 agreed)
+Based on: <link the previous SPEC if any>
 
-## 1. コンセプト
+## 1. Concept
 
-<3〜6 行。何を、誰のために、どこまで作るか。>
+<3-6 lines. What, for whom, how far.>
 
-## 2. 合意決定表（インタビュー結果）
+## 2. Agreed decisions (interview outcome)
 
-| # | 論点 | 決定内容 | 根拠・背景 |
+| # | Topic | Decision | Rationale |
 |---|---|---|---|
-| **D1** | <問い> | <決めたこと> | <なぜ> |
+| **D1** | <question> | <decision> | <why> |
 
-## 3. 詳細技術仕様
+## 3. Detailed technical spec
 
-### 3.1 <領域>
+### 3.1 <area>
 
-対象: <file>, <file>
+Targets: <file>, <file>
 
-1. **<機能>**: <仕様。関数名・保存キー・エンドポイント名まで書く>
+1. **<feature>**: <spec, down to function names, storage keys and endpoint names>
 
-## 4. カンバンタスク分割（Batch <SLUG>-1 〜 <SLUG>-N）
+## 4. Kanban task breakdown (Batch <SLUG>-1 .. <SLUG>-N)
 
-### Batch <SLUG>-1: <バッチ名>
+### Batch <SLUG>-1: <batch name>
 
 - **Execution Mode**: `[Mode: Zero-Stop]`
 - **Recommended Role**: `role:builder`
-- **目的**: <1〜3 行。何をどのファイルに実装するか>
-- **変更・新規ファイル**:
-  - 新規: `<path>`
-  - 変更: `<path>`
-- **受入条件（Verify）**:
-  - <観測可能な条件。テストファイル名まで書く>
-  - `npm run verify` が全件パスすること。
+- **Objective**: <1-3 lines. What goes into which file.>
+- **Files**:
+  - New: `<path>`
+  - Changed: `<path>`
+- **Verify**:
+  - <observable condition, down to test file names>
+  - `npm run verify` passes for everything.
 
 ---
 ```
 
-## バッチ見出しの規約（守らないと起票が壊れる）
+## Batch heading rules (break these and filing breaks)
 
-- バッチ見出しは **`### Batch <ID>: <Title>`** のみ。`<ID>` は英字始まり 16 文字まで
-  （`V5-1` / `P2` / `T3` は可、`1.1` は不可）。
-- バッチ以外の `###` 見出しは**必ず数字で始める**（`### 3.1 …`）。数字で始めないと
-  仕様ランチャーがバッチと誤認して起票する。
-- 各バッチに必ず次の 3 行を置く: `- **Execution Mode**: ...` / `- **目的**: ...` /
-  `- **受入条件（Verify）**: ...`。`Execution Mode` が無いバッチは起票時に
-  行動契約（`[Hermes Pilot Execution Contract]`）が注入されず、自走が保証されない。
-- 任意行 `- **Recommended Role**: role:planner | role:builder | role:visual-reviewer`
-  を `Execution Mode` の直後に置ける（設計寄りは `role:planner`、実装・検証は `role:builder`、
-  見た目の検収を含むなら `role:visual-reviewer`）。未宣言でも起票は壊れない。
+- Batch headings must be **`### Batch <ID>: <Title>`** only. `<ID>` starts with a letter and is at most
+  16 characters (`V5-1` / `P2` / `T3` are fine, `1.1` is not).
+- Any other `###` heading **must start with a digit** (`### 3.1 …`). Otherwise the spec launcher
+  mistakes it for a batch and files it.
+- Every batch needs these three lines: `- **Execution Mode**: ...` / `- **Objective**: ...` /
+  `- **Verify**: ...`. A batch without `Execution Mode` gets no behaviour contract
+  (`[Hermes Pilot Execution Contract]`) injected at filing time, so autonomy is not guaranteed.
+- An optional `- **Recommended Role**: role:planner | role:builder | role:visual-reviewer` line may sit
+  right after `Execution Mode` (design-heavy → `role:planner`, implement and verify → `role:builder`,
+  include visual sign-off → `role:visual-reviewer`). Filing still works when it is absent.
 
-## Execution Mode の選び方
+## Choosing the Execution Mode
 
-| Mode | 使うとき | ワーカーに注入される契約 |
+| Mode | When | Contract injected into the worker |
 |---|---|---|
-| `Zero-Stop` | 正解が一意（テスト・ビルド・機械的リファクタ） | 質問せず `npm run verify` が通るまで自律修復して `done` |
-| `Fast-Track Review` | 実装方針が 1 つに決まらず、途中で分岐しうる | 分岐が出たら実装前に `quick-review` シートを起票して 1 タップ承認を待つ |
-| `Visual Gate` | 見た目が変わる（UI・CSS・文言・レイアウト） | `npm run deploy` → 実画面 390×844 / 820×1180 を検証・撮影 → 必要なら `annotation` レビュー |
+| `Zero-Stop` | The answer is unique (tests, build, mechanical refactor) | No questions; self-repair until `npm run verify` passes, then `done` |
+| `Fast-Track Review` | The approach is not settled and may branch mid-way | On a branch, file a `quick-review` sheet before implementing and wait for one-tap approval |
+| `Visual Gate` | The look changes (UI, CSS, wording, layout) | `npm run deploy` → check and capture 390×844 / 820×1180 → `annotation` review when needed |
 
-迷ったら `Visual Gate`。見た目が変わらないと断言できないなら視覚検収を挟む。
+When in doubt use `Visual Gate`. If you cannot claim the look is unchanged, insert a visual check.
 
-## 抽象ロールと委譲・フォールバック（Model-Agnostic Delegation）
+## Abstract roles, delegation and fallback (model-agnostic)
 
-このスキルは**モデル非依存**。特定モデル名・プロバイダ名・課金プラン・個人環境のパスをここに書かない。
-「どの抽象ロールをどの実モデルへ割り当て、失敗時にどこへ落とすか」は**実機プロファイル側**
-（プロファイルメモリ / `SOUL.md` の割当表）が持つ。仕様書とスキルは抽象ロール名だけを扱う。
+This skill is **model-agnostic**. Never write a specific model name, provider name, pricing plan or
+personal path here. "Which abstract role maps to which real model, and where to fall back on failure"
+is owned by the **device profile** (profile memory / the assignment table in `SOUL.md`). Specs and
+skills deal in abstract role names only.
 
-### 4 つの抽象ロール
+### The four abstract roles
 
-- `role:planner` — 高度推論・設計・仕様策定・複雑な原因究明。Round 1 の問い設計、
-  Round 2 の影響分析・バッチ分割がここ。
-- `role:builder` — 通常実装・テスト修正・ビルド・定型作業。SPEC に沿った実装と
-  `npm test` / `npm run verify` の修復がここ。
-- `role:visual-reviewer` — スクショ差分・赤入れ画像（`.annotated.png`）の読解・
-  `390x844` / `820x1180` の視覚検収。**見た目の比較が論点のときだけ**使う。
-- `role:decision-framer` — 設問設計・トレードオフ整理。3±1 問への切り出しと
-  選択肢・推奨理由の構成がここ。
+- `role:planner` — heavy reasoning, design, spec authoring, complex root-causing. Round 1 question
+  design; Round 2 impact analysis and batch breakdown.
+- `role:builder` — routine implementation, test fixes, builds, mechanical work. Implementing the SPEC
+  and repairing `npm test` / `npm run verify`.
+- `role:visual-reviewer` — reading screenshot diffs and redlined images (`.annotated.png`), visual
+  sign-off at `390x844` / `820x1180`. **Only when the visual comparison is the question.**
+- `role:decision-framer` — question design and trade-off framing: cutting to 3±1 questions and
+  composing options with the reason to recommend.
 
-推奨の当て方:
+How to apply them:
 
-- Round 1 / Round 2 の設計推論・影響分析・バッチ分割は **`role:planner`**。
-- 絵（モック・スクショ）を検証する場合のみ **`role:visual-reviewer` を併用**する。
-  絵の無い論点（API・保存形式・命名・ロジック）には付けない。
-- 各バッチ定義に任意行 `- **Recommended Role**: role:builder` を書ける
-  （`role:planner` / `role:visual-reviewer` / `role:decision-framer` も同様）。
-  未宣言なら Execution Mode から推定される。
+- Round 1 / Round 2 design reasoning, impact analysis and batch breakdown → **`role:planner`**.
+- Only when judging pictures (mocks, screenshots) **also use `role:visual-reviewer`**. Do not attach it
+  to non-visual questions (API, storage format, naming, logic).
+- Each batch definition may carry the optional `- **Recommended Role**: role:builder` line
+  (`role:planner` / `role:visual-reviewer` / `role:decision-framer` likewise). Without it the role is
+  inferred from the Execution Mode.
 
-### ネイティブ委譲とフォールバック
+### Native delegation and fallback
 
-委譲は Hermes Agent 標準の **`delegate_task`** だけを使う。
+Use only Hermes Agent's standard **`delegate_task`** for delegation.
 
-1. 親がロール条件に合うサブタスクを切り出し、`goal` / `context` にロール名を明記して 1 回だけ委譲する。
-2. 子は**読み取り専用の助言者**。ファイル編集・commit・install・`npm run verify` は親が行う。
-3. 委譲が失敗した（エラー / レート制限 / タイムアウト / 未対応モデル / 委譲ツール未搭載）
-   場合は**停止しない**。プロファイルの割当表どおりのフォールバック順（次点 → 主モデル）へ
-   切り替え、自分でそのまま完走する。
-4. フォールバックした事実は完了報告か comment に 1 行残す（黙って検証を落とさない）。
-5. 同じロールで 2 回失敗したら 3 回目を投げない。自分で完走する。
+1. The parent cuts a sub-task that matches a role and delegates once, naming the role in `goal` / `context`.
+2. Children are **read-only advisers**. File edits, commits, installs and `npm run verify` are the parent's.
+3. If delegation fails (error / rate limit / timeout / unsupported model / no delegation tool),
+   **do not stop**. Switch to the fallback order in the profile assignment table (next choice → main model)
+   and finish on your own.
+4. Record the fallback in one line of the completion report or a comment (never silently drop verification).
+5. If the same role fails twice, do not send a third attempt. Finish it yourself.
 
-### 外部 AI CLI の禁止境界
+### Hard boundary: no external AI CLIs
 
-`gemini` CLI（`gemini -p` 等）・`agy -p` のような**外部 AI CLI をサブプロセスで起動して
-推論させる経路は使わない**。`spawn` / `execFile` / `exec` での起動も、シェルからのパイプも対象。
-ランタイムコード側は `npm run check:oauth` が機械検査する。委譲は Hermes のネイティブ API
-プロバイダ＋`delegate_task` のみ。
+**Do not spawn external AI CLIs such as the `gemini` CLI (`gemini -p`, …) or `agy -p` to do the
+reasoning.** Launching them through `spawn` / `execFile` / `exec`, or piping from a shell, is also
+covered. Runtime code is machine-checked by `npm run check:oauth`. Delegation means the Hermes native
+API provider plus `delegate_task` only.
 
-## バッチ分割の目安
+## Sizing the batches
 
-- 1 バッチ = **1 回の `npm run verify` で閉じる**変更量（おおむね 200〜600 行）。
-- 依存は前から後ろへの一方向。`V5-2` が `V5-1` の API を使うなら `V5-1` を先に置く。
-- 「基盤 → 機能 → 演出 → 総合検証」の順にし、最後のバッチは結合検証と実画面監査にする。
-- 6 バッチを超えるなら、独立した SPEC に割る（1 SPEC = 1 つの目的）。
+- One batch = a change **that closes within a single `npm run verify`** (roughly 200-600 lines).
+- Dependencies run one way, front to back. If `V5-2` uses an API from `V5-1`, put `V5-1` first.
+- Order it "foundation → features → polish → end-to-end verification", and make the last batch the
+  integration check plus a real-screen audit.
+- More than six batches: split into independent SPECs (one SPEC = one purpose).
 
-## 仕上げ（A2B ハンドオフ）
+## Wrap-up (A2B handoff)
 
-SPEC を書いたら、次を 1 つだけ出す:
+After writing the SPEC, emit exactly one of these:
 
 ```text
-仕様書: docs/SPEC-<SLUG>.md（Batch <SLUG>-1 〜 <SLUG>-N / n バッチ）
-起票: hermes-pilot の Tasks → 仕様ランチャー、または scripts から specs.launchSpec（dryRun: true で確認 → 実行）
+Spec: docs/SPEC-<SLUG>.md (Batch <SLUG>-1 .. <SLUG>-N / n batches)
+File it: hermes-pilot Tasks → spec launcher, or `specs.launchSpec` from your scripts (dryRun: true first, then run)
 ```
 
-`autoStart=true` のタグ付きで依頼されていた場合は、未起票バッチを **1 回だけ**
-起票する（`dryRun: true` → `dryRun: false`。二重起票を絶対に作らない）。
+If the request was tagged `autoStart=true`, file the unfiled batches **exactly once**
+(`dryRun: true` → `dryRun: false`; never create duplicates).
 
-## 落とし穴
+## Pitfalls
 
-- **Round 1 に手書き HTML を作らない／`browser_exec` で撮らない**。見た目の比較そのものが
-  論点でなければ `.json` 1 枚で起票して即ブロックする（HTML とモック画像で数分失うだけで
-  判断は変わらない）。絵が要るのは配置・情報密度・配色の比較が主題のときだけ。
-- **`docs/SPEC-*.md` のファイル名は大文字 `SPEC` で始める**。`spec-*.md` は走査対象外。
-- `BATCH_ID_RE` は 16 文字まで。長い ID（`V5-1-optimizer`）は切り落とされる。
-- 本文中の `### ` 見出しは起票時のバッチ境界になる。**バッチ内の小見出しは `####` 以下**にする。
-- `- **実行モード**` / `[Mode: ...]` の表記は `specs.js` の正規表現に合う形
-  （`- **Execution Mode**: \`[Mode: Zero-Stop]\``）を厳守する。バックティックの有無は許容。
-- 仕様書に **認証情報・トークン・個人情報を書かない**。パスは `~` か相対パスで書く。
-- インタビュー回答を待たずに SPEC を書き始めない。待つ間は別タスクを進める。
+- **Do not hand-write HTML or shoot with `browser_exec` in Round 1.** Unless the visual comparison is
+  the question, file one `.json` and block immediately (HTML and mock images burn minutes without
+  changing the decision). Pictures are only for placement / density / colour comparisons.
+- **`docs/SPEC-*.md` file names start with uppercase `SPEC`.** `spec-*.md` is not scanned.
+- `BATCH_ID_RE` allows 16 characters. Longer ids (`V5-1-optimizer`) are truncated.
+- Any `### ` heading in the body becomes a batch boundary at filing time. **Make sub-headings inside a
+  batch `####` or deeper.**
+- The `- **Execution Mode**` / `[Mode: ...]` notation must match the `specs.js` regex
+  (`- **Execution Mode**: \`[Mode: Zero-Stop]\``). Backticks are optional.
+- **Never put credentials, tokens or personal data in a spec.** Write paths as `~` or relative.
+- Do not start writing the SPEC before the interview answers arrive. Work on other tasks while waiting.

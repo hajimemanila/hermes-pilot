@@ -140,7 +140,7 @@ export function nextBackupPath(soulPath, stamp, exists = (p) => fs.existsSync(p)
  * @param {{now?: number, block?: string, create?: boolean}} [opts] 入力（`create:false` はファイルが無ければ作らない）
  * @returns {{ok: boolean, path: string, mode: string, changed: boolean, backupPath: string|null, exists: boolean, applied: boolean, error?: string}} 結果
  */
-function applySoulFile(soulPath, { now = Date.now(), block = A2B_RULE_BLOCK, create = true } = {}) {
+function applySoulFile(soulPath, { now = Date.now(), block = A2B_RULE_BLOCK, create = true, append = true } = {}) {
   let current = ''
   let exists = false
   try {
@@ -161,6 +161,18 @@ function applySoulFile(soulPath, { now = Date.now(), block = A2B_RULE_BLOCK, cre
     }
     // `create:false` は既存 SOUL.md だけを対象にする（人の環境に勝手に作らない）。
     if (!create) return { ok: true, path: soulPath, mode: 'skipped', changed: false, backupPath: null, exists: false, applied: false }
+  }
+
+  /*
+   * **他人の SOUL に勝手に追記しない**（過干渉の防止）。
+   *
+   * `append: false` は「マーカーが既にある SOUL だけを同期する」モード。
+   * マーカーが無い（＝まだ Pilot を使っていない）プロファイルには 1 文字も書き込まない。
+   * 対象を明示指定されたときだけ `append: true` で追記する。
+   */
+  const hasMarker = current.includes(A2B_START) && current.includes(A2B_END)
+  if (!append && current.trim() && !hasMarker) {
+    return { ok: true, path: soulPath, mode: 'skipped', changed: false, backupPath: null, exists, applied: false }
   }
 
   const merged = mergeSoul(current, block)
@@ -272,7 +284,8 @@ function profileSoulState(hermesHome, name) {
  */
 export function optimizeProfileSouls({ hermesHome, now = Date.now(), block = A2B_RULE_BLOCK, profiles } = {}) {
   const home = String(hermesHome ?? process.env.HERMES_HOME ?? path.join(os.homedir(), '.hermes'))
-  const names = Array.isArray(profiles) && profiles.length
+  const explicit = Array.isArray(profiles) && profiles.length > 0
+  const names = explicit
     ? profiles.map((n) => String(n ?? '').trim()).filter(Boolean)
     : listProfileNames(home)
 
@@ -301,10 +314,17 @@ export function optimizeProfileSouls({ hermesHome, now = Date.now(), block = A2B
       continue
     }
 
+    /*
+     * 追記してよいのは (1) Pilot 用プロファイル（`mobile`）と (2) 明示指定された名前だけ。
+     * それ以外は「既にマーカーがある SOUL」だけを同期する（Pilot を一度も使っていない
+     * プロファイルへ規範を書き込まない＝過干渉しない）。
+     */
+    const allowAppend = PROFILE_SOUL_CREATE_IF_MISSING.includes(name) || explicit
     const r = applySoulFile(path.join(dir, 'SOUL.md'), {
       now,
       block,
       create: PROFILE_SOUL_CREATE_IF_MISSING.includes(name),
+      append: allowAppend,
     })
     const state = profileSoulState(home, name)
     out.push({

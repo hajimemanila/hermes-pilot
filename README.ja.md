@@ -121,7 +121,8 @@ curl -s -H "x-client: mobile" \
 モデルに割り当て、失敗時にどこへ落とすか」の対応表は運用者のもので、Hermes プロファイル側（毎ターン読む
 短い契約は `~/.hermes/SOUL.md`、具体的な割当表はプロファイル自身の `SOUL.md` とメモリ）に置きます。この
 分離が、誰の環境にも入るプラグインでいるための条件です。`POST /api/pipeline/optimize` はマーカーブロックを
-`~/.hermes/SOUL.md` と、見つかった各 `~/.hermes/profiles/<name>/SOUL.md` へ冪等に書き込み（実行前に
+`~/.hermes/SOUL.md` と Pilot 用プロファイル `~/.hermes/profiles/mobile/SOUL.md` へ冪等に書き込み（それ以外の
+プロファイルは**マーカーが既にある SOUL だけ**を同期し、Pilot 未使用のプロファイルには触りません。実行前に
 `.bak-<stamp>` を退避）、`GET /api/pipeline/status` はファイルの中身を返さずにプロファイルごとの適用状況
 だけを返します。
 

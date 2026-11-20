@@ -293,7 +293,13 @@ test('optimizeProfileSouls はプロファイル配下の SOUL.md をバック�
     const afterFirst = fs.readFileSync(mobileSoul, 'utf8')
     assert.equal(countBlocks(afterFirst), 1)
     assert.ok(afterFirst.includes('- 人が書いた行'), '既存の行が消えた')
-    assert.match(fs.readFileSync(workSoul, 'utf8'), /hermes-pilot:a2b:end/, 'work プロファイルが同期されていない')
+    // 過干渉しない: Pilot を使っていない work プロファイルの SOUL は 1 文字も変えない
+    assert.equal(
+      fs.readFileSync(workSoul, 'utf8'),
+      '# WORK\n',
+      'Pilot 未使用のプロファイルの SOUL に追記している（過干渉）',
+    )
+    assert.equal(first.profiles.find((p) => p.name === 'work').mode, 'skipped')
 
     // 2 回目・3 回目は書き込みもバックアップもしない（1 タップ連打でファイルが増えない）
     const second = optimizeProfileSouls({ hermesHome, now })
@@ -378,5 +384,38 @@ test('A2B_RULES は英語（機械向け指示）で、CJK を含まない', () 
   // 機械トークンは ASCII のまま残す
   for (const token of ['`spec-architect`', '`quick-review`', 'needs_input', '`Mode: zero-stop`', '`npm run verify`']) {
     assert.ok(A2B_RULES.includes(token), `機械トークンが消えた: ${token}`)
+  }
+})
+
+
+test('Pilot 未使用プロファイルの SOUL には追記せず、明示指定と既マーカーだけ同期する', () => {
+  const home = tempHome()
+  try {
+    const hermesHome = path.join(home, '.hermes')
+    const workSoul = writeProfileSoul(hermesHome, 'work', '# WORK\n\n- 人の行\n')
+    const handoffSoul = writeProfileSoul(hermesHome, 'handoff', '# HANDOFF\n')
+
+    // 1) 既定（自動検出）: work / handoff には書かない
+    const r1 = optimizeProfileSouls({ hermesHome })
+    assert.equal(r1.profiles.find((p) => p.name === 'work').mode, 'skipped')
+    assert.equal(fs.readFileSync(workSoul, 'utf8'), '# WORK\n\n- 人の行\n')
+
+    // 2) 明示指定した名前だけは追記する（利用者が選んだ場合）
+    const r2 = optimizeProfileSouls({ hermesHome, profiles: ['handoff'] })
+    assert.equal(r2.profiles[0].mode, 'appended')
+    assert.match(fs.readFileSync(handoffSoul, 'utf8'), /hermes-pilot:a2b:end/)
+
+    // 3) 既にマーカーがある SOUL は、自動検出でも同期される（再適用・更新）
+    fs.writeFileSync(
+      workSoul,
+      `# WORK\n\n${A2B_START}\n古いブロック\n${A2B_END}\n`,
+      'utf8',
+    )
+    const r3 = optimizeProfileSouls({ hermesHome })
+    const work = r3.profiles.find((p) => p.name === 'work')
+    assert.equal(work.mode, 'replaced')
+    assert.equal(countBlocks(fs.readFileSync(workSoul, 'utf8')), 1)
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
   }
 })

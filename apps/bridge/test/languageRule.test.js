@@ -82,3 +82,21 @@ test('プロンプトを組む 2 モジュールが languageRule( を使って�
     )
   }
 })
+
+
+test('同梱 3 スキルは英語（機械向け）で、CJK を含まない', () => {
+  // 読み手はモデル。日本語の指示を混ぜると英語運用でも出力が日本語へ寄る（A2B_RULES と同じ理由）。
+  // 人が読む散文の言語は各スキルの `## Language` 節と language-rule.js が受け持つ。
+  const CJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]/
+  // 旧フォーマットの見出しは**パーサが受理する機械トークン**なので、記述のために残す
+  const LEGACY_TOKENS = ['【レビュー回答】', '【赤ペン回答】', '全体へのコメント:', '全体への赤ペン:']
+  for (const name of SKILLS) {
+    const file = path.join(REPO, 'skills', name, 'SKILL.md')
+    const text = fs.readFileSync(file, 'utf8')
+    const bad = text.split('\n')
+      .map((line, i) => [i + 1, line])
+      .map(([n, line]) => [n, LEGACY_TOKENS.reduce((acc, tok) => acc.split(tok).join(''), line)])
+      .filter(([, line]) => CJK.test(line))
+    assert.deepEqual(bad.slice(0, 3), [], `skills/${name}/SKILL.md に日本語が残っている`)
+  }
+})

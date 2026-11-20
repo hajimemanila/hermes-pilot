@@ -184,11 +184,17 @@ A2B は **2 つの正規ルート**だけを持ちます。どちらも外部 AI
 - **モデル割当の置き場所**: リポジトリではなく実機プロファイル。`~/.hermes/SOUL.md` は毎ターン読まれる
   ためマーカー内を短く保ち（「抽象ロールに従いプロファイルメモリの割当表を参照」）、具体的な
   ロール→モデル対応とフォールバック順は `~/.hermes/profiles/<name>/` 側の `SOUL.md`・メモリに置きます。
-- **プロファイル `SOUL.md` の同期**: `POST /api/pipeline/optimize` は `~/.hermes/SOUL.md` に加えて、
-  存在する `~/.hermes/profiles/<name>/SOUL.md` へもマーカーブロック（`<!-- hermes-pilot:a2b:start -->`〜
-  `end`）を冪等適用します（2 回適用しても 1 ブロック・タイムスタンプ付き `.bak-<stamp>` を事前退避）。
+- **SOUL への追記範囲（過干渉しない）**: `POST /api/pipeline/optimize` は
+  (1) `~/.hermes/SOUL.md` と (2) Pilot 用プロファイル `profiles/mobile/SOUL.md`（無ければ作成）に
+  マーカーブロック（`<!-- hermes-pilot:a2b:start -->`〜`end`）を冪等適用します。
+  **それ以外のプロファイルは、既にマーカーがある `SOUL.md` だけを同期**し、Pilot を一度も使っていない
+  プロファイルには 1 文字も書きません（明示的に `profiles: [...]` で指定したときだけ追記）。
+  書き込みはマーカー内のみ・内容が変わるときだけ・事前に `.bak-<stamp>` を 1 枚退避します。
   `GET /api/pipeline/status` は `profiles: [{ name, path, exists, applied, backups }]` を返し、
   ファイル本文は決して返しません。
+- **SOUL ブロックの言語**: ブロックは**英語**（読み手はモデルで、利用者向けの散文ではない）。
+  人が読む散文の言語はプロファイル設定と `language-rule.js`（`LANGUAGE_RULE_EN` / `JA`）が持ちます。
+  日本語で規範を読みたい場合は、マーカー外（同じ `SOUL.md` の他の節やメモリ）に書けば上書きされません。
 
 | メソッド | パス | 用途 |
 |---|---|---|
