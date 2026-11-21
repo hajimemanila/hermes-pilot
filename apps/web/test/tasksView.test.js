@@ -9,15 +9,22 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import {
+  archivedTaskCount,
+  archivableTasks,
+  bulkArchivePayload,
   collapseTaskEvents,
   coherenceBannerView,
   coherenceDismissRecord,
   coherenceSignature,
   eventKind,
+  isArchivedTask,
   normalizeCoherenceAlert,
+  organizeRowView,
   parseCoherenceDismissed,
+  selectableBrokenTasks,
   specPickerList,
   splitSpecsByArchive,
+  visibleTasks,
 } from '../src/lib/tasksView.js'
 
 /** 新しい順のイベント列を作る（`at` は降順）。 */
@@ -226,4 +233,62 @@ test('TasksPane は WAKE_SYNC・REFRESH_REPORTS・fresh 取得で Coherence バ�
   const src = fs.readFileSync(new URL('../src/features/TasksPane.jsx', import.meta.url), 'utf8')
   assert.match(src, /loadCoherence\(board,\s*\{\s*fresh:\s*true\s*\}\)/)
   assert.match(src, /HM_EVENTS\.REFRESH_REPORTS/)
+})
+
+/* ------------------------------------------------------------------ *
+ * D92 / RG-3: ゴミタスク整理の表示（純関数）
+ * ------------------------------------------------------------------ */
+
+const TASKS = [
+  { id: 't_1', status: 'running', failures: 0 },
+  { id: 't_2', status: 'blocked', failures: 0 },
+  { id: 't_3', status: 'failed', failures: 2 },
+  { id: 't_4', status: 'done', failures: 0 },
+  { id: 't_5', status: 'archived', failures: 0 },
+  { id: 't_6', status: 'ready', failures: 1 },
+]
+
+test('visibleTasks は既定でアーカイブを隠し、showArchived で戻す（順序は保つ）', () => {
+  assert.deepEqual(visibleTasks(TASKS).map((t) => t.id), ['t_1', 't_2', 't_3', 't_4', 't_6'])
+  assert.deepEqual(visibleTasks(TASKS, true).map((t) => t.id), TASKS.map((t) => t.id))
+  assert.deepEqual(visibleTasks(null), [])
+  // 元の配列は書き換えない
+  assert.equal(TASKS.length, 6)
+})
+
+test('isArchivedTask / archivedTaskCount は status とサーバ件数を見る', () => {
+  assert.equal(isArchivedTask({ status: 'archived' }), true)
+  assert.equal(isArchivedTask({ status: 'done' }), false)
+  assert.equal(isArchivedTask(null), false)
+  // サーバの件数（一覧の LIMIT で落ちた分も数えている）を優先する
+  assert.equal(archivedTaskCount(TASKS, 12), 12)
+  assert.equal(archivedTaskCount(TASKS, 0), 0)
+  // 旧ブリッジ（archivedCount 無し）は一覧から数える
+  assert.equal(archivedTaskCount(TASKS, null), 1)
+})
+
+test('archivableTasks は実行中とアーカイブ済みを選択肢から外す', () => {
+  assert.deepEqual(archivableTasks(TASKS).map((t) => t.id), ['t_2', 't_3', 't_4', 't_6'])
+})
+
+test('selectableBrokenTasks は失敗・停止のオープンだけを選ぶ（done は既定で外す）', () => {
+  assert.deepEqual(selectableBrokenTasks(TASKS), ['t_2', 't_3', 't_6'])
+  assert.deepEqual(selectableBrokenTasks(TASKS, { includeDone: true }), ['t_2', 't_3', 't_4', 't_6'])
+  // 実行中は failures>0 でも選ばない（止めずにアーカイブはできない）
+  assert.deepEqual(selectableBrokenTasks([{ id: 't_9', status: 'running', failures: 3 }]), [])
+})
+
+test('bulkArchivePayload は選択可能な ID だけを重複なく上限まで返す', () => {
+  assert.deepEqual(bulkArchivePayload(['t_1', 't_2', 't_2', 't_5', 't_3'], TASKS), ['t_2', 't_3'])
+  assert.deepEqual(bulkArchivePayload([], TASKS), [])
+  const many = Array.from({ length: 60 }, (_, i) => ({ id: `t_b${i}`, status: 'ready' }))
+  const picked = bulkArchivePayload(many.map((t) => t.id), many)
+  assert.equal(picked.length, 50, 'サーバの上限（50 件）で切る')
+})
+
+test('organizeRowView は選択状態と「押せない理由」を返す', () => {
+  assert.deepEqual(organizeRowView(TASKS[1], ['t_2']), { archivable: true, selected: true, reason: null })
+  assert.deepEqual(organizeRowView(TASKS[1], new Set()), { archivable: true, selected: false, reason: null })
+  assert.deepEqual(organizeRowView(TASKS[0], []), { archivable: false, selected: false, reason: 'running' })
+  assert.deepEqual(organizeRowView(TASKS[4], []), { archivable: false, selected: false, reason: 'archived' })
 })

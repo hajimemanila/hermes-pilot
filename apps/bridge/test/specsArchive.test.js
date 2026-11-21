@@ -70,17 +70,12 @@ test('完了済み歴史 SPEC は先頭 40 行で Status: archived を宣言す�
   assert.deepEqual(missing, [], `${missing.join(', ')} に \`- **Status**: archived\` が無い`)
 })
 
-test('アクティブ SPEC は specSprawlLimit 以下で、SPEC-COHERENCE はまだアクティブ', () => {
+test('アクティブ SPEC は specSprawlLimit 以下（全バッチ完了後のアーカイブ化を妨げない）', () => {
   if (!fs.existsSync(DOCS)) return
   const names = fs.readdirSync(DOCS).filter((n) => /^SPEC-.*\.md$/.test(n))
   const active = names.filter((n) => !declaresArchived(path.join(DOCS, n)))
   assert.ok(
     active.length <= SPEC_SPRAWL_LIMIT,
     `アクティブ SPEC が ${active.length} 件（上限 ${SPEC_SPRAWL_LIMIT}）: ${active.join(', ')}`,
-  )
-  // 進行中の横断仕様は全バッチ完了までアクティブのまま残す
-  assert.ok(
-    active.includes('SPEC-COHERENCE.md'),
-    'SPEC-COHERENCE.md は全バッチ完了までアクティブでなければならない',
   )
 })

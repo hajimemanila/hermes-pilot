@@ -31,7 +31,7 @@ import { createTelemetry } from './telemetry.js'
 import { createLive } from './live.js'
 import { createInbox } from './inbox.js'
 import { createRepos, normalizePath } from './repos.js'
-import { attachRunTaskIds, createSpecs, listSpecs, partitionSpecs, readRuns, readSpecContent, runsPathFor } from './specs.js'
+import { archiveSpec, attachRunTaskIds, createSpecs, listSpecs, partitionSpecs, readRuns, readSpecContent, runsPathFor } from './specs.js'
 import { analyzeCoherence } from './coherence.js'
 import { createArchitect } from './architect.js'
 import {
@@ -345,6 +345,12 @@ function resolveSpecRepo({ repoId = null, boardSlug = null } = {}) {
   }
 }
 
+/** 一括アーカイブで 1 回に受け付ける件数（D92）。UI 側の選択上限と揃える。 */
+const BULK_ARCHIVE_MAX = 50
+
+/** タスク ID の書式（`t_[0-9a-z]+`。カンバン本体・`inbox.js` と同じ規則）。 */
+const TASK_ID_RE = /^t_[0-9a-z]+$/i
+
 /**
  * 書き込み系の結果を返す（`ok === false` を HTTP 200 で返さない）。
  *
@@ -520,6 +526,27 @@ async function handleApi(req, res, url) {
         board: board || null,
         reports: readPipelineReports(cfg.reviewDir, { board, limit }),
       })
+    }
+    // POST /api/specs/archive { board?, repo?, path }
+    //   … SPEC のメタデータ部へ `- **Status**: archived` を追記して退避する（D92 / D84 互換）。
+    //     ファイルは消さない・移動しない（パスを維持するので既存リンクは壊れない）。
+    //     既にアーカイブ済みなら冪等 `{ ok: true, noop: true }`、`../` は 400。
+    if (b === 'archive' && req.method === 'POST') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendError(res, 429, 'RATE_LIMITED')
+      }
+      const body = await readJson(req)
+      const target = resolveSpecRepo({ repoId: body?.repo, boardSlug: body?.board })
+      if (!target) return sendError(res, 404, 'NOT_FOUND', { resource: 'repo' })
+      const out = archiveSpec(target.path, body?.path)
+      auth.audit({
+        kind: 'specs.archive',
+        repo: target.repo,
+        board: target.board ?? null,
+        path: out.path,
+        noop: Boolean(out.noop),
+      })
+      return sendJson(res, 200, { ...out, repo: target.repo, board: target.board ?? null })
     }
     if (b === 'launch' && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
@@ -803,7 +830,9 @@ async function handleApi(req, res, url) {
     if (b && c === 'tasks' && !d) {
       // 一覧は本文を載せない（1 件 1.5KB 平均 × 60 件で 90KB になり、モバイル回線で重い）。
       // 本文は詳細（/api/boards/:slug/tasks/:id）から取る。
+      // `archivedCount` は一覧の LIMIT と独立に数える（「アーカイブ済み (N)」の N。D92）。
       const list = kanban.tasks(b, { limit: Number(url.searchParams.get('limit') ?? 60), withBody: false })
+      const archivedCount = kanban.statusCounts(b).archivedCount
       // 履歴（kanban-sop）に記録があるタスクだけ git / Discord を添える
       const enriched = await Promise.all(
         list.map(async (t) => {
@@ -813,7 +842,72 @@ async function handleApi(req, res, url) {
           return { ...t, git: g, discord: dc }
         }),
       )
-      return sendJson(res, 200, { tasks: enriched })
+      return sendJson(res, 200, { tasks: enriched, archivedCount })
+    }
+    // POST /api/boards/:slug/tasks/bulk-archive { taskIds: [1..50], reason?, by? }
+    //   … 「整理モード」の一括アーカイブ（D92）。実行中のタスクは**止めずに**スキップして返す。
+    if (b && c === 'tasks' && d === 'bulk-archive' && req.method === 'POST') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendError(res, 429, 'RATE_LIMITED')
+      }
+      const body = await readJson(req)
+      const ids = Array.isArray(body?.taskIds)
+        ? body.taskIds.map((x) => String(x ?? '').trim()).filter(Boolean)
+        : []
+      if (!ids.length || ids.length > BULK_ARCHIVE_MAX) {
+        return sendError(res, 400, 'TASK_IDS_INVALID', { count: ids.length, max: BULK_ARCHIVE_MAX })
+      }
+      const bad = ids.filter((id) => !TASK_ID_RE.test(id))
+      if (bad.length) return sendError(res, 400, 'TASK_ID_INVALID', { ids: bad.slice(0, 10) })
+      const by = String(body?.by ?? 'mobile').slice(0, 40)
+      const lang = langOf(req, url)
+      const reason = String(
+        body?.reason ?? (lang === 'ja' ? 'ゴミ整理（一括アーカイブ）' : 'Cleanup (bulk archive)'),
+      ).slice(0, 200)
+      const known = new Map(kanban.tasks(b, { limit: 200, withBody: false }).map((t) => [t.id, t.status]))
+      const archived = []
+      const skippedRunning = []
+      const skippedArchived = []
+      const failed = []
+      for (const id of ids) {
+        let status = known.get(id) ?? null
+        if (status == null) {
+          try {
+            status = kanban.task(b, id).status
+          } catch {
+            failed.push({ id, code: 'TASK_NOT_FOUND' })
+            continue
+          }
+        }
+        if (status === 'running') {
+          skippedRunning.push(id)
+          continue
+        }
+        if (status === 'archived') {
+          skippedArchived.push(id)
+          continue
+        }
+        try {
+          const out = await inbox.close(b, id, 'cancel', reason, by, lang)
+          if (out?.status === 'archived') archived.push(id)
+          else if (out?.noop) skippedArchived.push(id)
+          else failed.push({ id, reason: 'not_closed' })
+        } catch (err) {
+          failed.push({ id, code: err?.code ?? 'CLOSE_FAILED' })
+        }
+      }
+      auth.audit({
+        kind: 'kanban.bulk_archive',
+        board: b,
+        requested: ids.length,
+        archived: archived.length,
+        skippedRunning: skippedRunning.length,
+        skippedArchived: skippedArchived.length,
+        failed: failed.length,
+        by,
+      })
+      if (archived.length) nudgeWatchers()
+      return sendJson(res, 200, { ok: true, board: b, archived, skippedRunning, skippedArchived, failed })
     }
     if (b && c === 'tasks' && d && e === 'diff' && req.method === 'GET') {
       const file = url.searchParams.get('file')

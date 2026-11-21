@@ -290,6 +290,18 @@ test('server.js は契約の全ルートを受け、handleApi の第 1 セグメ
   assert.match(SERVER_SRC, /b === 'from-image'/)
 })
 
+test('D92: ゴミ整理の 2 ルート（一括アーカイブ・SPEC 退避）はデモも答える', () => {
+  const bulk = matchApiRoute('POST', '/api/boards/mobile/tasks/bulk-archive')
+  assert.notEqual(bulk, null, 'bulk-archive が契約に無い')
+  assert.equal(bulk.demo, 'mocked')
+  assert.deepEqual(bulk.params, { board: 'mobile' })
+  const archive = matchApiRoute('POST', '/api/specs/archive')
+  assert.notEqual(archive, null, 'specs/archive が契約に無い')
+  assert.equal(archive.demo, 'mocked')
+  // 既存の詳細ルートを食っていない（静的セグメント優先）
+  assert.equal(matchApiRoute('GET', '/api/boards/mobile/tasks/t_9').pattern, '/api/boards/:board/tasks/:id')
+})
+
 test('D85: 行動契約とパイプライン提案文に検証コマンドの決め打ちが無い', () => {
   const contracts = Object.entries(MODE_CONTRACTS)
     .map(([mode, lines]) => `[${mode}]\n${lines.join('\n')}`)

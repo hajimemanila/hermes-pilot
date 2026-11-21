@@ -421,6 +421,33 @@ html[data-vibe='dopamine'] details.history-row[open] > .history-body {
   color: var(--muted);
 }
 
+/* バッチ行に添える「どのタスクが紐づいているか」（D92。done / archived / オープンは左の状態表示） */
+.history-task {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* SPEC のアーカイブ退避ボタン（履歴シート・MD プレビューの両方で同じ見た目） */
+.spec-archive-row,
+.spec-md-archive-row {
+  margin-top: 10px;
+}
+
+.spec-md-note {
+  margin: 6px 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.spec-md-archived {
+  display: inline-block;
+  padding: 3px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--text-dim);
+}
+
 .history-label {
   margin-top: 2px;
   font-size: 10.5px;

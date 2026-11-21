@@ -395,3 +395,86 @@ label.row-sub {
   margin-top: 2px;
 }
 
+
+/* ---------- ゴミタスク整理（SPEC-RELIABILITY-GUARD RG-3 / D92） ---------- */
+
+/* 一覧ヘッダの「整理」トグル。ON の間だけ行がチェックボックスになる */
+.organize-toggle {
+  color: var(--muted);
+}
+
+.organize-toggle.on {
+  color: var(--accent-2);
+  font-weight: 700;
+}
+
+/* 整理モードの操作帯（選択件数 → 全選択 → 解除 → 長押しで一括アーカイブ） */
+.organize-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 6px 0 10px;
+  padding: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.organize-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.organize-count {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.organize-head .link:disabled {
+  opacity: 0.5;
+}
+
+/* 行のチェックボックス（`SpecPicker` の `.spec-check` と同じ見た目に寄せる） */
+.organize-check {
+  flex: 0 0 auto;
+  font-size: 15px;
+  color: var(--accent-2);
+}
+
+/* アーカイブ済みの行（トグルを開いたときだけ出る）。沈めて「記録」だと分かるようにする */
+.row.is-archived .row-title {
+  color: var(--muted);
+}
+
+.row.is-archived .dot {
+  opacity: 0.5;
+}
+
+/* 整理モードで選べない行（実行中・アーカイブ済み） */
+.row.is-locked {
+  opacity: 0.55;
+}
+
+/* 一覧下部の「アーカイブ済み (N)」トグル（既定 OFF） */
+.archived-toggle {
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px;
+  /* タップ対象は 44px（WCAG 2.5.5）。実測 37px で audit:responsive が落ちた */
+  min-height: 44px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.archived-toggle.on {
+  border-style: solid;
+  border-color: var(--accent);
+  color: var(--accent-2);
+}

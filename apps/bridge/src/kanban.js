@@ -143,27 +143,35 @@ export function createKanban(cfg, deps = {}) {
    * `body` は Architect の `findJobReviewTask` が `[review]` の本文を読むために要る
    * （SPEC V7 §3.1①）。重い一覧（PWA のタスク一覧）だけは `withBody: false` で落とせる。
    *
+   * **アーカイブは別の LIMIT で引いてから merge する**（D92・SPEC-RELIABILITY-GUARD RG-3）。
+   * 1 本の `ORDER BY ... LIMIT 60` に混ぜると、古いアーカイブが新しいタスクを押し出して
+   * 「アーカイブ済み (N)」を開いても中身が出ない。表示側（`tasksView.js`）が既定で
+   * 隠すので、ここでは落とさない（Launchpad の `specProgress` が `archived` を見るため）。
+   *
    * @param {string} slug ボード
-   * @param {{limit?: number, statuses?: string[], withBody?: boolean}} [opts] オプション
+   * @param {{limit?: number, archivedLimit?: number, includeArchived?: boolean, withBody?: boolean}} [opts] オプション
    * @returns {Array<object>} タスク
    */
   function tasks(slug, opts = {}) {
     const limit = Math.min(Number(opts.limit ?? 60), 200)
+    const archivedLimit = Math.min(Number(opts.archivedLimit ?? 40), 200)
+    const includeArchived = opts.includeArchived !== false && archivedLimit > 0
     const withBody = opts.withBody !== false
     const db = new DatabaseSync(dbFor(slug), { readOnly: true })
     try {
       // 古い板の `tasks` に `body` 列が無くても落とさない（無ければ空文字）
       const bodyCol = hasColumn(db, 'tasks', 'body') ? 'body' : "'' AS body"
-      const rows = db
-        .prepare(
-          `SELECT id, title, ${bodyCol}, status, priority, assignee, created_at, started_at, completed_at,
+      const columns = `id, title, ${bodyCol}, status, priority, assignee, created_at, started_at, completed_at,
                   workspace_path, branch_name, worker_pid, last_heartbeat_at, result,
-                  consecutive_failures, session_id, current_step_key
-             FROM tasks
-            ORDER BY COALESCE(completed_at, started_at, created_at) DESC
-            LIMIT ?`,
-        )
+                  consecutive_failures, session_id, current_step_key`
+      const order = 'ORDER BY COALESCE(completed_at, started_at, created_at) DESC'
+      const openRows = db
+        .prepare(`SELECT ${columns} FROM tasks WHERE status <> 'archived' ${order} LIMIT ?`)
         .all(limit)
+      const archivedRows = includeArchived
+        ? db.prepare(`SELECT ${columns} FROM tasks WHERE status = 'archived' ${order} LIMIT ?`).all(archivedLimit)
+        : []
+      const rows = [...openRows, ...archivedRows].sort((a, b) => activityOf(b) - activityOf(a))
       return rows.map((r) => {
         const row = {
           id: r.id,
@@ -190,6 +198,25 @@ export function createKanban(cfg, deps = {}) {
     } finally {
       db.close()
     }
+  }
+
+  /**
+   * ステータス別件数（`archivedCount` の材料）。
+   *
+   * 一覧の LIMIT と独立に数えるので、アーカイブが 40 件を超えても
+   * 「アーカイブ済み (N)」の N は正しい。
+   *
+   * @param {string} slug ボード
+   * @returns {{counts: Record<string, number>, archivedCount: number}} 件数
+   */
+  function statusCounts(slug) {
+    const { counts } = countsFor(dbFor(slug))
+    return { counts, archivedCount: Number(counts?.archived ?? 0) }
+  }
+
+  /** 一覧の並び替えキー（SQL の `COALESCE(completed_at, started_at, created_at)` と同じ規則）。 */
+  function activityOf(r) {
+    return Number(r?.completed_at ?? r?.started_at ?? r?.created_at ?? 0)
   }
 
   /**
@@ -425,5 +452,5 @@ export function createKanban(cfg, deps = {}) {
     }
   }
 
-  return { boards, tasks, task, taskSession, abort, runningTasks }
+  return { boards, tasks, task, taskSession, abort, runningTasks, statusCounts }
 }

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { api } from '../api.js'
-import { Loader, Sheet, relTime } from './Ui.jsx'
+import { HoldButton, Loader, Sheet, relTime } from './Ui.jsx'
 import { haptic } from '../lib/haptic.js'
 import { renderMarkdown } from '../lib/markdown.js'
 import { useI18n } from '../i18n/index.js'
@@ -16,13 +16,17 @@ import { useI18n } from '../i18n/index.js'
  * Android の戻るでもこの 1 枚だけが閉じる。
  *
  * @param {{board?: string|null, repo?: string|null, path: string, title?: string|null,
- *          onClose: Function}} props 対象（`board` か `repo` のどちらかは必須）
+ *          onClose: Function, onArchived?: Function}} props 対象（`board` か `repo` のどちらかは必須）
  * @returns {any} シート
  */
-export function SpecMarkdownSheet({ board = null, repo = null, path, title = null, onClose }) {
+export function SpecMarkdownSheet({ board = null, repo = null, path, title = null, onClose, onArchived = null }) {
   const { t } = useI18n()
   const [state, setState] = useState({ loading: true, data: null, error: null })
   const [copied, setCopied] = useState(false)
+  // アーカイブ退避の結果（D92）。成功したら `spec-md-actions` から「退避」を消す。
+  const [archived, setArchived] = useState(false)
+  const [archiveBusy, setArchiveBusy] = useState(false)
+  const [note, setNote] = useState('')
 
   useEffect(() => {
     let alive = true
@@ -59,6 +63,32 @@ export function SpecMarkdownSheet({ board = null, repo = null, path, title = nul
   )
 
   const data = state.data
+
+  /**
+   * この仕様書をアーカイブへ退避する（`POST /api/specs/archive`・D92）。
+   *
+   * ファイルは消さない（ヘッダに `- **Status**: archived` を 1 行足すだけ）。
+   * 既にアーカイブ済みならサーバが `noop` を返すので、同じ文面で受ける。
+   */
+  const archiveSpec = useCallback(async () => {
+    if (!path || archiveBusy) return
+    setArchiveBusy(true)
+    try {
+      const r = await api('/api/specs/archive', {
+        method: 'POST',
+        body: { board, repo, path },
+      })
+      setArchived(true)
+      setNote(r?.noop ? t('tasks.specArchiveNoop') : t('tasks.specArchiveDone'))
+      onArchived?.(r)
+    } catch (e) {
+      setNote(e?.message || t('tasks.specArchiveFailed'))
+    } finally {
+      setArchiveBusy(false)
+    }
+  }, [archiveBusy, board, onArchived, path, repo, t])
+
+  const alreadyArchived = archived || data?.archived === true
 
   return (
     <Sheet title={t('tasks.specMdTitle')} onClose={onClose}>
@@ -98,6 +128,21 @@ export function SpecMarkdownSheet({ board = null, repo = null, path, title = nul
           {t('tasks.specMdBack')}
         </button>
       </div>
+      {/* 不要・テスト用 SPEC の退避（D92）。長押しの 1 操作でヘッダに 1 行足す */}
+      {alreadyArchived ? (
+        <div className="spec-md-note spec-md-archived">{t('tasks.specArchivedPill')}</div>
+      ) : (
+        <div className="spec-md-archive-row">
+          <HoldButton
+            label={t('tasks.specArchiveBtn')}
+            sub={t('tasks.specArchiveSub')}
+            tone="danger"
+            disabled={archiveBusy || !data?.markdown}
+            onFire={archiveSpec}
+          />
+        </div>
+      )}
+      {note ? <div className="spec-md-note">{note}</div> : null}
       {data?.truncated ? <div className="spec-md-warn">{t('tasks.specMdTruncated')}</div> : null}
       <div className="spec-md-body">
         {state.loading ? <Loader label={t('tasks.specMdLoading')} /> : null}

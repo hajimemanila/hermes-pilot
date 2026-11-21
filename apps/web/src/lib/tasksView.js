@@ -216,3 +216,127 @@ export function specPickerList(parts, showArchived = false) {
     (a, b) => Number(b?.mtime ?? 0) - Number(a?.mtime ?? 0) || String(a?.path ?? '').localeCompare(String(b?.path ?? '')),
   )
 }
+
+/* ------------------------------------------------------------------------- */
+/* ゴミタスク整理（SPEC-RELIABILITY-GUARD RG-3 / D92）                        */
+/* ------------------------------------------------------------------------- */
+
+/** 一括アーカイブ（`POST .../tasks/bulk-archive`）で 1 回に送れる件数の上限。サーバと同値。 */
+export const BULK_ARCHIVE_MAX = 50
+
+/**
+ * アーカイブ済みか（`status === 'archived'`）。
+ *
+ * @param {{status?: string}|null|undefined} task タスク
+ * @returns {boolean} アーカイブ済みなら true
+ */
+export function isArchivedTask(task) {
+  return String(task?.status ?? '') === 'archived'
+}
+
+/**
+ * 一覧に出すタスク（既定はアーカイブを隠す）。
+ *
+ * 並びはサーバの返した順（更新の新しい順）をそのまま保つ。絞り込むだけで並べ替えない。
+ *
+ * @param {Array<object>} [tasks] タスク一覧（アーカイブを含んでよい）
+ * @param {boolean} [showArchived] 「アーカイブ済み (N)」が ON か
+ * @returns {Array<object>} 表示するタスク
+ */
+export function visibleTasks(tasks = [], showArchived = false) {
+  const list = Array.isArray(tasks) ? tasks.filter(Boolean) : []
+  if (showArchived) return list
+  return list.filter((t) => !isArchivedTask(t))
+}
+
+/**
+ * アーカイブ済みの件数。
+ *
+ * サーバが `archivedCount` を返すときはそちらを優先する（一覧の LIMIT で
+ * 落ちた分も数えているため）。返さない旧ブリッジでは一覧から数える。
+ *
+ * @param {Array<object>} [tasks] タスク一覧
+ * @param {number|null} [serverCount] `GET /api/boards/:board/tasks` の `archivedCount`
+ * @returns {number} 件数
+ */
+export function archivedTaskCount(tasks = [], serverCount = null) {
+  const n = serverCount == null || serverCount === '' ? NaN : Number(serverCount)
+  if (Number.isFinite(n) && n >= 0) return n
+  return (Array.isArray(tasks) ? tasks : []).filter((t) => isArchivedTask(t)).length
+}
+
+/**
+ * 整理モードで選択できるタスク（実行中とアーカイブ済みは選択させない）。
+ *
+ * 実行中を選べてもサーバがスキップするだけなので、**押せないのに何も起きない**
+ * ボタンを作らないために先に外す。
+ *
+ * @param {Array<object>} [tasks] タスク一覧
+ * @returns {Array<object>} 選択可能なタスク
+ */
+export function archivableTasks(tasks = []) {
+  return (Array.isArray(tasks) ? tasks : []).filter(
+    (t) => t && t.status !== 'running' && !isArchivedTask(t),
+  )
+}
+
+/**
+ * 「失敗・停止の開いているタスク」をまとめて選ぶ補助（整理モードの全選択）。
+ *
+ * 対象: `blocked` / `failed`、または失敗回数が 1 以上のオープンタスク。
+ * `done`（完了済みの記録）は既定では選ばない — 消したいのは大概こちらではなく
+ * 失敗して止まったテスト起票だから。ただし `includeDone` で含められる。
+ *
+ * @param {Array<object>} [tasks] タスク一覧
+ * @param {{includeDone?: boolean}} [opts] 追加条件
+ * @returns {string[]} タスク ID（重複なし・入力順）
+ */
+export function selectableBrokenTasks(tasks = [], opts = {}) {
+  const includeDone = Boolean(opts?.includeDone)
+  const out = []
+  for (const t of archivableTasks(tasks)) {
+    const status = String(t?.status ?? '')
+    if (!includeDone && status === 'done') continue
+    const broken =
+      status === 'blocked' || status === 'failed' || Number(t?.failures ?? 0) > 0 || (includeDone && status === 'done')
+    if (broken && t?.id && !out.includes(t.id)) out.push(t.id)
+  }
+  return out
+}
+
+/**
+ * 選択の要約（サーバに送る `taskIds` を作る）。
+ *
+ * 未知の ID・上限超過は落とし、件数は `BULK_ARCHIVE_MAX` で切る
+ * （サーバが 400 を返す前に UI 側で整える）。
+ *
+ * @param {Iterable<string>|Array<string>} selected 選択中の ID
+ * @param {Array<object>} [tasks] タスク一覧（選択可能かの判定に使う）
+ * @returns {string[]} 送る ID（選択順）
+ */
+export function bulkArchivePayload(selected, tasks = []) {
+  const ok = new Set(archivableTasks(tasks).map((t) => t.id))
+  const out = []
+  for (const id of selected ?? []) {
+    const s = String(id ?? '').trim()
+    if (!s || !ok.has(s) || out.includes(s)) continue
+    out.push(s)
+    if (out.length >= BULK_ARCHIVE_MAX) break
+  }
+  return out
+}
+
+/**
+ * 整理モードの 1 行分の見え方（チェックボックス・押せるか）。
+ *
+ * @param {object} task タスク
+ * @param {Set<string>|Array<string>} [selected] 選択中の ID
+ * @returns {{archivable: boolean, selected: boolean, reason: string|null}} 行の状態
+ * @throws なし
+ */
+export function organizeRowView(task, selected = []) {
+  const set = selected instanceof Set ? selected : new Set(Array.isArray(selected) ? selected : [])
+  const archivable = archivableTasks([task]).length === 1
+  const reason = archivable ? null : isArchivedTask(task) ? 'archived' : 'running'
+  return { archivable, selected: Boolean(task?.id) && set.has(task.id), reason }
+}

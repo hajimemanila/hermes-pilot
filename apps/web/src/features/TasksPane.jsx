@@ -27,8 +27,15 @@ import {
   coherenceBannerView,
   coherenceDismissRecord,
   collapseTaskEvents,
+  archivedTaskCount,
+  archivableTasks,
+  bulkArchivePayload,
+  isArchivedTask,
+  organizeRowView,
+  selectableBrokenTasks,
   specPickerList,
   splitSpecsByArchive,
+  visibleTasks,
 } from '../lib/tasksView.js'
 import { HM_STORAGE } from '../contracts/storage.js'
 import { WorkerFeed } from './ReviewPane.jsx'
@@ -258,6 +265,14 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
   })
   // Launchpad の「Show archived (N)」トグル（既定 OFF＝アクティブ SPEC だけ。D84）
   const [specShowArchived, setSpecShowArchived] = useState(false)
+  // タスク一覧の「アーカイブ済み (N)」トグルと整理モード（SPEC-RELIABILITY-GUARD RG-3 / D92）。
+  // 既定はどちらも OFF（アーカイブは隠す・整理モードは通常の一覧）。
+  const [showArchivedTasks, setShowArchivedTasks] = useState(false)
+  const [organize, setOrganize] = useState(false)
+  const [organizeSel, setOrganizeSel] = useState([])
+  const [organizeBusy, setOrganizeBusy] = useState(false)
+  // `archivedCount` はサーバの値をそのまま持つ（一覧の LIMIT で落ちた分も数えている）
+  const [archivedTaskTotal, setArchivedTaskTotal] = useState(null)
 
   useEffect(() => {
     if (!taskToolRequest) return
@@ -391,6 +406,8 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
         const d = await api(`/api/boards/${encodeURIComponent(slug)}/tasks?limit=60`)
         const list = d.tasks ?? []
         setTasks(list)
+        // 「アーカイブ済み (N)」の N はサーバの件数を使う（一覧の LIMIT より正確・D92）。
+        setArchivedTaskTotal(Number.isFinite(Number(d.archivedCount)) ? Number(d.archivedCount) : null)
         // 未完了タスクが減った（完了へ抜けた）瞬間に完了報告と Architect 進行バーを即時更新する
         const openCount = list.filter((x) =>
           ['running', 'ready', 'todo', 'blocked'].includes(String(x?.status ?? '')),
@@ -414,6 +431,39 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     },
     [notify, loadArchitectJobs],
   )
+
+  /**
+   * 整理モードの一括アーカイブ（SPEC-RELIABILITY-GUARD RG-3 / D92）。
+   *
+   * 選択は `bulkArchivePayload()` で「選択可能なタスク」に絞ってから送る
+   * （実行中はサーバもスキップするが、UI 側でも押せない対象は送らない）。
+   */
+  const bulkArchiveSelected = async () => {
+    if (!board) return
+    const ids = bulkArchivePayload(organizeSel, tasks)
+    if (!ids.length) {
+      notify(t('tasks.organizeNone'))
+      return
+    }
+    setOrganizeBusy(true)
+    try {
+      const r = await api(`/api/boards/${encodeURIComponent(board)}/tasks/bulk-archive`, {
+        method: 'POST',
+        // 理由はカンバンのコメントに残るので UI 言語で書く（英語 UI に日本語を残さない）
+        body: { taskIds: ids, reason: lang === 'ja' ? 'ゴミ整理' : 'Cleanup', by: 'mobile' },
+      })
+      const archived = Array.isArray(r?.archived) ? r.archived.length : 0
+      const skippedRunning = Array.isArray(r?.skippedRunning) ? r.skippedRunning.length : 0
+      notify(t('tasks.organizeArchived', { n: archived, running: skippedRunning }))
+      setOrganizeSel([])
+      emitHmEvent(HM_EVENTS.WAKE_SYNC)
+      await loadTasks(board)
+    } catch (e) {
+      notify(e.message)
+    } finally {
+      setOrganizeBusy(false)
+    }
+  }
 
   useEffect(() => {
     loadBoards()
@@ -1046,6 +1096,11 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
   const mem = overview?.system?.memory
   const disk = overview?.system?.disk
   const running = tasks.filter((task) => task.status === 'running').length
+  // タスク一覧の表示（D92）: 既定はアーカイブを隠し、N はサーバの件数を優先する。
+  const archivedShown = archivedTaskCount(tasks, archivedTaskTotal)
+  const shownTasks = visibleTasks(tasks, showArchivedTasks)
+  const organizeTargets = archivableTasks(tasks)
+  const brokenSelection = selectableBrokenTasks(tasks)
   const paused = overview?.paused ?? { engaged: false }
   // >=680px は 2 ペイン（詳細をシートではなく右ペインに出す。SPEC-i18n-resp §2 B3）
   // 境界は lib/layout.js の 1 箇所だけ（CSS の @media と一致させる）
@@ -1139,6 +1194,27 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
         runTaskIds: next?.runTaskIds ?? null,
       })
       setSpecSel(unfiledBatchIds(prog, next.batches ?? []))
+    }
+  }
+
+  /**
+   * SPEC をアーカイブへ退避する（`POST /api/specs/archive`・D92）。
+   *
+   * ファイルは消さない。ヘッダに `- **Status**: archived` が 1 行足されるだけで、
+   * Launchpad の「アーカイブ済み」側へ移る（既にアーカイブ済みなら `noop`）。
+   */
+  const archiveCurrentSpec = async (spec = null) => {
+    const target = spec ?? currentSpec
+    if (!target?.path || !board) return
+    try {
+      const r = await api('/api/specs/archive', {
+        method: 'POST',
+        body: { board, repo: specsInfo?.repo ?? null, path: target.path },
+      })
+      notify(r?.noop ? t('tasks.specArchiveNoop') : t('tasks.specArchiveDone'))
+      await loadSpecs(board)
+    } catch (e) {
+      notify(e?.message || t('tasks.specArchiveFailed'))
     }
   }
 
@@ -1774,7 +1850,10 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
                       {b.objective ? <span className="row-sub">{b.objective.slice(0, 140)}</span> : null}
                     </span>
                     {filed ? (
-                      <span className="spec-taken">{t(taken ? 'tasks.specAlready' : 'tasks.specFiledDone')}</span>
+                      <span className="spec-taken">
+                        {t(taken ? 'tasks.specAlready' : 'tasks.specFiledDone')}
+                        {specProg.byId.get(b.id)?.id ? ` · ${specProg.byId.get(b.id).id}` : ''}
+                      </span>
                     ) : null}
                   </button>
                   <button
@@ -1881,6 +1960,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
                     <div className="history-head">
                       <ModePill batch={b} t={t} />
                       <span className="history-state-in">{stateText}</span>
+                      {task ? <span className="history-task">{t('tasks.specTaskId', { id: task.id })}</span> : null}
                       {when ? <span className="history-when">{when}</span> : null}
                     </div>
                     {b.objective ? (
@@ -1936,6 +2016,17 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
               {t('tasks.specOpenLaunch')}
             </button>
           )}
+          {/* 不要・テスト用 SPEC の退避（D92）。ファイルは消さず、ヘッダに 1 行足すだけ */}
+          {currentSpec && !currentSpec.archived ? (
+            <div className="spec-archive-row">
+              <HoldButton
+                label={t('tasks.specArchiveBtn')}
+                sub={t('tasks.specArchiveSub')}
+                tone="danger"
+                onFire={() => archiveCurrentSpec(currentSpec)}
+              />
+            </div>
+          ) : null}
           <div className="row-sub" style={{ padding: '8px 4px', lineHeight: 1.6 }}>
             {t('tasks.specHistoryNote')}
           </div>
@@ -1966,6 +2057,19 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
           >
             {t('tasks.newTask')}
           </button>
+          {/* 整理モードの入り口（D92）。ON の間は行がチェックボックスになる */}
+          <button
+            className={`link organize-toggle${organize ? ' on' : ''}`}
+            aria-pressed={organize}
+            onClick={() => {
+              haptic('tap')
+              const next = !organize
+              setOrganize(next)
+              if (!next) setOrganizeSel([])
+            }}
+          >
+            {organize ? t('tasks.organizeExit') : t('tasks.organize')}
+          </button>
           <RefreshButton variant="link" onRefresh={refreshAll} />
         </span>
       </div>
@@ -1973,16 +2077,74 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
       {loading ? <Loader label={t('common.loading')} /> : null}
       {!loading && !tasks.length ? <div className="empty">{t('tasks.empty')}</div> : null}
 
+      {/* 整理モードの操作帯: 失敗・停止の全選択 → 長押しで一括アーカイブ */}
+      {organize ? (
+        <div className="organize-bar">
+          <div className="organize-head">
+            <span className="organize-count">{t('tasks.organizeSelected', { n: organizeSel.length })}</span>
+            <button
+              type="button"
+              className="link"
+              disabled={!brokenSelection.length}
+              onClick={() => {
+                haptic('tap')
+                setOrganizeSel((cur) => [...new Set([...cur, ...brokenSelection])])
+              }}
+            >
+              {t('tasks.organizeSelectBroken', { n: brokenSelection.length })}
+            </button>
+            <button
+              type="button"
+              className="link"
+              disabled={!organizeSel.length}
+              onClick={() => {
+                haptic('tap')
+                setOrganizeSel([])
+              }}
+            >
+              {t('tasks.organizeClear')}
+            </button>
+          </div>
+          <div className="hold-grid">
+            <HoldButton
+              label={t('tasks.organizeArchive', { n: organizeSel.length })}
+              sub={t('tasks.organizeHint')}
+              tone="danger"
+              disabled={organizeBusy || !organizeSel.length || !organizeTargets.length}
+              onFire={bulkArchiveSelected}
+            />
+          </div>
+        </div>
+      ) : null}
+
       <div className="list">
-        {tasks.map((task) => (
+        {shownTasks.map((task) => {
+          const row = organizeRowView(task, organizeSel)
+          const archived = isArchivedTask(task)
+          const cls = ['row', archived ? 'is-archived' : '', row.selected ? 'on' : '', organize && !row.archivable ? 'is-locked' : '']
+            .filter(Boolean)
+            .join(' ')
+          return (
           <button
             key={task.id}
-            className="row"
+            className={cls}
+            aria-pressed={organize ? row.selected : undefined}
             onClick={() => {
               haptic('tap')
+              // 整理モードでは「選択」、通常は「詳細」。実行中・アーカイブ済みは選べない
+              if (organize) {
+                if (!row.archivable) return
+                setOrganizeSel((cur) => (cur.includes(task.id) ? cur.filter((x) => x !== task.id) : [...cur, task.id]))
+                return
+              }
               openTask(task)
             }}
           >
+            {organize ? (
+              <span className="spec-check organize-check" aria-hidden="true">
+                {row.selected ? '☑' : '☐'}
+              </span>
+            ) : null}
             <span className={`dot ${task.status}`} />
             <span className="row-main">
               <span className="row-title">{task.title}</span>
@@ -2024,8 +2186,28 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
             </span>
             <Icon name="chevron" size={16} />
           </button>
-        ))}
+          )
+        })}
       </div>
+
+      {/* 「アーカイブ済み (N)」トグル（既定 OFF・D92）。N はサーバの `archivedCount` */}
+      {archivedShown > 0 ? (
+        <button
+          type="button"
+          className={`archived-toggle${showArchivedTasks ? ' on' : ''}`}
+          aria-pressed={showArchivedTasks}
+          onClick={() => {
+            haptic('tap')
+            setShowArchivedTasks((v) => !v)
+          }}
+        >
+          {t('tasks.archivedToggle', { n: archivedShown })}
+          {showArchivedTasks ? ' ✓' : ''}
+        </button>
+      ) : null}
+      {showArchivedTasks && archivedShown > 0 && !tasks.some(isArchivedTask) ? (
+        <div className="empty">{t('tasks.archivedEmpty')}</div>
+      ) : null}
 
       <button className="kill-open" onClick={() => setKillOpen(true)}>
         <Icon name="bolt" size={18} />

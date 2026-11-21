@@ -123,6 +123,20 @@ export const API_ROUTES = [
 
   // --- 実行制御（緊急停止）--------------------------------------------------
   { method: 'POST', pattern: '/api/gateway/:action', demo: 'mocked', note: 'pause / resume / その他ゲートウェイ操作' },
+
+  // --- ゴミ整理（D92・SPEC-RELIABILITY-GUARD RG-3）---------------------------
+  {
+    method: 'POST',
+    pattern: '/api/boards/:board/tasks/bulk-archive',
+    demo: 'mocked',
+    note: '一括アーカイブ（running はスキップ）',
+  },
+  {
+    method: 'POST',
+    pattern: '/api/specs/archive',
+    demo: 'mocked',
+    note: 'SPEC をヘッダ追記でアーカイブ退避（ファイルは消さない）',
+  },
   {
     method: 'POST',
     pattern: '/api/emergency/stop-all',
