@@ -1189,4 +1189,17 @@ test('D92: SPEC 退避は冪等で、アクティブ一覧からアーカイブ�
   const outside = await demoFetch('/api/specs/archive', { method: 'POST', body: { path: '../SPEC-NOPE.md' } })
   assert.equal(outside.ok, false)
   assert.equal(outside.code, 'SPEC_PATH_OUTSIDE', 'リポジトリの外は拒否')
+
+  // アーカイブした SPEC は未起票通知 (`GET /api/architect/jobs` の pending) からも消える
+  const jobsAfter = await demoFetch('/api/architect/jobs?board=mobile')
+  assert.equal(
+    jobsAfter.pending.some((p) => p.path === target),
+    false,
+    '退避した SPEC が pending に残らない',
+  )
+  assert.equal(
+    jobsAfter.pending.some((p) => p.path.startsWith('docs/SPEC-DEMO-V3')),
+    false,
+    '最初から archived の過去 SPEC も pending に出さない',
+  )
 })

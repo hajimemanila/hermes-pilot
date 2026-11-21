@@ -1550,7 +1550,8 @@ export function demoArchitectJobs(board = DEMO_BOARD) {
       launchedCount: j.launched?.created?.length ?? 0,
     }))
   const pending = []
-  for (const spec of currentSpecs(state.now)) {
+  for (const spec of demoSpecsWithArchive(state.now)) {
+    if (!spec || spec.archived) continue
     // 未起票の判定は SPEC スコープで行う（別 SPEC の同名バッチを「起票済み」にしない・D91）。
     const filed = filedBatchIdsForSpec(state.tasks, spec.path, { specMtime: spec.mtime })
     const ids = spec.batches.map((b) => b.id).filter((id) => !filed.has(id))

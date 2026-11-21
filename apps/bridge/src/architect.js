@@ -779,6 +779,7 @@ export function filedBatchIds(tasks) {
 export function pendingSpecs(specs, tasks) {
   const out = []
   for (const spec of Array.isArray(specs) ? specs : []) {
+    if (!spec || spec.archived) continue
     const batches = (spec?.batches ?? []).filter((b) => b?.id)
     if (!batches.length) continue
     const filed = filedBatchIdsForSpec(tasks, spec.path, { specMtime: Number(spec.mtime ?? 0) })

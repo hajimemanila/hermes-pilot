@@ -673,7 +673,7 @@ export function archiveSpec(repoPath, specRelPath) {
   // 見出し（`# SPEC: …`）の直後へ入れる。見出しが無いファイルは先頭に入れる。
   // どちらも先頭 40 行の内側なので `extractSpecStatus()` が次回から読める。
   const headEnd = lines.findIndex((line, i) => i > 0 && line.trim() === '')
-  const insertAt = lines.length && /^#\s/.test(lines[0]) ? Math.min(Math.max(headEnd + 1, 1), 40) : 0
+  const insertAt = lines.length && /^#\s/.test(lines[0]) ? Math.min(Math.max(headEnd + 1, 1), 39) : 0
   const next = [...lines.slice(0, insertAt), SPEC_ARCHIVE_LINE, ...lines.slice(insertAt)]
 
   const tmp = `${abs}.tmp`

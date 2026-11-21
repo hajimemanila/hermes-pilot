@@ -112,17 +112,25 @@ export function redact(text, secret) {
   return value.split(s).join('<redacted>')
 }
 
-/** Run one child process without a shell. */
+/** Run one child process without a shell (swallow sync spawn EPERM in sandboxes). */
 function run(bin, args, timeout) {
   return new Promise((resolve) => {
-    execFile(
-      bin,
-      args,
-      { timeout, maxBuffer: 2_000_000, env: { ...process.env, PATH: buildAugmentedPath() } },
-      (err, stdout, stderr) => {
-        resolve({ code: err ? (typeof err.code === 'number' ? err.code : 1) : 0, out: `${stdout ?? ''}${stderr ?? ''}` })
-      },
-    )
+    try {
+      execFile(
+        bin,
+        args,
+        { timeout, maxBuffer: 2_000_000, env: { ...process.env, PATH: buildAugmentedPath() } },
+        (err, stdout, stderr) => {
+          resolve({
+            code: err ? (typeof err.code === 'number' ? err.code : 1) : 0,
+            out: `${stdout ?? ''}${stderr ?? ''}`,
+            ...(err ? { error: err } : {}),
+          })
+        },
+      )
+    } catch (err) {
+      resolve({ code: 1, out: '', error: err })
+    }
   })
 }
 
@@ -208,8 +216,9 @@ function push(results, name, status, detail) {
 export async function checkCli({ bin, timeout }) {
   const results = []
   const help = await run(bin, ['--help'], timeout)
-  if (help.code !== 0 && !help.out.trim()) {
-    push(results, 'cli:hermes-help', 'skip', 'hermes CLI not found on PATH')
+  if (help.error?.code === 'EPERM' || (help.code !== 0 && !help.out.trim())) {
+    const detail = help.error?.code === 'EPERM' ? 'hermes CLI spawn not permitted in this sandbox' : 'hermes CLI not found on PATH'
+    push(results, 'cli:hermes-help', 'skip', detail)
     return results
   }
   const helpOk = help.code === 0 && /\bkanban\b/.test(help.out)
@@ -217,6 +226,10 @@ export async function checkCli({ bin, timeout }) {
 
   if (!helpOk) return results
   const kanbanHelp = await run(bin, ['kanban', '--help'], timeout)
+  if (kanbanHelp.error?.code === 'EPERM') {
+    push(results, 'cli:kanban-help', 'skip', 'hermes CLI spawn not permitted in this sandbox')
+    return results
+  }
   const missing = CLI_SUBCOMMANDS.filter((sub) => !new RegExp(`\\b${sub}\\b`).test(kanbanHelp.out))
   push(
     results,

@@ -14,6 +14,7 @@ import { readSnippetBars, subscribeSnippetBars } from '../lib/snippetBars.js'
 import { MissionReceiptSheet } from './MissionReceiptSheet.jsx'
 import { SpecSeedSheet } from './SpecSeedSheet.jsx'
 import { SpecReadyBanner } from '../components/SpecReadyBanner.jsx'
+import { SpecMarkdownSheet } from '../components/SpecMarkdownSheet.jsx'
 import { ArchitectJobBar } from '../components/ArchitectJobBar.jsx'
 import { jobPollMs, pickActiveArchitectJob, pickSpecBanner } from '../lib/specSeed.js'
 import { celebrate } from '../lib/vibe.js'
@@ -375,6 +376,26 @@ export function ChatPane({
       }
     },
     [seedBoard, specFiling, sid, notify, t, loadSpecJobs],
+  )
+
+  /** バナーや MD プレビューから未起票 SPEC をアーカイブ退避する（D92）。 */
+  const archiveSpecBanner = useCallback(
+    async (banner) => {
+      if (!banner?.path) return
+      try {
+        const targetBoard = banner?.board ?? (seedBoard || null)
+        const targetRepo = banner?.board && banner.board !== seedBoard ? null : (repo?.id ?? null)
+        const r = await api('/api/specs/archive', {
+          method: 'POST',
+          body: { board: targetBoard, repo: targetRepo, path: banner.path },
+        })
+        notify(r?.noop ? t('tasks.specArchiveNoop') : t('tasks.specArchiveDone'))
+        await loadSpecJobs()
+      } catch (e) {
+        notify(e?.message ?? t('tasks.specArchiveFailed'))
+      }
+    },
+    [seedBoard, repo?.id, notify, t, loadSpecJobs],
   )
 
   /** state.db のツール実行履歴を会話ブロックへ復元する（再接続・切替後も足跡を残す）。 */
@@ -2352,6 +2373,7 @@ export function ChatPane({
         onFile={fileSpecBatches}
         onDismiss={(b) => setSpecDismissed((prev) => [...prev, b.path])}
         onPreview={(b) => setSpecMd({ path: b.path, title: b.title, board: b.board ?? null })}
+        onArchive={archiveSpecBanner}
       />
     </>
   )
@@ -2662,6 +2684,18 @@ export function ChatPane({
           notify={notify}
           onClose={() => setSeedOpen(false)}
           onSeeded={() => loadSpecJobs()}
+        />
+      ) : null}
+
+      {/* 仕様書(MD)プレビュー（SPEC-PILOT-V6 §3.4 ② / D30）。バナーと同じ 1 枚をここでも開く */}
+      {specMd ? (
+        <SpecMarkdownSheet
+          board={specMd.board ?? (seedBoard || null)}
+          repo={specMd.board && specMd.board !== seedBoard ? null : (repo?.id ?? null)}
+          path={specMd.path}
+          title={specMd.title}
+          onClose={() => setSpecMd(null)}
+          onArchived={() => loadSpecJobs()}
         />
       ) : null}
 

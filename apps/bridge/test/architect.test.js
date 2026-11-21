@@ -1401,3 +1401,28 @@ test('親 [ARCH] が done でも別タスクの [review] が blocked / ready / r
   snap = await arch.jobs({ board: 'demo' })
   assert.equal(snap.jobs.length, 0)
 })
+
+test('pendingSpecs は archived: true の過去 SPEC を mtime が新しくても未起票通知に出さない', () => {
+  const specs = [
+    {
+      path: 'docs/SPEC-PILOT-V9.md',
+      title: 'Pilot V9',
+      mtime: 50_000,
+      archived: true,
+      batches: [{ id: 'D42' }],
+    },
+    {
+      path: 'docs/SPEC-ACTIVE.md',
+      title: 'Active Spec',
+      mtime: 40_000,
+      archived: false,
+      batches: [{ id: 'ACT-1' }],
+    },
+  ]
+  const tasks = [{ id: 't_old', title: '[D42] Old legacy task', status: 'done', createdAt: 10_000 }]
+  const out = pendingSpecs(specs, tasks)
+  assert.deepEqual(
+    out.map((s) => s.path),
+    ['docs/SPEC-ACTIVE.md'],
+  )
+})

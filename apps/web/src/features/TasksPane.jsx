@@ -265,6 +265,9 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
   })
   // Launchpad の「Show archived (N)」トグル（既定 OFF＝アクティブ SPEC だけ。D84）
   const [specShowArchived, setSpecShowArchived] = useState(false)
+  // バッチ履歴ドロワーは過去分もすぐ参照できるよう、既定でアーカイブ済みも表示する
+  const [historyShowArchived, setHistoryShowArchived] = useState(true)
+  const [historySpecPath, setHistorySpecPath] = useState(null)
   // タスク一覧の「アーカイブ済み (N)」トグルと整理モード（SPEC-RELIABILITY-GUARD RG-3 / D92）。
   // 既定はどちらも OFF（アーカイブは隠す・整理モードは通常の一覧）。
   const [showArchivedTasks, setShowArchivedTasks] = useState(false)
@@ -450,7 +453,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
       const r = await api(`/api/boards/${encodeURIComponent(board)}/tasks/bulk-archive`, {
         method: 'POST',
         // 理由はカンバンのコメントに残るので UI 言語で書く（英語 UI に日本語を残さない）
-        body: { taskIds: ids, reason: lang === 'ja' ? 'ゴミ整理' : 'Cleanup', by: 'mobile' },
+        body: { taskIds: ids, reason: t('tasks.organizeReason'), by: 'mobile' },
       })
       const archived = Array.isArray(r?.archived) ? r.archived.length : 0
       const skippedRunning = Array.isArray(r?.skippedRunning) ? r.skippedRunning.length : 0
@@ -1132,6 +1135,13 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
       .map(([id]) => id),
   )
   const specAllDone = specProg.allDone
+  const historySpecList = specPickerList(specParts, historyShowArchived)
+  const historySpec =
+    historySpecList.find((s) => s.path === historySpecPath) ?? currentSpec ?? historySpecList[0] ?? null
+  const historyProg = specProgress(historySpec?.batches ?? [], tasks, historySpec?.path, {
+    specMtime: historySpec?.mtime ?? null,
+    runTaskIds: historySpec?.runTaskIds ?? null,
+  })
   /**
    * 起票シートで既定選択する（＝まだ起票していない）バッチ ID。
    *
@@ -1167,10 +1177,12 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     setSpecSheetOpen(true)
   }
 
-  /** 全バッチ完了後の履歴シートを開く（Q3=A）。 */
+  /** 全バッチ完了後の履歴シートを開く（Q3=A）。過去 SPEC もすぐ参照できるようアーカイブも開く。 */
   const openSpecHistory = () => {
-    if (!currentSpec) return
+    if (!currentSpec && !historySpecList.length) return
     haptic('tap')
+    setHistorySpecPath(currentSpec?.path ?? null)
+    setHistoryShowArchived(true)
     setSpecPickerOpen(false)
     setSpecHistoryOpen(true)
   }
@@ -1212,7 +1224,22 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
         body: { board, repo: specsInfo?.repo ?? null, path: target.path },
       })
       notify(r?.noop ? t('tasks.specArchiveNoop') : t('tasks.specArchiveDone'))
-      await loadSpecs(board)
+      await Promise.all([loadSpecs(board), loadArchitectJobs()])
+    } catch (e) {
+      notify(e?.message || t('tasks.specArchiveFailed'))
+    }
+  }
+
+  /** A2B 通知カード（SpecReadyBanner）から未起票 SPEC を直接アーカイブ退避する。 */
+  const archiveBannerSpec = async (banner) => {
+    if (!banner?.path || (!banner?.board && !board)) return
+    try {
+      const r = await api('/api/specs/archive', {
+        method: 'POST',
+        body: { board: banner?.board ?? board, repo: specsInfo?.repo ?? null, path: banner.path },
+      })
+      notify(r?.noop ? t('tasks.specArchiveNoop') : t('tasks.specArchiveDone'))
+      await Promise.all([loadSpecs(board), loadArchitectJobs()])
     } catch (e) {
       notify(e?.message || t('tasks.specArchiveFailed'))
     }
@@ -1501,6 +1528,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
         onFile={fileSpecBatches}
         onDismiss={(b) => setArchitectDismissed((prev) => [...prev, b.path])}
         onPreview={(b) => openSpecMd({ path: b.path, title: b.title })}
+        onArchive={archiveBannerSpec}
       />
 
       {/*
@@ -1826,6 +1854,12 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
             {currentSpec.batches.map((b) => {
               const filed = filedBatchIds.has(b.id)
               const taken = openBatchIds.has(b.id)
+              const bt = specProg.byId.get(b.id)
+              const badgeKey = taken
+                ? 'tasks.specAlready'
+                : bt?.status === 'archived'
+                  ? 'tasks.status.archived'
+                  : 'tasks.specFiledDone'
               const sel = specSel.includes(b.id)
               const open = specBatchOpen.includes(b.id)
               return (
@@ -1851,8 +1885,8 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
                     </span>
                     {filed ? (
                       <span className="spec-taken">
-                        {t(taken ? 'tasks.specAlready' : 'tasks.specFiledDone')}
-                        {specProg.byId.get(b.id)?.id ? ` · ${specProg.byId.get(b.id).id}` : ''}
+                        {t(badgeKey)}
+                        {bt?.id ? ` · ${bt.id}` : ''}
                       </span>
                     ) : null}
                   </button>
@@ -1904,36 +1938,39 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
       ) : null}
 
       {/* 全バッチ完了後の履歴（Q3=A）。行＝バッチ＋完了バッジ＋完了時刻。増えうる一覧なので縦リスト */}
-      {specHistoryOpen && currentSpec ? (
+      {specHistoryOpen && historySpec ? (
         <Sheet title={t('tasks.specHistoryTitle')} onClose={() => setSpecHistoryOpen(false)}>
           {/* 上部は親スコープ枠（SPEC 選択 ＋ プレビュー操作）として子のバッチ履歴と階層を分ける */}
           <div className={`spec-context-box${specPickerOpen ? ' is-open' : ''}`}>
             <SpecPicker
-              specList={specList}
-              currentSpec={currentSpec}
+              specList={historySpecList}
+              currentSpec={historySpec}
               open={specPickerOpen}
               onToggle={() => setSpecPickerOpen((v) => !v)}
-              onPick={(s) => pickSpec(s, false)}
+              onPick={(s) => {
+                setHistorySpecPath(s.path)
+                setSpecPickerOpen(false)
+              }}
               archivedCount={specArchivedCount}
-              showArchived={specShowArchived}
-              onToggleArchived={setSpecShowArchived}
+              showArchived={historyShowArchived}
+              onToggleArchived={setHistoryShowArchived}
               t={t}
             />
             <div className="spec-md-row">
-              <button type="button" className="btn spec-md-open" onClick={() => openSpecMd(currentSpec)}>
+              <button type="button" className="btn spec-md-open" onClick={() => openSpecMd(historySpec)}>
                 {`📄 ${t('tasks.specMdPreview')}`}
               </button>
             </div>
           </div>
           <div className="spec-children-section">
             <div className="list-head spec-children-head">
-              {t('tasks.specBatchesHead', { n: currentSpec.batches.length })}
+              {t('tasks.specBatchesHead', { n: historySpec.batches.length })}
             </div>
             {/* 1 行 1 バッチ。タップで展開して目的・結果・Git・抜粋まで読む（§3.5 ② / D29） */}
             <div className="pick-list">
-            {currentSpec.batches.map((b) => {
-              const task = specProg.byId.get(b.id) ?? null
-              const done = task && (task.status === 'done' || task.status === 'archived')
+            {historySpec.batches.map((b) => {
+              const task = historyProg.byId.get(b.id) ?? null
+              const done = task?.status === 'done'
               const stateText = task
                 ? STATUS_KEY[task.status]
                   ? t(STATUS_KEY[task.status])
@@ -2003,27 +2040,29 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
               )
             })}
           </div>
-          {/* 全バッチ完了後は起票するものが無いので導線を出さない（意味の無いボタンを残さない） */}
-          {specAllDone ? null : (
+          {/* 全バッチ完了後・アーカイブ済みは起票導線を出さない（意味の無いボタンを残さない） */}
+          {historySpec.archived || historyProg.allDone ? null : (
             <button
               className="btn"
               style={{ marginTop: 12, width: '100%' }}
               onClick={() => {
                 setSpecHistoryOpen(false)
-                openSpecSheet()
+                pickSpec(historySpec, true)
+                setSpecPickerOpen(false)
+                setSpecSheetOpen(true)
               }}
             >
               {t('tasks.specOpenLaunch')}
             </button>
           )}
           {/* 不要・テスト用 SPEC の退避（D92）。ファイルは消さず、ヘッダに 1 行足すだけ */}
-          {currentSpec && !currentSpec.archived ? (
+          {historySpec && !historySpec.archived ? (
             <div className="spec-archive-row">
               <HoldButton
                 label={t('tasks.specArchiveBtn')}
                 sub={t('tasks.specArchiveSub')}
                 tone="danger"
-                onFire={() => archiveCurrentSpec(currentSpec)}
+                onFire={() => archiveCurrentSpec(historySpec)}
               />
             </div>
           ) : null}
@@ -2042,6 +2081,9 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
           path={specMd.path}
           title={specMd.title}
           onClose={() => setSpecMd(null)}
+          onArchived={async () => {
+            await Promise.all([loadSpecs(board), loadArchitectJobs()])
+          }}
         />
       ) : null}
 

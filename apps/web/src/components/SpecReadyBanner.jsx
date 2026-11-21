@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { useI18n } from '../i18n/index.js'
 import { haptic } from '../lib/haptic.js'
 
@@ -12,12 +12,26 @@ import { haptic } from '../lib/haptic.js'
  * `Seed` シートで「承認後に自動でバッチを起票」を ON にしていた場合は、ここに来る前に
  * ブリッジが起票済みなので、このカードは自動で消える（`launched` は出さない）。
  *
+ * 意図しない退避を防ぐため、カード上の「📦 アーカイブ」は 2 タップ確認式（5 秒で自動リセット）。
+ *
  * @param {{banner: object, onFile: Function, busy?: boolean, onDismiss?: Function,
- *          onPreview?: Function}} props バナーと起票処理・仕様書プレビュー（D30 ③）
+ *          onPreview?: Function, onArchive?: Function}} props バナーと起票処理・仕様書プレビュー（D30 ③）・退避
  * @returns {any|null} カード
  */
-export function SpecReadyBanner({ banner, onFile, busy = false, onDismiss, onPreview }) {
+export function SpecReadyBanner({ banner, onFile, busy = false, onDismiss, onPreview, onArchive }) {
   const { t } = useI18n()
+  const [confirmArchive, setConfirmArchive] = useState(false)
+
+  useEffect(() => {
+    setConfirmArchive(false)
+  }, [banner?.path])
+
+  useEffect(() => {
+    if (!confirmArchive) return undefined
+    const id = setTimeout(() => setConfirmArchive(false), 5000)
+    return () => clearTimeout(id)
+  }, [confirmArchive])
+
   if (!banner) return null
   const ready = banner.kind === 'ready'
   return (
@@ -28,7 +42,7 @@ export function SpecReadyBanner({ banner, onFile, busy = false, onDismiss, onPre
         </span>
         <span className="spec-banner-sub">{banner.title}</span>
       </div>
-      {/* 狭幅 390px では主文の下へ折り返す（2 つのボタンを 1 行に詰めない・D30） */}
+      {/* 狭幅 390px では主文の下へ折り返す（ボタンを 1 行に詰めない・D30） */}
       <div className="spec-banner-actions">
         <button
           type="button"
@@ -51,6 +65,24 @@ export function SpecReadyBanner({ banner, onFile, busy = false, onDismiss, onPre
             }}
           >
             {`📄 ${t('seed.bannerPreview')}`}
+          </button>
+        ) : null}
+        {onArchive ? (
+          <button
+            type="button"
+            className="spec-banner-btn ghost"
+            disabled={busy}
+            onClick={() => {
+              haptic('tap')
+              if (!confirmArchive) {
+                setConfirmArchive(true)
+                return
+              }
+              setConfirmArchive(false)
+              onArchive(banner)
+            }}
+          >
+            {confirmArchive ? t('seed.bannerArchiveConfirm') : `📦 ${t('seed.bannerArchive')}`}
           </button>
         ) : null}
       </div>
