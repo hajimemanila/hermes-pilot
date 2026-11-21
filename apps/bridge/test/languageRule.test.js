@@ -21,6 +21,7 @@ import {
   LANGUAGE_RULE_JA,
   languageRule,
 } from '../src/language-rule.js'
+import { injectReviewBridge, parseReplyText, replyTextOf } from '../src/review.js'
 
 const here = import.meta.dirname
 const REPO = path.join(here, '..', '..', '..')
@@ -99,4 +100,86 @@ test('同梱 3 スキルは英語（機械向け）で、CJK を含まない', (
       .filter(([, line]) => CJK.test(line))
     assert.deepEqual(bad.slice(0, 3), [], `skills/${name}/SKILL.md に日本語が残っている`)
   }
+})
+
+/**
+ * シートのテンプレート（`skills/quick-review/assets/sheet-template.html`）。
+ *
+ * モデルが `.html` シートを作るときのコピー元なので、本文も HTML コメントも JS の固定文も
+ * ここが英語でないと英語環境に日本語が出る（SPEC-EN-ZERO-LEAK I1 / D70）。
+ */
+const SHEET_TEMPLATE = path.join(REPO, 'skills', 'quick-review', 'assets', 'sheet-template.html')
+
+/** 日本語（CJK）と全角の和文記号。テンプレートは 1 文字も含んではならない。 */
+const CJK_WIDE =
+  /[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\ufe10-\ufe19\ufe30-\ufe4f\uff01-\uff60\uffe0-\uffe6]/
+
+test('quick-review のシートテンプレートは英語のみ（CJK 0 文字）', () => {
+  assert.ok(fs.existsSync(SHEET_TEMPLATE), 'skills/quick-review/assets/sheet-template.html がありません')
+  const html = fs.readFileSync(SHEET_TEMPLATE, 'utf8')
+  assert.match(html, /^<!DOCTYPE html>/i)
+  assert.match(html, /<html lang="en">/, 'テンプレートは <html lang="en"> でなければならない')
+
+  const bad = html
+    .split('\n')
+    .map((line, i) => [i + 1, line])
+    .filter(([, line]) => CJK_WIDE.test(line))
+  assert.deepEqual(
+    bad.slice(0, 5),
+    [],
+    'skills/quick-review/assets/sheet-template.html に日本語（CJK・全角記号）が残っている',
+  )
+})
+
+test('シートテンプレートは DOM 契約を保ち、回答文が parseReplyText / injectReviewBridge と往復する', () => {
+  const html = fs.readFileSync(SHEET_TEMPLATE, 'utf8')
+
+  // ブリッジが依存する構造（SKILL.md の契約）
+  for (const needle of [
+    'id="akForm"',
+    'id="out"',
+    'id="genBtn"',
+    'data-q="q1"',
+    'data-opt="A"',
+    'type="radio"',
+    'name="note-q1"',
+    'name="global_note"',
+  ]) {
+    assert.ok(html.includes(needle), `テンプレートから ${needle} が消えている（ブリッジの契約）`)
+  }
+
+  // 回答テキストの見出しは replyTextOf('en') と同じ（写し書きが片側だけずれるのを止める・D70）
+  const T = replyTextOf('en')
+  for (const token of [T.head.trim(), T.unselected, T.noteMark, `${T.globalLabel}: `, T.tail]) {
+    assert.ok(html.includes(token), `テンプレートの回答フォーマットが REPLY_TEXT.en と一致しない: ${JSON.stringify(token)}`)
+  }
+
+  // テンプレートの buildReply() と同じ形の回答文 → parseReplyText で戻る
+  const reply = [
+    `${T.head}example-01`,
+    `Q1. Write exactly one question: A — Label of option A / ${T.noteMark} keep it short`,
+    `Q2. Write exactly one question: ${T.unselected}`,
+    `${T.globalLabel}: do both`,
+    '---',
+    T.tail,
+  ].join('\n')
+  const parsed = parseReplyText(reply)
+  assert.equal(parsed.answers.length, 2)
+  assert.equal(parsed.answers[0].choice, 'A — Label of option A')
+  assert.equal(parsed.answers[0].note, 'keep it short')
+  assert.equal(parsed.answers[1].choice, null, '未選択は null に落ちる（お任せ）')
+  assert.equal(parsed.global, 'do both')
+
+  // 注入しても構造は変わらず、英語注入で CJK が増えない（沙箱内で「送信」に化ける経路）
+  const injected = injectReviewBridge(html, 't_template01', 'en')
+  assert.ok(injected.includes('id="akBridgeStyle"'), 'ブリッジの CSS が注入されていない')
+  assert.ok(injected.includes('__reviewSubmit'), 'ブリッジの送信関数が注入されていない')
+  for (const needle of ['id="akForm"', 'id="out"', 'id="genBtn"', 'data-opt="B"']) {
+    assert.ok(injected.includes(needle), `注入後に ${needle} が失われた`)
+  }
+  const leaked = injected
+    .split('\n')
+    .map((line, i) => [i + 1, line])
+    .filter(([, line]) => CJK_WIDE.test(line))
+  assert.deepEqual(leaked.slice(0, 5), [], 'injectReviewBridge(html, id, "en") の出力に日本語が混ざっている')
 })

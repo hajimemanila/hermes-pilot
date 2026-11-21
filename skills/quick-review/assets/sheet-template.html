@@ -1,24 +1,24 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Quick Review テンプレート</title>
+<title>Quick Review Template</title>
 <!--
   hermes-pilot / skills/quick-review/assets/sheet-template.html
 
-  使い方:
-    1. このファイルをコピーして
-       ~/.hermes/plugin-data/hermes-pilot/review/sheets/<label>-<round>.html に置く
-    2. タイトル・事実・設問（.q セクション）を差し替える
-    3. 同じディレクトリに <label>-<round>.json を書く（PWA のネイティブフォーム用）
+  Usage:
+    1. Copy this file and place it at
+       ~/.hermes/plugin-data/hermes-pilot/review/sheets/<label>-<round>.html
+    2. Replace the title, the facts and the questions (the .q sections)
+    3. Write <label>-<round>.json next to it (for the PWA's native form)
 
-  ブリッジが依存する構造（消さない）:
-    #akForm   … 設問フォームのルート（注入スクリプトが .q h3 を装飾する）
-    #out      … 回答テキストの出力先（textarea）
-    #genBtn   … 回答テキストを組み立てるボタン（アプリ内では「回答を送信」に化ける）
+  Structure the bridge depends on (do not remove):
+    #akForm   ... root of the question form (the injected script decorates .q h3)
+    #out      ... output target for the answer text (textarea)
+    #genBtn   ... button that builds the answer text (in the app it becomes "Send answer")
     .q[data-q], h3, label[data-opt], input[type=radio][name=qN]
-  file:// で開いても、アプリ内（/api/review/:id/sheet）で開いても動く。
+  Works both from file:// and inside the app (/api/review/:id/sheet).
 -->
 <style>
   :root{--ink:#212529;--muted:#64707C;--line:#DEE2E6;--paper:#fff;--dim:#F6F8FA;--accent:#2563EB;--red:#DC2626}
@@ -62,64 +62,64 @@
 </head>
 <body>
 <main>
-  <div class="kicker">QUICK REVIEW ／ label=<span id="labelSlot">example-01</span> round=1</div>
-  <h1>ここに表題（タスク名と同じでよい）</h1>
+  <div class="kicker">QUICK REVIEW / label=<span id="labelSlot">example-01</span> round=1</div>
+  <h1>Title goes here (the task name is fine)</h1>
 
   <div class="concl">
-    <p><strong>決めてほしいこと:</strong> 何が決まれば作業を再開できるかを 1〜2 文で。</p>
-    <p class="m">判断に必要な事実はここに書く（<code>file:line</code> や実測値）。人は決定だけを返す。</p>
+    <p><strong>What to decide:</strong> one or two sentences on what unblocks the work.</p>
+    <p class="m">Facts the decision needs go here (<code>file:line</code> or measured values). The human returns only the decision.</p>
   </div>
 
-  <h2>設問</h2>
+  <h2>Questions</h2>
 
   <form id="akForm">
     <section class="q" data-q="q1">
-      <h3>Q1. 問いを 1 つだけ書く</h3>
-      <label data-opt="A"><input type="radio" name="q1" value="A"> A. 選択肢 A のラベル <span class="rec">推奨</span>
-        <span class="d">利点: … / 代償: …</span></label>
-      <label data-opt="B"><input type="radio" name="q1" value="B"> B. 選択肢 B のラベル
-        <span class="d">利点: … / 代償: …</span></label>
-      <textarea name="note-q1" placeholder="補足（任意）"></textarea>
+      <h3>Q1. Write exactly one question</h3>
+      <label data-opt="A"><input type="radio" name="q1" value="A"> A. Label of option A <span class="rec">Recommended</span>
+        <span class="d">Gain: ... / Cost: ...</span></label>
+      <label data-opt="B"><input type="radio" name="q1" value="B"> B. Label of option B
+        <span class="d">Gain: ... / Cost: ...</span></label>
+      <textarea name="note-q1" placeholder="Note (optional)"></textarea>
     </section>
 
     <section class="q" data-q="q2">
-      <h3>Q2. 問いを 1 つだけ書く</h3>
-      <label data-opt="A"><input type="radio" name="q2" value="A"> A. 選択肢 A のラベル <span class="rec">推奨</span>
-        <span class="d">利点: … / 代償: …</span></label>
-      <label data-opt="B"><input type="radio" name="q2" value="B"> B. 選択肢 B のラベル
-        <span class="d">利点: … / 代償: …</span></label>
-      <textarea name="note-q2" placeholder="補足（任意）"></textarea>
+      <h3>Q2. Write exactly one question</h3>
+      <label data-opt="A"><input type="radio" name="q2" value="A"> A. Label of option A <span class="rec">Recommended</span>
+        <span class="d">Gain: ... / Cost: ...</span></label>
+      <label data-opt="B"><input type="radio" name="q2" value="B"> B. Label of option B
+        <span class="d">Gain: ... / Cost: ...</span></label>
+      <textarea name="note-q2" placeholder="Note (optional)"></textarea>
     </section>
 
-    <h2>全体へのコメント</h2>
-    <textarea name="global_note" placeholder="複数の問いをまたぐ指示（任意）"></textarea>
+    <h2>Overall Note</h2>
+    <textarea name="global_note" placeholder="Instructions spanning multiple questions (optional)"></textarea>
 
     <div class="actions">
-      <button type="button" id="genBtn">回答テキストを作る</button>
-      <button type="button" class="ghost" id="copyBtn">コピー</button>
+      <button type="button" id="genBtn">Generate reply text</button>
+      <button type="button" class="ghost" id="copyBtn">Copy</button>
     </div>
-    <p class="m">選んで［回答テキストを作る］を押すと、下に貼り付け用のテキストが出ます（未選択は「お任せ」）。
-      アプリから開いた場合はボタンが［回答を送信］に変わり、そのままレビューへ返ります。</p>
+    <p class="m">Pick an option and press [Generate reply text] to get paste-ready text below (unselected = take recommended).
+      Opened from the app, the button becomes [Send answer] and the reply goes straight back to the review.</p>
     <div id="status" class="status"></div>
     <textarea id="out" readonly></textarea>
   </form>
 
   <footer class="m">
-    <p>反映先: <code id="targetSlot">~/Projects/your-repo</code></p>
+    <p>Target: <code id="targetSlot">~/Projects/your-repo</code></p>
   </footer>
 </main>
 <script>
 (function () {
   var QUESTIONS = [
-    { id: 'q1', text: 'Q1. 問いを 1 つだけ書く' },
-    { id: 'q2', text: 'Q2. 問いを 1 つだけ書く' }
+    { id: 'q1', text: 'Q1. Write exactly one question' },
+    { id: 'q2', text: 'Q2. Write exactly one question' }
   ];
   var LABEL = 'example-01';
 
   function oneLine(s) { return String(s || '').replace(/\s+/g, ' ').trim(); }
 
   function buildReply() {
-    var lines = ['【レビュー回答】' + LABEL];
+    var lines = ['[Review Answer] ' + LABEL];
     QUESTIONS.forEach(function (q) {
       var el = document.querySelector('input[name="' + q.id + '"]:checked');
       var noteEl = document.querySelector('textarea[name="note-' + q.id + '"]');
@@ -127,19 +127,26 @@
       var line = q.text + ': ';
       if (el) {
         var lab = el.closest('label');
-        var lbl = lab ? oneLine(lab.textContent).replace(/^(A|B|C)\.\s*/, '') : '';
+        var lbl = '';
+        if (lab) {
+          // Drop the badge and the gain/cost line so the reply carries the option label only.
+          var copy = lab.cloneNode(true);
+          var strip = copy.querySelectorAll('.rec, .d');
+          for (var i = 0; i < strip.length; i++) strip[i].remove();
+          lbl = oneLine(copy.textContent).replace(/^(A|B|C)\.\s*/, '');
+        }
         line += el.value + ' — ' + lbl;
       } else {
-        line += '(未選択 = お任せ)';
+        line += '(unselected = take recommended)';
       }
-      if (note) line += ' / 補足: ' + note;
+      if (note) line += ' / note: ' + note;
       lines.push(line);
     });
     var g = document.querySelector('textarea[name="global_note"]');
     var gv = oneLine(g ? g.value : '');
-    lines.push('全体へのコメント: ' + (gv || '(なし)'));
+    lines.push('Overall Note: ' + (gv || '(none)'));
     lines.push('---');
-    lines.push('上の回答を反映して作業を続けてください。お任せの項目は推奨案で確定してください。');
+    lines.push('Apply the answers above and continue. Items left unselected are settled by the recommended option.');
     return lines.join('\n');
   }
 
@@ -154,14 +161,14 @@
     var out = document.getElementById('out');
     out.style.display = 'block';
     out.value = buildReply();
-    setStatus('回答テキストを作りました。貼り付けるか［回答を送信］してください。', 'ok');
+    setStatus('Reply text generated. Paste it or click [Send answer].', 'ok');
   });
 
   document.getElementById('copyBtn').addEventListener('click', function () {
     var out = document.getElementById('out');
     var text = out.value || buildReply();
     var done = function (ok) {
-      setStatus(ok ? '✓ コピーしました' : 'テキストを選択してコピーしてください', ok ? 'ok' : 'err');
+      setStatus(ok ? '✓ Copied' : 'Select the text to copy', ok ? 'ok' : 'err');
     };
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
