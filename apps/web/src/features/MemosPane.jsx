@@ -133,7 +133,7 @@ export function MemosPane({ notify, onOpenChat }) {
       celebrate('approve')
       notify?.(t('notes.saved'))
     } catch (e) {
-      notify?.(e?.message || 'Error')
+      notify?.(e?.message || t('common.error'))
     } finally {
       setSaving(false)
     }
@@ -333,7 +333,7 @@ export function MemosPane({ notify, onOpenChat }) {
       setEditing(null)
       notify?.(t('notes.deleted'))
     } catch (e) {
-      notify?.(e?.message || 'Error')
+      notify?.(e?.message || t('common.error'))
     } finally {
       setSaving(false)
     }

@@ -3,6 +3,8 @@
  * `TasksPane.jsx` から分割した（挙動は変えない）。
  */
 import React from 'react'
+import { relTime } from '../../lib/format.js'
+import { haptic } from '../../lib/haptic.js'
 
 /**
  * Execution Mode → バッチ横のモードピル辞書キー（SPEC V5 §3.2）。

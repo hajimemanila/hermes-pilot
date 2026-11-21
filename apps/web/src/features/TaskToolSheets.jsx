@@ -10,6 +10,7 @@ import {
   acknowledgeSignal,
   adviceKeyForRule,
   buildSweepPayload,
+  formatSignalDetail,
   normalizePreset,
   normalizeReport,
   partitionSoftSignals,
@@ -86,7 +87,7 @@ export function BrainstormSheet({ initialSeed = '', board = '', repo = null, onC
       notify?.(t('brainstorm.saved'))
       onClose?.()
     } catch (e) {
-      notify?.(e?.message || 'Error')
+      notify?.(e?.message || t('common.error'))
     } finally {
       setBusy(false)
     }
@@ -249,7 +250,8 @@ export function RefactorSheet({ board = '', repo = null, initialPreset = '', onC
   const repoAck = ackForRepo(ackStore, repoKey)
   const { active: activeSoft, archived: archivedSoft } = partitionSoftSignals(report?.softSignals ?? [], repoAck)
   const counts = sweepCounts(report, repoAck)
-  const recommended = report ? recommendSweep(report) : ''
+  const recommendedId = report ? recommendSweep(report) : ''
+  const recommended = report && (report.recommendedSweep || counts[recommendedId] > 0) ? recommendedId : ''
 
   const pick = (id) => {
     touched.current = true
@@ -302,6 +304,7 @@ export function RefactorSheet({ board = '', repo = null, initialPreset = '', onC
         })
         notify?.(t('coherence.launched'))
       }
+      emitHmEvent(HM_EVENTS.WAKE_SYNC)
       celebrate('launch')
       onClose?.()
     } catch (e) {
@@ -360,45 +363,51 @@ export function RefactorSheet({ board = '', repo = null, initialPreset = '', onC
               : t('coherence.detailsToggleArchivedOnly', { n: archivedSoft.length })}
           </summary>
           <div className="coh-signal-list">
-            {hardList.map((item, i) => (
-              <div className="coh-signal is-hard" key={`hard:${i}:${signalKeyOf(item)}`}>
-                <div className="coh-signal-head">
-                  <span className="coh-signal-kind is-hard">{t('coherence.detailsHard')}</span>
-                  {item.rule ? <span className="coh-signal-rule">{item.rule}</span> : null}
+            {hardList.map((item, i) => {
+              const detail = formatSignalDetail(item, lang)
+              return (
+                <div className="coh-signal is-hard" key={`hard:${i}:${signalKeyOf(item)}`}>
+                  <div className="coh-signal-head">
+                    <span className="coh-signal-kind is-hard">{t('coherence.detailsHard')}</span>
+                    {item.rule ? <span className="coh-signal-rule">{item.rule}</span> : null}
+                  </div>
+                  {item.file ? <div className="coh-signal-file mono">{item.file}</div> : null}
+                  {detail ? <div className="coh-signal-msg">{detail}</div> : null}
+                  <div className="coh-signal-advice">{adviceText(item)}</div>
+                  <div className="coh-signal-actions">
+                    <button type="button" className="coh-signal-btn" onClick={() => applySignalTarget(item)}>
+                      {t('coherence.detailsApply')}
+                    </button>
+                  </div>
                 </div>
-                {item.file ? <div className="coh-signal-file mono">{item.file}</div> : null}
-                {item.detail ? <div className="coh-signal-msg">{item.detail}</div> : null}
-                <div className="coh-signal-advice">{adviceText(item)}</div>
-                <div className="coh-signal-actions">
-                  <button type="button" className="coh-signal-btn" onClick={() => applySignalTarget(item)}>
-                    {t('coherence.detailsApply')}
-                  </button>
+              )
+            })}
+            {activeSoft.map((item, i) => {
+              const detail = formatSignalDetail(item, lang)
+              return (
+                <div className="coh-signal" key={`soft:${i}:${signalKeyOf(item)}`}>
+                  <div className="coh-signal-head">
+                    <span className="coh-signal-kind">{t('coherence.detailsSoft')}</span>
+                    {item.rule ? <span className="coh-signal-rule">{item.rule}</span> : null}
+                  </div>
+                  {item.file ? <div className="coh-signal-file mono">{item.file}</div> : null}
+                  {detail ? <div className="coh-signal-msg">{detail}</div> : null}
+                  <div className="coh-signal-advice">{adviceText(item)}</div>
+                  <div className="coh-signal-actions">
+                    <button type="button" className="coh-signal-btn" onClick={() => applySignalTarget(item)}>
+                      {t('coherence.detailsApply')}
+                    </button>
+                    <button
+                      type="button"
+                      className="coh-signal-btn ghost"
+                      onClick={() => setAckStore((cur) => acknowledgeSignal(cur, repoKey, item))}
+                    >
+                      {t('coherence.detailsArchive')}
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
-            {activeSoft.map((item, i) => (
-              <div className="coh-signal" key={`soft:${i}:${signalKeyOf(item)}`}>
-                <div className="coh-signal-head">
-                  <span className="coh-signal-kind">{t('coherence.detailsSoft')}</span>
-                  {item.rule ? <span className="coh-signal-rule">{item.rule}</span> : null}
-                </div>
-                {item.file ? <div className="coh-signal-file mono">{item.file}</div> : null}
-                {item.detail ? <div className="coh-signal-msg">{item.detail}</div> : null}
-                <div className="coh-signal-advice">{adviceText(item)}</div>
-                <div className="coh-signal-actions">
-                  <button type="button" className="coh-signal-btn" onClick={() => applySignalTarget(item)}>
-                    {t('coherence.detailsApply')}
-                  </button>
-                  <button
-                    type="button"
-                    className="coh-signal-btn ghost"
-                    onClick={() => setAckStore((cur) => acknowledgeSignal(cur, repoKey, item))}
-                  >
-                    {t('coherence.detailsArchive')}
-                  </button>
-                </div>
-              </div>
-            ))}
+              )
+            })}
             {archivedSoft.length > 0 ? (
               <button
                 type="button"
@@ -414,25 +423,28 @@ export function RefactorSheet({ board = '', repo = null, initialPreset = '', onC
             {showArchivedSignals && archivedSoft.length > 0 ? (
               <>
                 <div className="coh-archived-note">{t('coherence.detailsAutoResurface')}</div>
-                {archivedSoft.map((item, i) => (
-                  <div className="coh-signal is-archived" key={`arch:${i}:${signalKeyOf(item)}`}>
-                    <div className="coh-signal-head">
-                      <span className="coh-signal-kind">{t('coherence.detailsSoft')}</span>
-                      {item.rule ? <span className="coh-signal-rule">{item.rule}</span> : null}
+                {archivedSoft.map((item, i) => {
+                  const detail = formatSignalDetail(item, lang)
+                  return (
+                    <div className="coh-signal is-archived" key={`arch:${i}:${signalKeyOf(item)}`}>
+                      <div className="coh-signal-head">
+                        <span className="coh-signal-kind">{t('coherence.detailsSoft')}</span>
+                        {item.rule ? <span className="coh-signal-rule">{item.rule}</span> : null}
+                      </div>
+                      {item.file ? <div className="coh-signal-file mono">{item.file}</div> : null}
+                      {detail ? <div className="coh-signal-msg">{detail}</div> : null}
+                      <div className="coh-signal-actions">
+                        <button
+                          type="button"
+                          className="coh-signal-btn"
+                          onClick={() => setAckStore((cur) => restoreSignal(cur, repoKey, item))}
+                        >
+                          {t('coherence.detailsRestore')}
+                        </button>
+                      </div>
                     </div>
-                    {item.file ? <div className="coh-signal-file mono">{item.file}</div> : null}
-                    {item.detail ? <div className="coh-signal-msg">{item.detail}</div> : null}
-                    <div className="coh-signal-actions">
-                      <button
-                        type="button"
-                        className="coh-signal-btn"
-                        onClick={() => setAckStore((cur) => restoreSignal(cur, repoKey, item))}
-                      >
-                        {t('coherence.detailsRestore')}
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  )
+                })}
               </>
             ) : null}
           </div>

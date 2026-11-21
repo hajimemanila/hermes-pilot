@@ -3,6 +3,7 @@ import { api } from '../api.js'
 import { Sheet, Spinner } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
 import { useI18n } from '../i18n/index.js'
+import { localizeError } from '../i18n/lang.js'
 
 /**
  * クイック起票。1行でカンバンにタスクを作る。
@@ -56,7 +57,7 @@ export function CaptureSheet({ board, boards, defaultBoard, onClose, onCreated, 
       })
       if (!r?.ok) {
         // 文言はコード＋辞書で自言語化する（SPEC-i18n-resp B2）。空文字なら既定文へ落とす。
-        notify?.(r?.error || t('capture.failed'))
+        notify?.(localizeError(r) || t('capture.failed'))
         return
       }
       notify?.(r.created ? t('capture.created', { id: r.task.id }) : t('capture.already', { id: r.task.id }))

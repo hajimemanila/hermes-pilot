@@ -22,10 +22,12 @@ import {
   DEFAULT_SWEEP,
   MAX_LISTED_FILES,
   SWEEP_PRESETS,
+  SWEEP_TITLE_MAX,
   ackForRepo,
   acknowledgeSignal,
   adviceKeyForRule,
   buildSweepPayload,
+  formatSignalDetail,
   isSignalAcknowledged,
   normalizePreset,
   normalizeReport,
@@ -413,4 +415,35 @@ test('adviceKeyForRule maps universal rules and falls back cleanly for repo-spec
   })
   assert.equal(normalized.softSignals[0].value, 900)
   assert.equal(normalized.softSignals[0].limit, 800)
+})
+
+test('buildSweepPayload caps task title to SWEEP_TITLE_MAX (200 chars) for all presets and languages', () => {
+  const longTarget = 'a'.repeat(240)
+  for (const lang of ['en', 'ja']) {
+    for (const preset of SWEEP_PRESETS) {
+      const payload = buildSweepPayload({ preset, report: REPORT, target: longTarget, mode: 'single', lang })
+      assert.ok(payload.title.length <= SWEEP_TITLE_MAX, `${preset}/${lang} title length=${payload.title.length}`)
+      assert.ok(payload.title.length > 20)
+    }
+  }
+})
+
+test('formatSignalDetail localises Layer-1 metrics in en/ja and falls back cleanly', () => {
+  const cases = [
+    { rule: 'file-bloat', value: 900, limit: 800, message: 'raw bloat' },
+    { rule: 'git-hotspot', value: 7, limit: 5, message: 'raw hotspot' },
+    { rule: 'spec-sprawl', value: 8, limit: 6, message: 'raw sprawl' },
+    { rule: 'debt-spike', value: 12, limit: 10, message: 'raw debt' },
+  ]
+  for (const c of cases) {
+    const enText = formatSignalDetail(c, 'en')
+    const jaText = formatSignalDetail(c, 'ja')
+    assert.ok(enText.includes(String(c.value)) && enText.includes(String(c.limit)))
+    assert.ok(jaText.includes(String(c.value)) && jaText.includes(String(c.limit)))
+    assert.doesNotMatch(enText, CJK)
+    assert.match(jaText, CJK)
+    assert.notEqual(enText, jaText)
+  }
+  assert.equal(formatSignalDetail({ rule: 'custom-rule', detail: 'fallback detail' }, 'ja'), 'fallback detail')
+  assert.equal(formatSignalDetail({ rule: 'file-bloat', detail: 'missing limit', value: 900 }, 'ja'), 'missing limit')
 })

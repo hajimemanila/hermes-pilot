@@ -4,6 +4,8 @@
  * `server.js` の `handleApi` から**そのまま**切り出した（ルート条件・応答形・404 の位置は変えない）。
  * 依存（cfg・各クライアント・送信ヘルパ）は `ctx` で受け取る。
  */
+import { injectReviewBridge, reviewSheetHeaders, reviewViewHeaders, reviewViewHtml } from '../review.js'
+
 export function createBoardsApi(ctx = {}) {
   const {
     cfg,
@@ -15,15 +17,12 @@ export function createBoardsApi(ctx = {}) {
     live,
     inbox,
     usage,
-    telemetry,
     search,
     discord,
     memos,
     capture,
-    transcripts,
     transcript,
     reviewWatcher,
-    myCapture,
     gitinfo,
     pipelineWatcher,
     stateDbFor,
@@ -53,6 +52,9 @@ export function createBoardsApi(ctx = {}) {
     BULK_ARCHIVE_MAX,
     TASK_ID_RE,
     sendOutcome,
+    getPilotProfile,
+    ensureWatchersFresh,
+    nudgeWatchers,
     VERSION,
   } = ctx
 

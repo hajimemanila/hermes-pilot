@@ -47,6 +47,9 @@ export const MAX_LISTED_FILES = 12
 /** Longest single-line issue detail copied into a payload. */
 const DETAIL_MAX = 160
 
+/** Maximum task title length accepted by `capture.js` (`TITLE_MAX = 200`). */
+export const SWEEP_TITLE_MAX = 200
+
 /**
  * Universal Layer-1 rule → preset. These rule ids are emitted by the analyzer for every
  * repository (no config), so they are safe to hardcode as *machine* tokens.
@@ -365,6 +368,27 @@ export function adviceKeyForRule(rule) {
   return ADVICE_KEYS[r] ?? 'coherence.advice.preset'
 }
 
+/** Layer-1 rule detail keys carrying numeric `{ value, limit }`. */
+const DETAIL_KEYS = Object.freeze({
+  'file-bloat': 'coherence.detail.fileBloat',
+  'git-hotspot': 'coherence.detail.gitHotspot',
+  'spec-sprawl': 'coherence.detail.specSprawl',
+  'debt-spike': 'coherence.detail.debtSpike',
+})
+
+/** Localise a Layer-1 signal detail when structured numbers exist, else clip raw detail. */
+export function formatSignalDetail(item, lang = getLocale()) {
+  const rule = String(item?.rule ?? '').trim().toLowerCase()
+  const key = DETAIL_KEYS[rule]
+  const value = optionalNum(item?.value)
+  const limit = optionalNum(item?.limit)
+  if (key && value !== null && limit !== null) {
+    const l = lang === 'ja' ? 'ja' : 'en'
+    return translate(l, key, { value, limit })
+  }
+  return clip(item?.detail ?? item?.message)
+}
+
 /**
  * Per-preset signal counts for the sheet's badges.
  * When `repoAckMap` is supplied, archived soft signals are excluded from the badges.
@@ -473,9 +497,10 @@ export function buildSweepPayload({
   // 再現先行は spec ルートでも種に載せる（チェックを黙って無視しない）
   const fix = hunt && Boolean(autoFix)
 
-  const title = `[COHERENCE/${id.toUpperCase()}] ${t(`coherence.preset.${id}`)}${
-    targetText ? ` - ${targetText}` : ''
-  }`
+  const title = clip(
+    `[COHERENCE/${id.toUpperCase()}] ${t(`coherence.preset.${id}`)}${targetText ? ` - ${targetText}` : ''}`,
+    SWEEP_TITLE_MAX,
+  )
 
   const detected = r.available
     ? t('coherence.body.detectedLine', {
