@@ -54,4 +54,6 @@ export const HM_STORAGE = Object.freeze({
   MEMOS_VIEW: 'hm.memosView',
   /** Coherence 提案バナーを閉じた記録（`{ signature, at }` の JSON）。 */
   COHERENCE_DISMISSED: 'hm.coherenceDismissed',
+  /** リポジトリごとの退避済みソフトシグナル（`{ [repoKey]: { [signalKey]: { value, at } } }` の JSON）。 */
+  COHERENCE_ACK: 'hm.coherenceAck',
 })

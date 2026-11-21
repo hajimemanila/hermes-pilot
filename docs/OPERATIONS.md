@@ -10,16 +10,16 @@ Hermes Pilot は **PWA**（`apps/web/dist`）と **ブリッジ**（`apps/bridge
 
 ```bash
 # A) npm から（clone 不要・最速。データ・トークン・同梱スキル・ペアリング QR。冪等）
-npx hermes-pilot@0.2.3 init
-npx hermes-pilot@0.2.3 start        # ブリッジ起動（必要なら UI をビルド）
+npx hermes-pilot@0.2.4 init
+npx hermes-pilot@0.2.4 start        # ブリッジ起動（必要なら UI をビルド）
 
 # 常駐させる場合（launchd / systemd --user）
-npm i -g hermes-pilot@0.2.3 && hermes-pilot service install
+npm i -g hermes-pilot@0.2.4 && hermes-pilot service install
 ```
 
 ```bash
 # B) Hermes のプラグインとして入れる（ダッシュボードのタブも使う場合）: 取得 → 依存 → 初期化の 3 手
-hermes plugins install hajimemanila/hermes-pilot --ref v0.2.3   # タグ／sha で固定。省略すると既定ブランチ
+hermes plugins install hajimemanila/hermes-pilot --ref v0.2.4   # タグ／sha で固定。省略すると既定ブランチ
 cd ~/.hermes/plugins/hermes-pilot
 npm ci                              # ws と node-pty。postinstall が spawn-helper の exec bit を直す
 node bin/hermes-pilot.mjs init

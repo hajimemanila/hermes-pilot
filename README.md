@@ -252,14 +252,14 @@ so the dashboard tab and the bundled skills are wired up for you.
 **A. From npm (published package)**
 
 ```bash
-npx hermes-pilot@0.2.3 init      # data dirs, token, bundled skills, pairing QR (idempotent)
-npx hermes-pilot@0.2.3 start     # bridge on http://127.0.0.1:4097
+npx hermes-pilot@0.2.4 init      # data dirs, token, bundled skills, pairing QR (idempotent)
+npx hermes-pilot@0.2.4 start     # bridge on http://127.0.0.1:4097
 ```
 
 To keep it running across logins instead, install it once and use the `service` subcommand:
 
 ```bash
-npm i -g hermes-pilot@0.2.3
+npm i -g hermes-pilot@0.2.4
 hermes-pilot service install     # launchd on macOS, systemd --user on Linux
 ```
 
@@ -270,7 +270,7 @@ npm's tarball extraction drops, so the terminal tab works without extra steps.
 **B. From the Hermes plugin catalog**
 
 ```bash
-hermes plugins install hajimemanila/hermes-pilot --ref v0.2.3   # pin a tag/commit; omit --ref to track the default branch
+hermes plugins install hajimemanila/hermes-pilot --ref v0.2.4   # pin a tag/commit; omit --ref to track the default branch
 cd ~/.hermes/plugins/hermes-pilot
 npm ci
 node bin/hermes-pilot.mjs init

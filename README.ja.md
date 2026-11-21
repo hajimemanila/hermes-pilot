@@ -239,14 +239,14 @@ data URL として組み立てるため、デモは外部ネットワークに�
 **A. npm から（公開パッケージ）**
 
 ```bash
-npx hermes-pilot@0.2.3 init      # データ・トークン・同梱スキル・ペアリング QR（冪等）
-npx hermes-pilot@0.2.3 start     # ブリッジ起動（http://127.0.0.1:4097）
+npx hermes-pilot@0.2.4 init      # データ・トークン・同梱スキル・ペアリング QR（冪等）
+npx hermes-pilot@0.2.4 start     # ブリッジ起動（http://127.0.0.1:4097）
 ```
 
 ログインをまたいで常駐させるなら、一度だけ入れて `service` を使います。
 
 ```bash
-npm i -g hermes-pilot@0.2.3
+npm i -g hermes-pilot@0.2.4
 hermes-pilot service install     # macOS は launchd、Linux は systemd --user
 ```
 
@@ -256,7 +256,7 @@ npm のパッケージ: <https://www.npmjs.com/package/hermes-pilot>（版は固
 **B. Hermes のプラグインカタログから**
 
 ```bash
-hermes plugins install hajimemanila/hermes-pilot --ref v0.2.3   # タグ／sha で固定。--ref を省くと既定ブランチ
+hermes plugins install hajimemanila/hermes-pilot --ref v0.2.4   # タグ／sha で固定。--ref を省くと既定ブランチ
 cd ~/.hermes/plugins/hermes-pilot
 npm ci
 node bin/hermes-pilot.mjs init

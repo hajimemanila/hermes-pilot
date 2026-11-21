@@ -2,7 +2,7 @@
  * Frontend 契約モジュールのテスト（SPEC-COHERENCE Batch COH-1 / D81）。
  *
  * 固定すること:
- *  1. `HM_EVENTS`（25 種）と `HM_STORAGE`（22 種）が一意で、全件 prefix が揃っている
+ *  1. `HM_EVENTS`（25 種）と `HM_STORAGE`（23 種）が一意で、全件 prefix が揃っている
  *  2. `HM_EVENT_META` が全イベントの payload を持つ（契約の抜けを作らない）
  *  3. 既存の定数名（`VIBE_EVENT` / `SNIPPET_BARS_EVENT` / `THEME_KEY` など）が
  *     **同じ値の再エクスポート**として生きている（後方互換）
@@ -87,15 +87,15 @@ test('HM_EVENT_META は全イベントの payload を宣言している', () => 
   }
 })
 
-test('HM_STORAGE は 22 種で、値がすべて一意な hm. キー', () => {
+test('HM_STORAGE は 23 種で、値がすべて一意な hm. キー', () => {
   const values = Object.values(HM_STORAGE)
-  assert.equal(values.length, 22)
-  assert.equal(new Set(values).size, 22, '同じキーが 2 回定義されている')
+  assert.equal(values.length, 23)
+  assert.equal(new Set(values).size, 23, '同じキーが 2 回定義されている')
   for (const key of values) assert.match(key, /^hm\.[A-Za-z0-9.]+$/)
   assert.ok(Object.isFrozen(HM_STORAGE))
 })
 
-test('HM_STORAGE は既存 21 キーと COHERENCE_DISMISSED を集約している', () => {
+test('HM_STORAGE は既存 21 キーと Coherence 系キーを集約している', () => {
   const expected = [
     'hm.board',
     'hm.storedSid',
@@ -119,6 +119,7 @@ test('HM_STORAGE は既存 21 キーと COHERENCE_DISMISSED を集約してい�
     'hm.swReload',
     'hm.memosView',
     'hm.coherenceDismissed',
+    'hm.coherenceAck',
   ]
   assert.deepEqual([...Object.values(HM_STORAGE)].sort(), expected.sort())
 })

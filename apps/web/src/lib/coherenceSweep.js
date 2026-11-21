@@ -98,11 +98,35 @@ function count(value, fallback) {
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback
 }
 
+/** Max archived soft-signal entries kept per repository. */
+const ACK_LIMIT = 100
+
+/**
+ * Universal rule -> 1-line remediation advice dictionary key (`coherence.advice.*`).
+ * Rules without an explicit entry fall back to `coherence.advice.preset`.
+ * @type {Record<string, string>}
+ */
+const ADVICE_KEYS = Object.freeze({
+  'file-bloat': 'coherence.advice.fileBloat',
+  'git-hotspot': 'coherence.advice.gitHotspot',
+  'spec-sprawl': 'coherence.advice.specSprawl',
+  'duplicate-batch-id': 'coherence.advice.duplicateBatchId',
+  'debt-spike': 'coherence.advice.debtSpike',
+  'baseline-ratchet': 'coherence.advice.baselineRatchet',
+})
+
+/** Normalise a numeric field when explicitly supplied, else null. */
+function optionalNum(value) {
+  if (value === undefined || value === null || value === '') return null
+  const n = Number(value)
+  return Number.isFinite(n) ? n : null
+}
+
 /**
  * Normalise one analyzer issue (`hardFails` / `softSignals` entry). The exact field names differ
  * between Layer-1 rules and repository checkers, so accept the common spellings.
  * @param {unknown} raw issue
- * @returns {{rule: string, detail: string, file: string}|null} normalised issue
+ * @returns {{rule: string, detail: string, file: string, value?: number, limit?: number}|null} normalised issue
  */
 function issueOf(raw) {
   if (raw == null) return null
@@ -116,7 +140,15 @@ function issueOf(raw) {
   const file = clip(o.file ?? o.path, 200)
   const detail = clip(o.message ?? o.detail ?? o.title ?? o.summary)
   if (!rule && !file && !detail) return null
-  return { rule, detail, file }
+  const val = optionalNum(o.value)
+  const lim = optionalNum(o.limit)
+  return {
+    rule,
+    detail,
+    file,
+    ...(val !== null ? { value: val } : {}),
+    ...(lim !== null ? { limit: lim } : {}),
+  }
 }
 
 /**
@@ -207,11 +239,140 @@ export function presetForRule(rule) {
 }
 
 /**
+ * Stable per-signal key (`rule::target`) used for ratchet-based archiving of soft signals.
+ * Numbers inside a file-less detail string are collapsed (`#`) so an increase in count still matches
+ * the same entry and cleanly auto-resurfaces when the count exceeds the archived value.
+ * @param {unknown} issue normalised or raw issue
+ * @returns {string} signal key
+ */
+export function signalKeyOf(issue) {
+  const rule = clip(issue?.rule, 60) || 'signal'
+  const file = clip(issue?.file, 200)
+  if (file) return `${rule}::${file}`
+  const detail = clip(issue?.detail ?? issue?.message, 80).replace(/\d+/g, '#')
+  return `${rule}::${detail || '_'}`
+}
+
+/**
+ * Parse stored soft-signal acknowledgements (`HM_STORAGE.COHERENCE_ACK`).
+ * @param {unknown} raw JSON string or plain object
+ * @returns {Record<string, Record<string, {value: number|null, at: number}>>} sanitised store
+ */
+export function parseCoherenceAck(raw) {
+  let src = raw
+  if (typeof raw === 'string') {
+    try {
+      src = JSON.parse(raw)
+    } catch {
+      return {}
+    }
+  }
+  if (!src || typeof src !== 'object' || Array.isArray(src)) return {}
+  /** @type {Record<string, Record<string, {value: number|null, at: number}>>} */
+  const out = {}
+  for (const [repoKey, repoVal] of Object.entries(src)) {
+    const rk = String(repoKey ?? '').trim()
+    if (!rk || !repoVal || typeof repoVal !== 'object' || Array.isArray(repoVal)) continue
+    /** @type {Record<string, {value: number|null, at: number}>} */
+    const clean = {}
+    for (const [sigKey, entry] of Object.entries(repoVal)) {
+      const sk = String(sigKey ?? '').trim()
+      if (!sk || !entry || typeof entry !== 'object' || Array.isArray(entry)) continue
+      const val = optionalNum(entry.value)
+      const atNum = Number(entry.at)
+      clean[sk] = { value: val, at: Number.isFinite(atNum) ? atNum : 0 }
+    }
+    if (Object.keys(clean).length) out[rk] = clean
+  }
+  return out
+}
+
+/** Look up one repository's ack map (safe empty map fallback). */
+export function ackForRepo(ackStore, repoKey) {
+  const rk = String(repoKey ?? '').trim() || '_default'
+  const map = ackStore && typeof ackStore === 'object' ? ackStore[rk] : null
+  return map && typeof map === 'object' && !Array.isArray(map) ? map : {}
+}
+
+/**
+ * Whether a soft signal is currently suppressed by the repo's archive map.
+ * Auto-resurfaces (`false`) whenever both current and archived numeric `value` exist and the
+ * signal has grown (`issue.value > entry.value`).
+ * @param {unknown} issue signal object
+ * @param {Record<string, {value?: number|null}>|null} repoAckMap per-repo ack map
+ * @returns {boolean} true if suppressed
+ */
+export function isSignalAcknowledged(issue, repoAckMap) {
+  if (!repoAckMap || typeof repoAckMap !== 'object') return false
+  const entry = repoAckMap[signalKeyOf(issue)]
+  if (!entry || typeof entry !== 'object') return false
+  const curVal = optionalNum(issue?.value)
+  const ackVal = optionalNum(entry.value)
+  if (curVal !== null && ackVal !== null) return curVal <= ackVal
+  return true
+}
+
+/**
+ * Split soft signals into active vs archived according to `repoAckMap`.
+ * Hard fails are never filtered here (only soft signals can be archived).
+ * @param {unknown} softSignals soft signal list
+ * @param {Record<string, {value?: number|null}>|null} repoAckMap per-repo ack map
+ * @returns {{active: Array<any>, archived: Array<any>}} split lists
+ */
+export function partitionSoftSignals(softSignals, repoAckMap) {
+  const active = []
+  const archived = []
+  for (const item of toList(softSignals)) {
+    if (!item) continue
+    if (isSignalAcknowledged(item, repoAckMap)) archived.push(item)
+    else active.push(item)
+  }
+  return { active, archived }
+}
+
+/** Immutably archive one soft signal under `repoKey` with its current numeric ratchet value. */
+export function acknowledgeSignal(ackStore, repoKey, issue, now = Date.now()) {
+  const base = parseCoherenceAck(ackStore)
+  const rk = String(repoKey ?? '').trim() || '_default'
+  const nextRepo = {
+    ...ackForRepo(base, rk),
+    [signalKeyOf(issue)]: { value: optionalNum(issue?.value), at: Number(now) || 0 },
+  }
+  const entries = Object.entries(nextRepo)
+  if (entries.length > ACK_LIMIT) {
+    entries.sort((a, b) => (b[1]?.at ?? 0) - (a[1]?.at ?? 0))
+  }
+  return { ...base, [rk]: Object.fromEntries(entries.slice(0, ACK_LIMIT)) }
+}
+
+/** Immutably restore (un-archive) one soft signal under `repoKey`. */
+export function restoreSignal(ackStore, repoKey, issue) {
+  const base = parseCoherenceAck(ackStore)
+  const rk = String(repoKey ?? '').trim() || '_default'
+  const curRepo = { ...ackForRepo(base, rk) }
+  const key = signalKeyOf(issue)
+  if (!(key in curRepo)) return base
+  delete curRepo[key]
+  const next = { ...base }
+  if (Object.keys(curRepo).length) next[rk] = curRepo
+  else delete next[rk]
+  return next
+}
+
+/** i18n advice key for one rule id (`coherence.advice.preset` fallback uses `{ preset }`). */
+export function adviceKeyForRule(rule) {
+  const r = String(rule ?? '').trim().toLowerCase()
+  return ADVICE_KEYS[r] ?? 'coherence.advice.preset'
+}
+
+/**
  * Per-preset signal counts for the sheet's badges.
+ * When `repoAckMap` is supplied, archived soft signals are excluded from the badges.
  * @param {unknown} report raw or normalised report
+ * @param {Record<string, {value?: number|null}>|null} [repoAckMap] optional per-repo ack map
  * @returns {Record<string, number>} count per preset (`custom` = signals no preset owns)
  */
-export function sweepCounts(report) {
+export function sweepCounts(report, repoAckMap = null) {
   const r = normalizeReport(report)
   const counts = {
     'state-flow': 0,
@@ -221,7 +382,8 @@ export function sweepCounts(report) {
     'bug-hunt': 0,
     custom: 0,
   }
-  for (const issue of [...r.hardFails, ...r.softSignals]) {
+  const soft = repoAckMap ? partitionSoftSignals(r.softSignals, repoAckMap).active : r.softSignals
+  for (const issue of [...r.hardFails, ...soft]) {
     counts[presetForRule(issue.rule)] += 1
   }
   return counts
@@ -250,10 +412,11 @@ export function recommendSweep(report) {
 /**
  * Files a preset should name, most urgent first (hard fails → soft signals → hotspots), deduped.
  * @param {unknown} report raw or normalised report
- * @param {'en'|'ja'} lang language for the parenthetical note
+ * @param {'en'|'ja'} [lang] language for the parenthetical note
+ * @param {Record<string, {value?: number|null}>|null} [repoAckMap] optional per-repo ack map
  * @returns {string[]} `path (note)` lines
  */
-export function sweepFiles(report, lang = getLocale()) {
+export function sweepFiles(report, lang = getLocale(), repoAckMap = null) {
   const r = normalizeReport(report)
   const out = []
   const seen = new Set()
@@ -262,8 +425,9 @@ export function sweepFiles(report, lang = getLocale()) {
     seen.add(file)
     out.push(note ? `${file} (${note})` : file)
   }
+  const soft = repoAckMap ? partitionSoftSignals(r.softSignals, repoAckMap).active : r.softSignals
   for (const issue of r.hardFails) push(issue.file, issue.rule)
-  for (const issue of r.softSignals) push(issue.file, issue.rule)
+  for (const issue of soft) push(issue.file, issue.rule)
   for (const hotspot of r.hotspots) {
     push(hotspot.file, hotspot.touches ? translate(lang, 'coherence.file.hotspot', { touches: hotspot.touches }) : '')
   }
@@ -284,7 +448,7 @@ export function sweepFiles(report, lang = getLocale()) {
  *   seed instead of a single task body
  *
  * @param {{preset?: string, report?: unknown, target?: string, mode?: 'single'|'spec',
- *   board?: string, lang?: string, autoFix?: boolean}} [input] sweep input
+ *   board?: string, lang?: string, autoFix?: boolean, ackMap?: Record<string, any>|null}} [input] sweep input
  * @returns {{preset: string, mode: 'single'|'spec', lang: 'en'|'ja', board: string,
  *   title: string, body: string, seedText: string, autoFix: boolean}} payload
  */
@@ -296,11 +460,13 @@ export function buildSweepPayload({
   board = '',
   lang = getLocale(),
   autoFix = false,
+  ackMap = null,
 } = {}) {
   const id = normalizePreset(preset)
   const l = lang === 'ja' ? 'ja' : 'en'
   const t = (key, vars) => translate(l, key, vars)
   const r = normalizeReport(report)
+  const activeSoft = ackMap ? partitionSoftSignals(r.softSignals, ackMap).active : r.softSignals
   const targetText = clip(target, 200)
   const scope = targetText || t('coherence.scopeWholeRepo')
   const hunt = id === 'bug-hunt'
@@ -314,7 +480,7 @@ export function buildSweepPayload({
   const detected = r.available
     ? t('coherence.body.detectedLine', {
         hard: r.counts.hardFailCount,
-        soft: r.counts.softSignalCount,
+        soft: ackMap ? activeSoft.length : r.counts.softSignalCount,
         hotspots: r.counts.hotspotCount,
       })
     : t('coherence.body.detectedNone')
@@ -334,7 +500,7 @@ export function buildSweepPayload({
     if (mode === 'spec') lines.push(t('coherence.preset.bug-hunt.orderPolicy'))
   }
 
-  const files = sweepFiles(r, l)
+  const files = sweepFiles(r, l, ackMap)
   if (files.length) {
     lines.push('Files:')
     for (const file of files.slice(0, MAX_LISTED_FILES)) lines.push(`- ${file}`)

@@ -29,7 +29,6 @@ test('injectReviewBridge は設問見出しのマーカー装飾を注入し、�
   assert.match(html, /#akForm \.q h3\{[^}]*linear-gradient/, '設問見出しにマーカー (linear-gradient) が当たる')
   assert.ok(html.includes('var TASK = "t_abc12345";'), '送信ブリッジは従来どおり')
   assert.ok(html.indexOf('akBridgeStyle') < html.indexOf('</body>'), '</body> の直前に注入する')
-
   assert.equal(base.includes('akBridgeStyle'), false, '元のシート HTML は書き換えない')
   assert.equal(base.includes('review:reply'), false)
 

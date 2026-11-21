@@ -3,7 +3,7 @@
   "label": "Hermes Pilot",
   "description": "Pair a phone with the Hermes Pilot PWA and drive the A2B pipeline from it — Spec Seed to filed batches, live architect progress, one-tap review sheets and visual annotation — plus the one-time pairing QR, bridge status, scan directories and the keep-alive service, all from the standard dashboard.",
   "icon": "QrCode",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "tab": {
     "path": "/hermes-pilot",
     "position": "after:git-ops"

@@ -6,14 +6,23 @@ import { celebrate } from '../lib/vibe.js'
 import {
   DEFAULT_SWEEP,
   SWEEP_PRESETS,
+  ackForRepo,
+  acknowledgeSignal,
+  adviceKeyForRule,
   buildSweepPayload,
   normalizePreset,
   normalizeReport,
+  partitionSoftSignals,
+  parseCoherenceAck,
+  presetForRule,
   recommendSweep,
+  restoreSignal,
+  signalKeyOf,
   sweepCounts,
 } from '../lib/coherenceSweep.js'
 import { buildSeedPayload } from '../lib/specSeed.js'
 import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
+import { HM_STORAGE } from '../contracts/storage.js'
 
 const ANGLES = [
   { id: 'feature', key: 'brainstorm.angleFeature' },
@@ -183,9 +192,31 @@ export function RefactorSheet({ board = '', repo = null, initialPreset = '', onC
   const [error, setError] = useState(null)
   // bug-hunt の再現先行オプトイン（既定 OFF＝調査レポート専念・プリセット変更で戻す）
   const [autoFix, setAutoFix] = useState(false)
+  // ソフトシグナルの内訳アコーディオン内の「退避済み」開閉
+  const [showArchivedSignals, setShowArchivedSignals] = useState(false)
+  // 対応しないソフトシグナルの退避状態（localStorage の HM_STORAGE.COHERENCE_ACK）
+  const [ackStore, setAckStore] = useState(() => {
+    try {
+      return parseCoherenceAck(globalThis.localStorage?.getItem(HM_STORAGE.COHERENCE_ACK))
+    } catch {
+      return {}
+    }
+  })
   // 人が選び直したら診断結果の推奨で上書きしない（`initialPreset` での起動も同じ扱い）
   const touched = useRef(Boolean(String(initialPreset ?? '').trim()))
   const repoId = typeof repo === 'string' ? repo : ''
+
+  useEffect(() => {
+    try {
+      if (Object.keys(ackStore).length) {
+        globalThis.localStorage?.setItem(HM_STORAGE.COHERENCE_ACK, JSON.stringify(ackStore))
+      } else {
+        globalThis.localStorage?.removeItem(HM_STORAGE.COHERENCE_ACK)
+      }
+    } catch {
+      /* noop */
+    }
+  }, [ackStore])
 
   const loadReport = useCallback(
     async (fresh = false) => {
@@ -214,7 +245,10 @@ export function RefactorSheet({ board = '', repo = null, initialPreset = '', onC
     loadReport(false)
   }, [loadReport])
 
-  const counts = sweepCounts(report)
+  const repoKey = report?.repoRoot || board || '_default'
+  const repoAck = ackForRepo(ackStore, repoKey)
+  const { active: activeSoft, archived: archivedSoft } = partitionSoftSignals(report?.softSignals ?? [], repoAck)
+  const counts = sweepCounts(report, repoAck)
   const recommended = report ? recommendSweep(report) : ''
 
   const pick = (id) => {
@@ -222,6 +256,19 @@ export function RefactorSheet({ board = '', repo = null, initialPreset = '', onC
     setPreset(id)
     // 別プリセットへ移ったら再現先行は必ず OFF に戻す（前回の選択を持ち越さない）
     if (id !== 'bug-hunt') setAutoFix(false)
+  }
+
+  const applySignalTarget = (item) => {
+    pick(presetForRule(item?.rule))
+    setTarget(String(item?.file || item?.rule || ''))
+  }
+
+  const adviceText = (item) => {
+    const key = adviceKeyForRule(item?.rule)
+    if (key === 'coherence.advice.preset') {
+      return t(key, { preset: t(`coherence.preset.${presetForRule(item?.rule)}`) })
+    }
+    return t(key)
   }
 
   const submit = async (mode) => {
@@ -232,7 +279,7 @@ export function RefactorSheet({ board = '', repo = null, initialPreset = '', onC
     }
     setBusy(mode)
     setError(null)
-    const payload = buildSweepPayload({ preset, report, target, mode, board, lang, autoFix })
+    const payload = buildSweepPayload({ preset, report, target, mode, board, lang, autoFix, ackMap: repoAck })
     try {
       if (mode === 'spec') {
         await api('/api/architect/seed', {
@@ -264,6 +311,10 @@ export function RefactorSheet({ board = '', repo = null, initialPreset = '', onC
   }
 
   const repoName = report?.repoRoot ? String(report.repoRoot).split('/').filter(Boolean).pop() : ''
+  const hardList = report?.hardFails ?? []
+  const shownSoftCount = archivedSoft.length ? activeSoft.length : (report?.counts?.softSignalCount ?? 0)
+  const activeSignalCount = hardList.length + activeSoft.length
+  const hasSignals = activeSignalCount + archivedSoft.length > 0
 
   return (
     <Sheet title={`🛠 ${t('refactor.title')}`} onClose={() => !busy && onClose?.()}>
@@ -277,12 +328,18 @@ export function RefactorSheet({ board = '', repo = null, initialPreset = '', onC
               ? t('coherence.reportUnavailable')
               : t('coherence.reportSummary', {
                   hard: report.counts.hardFailCount,
-                  soft: report.counts.softSignalCount,
+                  soft: shownSoftCount,
                   hotspots: report.counts.hotspotCount,
                 })}
         </span>
-        {reportState === 'ready' && repoName ? (
-          <span className="coh-report-meta">{t('coherence.reportRepo', { repo: repoName })}</span>
+        {reportState === 'ready' && (repoName || archivedSoft.length > 0) ? (
+          <span className="coh-report-meta">
+            {repoName ? t('coherence.reportRepo', { repo: repoName }) : ''}
+            {repoName && archivedSoft.length > 0 ? ' · ' : ''}
+            {archivedSoft.length > 0 ? (
+              <span className="coh-report-archived">{t('coherence.reportArchived', { n: archivedSoft.length })}</span>
+            ) : null}
+          </span>
         ) : null}
         <button
           type="button"
@@ -294,6 +351,93 @@ export function RefactorSheet({ board = '', repo = null, initialPreset = '', onC
           ↻ {t('coherence.refresh')}
         </button>
       </div>
+
+      {reportState === 'ready' && hasSignals ? (
+        <details className="coh-details">
+          <summary className="coh-details-summary">
+            {activeSignalCount > 0
+              ? t('coherence.detailsToggle', { n: activeSignalCount })
+              : t('coherence.detailsToggleArchivedOnly', { n: archivedSoft.length })}
+          </summary>
+          <div className="coh-signal-list">
+            {hardList.map((item, i) => (
+              <div className="coh-signal is-hard" key={`hard:${i}:${signalKeyOf(item)}`}>
+                <div className="coh-signal-head">
+                  <span className="coh-signal-kind is-hard">{t('coherence.detailsHard')}</span>
+                  {item.rule ? <span className="coh-signal-rule">{item.rule}</span> : null}
+                </div>
+                {item.file ? <div className="coh-signal-file mono">{item.file}</div> : null}
+                {item.detail ? <div className="coh-signal-msg">{item.detail}</div> : null}
+                <div className="coh-signal-advice">{adviceText(item)}</div>
+                <div className="coh-signal-actions">
+                  <button type="button" className="coh-signal-btn" onClick={() => applySignalTarget(item)}>
+                    {t('coherence.detailsApply')}
+                  </button>
+                </div>
+              </div>
+            ))}
+            {activeSoft.map((item, i) => (
+              <div className="coh-signal" key={`soft:${i}:${signalKeyOf(item)}`}>
+                <div className="coh-signal-head">
+                  <span className="coh-signal-kind">{t('coherence.detailsSoft')}</span>
+                  {item.rule ? <span className="coh-signal-rule">{item.rule}</span> : null}
+                </div>
+                {item.file ? <div className="coh-signal-file mono">{item.file}</div> : null}
+                {item.detail ? <div className="coh-signal-msg">{item.detail}</div> : null}
+                <div className="coh-signal-advice">{adviceText(item)}</div>
+                <div className="coh-signal-actions">
+                  <button type="button" className="coh-signal-btn" onClick={() => applySignalTarget(item)}>
+                    {t('coherence.detailsApply')}
+                  </button>
+                  <button
+                    type="button"
+                    className="coh-signal-btn ghost"
+                    onClick={() => setAckStore((cur) => acknowledgeSignal(cur, repoKey, item))}
+                  >
+                    {t('coherence.detailsArchive')}
+                  </button>
+                </div>
+              </div>
+            ))}
+            {archivedSoft.length > 0 ? (
+              <button
+                type="button"
+                className="coh-archived-toggle"
+                aria-expanded={showArchivedSignals}
+                onClick={() => setShowArchivedSignals((v) => !v)}
+              >
+                {showArchivedSignals
+                  ? t('coherence.detailsHideArchived')
+                  : t('coherence.detailsArchivedToggle', { n: archivedSoft.length })}
+              </button>
+            ) : null}
+            {showArchivedSignals && archivedSoft.length > 0 ? (
+              <>
+                <div className="coh-archived-note">{t('coherence.detailsAutoResurface')}</div>
+                {archivedSoft.map((item, i) => (
+                  <div className="coh-signal is-archived" key={`arch:${i}:${signalKeyOf(item)}`}>
+                    <div className="coh-signal-head">
+                      <span className="coh-signal-kind">{t('coherence.detailsSoft')}</span>
+                      {item.rule ? <span className="coh-signal-rule">{item.rule}</span> : null}
+                    </div>
+                    {item.file ? <div className="coh-signal-file mono">{item.file}</div> : null}
+                    {item.detail ? <div className="coh-signal-msg">{item.detail}</div> : null}
+                    <div className="coh-signal-actions">
+                      <button
+                        type="button"
+                        className="coh-signal-btn"
+                        onClick={() => setAckStore((cur) => restoreSignal(cur, repoKey, item))}
+                      >
+                        {t('coherence.detailsRestore')}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </>
+            ) : null}
+          </div>
+        </details>
+      ) : null}
 
       <div className="list-head">{t('coherence.preset')}</div>
       <div className="coh-presets" role="radiogroup" aria-label={t('coherence.preset')}>

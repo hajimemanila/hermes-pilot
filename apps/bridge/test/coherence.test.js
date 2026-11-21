@@ -605,6 +605,11 @@ test('gitHotspots は COHERENCE/ スイープコミットを境界に過去チ�
   }
   const afterDrift = await gitHotspots(root, { days: 14 })
   assert.deepEqual(afterDrift, [{ file: 'src/hot.js', touches: 5 }])
+
+  // `refactor(coherence):` / `chore(coherence):` も同じくスイープ完了境界として扱う
+  commitAt(300, 'refactor(coherence): extract module after drift', 'export const n = 300\n')
+  const afterScopeSweep = await gitHotspots(root, { days: 14 })
+  assert.deepEqual(afterScopeSweep, [])
 })
 
 /* -------------------------------------------------------------------------- *

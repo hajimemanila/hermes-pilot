@@ -366,3 +366,154 @@
   color: var(--muted);
   vertical-align: 1px;
 }
+
+/* ------------------------------------------------------------------------ */
+/* RefactorSheet 内訳・推奨対応・退避（D93/v0.2.4）                           */
+/* ------------------------------------------------------------------------ */
+
+.coh-report-archived {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.coh-details {
+  margin: 0 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.coh-details-summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 11px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+  list-style: none;
+}
+
+.coh-details-summary::-webkit-details-marker {
+  display: none;
+}
+
+.coh-details[open] .coh-details-summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.coh-signal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px 10px;
+}
+
+.coh-signal {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.coh-signal.is-hard {
+  border-color: var(--danger-line);
+  background: var(--danger-bg);
+}
+
+.coh-signal.is-archived {
+  opacity: 0.72;
+}
+
+.coh-signal-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.coh-signal-kind {
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--warn);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.coh-signal-kind.is-hard {
+  border-color: var(--danger-line);
+  color: var(--danger-fg);
+}
+
+.coh-signal-rule {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.coh-signal-file {
+  font-size: 11px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.coh-signal-msg {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.coh-signal-advice {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.coh-signal-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.coh-signal-btn {
+  min-height: 44px;
+  padding: 6px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.coh-signal-btn.ghost {
+  background: transparent;
+  color: var(--muted);
+}
+
+.coh-archived-toggle {
+  min-height: 44px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  border: 1px dashed var(--line-strong);
+  background: transparent;
+  color: var(--muted);
+  font-size: 11.5px;
+  text-align: start;
+}
+
+.coh-archived-note {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+}

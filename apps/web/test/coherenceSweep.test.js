@@ -22,11 +22,19 @@ import {
   DEFAULT_SWEEP,
   MAX_LISTED_FILES,
   SWEEP_PRESETS,
+  ackForRepo,
+  acknowledgeSignal,
+  adviceKeyForRule,
   buildSweepPayload,
+  isSignalAcknowledged,
   normalizePreset,
   normalizeReport,
+  partitionSoftSignals,
+  parseCoherenceAck,
   presetForRule,
   recommendSweep,
+  restoreSignal,
+  signalKeyOf,
   sweepCounts,
   sweepFiles,
 } from '../src/lib/coherenceSweep.js'
@@ -348,4 +356,61 @@ test('English payloads stay CJK-free, Japanese payloads are translated', () => {
   }
   // 未知の lang は en へ落とす（辞書の無い言語で空文字列を出さない）
   assert.doesNotMatch(buildSweepPayload({ preset: 'custom', lang: 'fr' }).body, CJK)
+})
+
+test('soft-signal archive ratchets on numeric value and auto-resurfaces on growth', () => {
+  const repoSignal21 = { rule: 'akapen-residual', file: '', detail: "21 legacy 'akapen' references", value: 21 }
+  const repoSignal22 = { rule: 'akapen-residual', file: '', detail: "22 legacy 'akapen' references", value: 22 }
+  const bloatSignal = { rule: 'file-bloat', file: 'src/big.js', detail: '810 lines', value: 810, limit: 800 }
+  assert.equal(signalKeyOf(repoSignal21), signalKeyOf(repoSignal22), '数字が変わっても同一シグナルのキーに束ねる')
+  assert.equal(signalKeyOf(bloatSignal), 'file-bloat::src/big.js')
+
+  let store = acknowledgeSignal({}, '/repo/a', repoSignal21, 1000)
+  store = parseCoherenceAck(JSON.stringify(store))
+  const repoMap = ackForRepo(store, '/repo/a')
+
+  assert.equal(isSignalAcknowledged(repoSignal21, repoMap), true)
+  assert.equal(isSignalAcknowledged({ ...repoSignal21, value: 20 }, repoMap), true)
+  assert.equal(isSignalAcknowledged(repoSignal22, repoMap), false, '件数増加時は自動で再点灯する')
+  assert.deepEqual(ackForRepo(store, '/repo/other'), {}, '別リポジトリへ漏れない')
+  assert.deepEqual(parseCoherenceAck('{broken'), {})
+
+  const split = partitionSoftSignals([repoSignal21, bloatSignal], repoMap)
+  assert.deepEqual(split.archived.map((x) => x.rule), ['akapen-residual'])
+  assert.deepEqual(split.active.map((x) => x.rule), ['file-bloat'])
+
+  const countsWithAck = sweepCounts({ hardFails: [], softSignals: [repoSignal21, bloatSignal] }, repoMap)
+  assert.equal(countsWithAck.hotspots, 1)
+  assert.equal(countsWithAck.custom, 0)
+
+  const payloadWithAck = buildSweepPayload({
+    preset: 'hotspots',
+    report: {
+      hardFails: [],
+      softSignals: [{ rule: 'debt-spike', file: 'src/skip.js', detail: '10 markers', value: 10 }, bloatSignal],
+    },
+    ackMap: ackForRepo(acknowledgeSignal({}, '/repo/a', { rule: 'debt-spike', file: 'src/skip.js', value: 10 }), '/repo/a'),
+    lang: 'en',
+  })
+  assert.match(payloadWithAck.body, /^Detected: 0 hard fail\(s\), 1 soft signal\(s\), 0 hotspot\(s\)$/m)
+  assert.doesNotMatch(payloadWithAck.body, /src\/skip\.js/)
+  assert.match(payloadWithAck.body, /src\/big\.js/)
+
+  const restored = restoreSignal(store, '/repo/a', repoSignal21)
+  assert.deepEqual(ackForRepo(restored, '/repo/a'), {})
+})
+
+test('adviceKeyForRule maps universal rules and falls back cleanly for repo-specific rules', () => {
+  assert.equal(adviceKeyForRule('file-bloat'), 'coherence.advice.fileBloat')
+  assert.equal(adviceKeyForRule('git-hotspot'), 'coherence.advice.gitHotspot')
+  assert.equal(adviceKeyForRule('spec-sprawl'), 'coherence.advice.specSprawl')
+  assert.equal(adviceKeyForRule('duplicate-batch-id'), 'coherence.advice.duplicateBatchId')
+  assert.equal(adviceKeyForRule('debt-spike'), 'coherence.advice.debtSpike')
+  assert.equal(adviceKeyForRule('baseline-ratchet'), 'coherence.advice.baselineRatchet')
+  assert.equal(adviceKeyForRule('akapen-residual'), 'coherence.advice.preset')
+  const normalized = normalizeReport({
+    softSignals: [{ rule: 'file-bloat', file: 'src/x.js', message: '900 lines', value: 900, limit: 800 }],
+  })
+  assert.equal(normalized.softSignals[0].value, 900)
+  assert.equal(normalized.softSignals[0].limit, 800)
 })

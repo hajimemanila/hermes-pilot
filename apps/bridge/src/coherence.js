@@ -184,7 +184,7 @@ export function listSourceFiles(repoRoot, opts = {}) {
 }
 
 /**
- * 直近の `COHERENCE/` スイープコミットの UNIX 秒を返す（見つからなければ null）。
+ * 直近の整合性スイープ（`COHERENCE/` または `(coherence):`）コミットの UNIX 秒を返す。
  *
  * リファクタ・分割を完了したスイープコミット以前の履歴が `git-hotspot` を 14 日間
  * 汚染し続けないためのチェックポイント（D80 / post-sweep clear）。
@@ -197,7 +197,7 @@ function latestCoherenceSweepSec(repoRoot, days) {
   return new Promise((resolve) => {
     execFile(
       'git',
-      ['log', `--since=${days}.days`, '-n', '1', '--grep=COHERENCE/', '--format=%ct'],
+      ['log', `--since=${days}.days`, '-n', '1', '--extended-regexp', '--grep=(COHERENCE/|\\(coherence\\):)', '--format=%ct'],
       { cwd: repoRoot, timeout: 5_000, maxBuffer: 64 * 1024 },
       (err, stdout) => {
         if (err) return resolve(null)
