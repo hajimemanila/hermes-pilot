@@ -30,6 +30,9 @@ const TOKEN_REF = ['auth', 'token'].join('.')
 
 const CONSOLE_CALL = /\bconsole\.(log|error|warn|info|debug)\s*\(/
 
+/** CJK（かな・カナ・漢字・全角形）。ログ出力に出てはいけない（SPEC-EN-ZERO-LEAK D71）。 */
+const CJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff01-\uff60]/
+
 /**
  * ソースから `console.*` 呼び出しの行だけを取り出す。
  * @param {string} source ソース全文
@@ -116,14 +119,35 @@ test('起動ログは auth.token の生値を出さない（ソース走査）',
     'auth.token を console.* へ流している行がある',
   )
   // 管理画面 URL はトークン無しで出し、代わりにトークンファイルのパスを案内する
-  assert.match(source, /\[bridge\] トークンファイル: \$\{cfg\.tokenPath\}/)
-  assert.match(source, /\[bridge\] 管理画面: http:\/\/\$\{cfg\.host\}:\$\{cfg\.port\}\/auth`/)
+  assert.match(source, /\[bridge\] Token file: \$\{cfg\.tokenPath\}/)
+  assert.match(source, /\[bridge\] Auth page: http:\/\/\$\{cfg\.host\}:\$\{cfg\.port\}\/auth`/)
+})
+
+test('起動・PTY・500 のログは標準英語（日本語の直書きが無い）', () => {
+  const source = fs.readFileSync(SERVER, 'utf8')
+  // 実出力になる文字列（ログ・端末へ送る行）が英語であること（D71）。
+  assert.match(source, /\[bridge\] Port \$\{cfg\.port\} is already in use/)
+  assert.match(source, /\[bridge\] Server error:/)
+  assert.match(source, /\[api\] failed:/)
+  assert.match(source, /\[bridge\] node-pty failed to load/)
+  assert.match(source, /\[bridge\] Failed to start PTY: \$\{err\?\.message \?\? err\}/)
+  assert.match(source, /\[bridge\] Upstream: \$\{cfg\.hermesBase\}/)
+  assert.match(source, /\[bridge\] Hermes session token: resolved/)
+  assert.match(source, /\[bridge\] Failed to resolve session token \(is the dashboard stopped\?\)/)
+  // 機械ゲート: `server.js` の console.* 行に日本語が 1 行も無い
+  const bad = consoleLines(source).filter((l) => CJK.test(l.text)).map((l) => `${l.line}: ${l.text.trim()}`)
+  assert.deepEqual(bad, [], 'console.* に日本語が残っている（D71）')
 })
 
 test('ログイン案内はトークンファイルを指す（起動ログではない）', () => {
   const source = fs.readFileSync(SERVER, 'utf8')
   assert.equal(source.includes('起動ログにあります'), false, '旧文言（起動ログ案内）が残っている')
-  assert.match(source, /plugin-data\/hermes-pilot\/token<\/code>（トークンファイル）を確認してください/)
+  // EN（英語既定）と JA の両方がトークンファイルを指す（D71 / §3.2-5）。
+  assert.match(source, /hint: 'Find the token in <code>~\/\.hermes\/plugin-data\/hermes-pilot\/token<\/code>\.'/)
+  assert.match(
+    source,
+    /hint: 'トークンは <code>~\/\.hermes\/plugin-data\/hermes-pilot\/token<\/code>（トークンファイル）を確認してください。'/,
+  )
 })
 
 test('実起動した stdout/stderr に生トークンが出ない', async () => {
@@ -140,9 +164,11 @@ test('実起動した stdout/stderr に生トークンが出ない', async () =>
     assert.equal(boot.log.includes(token), false, '起動ログに生トークンが出ている')
     assert.equal(/\?t=/.test(boot.log), false, '起動ログに /auth?t=… の URL が出ている')
     assert.ok(
-      boot.log.includes(`[bridge] トークンファイル: ${tokenFile}`),
+      boot.log.includes(`[bridge] Token file: ${tokenFile}`),
       `トークンファイルのパスが起動ログに無い: ${boot.log}`,
     )
+    // 英語環境のゼロ CJK（D71）。ログビューアに日本語が 1 行でも出れば落ちる。
+    assert.equal(CJK.test(boot.log), false, `起動ログに日本語が残っている: ${boot.log}`)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }

@@ -19,7 +19,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import * as review from '../src/review.js'
 import { buildTaskBody } from '../src/specs.js'
 
@@ -234,4 +236,85 @@ test("review.js に `lang = 'ja'` が無い（既定値の逆戻り防止）", (
   // 機械トークン・機械行は ASCII のまま（カンバンに残る 1 行の言語分岐は両方が存在する）。
   assert.ok(REVIEW_SRC.includes('注釈'), '注釈サマリの ja 分岐が消えています（§3.3）')
   assert.ok(REVIEW_SRC.includes('Annotation'), '注釈サマリの en 分岐がありません（§3.3）')
+})
+
+test('server.js は reopen に表示言語を渡す（D73）', () => {
+  const serverSrc = fs.readFileSync(path.join(BRIDGE_SRC, 'server.js'), 'utf8')
+  assert.match(
+    serverSrc,
+    /review\.reopen\(b,\s*body\?\.reason,\s*langOf\(req, url\)\)/,
+    'server.js が review.reopen(…, langOf(req, url)) を呼んでいません（lang が渡らず ja 既定に戻る）',
+  )
+})
+
+/**
+ * `reopen` 用の一時ボード（1 タスクだけ入れた kanban.db と board.json）。
+ *
+ * 既定理由は `bodyOf()` → `runKanban(['request-changes', id, reason])` に載るので、
+ * `runKanban` を差し替えて**実際に渡された理由**を見る（出力そのものの検査）。
+ *
+ * @returns {{root: string, calls: string[][]}} 一時ルートと呼び出し記録
+ */
+function reopenBoard() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-reopen-'))
+  const boardDir = path.join(root, 'kanban', 'boards', 'mobile')
+  fs.mkdirSync(boardDir, { recursive: true })
+  fs.writeFileSync(path.join(boardDir, 'board.json'), JSON.stringify({ slug: 'mobile', default_workdir: root }))
+  const db = new DatabaseSync(path.join(boardDir, 'kanban.db'))
+  db.exec(`CREATE TABLE tasks (
+    id TEXT PRIMARY KEY, title TEXT, body TEXT, status TEXT NOT NULL, assignee TEXT,
+    priority INTEGER DEFAULT 0, created_at INTEGER, started_at INTEGER, completed_at INTEGER, result TEXT,
+    last_heartbeat_at INTEGER)`)
+  db.prepare('INSERT INTO tasks (id,title,body,status,assignee,created_at) VALUES (?,?,?,?,?,?)').run(
+    't_reopen1',
+    'Demo task',
+    'Body\n[review] label=demo-01 round=1 mode=standard sheet=sheets/demo-01-1.json\n',
+    'blocked',
+    'mobile',
+    1,
+  )
+  db.close()
+  return { root, calls: [] }
+}
+
+test('reopen の既定理由は en（既定）で、ja を渡すと日本語に戻る（D73）', async () => {
+  const { root, calls } = reopenBoard()
+  try {
+    const api = review.createReview(
+      { kanbanRoot: path.join(root, 'kanban') },
+      {
+        board: 'mobile',
+        runKanban: async (args) => {
+          calls.push(args)
+          return { code: 0, out: 'ok' }
+        },
+      },
+    )
+    // ① lang 省略（既定 en）
+    const en = await api.reopen('t_reopen1')
+    assert.equal(en.ok, true)
+    assert.equal(calls[0][0], 'request-changes')
+    assert.equal(calls[0][1], 't_reopen1')
+    assert.equal(cjkSample(calls[0][2]), null, `reopen の既定理由（en）に日本語: ${calls[0][2]}`)
+    assert.equal(calls[0][2], review.reopenTextOf('en').defaultReason)
+
+    // ② 明示 en は ① と同じ
+    await api.reopen('t_reopen1', undefined, 'en')
+    assert.equal(calls[1][2], calls[0][2])
+
+    // ③ ja は日本語フォールバック
+    await api.reopen('t_reopen1', undefined, 'ja')
+    assert.ok(CJK.test(calls[2][2]), `reopen(…, 'ja') が日本語になっていない: ${calls[2][2]}`)
+
+    // ④ 明示理由は言語に関係なくそのまま使う（人が書いた文を書き換えない）
+    await api.reopen('t_reopen1', 'Please fix the header spacing', 'ja')
+    assert.equal(calls[3][2], 'Please fix the header spacing')
+
+    // ⑤ 表の既定引数も en（未知の言語は en へ倒す）
+    assert.equal(review.reopenTextOf().defaultReason, review.reopenTextOf('en').defaultReason)
+    assert.equal(review.reopenTextOf('fr').defaultReason, review.reopenTextOf('en').defaultReason)
+    assert.equal(cjkSample(`[${review.reopenTextOf().defaultReason}]`), null)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
 })

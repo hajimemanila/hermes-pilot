@@ -114,6 +114,26 @@ export function opsText(lang) {
   return lang === 'ja' ? OPS_TEXT.ja : OPS_TEXT.en
 }
 
+/**
+ * `reopen`（変更要求）の既定理由の表。
+ *
+ * 理由文は worker がそのまま読む **カンバンに残る散文**なので、呼び出し元の表示言語で出す
+ * （SPEC-EN-ZERO-LEAK D73）。機械トークン（タスク id・パス）は含めない。
+ */
+const REOPEN_TEXT = {
+  en: { defaultReason: 'Please re-check and update the implementation' },
+  ja: { defaultReason: 'レビューの再確認をお願いします' },
+}
+
+/**
+ * `reopen` の既定理由を返す（未知の言語は en）。
+ * @param {'ja'|'en'} [lang] 言語
+ * @returns {typeof REOPEN_TEXT.en} 表
+ */
+export function reopenTextOf(lang) {
+  return lang === 'ja' ? REOPEN_TEXT.ja : REOPEN_TEXT.en
+}
+
 /** 未選択を表す接頭辞（`(未選択 = お任せ)` / `(unselected = take recommended)` の両方）。 */
 const UNSELECTED_RE = /^\(\s*(?:未選択|unselected)/i
 
@@ -1271,11 +1291,17 @@ export function createReview(cfg, opts = {}) {
     }
   }
 
-  /** 反映が違うとき review に戻す。 */
-  async function reopen(id, reason) {
+  /**
+   * 反映が違うとき review に戻す。
+   * @param {string} id タスク ID
+   * @param {string} [reason] 変更要求の理由（省略時は言語別の既定文）
+   * @param {'ja'|'en'} [lang] 既定理由の言語（既定 en・SPEC-EN-ZERO-LEAK D73）
+   * @returns {Promise<{ok: boolean, status: string, output: string} | {ok: false, code: string}>} 結果
+   */
+  async function reopen(id, reason, lang = 'en') {
     const b = bodyOf(id)
     if (!b) return { ok: false, code: 'NOT_FOUND' }
-    const out = await runKanban(['request-changes', id, String(reason || 'レビューの再確認をお願いします')])
+    const out = await runKanban(['request-changes', id, String(reason || reopenTextOf(lang).defaultReason)])
     return { ok: out.code === 0, status: b.status, output: out.out.slice(0, 800) }
   }
 

@@ -1229,6 +1229,7 @@ export function createArchitect(cfg = {}, deps = {}) {
           specRelPath: job.spec,
           batchIds: pending[0].pending,
           chat: job.chat ?? undefined,
+          lang: job.lang,
         })
         job.status = 'launched'
         job.launched = {

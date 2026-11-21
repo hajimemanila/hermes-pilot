@@ -1069,7 +1069,7 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
         const merged = fresh.map((r) => touchedRuns.get(String(r.id)) ?? r)
         writeRunsFn(runsFile, merged)
       } catch (err) {
-        log.warn?.(`[pipeline-watcher] ランの reportedAt 更新に失敗: ${err?.message ?? err}`)
+        log.warn?.(`[pipeline-watcher] Failed to update run reportedAt: ${err?.message ?? err}`)
       }
     }
 

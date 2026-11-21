@@ -110,6 +110,7 @@ test('空クエリ・DBなしは ok:false で理由を返す', () => {
   const r = s2.search({ q: 'テスト' })
   assert.equal(r.ok, false)
   assert.match(r.reason, /state\.db/)
+  assert.equal(/[\u3040-\u30ff\u4e00-\u9fff]/.test(r.reason), false, `reason が英語になっていません: ${r.reason}`)
 })
 
 test('FTS の構文エラーになる入力でも落ちない', () => {

@@ -84,6 +84,7 @@ test('DBなしは ok:false', () => {
   const d = u.summary({ hours: 24 })
   assert.equal(d.ok, false)
   assert.match(d.reason, /state\.db/)
+  assert.equal(/[\u3040-\u30ff\u4e00-\u9fff]/.test(d.reason), false, `reason が英語になっていません: ${d.reason}`)
 })
 
 test('表示フォーマット', () => {

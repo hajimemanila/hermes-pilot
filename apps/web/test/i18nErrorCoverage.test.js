@@ -34,7 +34,8 @@ const ja = readDict('ja')
 /** ひらがな・カタカナ・漢字（全角記号は含めない＝記号だけの文は許す）。 */
 const JP = /[\u3040-\u309f\u30a0-\u30ff\u4e00-\u9fff]/
 
-/** B2 で置換した 9 ファイル（`runKanban` の運用文・シート HTML・生成文は対象外）。 */
+/** B2 で置換した 9 ファイル + SPEC-EN-ZERO-LEAK D74 のデータ API 5 モジュール
+ * （`runKanban` の運用文・シート HTML・生成文は対象外）。 */
 const SCOPED = [
   'review.js',
   'repos.js',
@@ -45,6 +46,12 @@ const SCOPED = [
   'capture.js',
   'chat-profile.js',
   'server.js',
+  // D74: データ API の `reason`（`detail` として応答 JSON に載る）
+  'gitinfo.js',
+  'live.js',
+  'search.js',
+  'transcript.js',
+  'usage.js',
 ]
 
 /** 行コメント・ブロックコメントを落とす（コメント内の日本語は対象外）。 */

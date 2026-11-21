@@ -116,11 +116,11 @@ export function createGitInfo(cfg) {
   async function diffSummary(taskId) {
     const e = entryFor(taskId)
     if (!e) {
-      return { ok: false, code: 'NO_GIT_RECORD', reason: 'このタスクの git 記録がありません（kanban-sop 経由でない可能性）' }
+      return { ok: false, code: 'NO_GIT_RECORD', reason: 'This task has no Git record (it may not have gone through kanban-sop)' }
     }
     const { repo, head, dirty } = e.git
-    if (!head) return { ok: false, code: 'NO_COMMITS', reason: 'コミットがまだありません' }
-    if (!fs.existsSync(repo)) return { ok: false, code: 'GIT_REPO_MISSING', reason: `リポジトリが見つかりません: ${repo}` }
+    if (!head) return { ok: false, code: 'NO_COMMITS', reason: 'No commits yet' }
+    if (!fs.existsSync(repo)) return { ok: false, code: 'GIT_REPO_MISSING', reason: `The Git repository directory was not found: ${repo}` }
 
     const key = `${repo}@${head}`
     const cached = numstatCache.get(key)
@@ -128,7 +128,7 @@ export function createGitInfo(cfg) {
     let subj = cached?.subject
     if (!files) {
       const out = await git(repo, ['show', '--numstat', '--format=%h%x09%s', head])
-      if (out == null) return { ok: false, code: 'GIT_SHOW_FAILED', reason: 'git show に失敗しました' }
+      if (out == null) return { ok: false, code: 'GIT_SHOW_FAILED', reason: 'git show failed' }
       const lines = out.split('\n')
       const headLine = lines.shift() ?? ''
       subj = headLine.split('\t')[1] ?? ''
@@ -169,16 +169,16 @@ export function createGitInfo(cfg) {
    */
   async function filePatch(taskId, file) {
     const e = entryFor(taskId)
-    if (!e?.git?.head) return { ok: false, code: 'NO_COMMITS', reason: 'コミットがありません' }
+    if (!e?.git?.head) return { ok: false, code: 'NO_COMMITS', reason: 'No commits yet' }
     const { repo, head } = e.git
     const key = `${repo}@${head}`
     if (!numstatCache.has(key)) await diffSummary(taskId)
     const files = numstatCache.get(key)?.files ?? []
     const allowed = files.some((f) => f.path === file)
-    if (!allowed) return { ok: false, code: 'FILE_NOT_IN_COMMIT', reason: 'そのコミットに含まれないファイルです' }
+    if (!allowed) return { ok: false, code: 'FILE_NOT_IN_COMMIT', reason: 'That file is not part of this commit' }
 
     const patch = await git(repo, ['show', '--format=', '--no-color', head, '--', file], MAX_PATCH_BYTES * 4)
-    if (patch == null) return { ok: false, code: 'GIT_SHOW_FAILED', reason: 'git show に失敗しました' }
+    if (patch == null) return { ok: false, code: 'GIT_SHOW_FAILED', reason: 'git show failed' }
     const lines = patch.split('\n')
     const clipped = lines.slice(0, MAX_PATCH_LINES).join('\n')
     const text = clipped.length > MAX_PATCH_BYTES ? clipped.slice(0, MAX_PATCH_BYTES) : clipped

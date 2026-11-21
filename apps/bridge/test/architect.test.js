@@ -350,12 +350,14 @@ test('autoStart は未起票バッチを 1 回だけ起票する（2 周目は�
     },
   )
 
-  await arch.seed(seedInput(repo, { autoStart: true }))
+  await arch.seed(seedInput(repo, { autoStart: true, lang: 'en' }))
   await settle()
 
   const first = await arch.jobs({ board: 'demo' })
   assert.equal(launches.length, 1, '1 周目で 1 回だけ起票')
   assert.deepEqual(launches[0].batchIds, ['D-1', 'D-2'])
+  // ジョブの言語は起票時のタスク本文へ引き継ぐ（SPEC-EN-ZERO-LEAK D73）
+  assert.equal(launches[0].lang, 'en', 'autoStart が job.lang を launchSpec に渡していない')
   assert.equal(first.jobs[0].status, 'launched')
   assert.equal(first.jobs[0].launched.ok, true)
   assert.equal(first.jobs[0].launched.created.length, 2)

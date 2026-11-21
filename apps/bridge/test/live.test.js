@@ -124,6 +124,7 @@ test('state.db が無くてもタスクは返す', () => {
   assert.equal(s.ok, false)
   assert.equal(s.tasks.length, 1)
   assert.match(s.reason, /state\.db/)
+  assert.equal(/[\u3040-\u30ff\u4e00-\u9fff]/.test(s.reason), false, `reason が英語になっていません: ${s.reason}`)
 })
 
 test('カンバンが落ちてもターンは返す', () => {

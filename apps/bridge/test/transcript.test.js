@@ -146,6 +146,7 @@ test('session_id 無し・DBなしは ok:false', () => {
   const r = s2.read('s1')
   assert.equal(r.ok, false)
   assert.match(r.reason, /state\.db/)
+  assert.equal(/[\u3040-\u30ff\u4e00-\u9fff]/.test(r.reason), false, `reason が英語になっていません: ${r.reason}`)
 })
 
 test('旧スキーマ（tool_* 列なし）でも後方互換で読める', () => {

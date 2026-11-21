@@ -6,6 +6,9 @@ import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { createGitInfo } from '../src/gitinfo.js'
 
+/** ひらがな・カタカナ・漢字・全角形（`reason` は英語のみ・SPEC-EN-ZERO-LEAK D74）。 */
+const CJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff01-\uff60]/
+
 /** 一時的な git リポジトリと history.jsonl を作る。 */
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-git-'))
@@ -77,7 +80,8 @@ test('diffSummary は git 記録が無いタスクで理由を返す', async () 
   const gi = createGitInfo({ home: '/nonexistent', sopHistory: history })
   const d = await gi.diffSummary('t_none')
   assert.equal(d.ok, false)
-  assert.match(d.reason, /git 記録がありません/)
+  assert.match(d.reason, /no Git record/i)
+  assert.equal(CJK.test(d.reason), false, `reason が英語になっていません: ${d.reason}`)
 })
 
 test('filePatch はコミットに含まれるファイルだけ返す', async () => {
@@ -88,7 +92,8 @@ test('filePatch はコミットに含まれるファイルだけ返す', async (
   assert.match(ok.text, /\+new/)
   const ng = await gi.filePatch('t_1', 'package.json')
   assert.equal(ng.ok, false)
-  assert.match(ng.reason, /含まれない/)
+  assert.match(ng.reason, /not part of this commit/i)
+  assert.equal(CJK.test(ng.reason), false, `reason が英語になっていません: ${ng.reason}`)
 })
 
 test('filePatch はパストラバーサルを拒否する', async () => {

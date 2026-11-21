@@ -191,7 +191,7 @@ export function createLive(cfg, kanban, deps = {}) {
     if (!targets.length) {
       out.ok = false
       out.code = 'DB_NOT_FOUND'
-      out.reason = 'state.db が見つかりません'
+      out.reason = 'Hermes state.db was not found'
       return out
     }
     const turns = []
@@ -208,7 +208,7 @@ export function createLive(cfg, kanban, deps = {}) {
     if (!succeeded && firstErr) {
       out.ok = false
       out.code = 'READ_FAILED'
-      out.reason = `読み取りに失敗しました: ${firstErr.message}`
+      out.reason = `Could not read the data: ${firstErr.message}`
       return out
     }
     turns.sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))

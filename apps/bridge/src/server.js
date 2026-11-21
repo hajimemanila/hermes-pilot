@@ -1142,7 +1142,7 @@ async function handleApi(req, res, url) {
         return sendError(res, 429, 'RATE_LIMITED')
       }
       const body = await readJson(req)
-      const r = await review.reopen(b, body?.reason)
+      const r = await review.reopen(b, body?.reason, langOf(req, url))
       auth.audit({ kind: 'review.reopen', task: b, ok: Boolean(r.ok) })
       return r.ok ? sendJson(res, 200, r) : sendFailure(res, 400, r)
     }
@@ -1540,7 +1540,7 @@ const server = http.createServer(async (req, res) => {
     return serveStatic(req, res, url.pathname)
   } catch (err) {
     const status = err?.statusCode ?? 500
-    if (status >= 500) console.error('[api] 失敗:', err)
+    if (status >= 500) console.error('[api] failed:', err)
     // `ApiError` など `code` / `params` を持つ throw はそのコードで返す（SPEC-i18n-resp B1）。
     const code = typeof err?.code === 'string' && err.code ? err.code : status >= 500 ? 'INTERNAL' : 'BAD_REQUEST'
     sendFailure(res, status, { code, params: err?.params, message: String(err?.message ?? '') })
@@ -1696,7 +1696,7 @@ async function proxyChat(client) {
  */
 function openTerm(ws) {
   if (!pty) {
-    ws.send(JSON.stringify({ t: 'out', d: '\r\n[bridge] node-pty が読み込めません\r\n' }))
+    ws.send(JSON.stringify({ t: 'out', d: '\r\n[bridge] node-pty failed to load\r\n' }))
     ws.close(1011)
     return
   }
@@ -1714,7 +1714,7 @@ function openTerm(ws) {
   } catch (err) {
     // ここで例外を投げるとプロセスごと落ちる（実測: spawn-helper の実行権限欠落）
     auth.audit({ kind: 'term.error', message: String(err?.message ?? err) })
-    ws.send(JSON.stringify({ t: 'out', d: `\r\n[bridge] PTY を起動できません: ${err?.message ?? err}\r\n` }))
+    ws.send(JSON.stringify({ t: 'out', d: `\r\n[bridge] Failed to start PTY: ${err?.message ?? err}\r\n` }))
     ws.close(1011)
     return
   }
@@ -1754,36 +1754,36 @@ function openTerm(ws) {
 server.on('error', (err) => {
   if (err?.code === 'EADDRINUSE') {
     console.error(
-      `[bridge] ポート ${cfg.port} は使用中です。手動起動したプロセスが残っていませんか: ` +
-        `lsof -nP -iTCP:${cfg.port} -sTCP:LISTEN  →  hermes-pilot service restart（または launchctl kickstart -k gui/$(id -u)/ai.hermes.pilot）`,
+      `[bridge] Port ${cfg.port} is already in use. Check for leftover manual processes: ` +
+        `lsof -nP -iTCP:${cfg.port} -sTCP:LISTEN -> hermes-pilot service restart (or launchctl kickstart -k gui/$(id -u)/ai.hermes.pilot)`,
     )
     process.exit(75)
   }
-  console.error('[bridge] サーバエラー:', err)
+  console.error('[bridge] Server error:', err)
   process.exit(1)
 })
 
 server.listen(cfg.port, cfg.host, async () => {
   console.log(`[bridge] Hermes Pilot: http://${cfg.host}:${cfg.port}`)
-  console.log(`[bridge] 上流: ${cfg.hermesBase}`)
-  console.log(`[bridge] トークンファイル: ${cfg.tokenPath}`)
-  console.log(`[bridge] 管理画面: http://${cfg.host}:${cfg.port}/auth`)
+  console.log(`[bridge] Upstream: ${cfg.hermesBase}`)
+  console.log(`[bridge] Token file: ${cfg.tokenPath}`)
+  console.log(`[bridge] Auth page: http://${cfg.host}:${cfg.port}/auth`)
   // 内蔵ウォッチャー（D7）。初回はベースライン確立のみで過去分は通知しない。
   try {
     reviewWatcher.start()
   } catch (err) {
-    console.warn(`[bridge] reviewWatcher を起動できません: ${err?.message}`)
+    console.warn(`[bridge] Failed to start reviewWatcher: ${err?.message}`)
   }
   // パイプライン完走レポート（D20 / D21）。初回はベースライン確立のみ。
   try {
     pipelineWatcher.start()
   } catch (err) {
-    console.warn(`[bridge] pipelineWatcher を起動できません: ${err?.message}`)
+    console.warn(`[bridge] Failed to start pipelineWatcher: ${err?.message}`)
   }
   try {
     await hermes.ensureToken()
-    console.log('[bridge] Hermes セッショントークン: 解決済み')
+    console.log('[bridge] Hermes session token: resolved')
   } catch (err) {
-    console.warn(`[bridge] トークン解決に失敗（ダッシュボード停止？）: ${err?.message}`)
+    console.warn(`[bridge] Failed to resolve session token (is the dashboard stopped?): ${err?.message}`)
   }
 })
