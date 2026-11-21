@@ -813,6 +813,8 @@ export function demoRoute(path) {
   // Discord ディープリンク（本番 `/api/discord/session`）。デモは「リンク無し」を明示して返す。
   if (p === '/api/discord/session') return { name: 'discord.session', params }
   if (p.startsWith('/api/auth/')) return { name: 'auth', params }
+  // D90: 全タスク緊急停止（ESTOP ＋ 実行中一括中断）。本番と同じ 1 本のエンドポイント。
+  if (p === '/api/emergency/stop-all') return { name: 'emergency.stopAll', params }
   if (p.startsWith('/api/gateway/')) {
     // 緊急停止は状態を持つ（`/api/overview` の `paused` とタスク一覧へ連動する）
     const action = parts[2] ?? ''
@@ -2149,6 +2151,36 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
     }
     case 'gateway':
       return { ok: true, state: 'running', demo: true }
+    // D90: 全タスク緊急停止（ESTOP ＋ 実行中一括中断）。本番 `ops.stopAll()` と同じ形を返し、
+    // `/api/overview` の `paused` とタスク一覧へ連動させる（デモでも 1 タップ停止を体験できる）。
+    case 'emergency.stopAll': {
+      if (String(payload?.confirm ?? '').toUpperCase() !== 'STOP_ALL') {
+        return { ok: false, code: 'CONFIRM_MISMATCH', params: { expected: 'STOP_ALL' }, demo: true }
+      }
+      const nowIso = new Date().toISOString()
+      state.demoOps.paused = {
+        engaged: true,
+        reason: String(payload?.reason ?? 'mobile'),
+        engagedAt: nowIso,
+      }
+      const running = state.tasks.filter((t) => t.status === 'running')
+      for (const t of running) {
+        t.status = 'blocked'
+        t.updatedAt = Date.now()
+      }
+      publish('tasks')
+      publish('overview')
+      return {
+        ok: true,
+        paused: state.demoOps.paused,
+        aborted: running.length,
+        abortedTasks: running.map((t) => ({ board: t.board, id: t.id })),
+        failed: [],
+        remainingRunning: state.tasks.filter((t) => t.status === 'running').length,
+        at: Date.now(),
+        demo: true,
+      }
+    }
     case 'clientError':
       return { ok: true }
     default:

@@ -302,14 +302,19 @@ export function HoldButton({ onFire, ms = 1500, label, sub, hint, tone = 'danger
 
   useEffect(() => stop, [stop])
 
+  // モバイルの長押しは「コンテキストメニュー（保存・共有）」に奪われると 1.5 秒に届かない。
+  // 抑止しないと押下中に `pointercancel` が来て進捗が 0 に戻る（実機で途切れる）。
   return (
     <button
+      type="button"
       className={`hold ${tone}`}
       disabled={disabled}
       onPointerDown={start}
       onPointerUp={stop}
       onPointerLeave={stop}
       onPointerCancel={stop}
+      onContextMenu={(e) => e.preventDefault()}
+      onDragStart={(e) => e.preventDefault()}
     >
       <span className="hold-fill" style={{ transform: `scaleX(${progress})` }} />
       <span className="hold-label">{label}</span>

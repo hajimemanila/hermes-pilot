@@ -707,6 +707,51 @@ test('V10-B3: demoRoute は V3〜V9 の未対応エンドポイントを本番�
   // 既存の catch-all（ログイン・セッション等）は壊さない
   assert.equal(demoRoute('/api/auth/session').name, 'auth')
   assert.equal(demoRoute('/api/gateway/restart').name, 'gateway')
+  // D90: 全タスク緊急停止（本番と同じ 1 本。`gateway` の catch-all に落とさない）
+  assert.equal(demoRoute('/api/emergency/stop-all').name, 'emergency.stopAll')
+})
+
+test('D90: デモの全タスク緊急停止は confirm を検証し、ESTOP と実行中を止める', async () => {
+  resetDemoState()
+  // 実行中タスクを 1 件足す（本番の `status === 'running'` と同じ判定）
+  demoState().tasks.push({
+    id: 't_demo_running',
+    board: 'mobile',
+    title: '[DEMO] running task',
+    status: 'running',
+    assignee: 'mobile',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    priority: 0,
+  })
+
+  // confirm 不一致は本番と同じ `CONFIRM_MISMATCH`（HTTP 400 相当）を返し、状態を変えない
+  const bad = await demoFetch('/api/emergency/stop-all', { method: 'POST', body: { confirm: 'nope' } })
+  assert.equal(bad.ok, false)
+  assert.equal(bad.code, 'CONFIRM_MISMATCH')
+  assert.equal(demoState().demoOps.paused.engaged, false)
+  assert.equal(demoState().tasks.find((t) => t.id === 't_demo_running').status, 'running')
+
+  // 正常系: ESTOP が作動し、実行中が止まり、残り 0 件
+  const ok = await demoFetch('/api/emergency/stop-all', {
+    method: 'POST',
+    body: { confirm: 'STOP_ALL', reason: 'demo check' },
+  })
+  assert.equal(ok.ok, true)
+  assert.equal(ok.paused.engaged, true)
+  assert.equal(ok.paused.reason, 'demo check')
+  assert.equal(ok.aborted, 1)
+  assert.deepEqual(ok.abortedTasks, [{ board: 'mobile', id: 't_demo_running' }])
+  assert.deepEqual(ok.failed, [])
+  assert.equal(ok.remainingRunning, 0)
+  assert.equal(demoState().tasks.find((t) => t.id === 't_demo_running').status, 'blocked')
+
+  // `/api/overview` の paused とタスク一覧に連動する（停止バナーが出る）
+  const ov = await demoFetch('/api/overview')
+  assert.equal(ov.paused.engaged, true)
+  const board = await demoFetch('/api/boards/mobile/tasks')
+  assert.equal(board.paused.engaged, true)
+  assert.equal(board.tasks.filter((t) => t.status === 'running').length, 0)
 })
 
 test('V10-B3: /api/usage は UsageSheet が読む totals / models / topSessions を返す', async () => {

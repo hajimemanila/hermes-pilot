@@ -93,12 +93,42 @@ test('resume は hermes resume を実行して ESTOP を消す', async () => {
   assert.equal(auth.rows.at(-1).kind, 'gateway.resume')
 })
 
-test('CLI が失敗したら例外（statusCode 502・コードは CLI_FAILED）', async () => {
-  const { o } = ops({ runner: async () => ({ code: 1, out: 'boom' }) })
+test('CLI が失敗したら例外（statusCode 502・コードは CLI_FAILED・詳細は params.detail）', async () => {
+  const { o } = ops({ runner: async () => ({ code: 1, out: 'boom: ESTOP' }) })
   await assert.rejects(
     () => o.pause('x'),
-    (e) => e.statusCode === 502 && e.code === 'CLI_FAILED' && e instanceof Error,
-    // 失敗理由（CLI 出力）は応答に載せず、コードで自言語化する（SPEC-i18n-resp B2）
+    (e) =>
+      e.statusCode === 502 &&
+      e.code === 'CLI_FAILED' &&
+      e instanceof Error &&
+      // 表示文は自言語化（`err.CLI_FAILED`）に任せ、生の CLI 出力は `params.detail` に載せる。
+      // 捨てると「HTTP 502」しか残らず、実機で原因を追えない（D90）。
+      e.params?.detail === 'boom: ESTOP',
+  )
+})
+
+test('gateway が失敗したら Hermes の detail を params.detail に載せる', async () => {
+  const o = createOps(
+    { hermesHome: home() },
+    { call: async () => ({ status: 500, data: { detail: 'gateway is not running' } }) },
+    fakeAuth(),
+    { kanban: { boards: () => [] } },
+  )
+  await assert.rejects(
+    () => o.gateway('stop', 'STOP'),
+    (e) =>
+      e.statusCode === 502 &&
+      e.code === 'HERMES_REJECTED' &&
+      e.params?.status === 500 &&
+      e.params?.detail === 'gateway is not running',
+  )
+})
+
+test('resume の失敗も CLI 出力を params.detail に載せる', async () => {
+  const { o } = ops({ runner: async () => ({ code: 1, out: 'resume failed: no ESTOP' }) })
+  await assert.rejects(
+    () => o.resume('x'),
+    (e) => e.code === 'CLI_FAILED' && e.params?.detail === 'resume failed: no ESTOP',
   )
 })
 

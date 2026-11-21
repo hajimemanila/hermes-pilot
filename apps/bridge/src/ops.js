@@ -120,8 +120,11 @@ export function createOps(cfg, hermes, auth, deps = {}) {
     const ok = res.status >= 200 && res.status < 300
     auth.audit({ kind: `gateway.${action}`, ok, status: res.status, by, result: res.data })
     if (!ok) {
-      const detail = res.data?.detail ?? res.data?.error?.message ?? `HTTP ${res.status}`
-      throw new ApiError('HERMES_REJECTED', { status: res.status }, 502)
+      // `detail` は Hermes が返す失敗理由。捨てるとクライアントには「HTTP 502」しか残らない。
+      const detail = String(
+        res.data?.detail ?? res.data?.error?.message ?? res.data?.error ?? `HTTP ${res.status}`,
+      ).slice(0, 400)
+      throw new ApiError('HERMES_REJECTED', { status: res.status, detail }, 502)
     }
     return { ok, action, result: res.data, at: Date.now() }
   }
@@ -162,7 +165,8 @@ export function createOps(cfg, hermes, auth, deps = {}) {
     const state = paused()
     auth.audit({ kind: 'gateway.pause', ok: res.code === 0, by, reason, state })
     if (res.code !== 0) {
-      throw new ApiError('CLI_FAILED', {}, 502)
+      // CLI の出力は失敗理由の唯一の手掛かり。抜粋して `params.detail` に載せる（捨てない）。
+      throw new ApiError('CLI_FAILED', { detail: String(res.out ?? '').slice(0, 400) }, 502)
     }
     return { ok: true, action: 'pause', state, output: res.out.slice(0, 400), at: Date.now() }
   }
@@ -177,9 +181,110 @@ export function createOps(cfg, hermes, auth, deps = {}) {
     const state = paused()
     auth.audit({ kind: 'gateway.resume', ok: res.code === 0, by, state })
     if (res.code !== 0) {
-      throw new ApiError('CLI_FAILED', {}, 502)
+      throw new ApiError('CLI_FAILED', { detail: String(res.out ?? '').slice(0, 400) }, 502)
     }
     return { ok: true, action: 'resume', state, output: res.out.slice(0, 400), at: Date.now() }
+  }
+
+  /**
+   * 全タスク緊急停止（ESTOP ＋ 実行中タスクの一括中断）。
+   *
+   * 目的は「暴走したワーカーをスマホ 1 操作で確実に止める」ことなので、
+   * **片方が失敗しても止める作業は続ける**:
+   * 1. `pause()`（ESTOP センチネル）— 新しい作業を止める。失敗しても続行し `failed` に記録する
+   * 2. 非アーカイブ全ボードの `status === 'running'` を `kanban.abort()` で順次中断する
+   * 3. 結果を監査（`emergency.stop_all`）に残し、ウォッチャーを回す
+   *
+   * 1 件でも失敗があれば `ok: false`（呼び出し側が HTTP 502 にする）。
+   *
+   * @param {{reason?: string, by?: string, lang?: 'en'|'ja'}} [opts] 実行条件
+   * @returns {Promise<{ok: boolean, paused: object|null, aborted: number,
+   *   abortedTasks: Array<{board: string, id: string}>, failed: Array<object>,
+   *   remainingRunning: number, at: number}>} 結果
+   */
+  async function stopAll(opts = {}) {
+    const reason = String(opts.reason ?? 'mobile').slice(0, 200)
+    const by = String(opts.by ?? 'mobile').slice(0, 40)
+    const lang = opts.lang === 'ja' ? 'ja' : 'en'
+    /** @type {Array<{kind: string, board?: string|null, id?: string|null, code: string, detail: string}>} */
+    const failed = []
+    /** @type {Array<{board: string, id: string}>} */
+    const abortedTasks = []
+
+    let pauseState = null
+    try {
+      const r = await pause(reason, by)
+      pauseState = r.state ?? paused()
+    } catch (err) {
+      failed.push({
+        kind: 'pause',
+        board: null,
+        id: null,
+        code: String(err?.code ?? 'CLI_FAILED'),
+        detail: String(err?.params?.detail ?? err?.message ?? '').slice(0, 400),
+      })
+      pauseState = paused()
+    }
+
+    let targets = []
+    try {
+      targets = deps.kanban?.runningTasks?.() ?? []
+    } catch {
+      targets = []
+    }
+    for (const t of targets) {
+      try {
+        const r = await deps.kanban.abort(t.board, t.id, reason, lang)
+        if (r?.ok) abortedTasks.push({ board: t.board, id: t.id })
+        else
+          failed.push({
+            kind: 'abort',
+            board: t.board,
+            id: t.id,
+            code: 'CLI_FAILED',
+            detail: String(r?.output ?? '').slice(0, 400),
+          })
+      } catch (err) {
+        failed.push({
+          kind: 'abort',
+          board: t.board,
+          id: t.id,
+          code: String(err?.code ?? 'CLI_FAILED'),
+          detail: String(err?.message ?? '').slice(0, 400),
+        })
+      }
+    }
+
+    let remainingRunning = 0
+    try {
+      remainingRunning = (deps.kanban?.runningTasks?.() ?? []).length
+    } catch {
+      remainingRunning = 0
+    }
+    try {
+      deps.nudge?.()
+    } catch {
+      /* 補助同期の失敗で結果を落とさない */
+    }
+    auth.audit({
+      kind: 'emergency.stop_all',
+      ok: failed.length === 0,
+      by,
+      reason,
+      paused: Boolean(pauseState?.engaged),
+      aborted: abortedTasks.length,
+      failed: failed.length,
+      remainingRunning,
+    })
+    return {
+      ok: failed.length === 0,
+      paused: pauseState,
+      aborted: abortedTasks.length,
+      abortedTasks,
+      failed,
+      remainingRunning,
+      at: Date.now(),
+    }
   }
 
   /** `hermes <args>` を実行する（シェルを介さない。テストでは runner を差し替え可）。 */
@@ -197,5 +302,5 @@ export function createOps(cfg, hermes, auth, deps = {}) {
     })
   }
 
-  return { overview, gateway, paused, pause, resume }
+  return { overview, gateway, paused, pause, resume, stopAll }
 }

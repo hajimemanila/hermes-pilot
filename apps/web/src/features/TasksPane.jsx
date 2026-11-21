@@ -953,6 +953,10 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     setBusy(true)
     try {
       const r = await api(`/api/gateway/${action}`, { method: 'POST', body: { confirm: action.toUpperCase() } })
+      if (r?.ok === false) {
+        notify(localizeError(r) || t('tasks.actionFailed'))
+        return
+      }
       notify(t('tasks.actionRan', { action }))
       setKillOpen(false)
       setConfirmText('')
@@ -965,11 +969,52 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     }
   }
 
+  /**
+   * 全タスク緊急停止（ESTOP ＋ 実行中一括中断）。
+   *
+   * 本番は失敗を HTTP 502 で返すので `api()` が例外にするが、デモは `{ok:false}` を返す。
+   * どちらでも「成功トーストを出さない」ために両方を見る（D90 のエラー可視化）。
+   */
+  const stopAllAction = async () => {
+    setBusy(true)
+    try {
+      const r = await api('/api/emergency/stop-all', {
+        method: 'POST',
+        body: { confirm: 'STOP_ALL', reason: t('tasks.stopAllReason') },
+      })
+      if (r?.ok === false) {
+        notify(localizeError(r) || t('tasks.stopAllFailed'))
+        return
+      }
+      notify(
+        t('tasks.stopAllDone', {
+          estop: r?.paused?.engaged ? t('tasks.estopOn') : t('tasks.estopOff'),
+          aborted: Number(r?.aborted ?? 0),
+          failed: Number(r?.failed?.length ?? 0),
+        }),
+      )
+      if (Number(r?.remainingRunning ?? 0) > 0) notify(t('tasks.stopAllLeft', { n: Number(r.remainingRunning) }))
+      emitHmEvent(HM_EVENTS.WAKE_SYNC)
+      setKillOpen(false)
+      setConfirmText('')
+      refresh?.()
+      if (board) loadTasks(board)
+    } catch (e) {
+      notify(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   /** 緊急停止（新規作業のみ停止）。実行中は完走する。 */
   const pauseAction = async () => {
     setBusy(true)
     try {
-      await api('/api/gateway/pause', { method: 'POST', body: { confirm: 'PAUSE', reason: 'mobile' } })
+      const r = await api('/api/gateway/pause', { method: 'POST', body: { confirm: 'PAUSE', reason: 'mobile' } })
+      if (r?.ok === false) {
+        notify(localizeError(r) || t('tasks.actionFailed'))
+        return
+      }
       notify(t('tasks.pausedDone'))
       refresh?.()
     } catch (e) {
@@ -983,7 +1028,11 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
   const resumeAction = async () => {
     setBusy(true)
     try {
-      await api('/api/gateway/resume', { method: 'POST', body: { confirm: 'RESUME' } })
+      const r = await api('/api/gateway/resume', { method: 'POST', body: { confirm: 'RESUME' } })
+      if (r?.ok === false) {
+        notify(localizeError(r) || t('tasks.actionFailed'))
+        return
+      }
       notify(t('tasks.resumed'))
       refresh?.()
     } catch (e) {
@@ -1968,7 +2017,21 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
 
       {killOpen ? (
         <Sheet title={t('tasks.emergencyTitle')} onClose={() => !busy && setKillOpen(false)}>
+          {/* (1) カンバン・タスク緊急停止（Kanban Workers）— 最優先はこの 1 ボタン */}
+          <div className="kill-section">
+            <span className="kill-section-title">{t('tasks.emergencyKanbanHead')}</span>
+            <span className="kill-section-sub">{t('tasks.emergencyKanbanSub')}</span>
+          </div>
           <div className="warn-card">{t('tasks.emergencyNote', { n: running })}</div>
+          <div className="hold-grid">
+            <HoldButton
+              label={t('tasks.stopAllLabel')}
+              sub={t('tasks.stopAllSub')}
+              tone="danger"
+              disabled={busy}
+              onFire={stopAllAction}
+            />
+          </div>
           <div className="warn-card" style={{ marginTop: 8 }}>
             {paused.engaged
               ? t('tasks.pausedNow', { at: paused.engagedAt ?? t('tasks.unknownTime') })
@@ -1979,7 +2042,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
               {t('tasks.resumeEstop')}
             </button>
           ) : (
-            <div className="hold-grid" style={{ marginTop: 10 }}>
+            <div className="hold-grid">
               <HoldButton
                 label={t('tasks.pauseLabel')}
                 sub={t('tasks.pauseSub')}
@@ -1989,6 +2052,13 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
               />
             </div>
           )}
+
+          {/* (2) Hermes Gateway 操作（Bot / 通信）— カンバンのタスクは止まらない */}
+          <div className="kill-section">
+            <span className="kill-section-title">{t('tasks.emergencyGatewayHead')}</span>
+            <span className="kill-section-sub">{t('tasks.emergencyGatewaySub')}</span>
+          </div>
+          <div className="row-sub" style={{ padding: '0 4px 8px' }}>{t('tasks.gatewayNote')}</div>
           <div className="hold-grid">
             <HoldButton
               label={t('tasks.drainLabel')}

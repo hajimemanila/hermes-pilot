@@ -310,6 +310,37 @@ export function createKanban(cfg, deps = {}) {
   }
 
   /**
+   * 非アーカイブ全ボードの実行中タスクを列挙する（緊急停止の対象集め）。
+   *
+   * ボードの `counts.running` は件数しか持たないので、中断対象の `board` / `id` を
+   * 得るために板ごとに一覧を読む。1 板が壊れていても他の板は返す（止めることが目的）。
+   *
+   * @returns {Array<{board: string, id: string, title: string, workerPid: number|null}>} 実行中タスク
+   */
+  function runningTasks() {
+    const out = []
+    let list = []
+    try {
+      list = boards().filter((b) => b && !b.archived)
+    } catch {
+      list = []
+    }
+    for (const b of list) {
+      let rows = []
+      try {
+        rows = tasks(b.slug, { limit: 200, withBody: false })
+      } catch {
+        rows = []
+      }
+      for (const t of rows) {
+        if (t?.status !== 'running') continue
+        out.push({ board: b.slug, id: t.id, title: t.title, workerPid: t.workerPid ?? null })
+      }
+    }
+    return out
+  }
+
+  /**
    * 実行中タスクを中断する（reclaim で worker を終了 → block で再実行を止める）。
    * @param {string} slug ボード
    * @param {string} id タスク ID
@@ -394,5 +425,5 @@ export function createKanban(cfg, deps = {}) {
     }
   }
 
-  return { boards, tasks, task, taskSession, abort }
+  return { boards, tasks, task, taskSession, abort, runningTasks }
 }

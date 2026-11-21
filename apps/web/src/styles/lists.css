@@ -298,6 +298,37 @@ label.row-sub {
   margin-bottom: 12px;
 }
 
+/*
+ * 緊急操作シートの見出し（D90）。
+ * 「カンバン・タスク緊急停止」と「Hermes Gateway 操作」を 1 枚のシートで混ぜないため、
+ * セクションの境目を罫線 + 小さな見出しで示す。色はトークンだけを使う。
+ */
+.kill-section {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 14px 0 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.kill-section:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.kill-section-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.kill-section-sub {
+  font-size: 11px;
+  color: var(--muted);
+}
+
 .hold-grid {
   display: flex;
   flex-direction: column;
@@ -318,6 +349,15 @@ label.row-sub {
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
+  /* 長押しで iOS の「コピー / 共有」ポップアップが出ると pointercancel で進捗が途切れる */
+  -webkit-touch-callout: none;
+}
+
+/* 内側の文字はタップ対象にしない（子が pointerdown を吸うと長押しが start しない端末がある） */
+.hold-label,
+.hold-sub,
+.hold-hint {
+  pointer-events: none;
 }
 
 .hold.danger {

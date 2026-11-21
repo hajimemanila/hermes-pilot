@@ -123,6 +123,12 @@ export const API_ROUTES = [
 
   // --- 実行制御（緊急停止）--------------------------------------------------
   { method: 'POST', pattern: '/api/gateway/:action', demo: 'mocked', note: 'pause / resume / その他ゲートウェイ操作' },
+  {
+    method: 'POST',
+    pattern: '/api/emergency/stop-all',
+    demo: 'mocked',
+    note: 'Stop every running kanban task (ESTOP + bulk abort)',
+  },
 
   // --- 定型文・メモ・ログ ---------------------------------------------------
   { method: 'GET', pattern: '/api/snippets', demo: 'mocked' },

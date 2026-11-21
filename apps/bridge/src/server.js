@@ -44,6 +44,7 @@ import { createPairCodes } from './pair-codes.js'
 import { createMemosStore } from './memos.js'
 import { getCapabilities } from './capabilities.js'
 import { langOf, readJson, sendError, sendFailure, sendJson } from './http/respond.js'
+import { errorBody } from './api-errors.js'
 import { loginAllowed, readAllowed, writeAllowed } from './http/rate-limit.js'
 import { loginPage } from './http/login-page.js'
 import { createStaticFiles } from './http/static-files.js'
@@ -123,7 +124,7 @@ const architect = createArchitect(
 const review = createReview(cfg, { targets: () => repos.targets(), assignee: getPilotProfile })
 // 完了・ブロックの記録はブリッジ内蔵（D7）。外部 cron は要らない。
 const reviewWatcher = createReviewWatcher(cfg, { review })
-const ops = createOps(cfg, hermes, auth, { kanban })
+const ops = createOps(cfg, hermes, auth, { kanban, nudge: () => nudgeWatchers() })
 const gitinfo = createGitInfo(cfg)
 // 使用量（コスト・トークン・API コール）はテレメトリとパイプライン報告の双方が使う（V7-2）。
 const usage = createUsage(cfg)
@@ -342,6 +343,25 @@ function resolveSpecRepo({ repoId = null, boardSlug = null } = {}) {
     path: board.workdir,
     board: board.slug,
   }
+}
+
+/**
+ * 書き込み系の結果を返す（`ok === false` を HTTP 200 で返さない）。
+ *
+ * 内部モジュールが `{ok:false}` を返したのに 200 を付けると、画面は成功トーストを出し
+ * 監査ログだけが失敗になる（サイレント失敗）。ここで 1 箇所に寄せる。
+ *
+ * @param {import('node:http').ServerResponse} res 応答
+ * @param {{ok?: boolean, code?: string}} out 結果
+ * @param {number} [okStatus] 成功時のステータス
+ * @param {string} [failCode] 失敗時にコードが無い場合の既定コード
+ * @returns {void}
+ */
+function sendOutcome(res, out, okStatus = 200, failCode = 'CLI_FAILED') {
+  if (out && out.ok === false) {
+    return sendJson(res, 502, { ...out, code: out.code ?? failCode })
+  }
+  return sendJson(res, okStatus, out)
 }
 
 /** API のルーティング。 */
@@ -811,7 +831,7 @@ async function handleApi(req, res, url) {
       const body = await readJson(req)
       const out = await inbox.comment(b, d, body?.body ?? body?.text, String(body?.by ?? 'mobile'))
       auth.audit({ kind: 'kanban.comment', board: b, task: d, chars: String(body?.body ?? body?.text ?? '').length })
-      return sendJson(res, 200, out)
+      return sendOutcome(res, out)
     }
     if (b && c === 'tasks' && d && e === 'close' && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
@@ -828,7 +848,7 @@ async function handleApi(req, res, url) {
         noop: Boolean(out.noop),
       })
       if (!out?.noop) nudgeWatchers()
-      return sendJson(res, 200, out)
+      return sendOutcome(res, out)
     }
     if (b && c === 'tasks' && d && e === 'unblock' && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
@@ -844,7 +864,7 @@ async function handleApi(req, res, url) {
         noop: Boolean(out.noop),
       })
       if (!out?.noop) nudgeWatchers()
-      return sendJson(res, 200, out)
+      return sendOutcome(res, out)
     }
     if (b && c === 'tasks' && d && e === 'worker' && req.method === 'GET') {
       // 任意のボードの実行中タスクでもワーカーのライブ進捗を読めるようにする（SPEC V8-B3）
@@ -1211,6 +1231,32 @@ async function handleApi(req, res, url) {
     return sendJson(res, link ? 200 : 404, link ? { link } : { link: null })
   }
 
+  // --- 緊急停止（カンバン一括）-----------------------------------------------
+  // 暴走したワーカーを 1 操作で止める。ESTOP（新規停止）＋非アーカイブ全ボードの
+  // 実行中タスク中断を 1 リクエストで行い、失敗は failed 配列で返す（200 で隠さない）。
+  if (a === 'emergency' && b === 'stop-all' && req.method === 'POST') {
+    if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) return sendError(res, 429, 'RATE_LIMITED')
+    const body = await readJson(req)
+    if (String(body?.confirm ?? '').toUpperCase() !== 'STOP_ALL') {
+      return sendError(res, 400, 'CONFIRM_MISMATCH', { expected: 'STOP_ALL' })
+    }
+    const out = await ops.stopAll({
+      reason: body?.reason ?? 'mobile',
+      by: body?.by ?? 'mobile',
+      lang: langOf(req, url),
+    })
+    nudgeWatchers()
+    if (!out.ok) {
+      // 中断が 1 件も通らず pause だけ失敗した場合は CLI_FAILED、それ以外は部分失敗。
+      const failureCode = out.aborted === 0 && out.failed.some((f) => f.kind === 'pause')
+        ? 'CLI_FAILED'
+        : 'PARTIAL_FAILURE'
+      const body = errorBody(failureCode, { aborted: out.aborted, failed: out.failed.length })
+      return sendJson(res, 502, { ...out, ...body })
+    }
+    return sendJson(res, 200, out)
+  }
+
   if (a === 'gateway' && b && req.method === 'POST') {
     if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) return sendError(res, 429, 'RATE_LIMITED')
     const body = await readJson(req)
@@ -1221,10 +1267,10 @@ async function handleApi(req, res, url) {
         return sendError(res, 400, 'CONFIRM_MISMATCH', { expected })
       }
       const out = b === 'pause' ? await ops.pause(String(body?.reason ?? 'mobile'), by) : await ops.resume(by)
-      return sendJson(res, 200, out)
+      return sendOutcome(res, out)
     }
     const out = await ops.gateway(b, body?.confirm, by)
-    return sendJson(res, 200, out)
+    return sendOutcome(res, out)
   }
 
   if (a === 'sessions') {
@@ -1305,7 +1351,7 @@ async function handleApi(req, res, url) {
         return sendError(res, 429, 'RATE_LIMITED')
       }
       const out = memos.remove(b)
-      return sendJson(res, 200, out)
+      return sendOutcome(res, out)
     }
   }
 
