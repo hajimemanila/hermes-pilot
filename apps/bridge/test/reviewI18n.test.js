@@ -23,11 +23,12 @@ import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import * as review from '../src/review.js'
+import { readReviewSource, readServerSource } from './helpers/moduleSource.js'
 import { buildTaskBody } from '../src/specs.js'
 
 const here = import.meta.dirname
 const BRIDGE_SRC = path.join(here, '..', 'src')
-const REVIEW_SRC = fs.readFileSync(path.join(BRIDGE_SRC, 'review.js'), 'utf8')
+const REVIEW_SRC = readReviewSource()
 
 /** CJK（かな・カナ・漢字・全角形・CJK 記号）。生成文に出てはいけない範囲。 */
 const CJK = /[\u2e80-\u2fff\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff01-\uff60]/
@@ -239,7 +240,7 @@ test("review.js に `lang = 'ja'` が無い（既定値の逆戻り防止）", (
 })
 
 test('server.js は reopen に表示言語を渡す（D73）', () => {
-  const serverSrc = fs.readFileSync(path.join(BRIDGE_SRC, 'server.js'), 'utf8')
+  const serverSrc = readServerSource()
   assert.match(
     serverSrc,
     /review\.reopen\(b,\s*body\?\.reason,\s*langOf\(req, url\)\)/,

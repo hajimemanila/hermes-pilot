@@ -7,7 +7,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { readTailText } from '../tail.js'
-import { parseReviewLine } from './parse.js'
+import { isSafeRel, parseReviewLine } from './parse.js'
 import { opsText } from './text.js'
 
 export function createReviewFeeds(ctx = {}) {

@@ -22,6 +22,7 @@ import {
   languageRule,
 } from '../src/language-rule.js'
 import { injectReviewBridge, parseReplyText, replyTextOf } from '../src/review.js'
+import { readModuleSource } from './helpers/moduleSource.js'
 
 const here = import.meta.dirname
 const REPO = path.join(here, '..', '..', '..')
@@ -71,15 +72,16 @@ test('プロンプトを組む 2 モジュールが languageRule( を使って�
   for (const name of PROMPT_BUILDERS) {
     const file = path.join(BRIDGE_SRC, name)
     assert.ok(fs.existsSync(file), `モジュールがありません: apps/bridge/src/${name}`)
-    const src = fs.readFileSync(file, 'utf8')
+    // 分割後は本体が `<name>/` 配下へ出ているので、入口＋配下を連結して見る。
+    const src = readModuleSource(name.replace(/\.js$/, ''))
     assert.ok(
       src.includes('languageRule('),
       `apps/bridge/src/${name} が languageRule( を使っていません（規則文の写し書きは禁止・D2）`,
     )
     assert.match(
       src,
-      /from\s+['"]\.\/language-rule\.js['"]/,
-      `apps/bridge/src/${name} が ./language-rule.js から import していません（規則の二重定義）`,
+      /from\s+['"][^'"]*language-rule\.js['"]/,
+      `apps/bridge/src/${name} が language-rule.js から import していません（規則の二重定義）`,
     )
   }
 })

@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url'
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, '../../..')
 const SERVER = path.join(ROOT, 'apps', 'bridge', 'src', 'server.js')
+import { readServerSource } from './helpers/moduleSource.js'
 
 /** 検査語は分割して組み立てる（受入条件の grep をこのファイル自身が汚さないため）。 */
 const TOKEN_REF = ['auth', 'token'].join('.')
@@ -111,7 +112,7 @@ function bootBridge(dir, port) {
 }
 
 test('起動ログは auth.token の生値を出さない（ソース走査）', () => {
-  const source = fs.readFileSync(SERVER, 'utf8')
+  const source = readServerSource()
   const offenders = consoleLines(source).filter((l) => l.text.includes(TOKEN_REF))
   assert.deepEqual(
     offenders.map((l) => `${l.line}: ${l.text.trim()}`),
@@ -124,7 +125,7 @@ test('起動ログは auth.token の生値を出さない（ソース走査）',
 })
 
 test('起動・PTY・500 のログは標準英語（日本語の直書きが無い）', () => {
-  const source = fs.readFileSync(SERVER, 'utf8')
+  const source = readServerSource()
   // 実出力になる文字列（ログ・端末へ送る行）が英語であること（D71）。
   assert.match(source, /\[bridge\] Port \$\{cfg\.port\} is already in use/)
   assert.match(source, /\[bridge\] Server error:/)

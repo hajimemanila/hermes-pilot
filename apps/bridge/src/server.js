@@ -51,38 +51,14 @@ import { createStaticFiles } from './http/static-files.js'
 import { checkFrame, rejectionFrame } from './chat-profile.js'
 import { readTailText } from './tail.js'
 import { collectPairing, qrPng, qrRows, qrSvg, tailscaleCommandCandidates } from './qr.js'
+import { createBoardsApi } from './server/api-boards.js'
+import { createSpecsApi } from './server/api-specs.js'
+import { createWsHandlers } from './server/ws-handlers.js'
+import { createServerHelpers } from './server/helpers.js'
 
 const require = createRequire(import.meta.url)
 const pty = safeRequire('node-pty')
 
-/**
- * `tailscale status --json` を 1 回だけ叩いて 60 秒キャッシュする。
- *
- * Tailscale が無い・ログインしていない環境では素直に null（LAN 候補だけ出す）。
- * ここで失敗してもペアリングは成立させる（QR が出ない理由にしない）。
- * @returns {Promise<string|null>} 生の JSON 文字列
- */
-let tailscaleCache = { at: 0, json: null }
-async function tailscaleStatusJson() {
-  const now = Date.now()
-  if (now - tailscaleCache.at < 60_000) return tailscaleCache.json
-  const { execFile } = await import('node:child_process')
-  let json = null
-  for (const bin of tailscaleCommandCandidates()) {
-    json = await new Promise((resolve) => {
-      try {
-        execFile(bin, ['status', '--json'], { timeout: 1500, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) =>
-          resolve(err ? null : String(stdout)),
-        )
-      } catch {
-        resolve(null)
-      }
-    })
-    if (json) break
-  }
-  tailscaleCache = { at: now, json }
-  return json
-}
 
 /**
  * node-pty はネイティブモジュール。無くても他は動かす。
@@ -131,86 +107,37 @@ const usage = createUsage(cfg)
 // パイプライン完走レポート（D20 / D21）。Spec ラン／ボードウェーブの収束を監視する。
 // `usage` を渡すと報告に Spec スコープの API コール数・トークン数が入る。
 const pipelineWatcher = createPipelineWatcher(cfg, { gitinfo, usage })
-
-let watcherRefreshAt = 0
-let watcherInFlight = null
-
-/**
- * レビュー／パイプラインの両ウォッチャーを即時走査する（連打と並行実行を束ねる）。
- * 状態変更直後の「最大 10〜25 秒の通知ラグ」を消すための補助同期。
- * @param {number} [minIntervalMs] 前回走査からの最小経過時間
- * @returns {Promise<void>}
+/*
+ * 補助関数（ウォッチャー同期・プロファイル探索・スニペット保存・コヒーレンス解決・sendOutcome）は
+ * `server/helpers.js` へ分割した。ここで 1 回だけ束ねて受け取る。
  */
-function ensureWatchersFresh(minIntervalMs = 2000) {
-  if (watcherInFlight) return watcherInFlight
-  const nowMs = Date.now()
-  if (minIntervalMs > 0 && nowMs - watcherRefreshAt < minIntervalMs) return Promise.resolve()
-  watcherInFlight = (async () => {
-    try {
-      watcherRefreshAt = Date.now()
-      try {
-        reviewWatcher.tick()
-      } catch {
-        /* 補助同期の失敗で本線を止めない */
-      }
-      try {
-        await pipelineWatcher.tick()
-      } catch {
-        /* 補助同期の失敗で本線を止めない */
-      }
-      watcherRefreshAt = Date.now()
-    } finally {
-      watcherInFlight = null
-    }
-  })()
-  return watcherInFlight
-}
+const helpers = createServerHelpers({ cfg, hermes, kanban, repos, capabilities, reviewWatcher, pipelineWatcher, sendJson })
+const {
+  ensureWatchersFresh,
+  tailscaleStatusJson,
+  nudgeWatchers,
+  listProfiles,
+  stateDbFor,
+  listStateDbs,
+  SNIPPET_STORE,
+  loadSnippetStore,
+  saveSnippetStore,
+  snippetPayload,
+  tailLog,
+  coherenceCache,
+  COHERENCE_TTL_MS,
+  resolveSpecRepo,
+  BULK_ARCHIVE_MAX,
+  TASK_ID_RE,
+  sendOutcome,
+} = helpers
 
-/** 状態変更 API の成功後に背後でウォッチャーを即時回転させる。 */
-function nudgeWatchers() {
-  void ensureWatchersFresh(0)
-}
+// これらは起動時に 1 度だけ作るシングルトン（補助関数群からは ctx 経由で見せる）。
 const discord = createDiscord(cfg)
 const search = createSearch(cfg)
 const transcript = createTranscript(cfg)
 
-/**
- * プロファイル一覧（name と state.db の在処）。30秒キャッシュ。
- * チャット一覧をプロジェクト横断にするために使う。
- */
-let profilesCache = { at: 0, list: [] }
-async function listProfiles() {
-  if (Date.now() - profilesCache.at < 30_000 && profilesCache.list.length) return profilesCache.list
-  const r = await hermes.call('/api/profiles', { timeoutMs: 8000 })
-  const list = r.status === 200 ? (r.data?.profiles ?? []) : []
-  if (list.length) profilesCache = { at: Date.now(), list }
-  return list
-}
 
-/** プロファイル名 → state.db のパス（不明なら既定）。 */
-function stateDbFor(profiles, name) {
-  const hit = profiles.find((p) => p.name === name)
-  if (!hit?.path) return cfg.stateDb
-  return path.join(hit.path, 'state.db')
-}
-
-/** 全プロファイルの state.db 一覧（重複除去・default フォールバック付き）。 */
-async function listStateDbs() {
-  const profiles = await listProfiles()
-  const out = []
-  const seen = new Set()
-  for (const p of profiles) {
-    if (!p?.name) continue
-    const dbPath = p.path ? path.join(p.path, 'state.db') : cfg.stateDb
-    if (seen.has(dbPath)) continue
-    seen.add(dbPath)
-    out.push({ profile: p.name, path: dbPath })
-  }
-  if (!seen.has(cfg.stateDb)) {
-    out.unshift({ profile: 'default', path: cfg.stateDb })
-  }
-  return out
-}
 
 /**
  * 実行ワーカーのトランスクリプトを読む（レビュー詳細とタスク詳細で共通）。
@@ -237,140 +164,81 @@ const inbox = createInbox(cfg, kanban)
 // 起動時にコミットサマリを温める（初回のタスク一覧を待たせない）
 gitinfo.warm().catch(() => {})
 
-// スニペット（組み込みの Hot/Hidden 上書き + ユーザー定義を小さな JSON に保存する・SPEC §3.4）
-const SNIPPET_STORE = {
-  chat: { file: path.join(cfg.dataDir, 'snippets.json'), ids: BUILTIN_IDS, withRun: false },
-  term: { file: path.join(cfg.dataDir, 'term-snippets.json'), ids: TERM_BUILTIN_IDS, withRun: true },
-}
-
-/**
- * スニペット設定を読む（version 1 は読取時に version 2 へ補完）。
- * @param {'chat'|'term'} kind 種類
- * @returns {{version: 2, overrides: Record<string, object>, custom: Array<object>}} 設定
- */
-function loadSnippetStore(kind) {
-  const s = SNIPPET_STORE[kind]
-  return readSnippetStore(s.file, { ids: s.ids, withRun: s.withRun, max: CUSTOM_MAX })
-}
-
-/**
- * スニペット設定を保存する（`reset: true` で既定に戻す）。
- * @param {'chat'|'term'} kind 種類
- * @param {{custom?: unknown, overrides?: unknown, reset?: boolean}} [body] 変更内容
- * @returns {{version: 2, overrides: Record<string, object>, custom: Array<object>}} 保存した設定
- */
-function saveSnippetStore(kind, body = {}) {
-  const s = SNIPPET_STORE[kind]
-  const prev = loadSnippetStore(kind)
-  const reset = body?.reset === true
-  const hasCustom = body != null && Object.prototype.hasOwnProperty.call(body, 'custom')
-  const hasOverrides = body != null && Object.prototype.hasOwnProperty.call(body, 'overrides')
-  return writeSnippetStore(
-    s.file,
-    {
-      custom: reset ? [] : hasCustom ? body.custom : prev.custom,
-      overrides: reset ? {} : hasOverrides ? body.overrides : prev.overrides,
-    },
-    { ids: s.ids, withRun: s.withRun, max: CUSTOM_MAX },
-  )
-}
-
-/**
- * API 応答（`{snippets, allSnippets, overrides, custom, customMax, hotLimit, lang}`）。
- * @param {'chat'|'term'} kind 種類
- * @param {'en'|'ja'} lang 表示言語
- * @returns {Record<string, unknown>} 応答
- */
-function snippetPayload(kind, lang) {
-  const store = loadSnippetStore(kind)
-  const all =
-    kind === 'term'
-      ? allTermSnippets(capabilities, lang, store.overrides, store.custom)
-      : allSnippets(store.custom, lang, store.overrides)
-  return {
-    snippets: all.filter((s) => !s.hidden),
-    allSnippets: all,
-    overrides: store.overrides,
-    custom: store.custom,
-    customMax: CUSTOM_MAX,
-    hotLimit: HOT_LIMIT,
-    lang,
-  }
-}
-
-/** ログの末尾を返す。 */
-function tailLog(name, lines = 200) {
-  const safe = String(name ?? 'gateway').replace(/[^a-z0-9._-]/gi, '')
-  const file = path.join(cfg.logDir, safe.endsWith('.log') ? safe : `${safe}.log`)
-  if (!file.startsWith(cfg.logDir)) throw Object.assign(new Error('invalid log'), { statusCode: 400 })
-  const text = readTailText(file, 256 * 1024)
-  return text.split('\n').slice(-Math.min(lines, 1000)).join('\n')
-}
-
-/** コヒーレンス診断のキャッシュ（リポジトリごと・15 秒）。 */
-const coherenceCache = new Map()
-
-/** コヒーレンス診断のキャッシュ寿命（ms）。 */
-const COHERENCE_TTL_MS = 15_000
-
-/**
- * Spec Launchpad の対象リポジトリを決める（SPEC §5.4）。
- *
- * `?repo=<repoId>` は repos の 1 件。`?board=<slug>`（未指定なら現在のボード）は
- * そのボードの `default_workdir` をリポジトリとして扱う。
- *
- * @param {{repoId?: string|null, boardSlug?: string|null}} q クエリ
- * @returns {{repo: string, label: string, path: string, board: string|null}|null} 対象
- */
-function resolveSpecRepo({ repoId = null, boardSlug = null } = {}) {
-  const list = repos.list()
-  const want = String(repoId ?? '').trim()
-  if (want) {
-    const hit = list.find((r) => r.id === want)
-    return hit
-      ? { repo: hit.id, label: hit.label, path: hit.path, board: hit.boards?.[0]?.slug ?? null }
-      : null
-  }
-  const boards = kanban.boards()
-  const slug = String(boardSlug ?? '').trim() || boards.find((b) => b.current)?.slug || ''
-  const board = boards.find((b) => b.slug === slug)
-  if (!board?.workdir) return null
-  const key = normalizePath(board.workdir)
-  const hit = list.find((r) => normalizePath(r.path) === key)
-  return {
-    repo: hit?.id ?? board.slug,
-    label: hit?.label ?? board.name ?? board.slug,
-    path: board.workdir,
-    board: board.slug,
-  }
-}
-
-/** 一括アーカイブで 1 回に受け付ける件数（D92）。UI 側の選択上限と揃える。 */
-const BULK_ARCHIVE_MAX = 50
-
-/** タスク ID の書式（`t_[0-9a-z]+`。カンバン本体・`inbox.js` と同じ規則）。 */
-const TASK_ID_RE = /^t_[0-9a-z]+$/i
-
-/**
- * 書き込み系の結果を返す（`ok === false` を HTTP 200 で返さない）。
- *
- * 内部モジュールが `{ok:false}` を返したのに 200 を付けると、画面は成功トーストを出し
- * 監査ログだけが失敗になる（サイレント失敗）。ここで 1 箇所に寄せる。
- *
- * @param {import('node:http').ServerResponse} res 応答
- * @param {{ok?: boolean, code?: string}} out 結果
- * @param {number} [okStatus] 成功時のステータス
- * @param {string} [failCode] 失敗時にコードが無い場合の既定コード
- * @returns {void}
- */
-function sendOutcome(res, out, okStatus = 200, failCode = 'CLI_FAILED') {
-  if (out && out.ok === false) {
-    return sendJson(res, 502, { ...out, code: out.code ?? failCode })
-  }
-  return sendJson(res, okStatus, out)
-}
 
 /** API のルーティング。 */
+
+/*
+ * API ハンドラは `server/` 配下のモジュールへ分割した（`handleApi` のルート条件・応答形・404 の位置は
+ * 変えない）。依存はここで 1 回だけ束ねて渡す。
+ */
+const apiCtx = {
+  cfg,
+  auth,
+  kanban,
+  repos,
+  specs,
+  architect,
+  review,
+  reviewWatcher,
+  ops,
+  gitinfo,
+  usage,
+  pipelineWatcher,
+  readPipelineReports,
+  capabilities,
+  getPilotProfile,
+  writePilotProfile,
+  ensurePilotProfile,
+  DEFAULT_SKILLS_SRC,
+  getOptimizeStatus,
+  optimizeAgentSkills,
+  memos,
+  capture,
+  pairCodes,
+  discord,
+  live,
+  inbox,
+  search,
+  transcript,
+  readWorkerFeed,
+  stateDbFor,
+  listProfiles,
+  listStateDbs,
+  loadSnippetStore,
+  saveSnippetStore,
+  snippetPayload,
+  SNIPPET_STORE,
+  tailLog,
+  sendJson,
+  sendError,
+  sendFailure,
+  readJson,
+  langOf,
+  readAllowed,
+  writeAllowed,
+  errorBody,
+  normalizePath,
+  listSpecs,
+  archiveSpec,
+  partitionSpecs,
+  readRuns,
+  attachRunTaskIds,
+  readSpecContent,
+  runsPathFor,
+  analyzeCoherence,
+  resolveSpecRepo,
+  coherenceCache,
+  COHERENCE_TTL_MS,
+  BULK_ARCHIVE_MAX,
+  TASK_ID_RE,
+  sendOutcome,
+  ensureWatchersFresh,
+  tailscaleStatusJson,
+  nudgeWatchers,
+  VERSION,
+}
+const apiBoards = createBoardsApi(apiCtx)
+const apiSpecs = createSpecsApi(apiCtx)
 
 async function handleApi(req, res, url) {
   const seg = url.pathname.split('/').filter(Boolean) // ['api', ...]
@@ -434,777 +302,17 @@ async function handleApi(req, res, url) {
   // POST   /api/repos/scan       … 即時再スキャン（キャッシュ TTL 30 秒を飛ばす）
   // POST   /api/repos/:id/board  … 板が無いリポジトリにボードを 1 つ作る
   // DELETE /api/repos/:id        … custom から削除 / 自動検出は hidden へ
-  if (a === 'repos') {
-    if (!b && req.method === 'GET') {
-      return sendJson(res, 200, { repos: repos.list(), scanDirs: repos.scanDirs() })
-    }
-    if (!b && req.method === 'POST') {
-      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendError(res, 429, 'RATE_LIMITED')
-      }
-      const body = await readJson(req)
-      const r = Array.isArray(body?.scanDirs) ? repos.setScanDirs(body.scanDirs) : repos.add(body)
-      auth.audit({ kind: 'repos.save', ok: Boolean(r.ok), path: body?.path ?? null })
-      if (!r.ok) return sendFailure(res, 400, r)
-      return sendJson(res, 201, { ...r, repos: repos.list({ force: true }), scanDirs: repos.scanDirs() })
-    }
-    if (b === 'scan' && req.method === 'POST') {
-      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendError(res, 429, 'RATE_LIMITED')
-      }
-      const r = repos.scan()
-      auth.audit({ kind: 'repos.scan', count: r.repos.length })
-      return sendJson(res, 200, r)
-    }
-    if (b && c === 'board' && req.method === 'POST') {
-      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendError(res, 429, 'RATE_LIMITED')
-      }
-      const r = await repos.createBoard(b)
-      auth.audit({ kind: 'repos.board.create', repo: b, board: r.board?.slug ?? null, ok: Boolean(r.ok) })
-      return r.ok ? sendJson(res, 201, r) : sendFailure(res, 400, r)
-    }
-    if (b && req.method === 'DELETE') {
-      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendError(res, 429, 'RATE_LIMITED')
-      }
-      const r = repos.remove(b)
-      auth.audit({ kind: 'repos.remove', repo: b, hidden: r.hidden ?? null, ok: Boolean(r.ok) })
-      if (!r.ok) return sendFailure(res, 400, r)
-      return sendJson(res, 200, { ...r, repos: repos.list({ force: true }) })
-    }
-    return sendError(res, 404, 'UNKNOWN_ENDPOINT', { path: url.pathname })
-  }
+  // --- リポジトリ / SPEC / コヒーレンス / パイプライン / Architect / ボード / レビュー --------
+  // 実体は `server/api-specs.js`（repos・specs・coherence・pipeline・architect）と
+  // `server/api-boards.js`（boards・review）。ルート条件と応答形は分割前と同一。
+  if (a === 'repos') return apiSpecs.handleRepos(req, res, url, seg)
+  if (a === 'specs') return apiSpecs.handleSpecs(req, res, url, seg)
+  if (a === 'coherence' && b === 'report' && req.method === 'GET') return apiSpecs.handleCoherence(req, res, url, seg)
+  if (a === 'pipeline') return apiSpecs.handlePipeline(req, res, url, seg)
+  if (a === 'architect') return apiSpecs.handleArchitect(req, res, url, seg)
+  if (a === 'boards') return apiBoards.handleBoards(req, res, url, seg)
+  if (a === 'review') return apiBoards.handleReview(req, res, url, seg)
 
-  // --- Spec Launchpad -------------------------------------------------------
-  // GET  /api/specs?repo=<repoId> | ?board=<slug>       … SPEC とバッチ一覧（SPEC §5.4）
-  // POST /api/specs/launch { repo?, board?, specRelPath, batchIds?, assignee? }
-  //                                                      … バッチを一括起票（同一ボードの未完了はスキップ）
-  if (a === 'specs') {
-    if (!b && req.method === 'GET') {
-      const target = resolveSpecRepo({
-        repoId: url.searchParams.get('repo'),
-        boardSlug: url.searchParams.get('board'),
-      })
-      if (!target) return sendError(res, 404, 'NOT_FOUND', { resource: 'repo' })
-      // 既定はアクティブ SPEC だけ（完了済みで Launchpad が埋まらないようにする。D84）。
-      // `?includeArchived=1` で全件（`specs` にアーカイブも含める）。
-      const all = attachRunTaskIds(specs.listSpecs(target.path), readRuns(runsPathFor(cfg)))
-      const parts = partitionSpecs(all)
-      const includeArchived = url.searchParams.get('includeArchived') === '1'
-      return sendJson(res, 200, {
-        ok: true,
-        repo: target.repo,
-        label: target.label,
-        path: target.path,
-        board: target.board,
-        specs: includeArchived ? all : parts.active,
-        archivedSpecs: parts.archived,
-        archivedCount: parts.archived.length,
-      })
-    }
-    // GET /api/specs/content?board=<slug>&repo=<id>&path=<rel>
-    //   … 1 枚の SPEC の全文（リポジトリ境界内・`.md` のみ・256KB 上限）
-    //   不正パス（`../` 等）は 400、未検出は 404（`readSpecContent` の ApiError を外側が拾う）
-    if (b === 'content' && req.method === 'GET') {
-      const target = resolveSpecRepo({
-        repoId: url.searchParams.get('repo'),
-        boardSlug: url.searchParams.get('board'),
-      })
-      if (!target) return sendError(res, 404, 'NOT_FOUND', { resource: 'repo' })
-      const content = readSpecContent(target.path, url.searchParams.get('path'))
-      auth.audit({ kind: 'specs.content', repo: target.repo, path: content.path, bytes: content.bytes })
-      return sendJson(res, 200, { ...content, repo: target.repo, label: target.label, board: target.board })
-    }
-    // GET /api/specs/reports?board=<slug>&limit=<n>  … 直近のパイプライン完走レポート（D20 / D21）
-    if (b === 'reports' && req.method === 'GET') {
-      await ensureWatchersFresh()
-      const board = String(url.searchParams.get('board') ?? '').trim()
-      const limit = Number(url.searchParams.get('limit')) || 20
-      return sendJson(res, 200, {
-        ok: true,
-        board: board || null,
-        reports: readPipelineReports(cfg.reviewDir, { board, limit }),
-      })
-    }
-    // POST /api/specs/archive { board?, repo?, path }
-    //   … SPEC のメタデータ部へ `- **Status**: archived` を追記して退避する（D92 / D84 互換）。
-    //     ファイルは消さない・移動しない（パスを維持するので既存リンクは壊れない）。
-    //     既にアーカイブ済みなら冪等 `{ ok: true, noop: true }`、`../` は 400。
-    if (b === 'archive' && req.method === 'POST') {
-      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendError(res, 429, 'RATE_LIMITED')
-      }
-      const body = await readJson(req)
-      const target = resolveSpecRepo({ repoId: body?.repo, boardSlug: body?.board })
-      if (!target) return sendError(res, 404, 'NOT_FOUND', { resource: 'repo' })
-      const out = archiveSpec(target.path, body?.path)
-      auth.audit({
-        kind: 'specs.archive',
-        repo: target.repo,
-        board: target.board ?? null,
-        path: out.path,
-        noop: Boolean(out.noop),
-      })
-      return sendJson(res, 200, { ...out, repo: target.repo, board: target.board ?? null })
-    }
-    if (b === 'launch' && req.method === 'POST') {
-      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendError(res, 429, 'RATE_LIMITED')
-      }
-      const body = await readJson(req)
-      const target = resolveSpecRepo({ repoId: body?.repo, boardSlug: body?.board })
-      if (!target) return sendError(res, 404, 'NOT_FOUND', { resource: 'repo' })
-      const board = String(body?.board ?? target.board ?? '').trim()
-      const r = await specs.launchSpec({
-        repoPath: target.path,
-        board,
-        specRelPath: body?.specRelPath,
-        batchIds: body?.batchIds,
-        assignee: String(body?.assignee ?? getPilotProfile()).trim() || 'mobile',
-        // 起票元チャット（`Chat:` 行 ＋ ラン記録の originSessionId）。書式外は specs 側で捨てる。
-        chat: body?.chat,
-        // 本文の見出し言語（`?lang=` → `Accept-Language` → en）。散文だけが従う。
-        lang: langOf(req, url),
-        dryRun: Boolean(body?.dryRun),
-      })
-      auth.audit({
-        kind: 'specs.launch',
-        board,
-        spec: String(body?.specRelPath ?? ''),
-        created: r.created?.length ?? 0,
-        skipped: r.skipped?.length ?? 0,
-        failed: r.failed?.length ?? 0,
-        ok: Boolean(r.ok),
-      })
-      if (r.ok && !body?.dryRun) nudgeWatchers()
-      return r.ok ? sendJson(res, 201, r) : sendFailure(res, 400, r)
-    }
-    return sendError(res, 404, 'UNKNOWN_ENDPOINT', { path: url.pathname })
-  }
-
-  // --- コヒーレンス診断（SPEC-COHERENCE §3.3.1 / D80・D83） --------------------
-  // GET /api/coherence/report?board=<slug>&repo=<id>&fresh=1
-  //   … 対象リポジトリの Layer 1（＋任意 Layer 2）診断を返す。15 秒キャッシュ（`fresh=1` で再計算）。
-  //     `TasksPane` の提案バナーと `RefactorSheet` のバッジが読む。**読み取り専用**（起票しない）。
-  if (a === 'coherence' && b === 'report' && req.method === 'GET') {
-    const target = resolveSpecRepo({
-      repoId: url.searchParams.get('repo'),
-      boardSlug: url.searchParams.get('board'),
-    })
-    if (!target) return sendError(res, 404, 'NOT_FOUND', { resource: 'repo' })
-    const fresh = url.searchParams.get('fresh') === '1'
-    const key = `${target.repo}:${target.path}`
-    const hit = coherenceCache.get(key)
-    if (!fresh && hit && Date.now() - hit.at < COHERENCE_TTL_MS) {
-      return sendJson(res, 200, { ...hit.report, cached: true })
-    }
-    let report
-    try {
-      report = await analyzeCoherence(target.path)
-    } catch (e) {
-      // 診断の失敗で UI を壊さない（バナーが出ないだけ）。
-      return sendJson(res, 200, {
-        ok: false,
-        error: String(e?.message ?? e).slice(0, 200),
-        repo: target.repo,
-        board: target.board,
-        generatedAt: new Date().toISOString(),
-        layers: { universal: false, repoConfig: false, repoChecker: false },
-        hardFails: [],
-        softSignals: [],
-        hotspots: [],
-        summary: { hardFailCount: 0, softSignalCount: 0, hotspotCount: 0, activeSpecCount: 0, archivedSpecCount: 0, deprecatedRoutes: 0 },
-        recommendedSweep: null,
-      })
-    }
-    coherenceCache.set(key, { at: Date.now(), report })
-    return sendJson(res, 200, { ...report, repo: target.repo, label: target.label, board: target.board, cached: false })
-  }
-
-  // --- A2B パイプライン最適化（第3段 / SPEC §3.2・D25③） ----------------------
-  // GET  /api/pipeline/status                    … 適用済みか（中身は返さない）
-  // POST /api/pipeline/optimize { soul?, skills? }
-  //                                              … SOUL.md へ冪等追記＋スキル配置
-  if (a === 'pipeline') {
-    if (b === 'status' && req.method === 'GET') {
-      return sendJson(
-        res,
-        200,
-        getOptimizeStatus({
-          hermesHome: cfg.hermesHome,
-          home: cfg.home,
-          skillsSrcDir: DEFAULT_SKILLS_SRC,
-          pilotProfile: getPilotProfile(),
-        }),
-      )
-    }
-    if (b === 'profile' && (req.method === 'POST' || req.method === 'PUT')) {
-      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendError(res, 429, 'RATE_LIMITED')
-      }
-      const body = await readJson(req)
-      const pilotProfile = writePilotProfile(cfg.configPath, body?.profile)
-      let ensured = null
-      if (body?.optimize !== false) {
-        ensured = ensurePilotProfile({ hermesHome: cfg.hermesHome, profile: pilotProfile })
-      }
-      const ok = ensured ? ensured.ok : true
-      auth.audit({
-        kind: 'pipeline.profile',
-        profile: pilotProfile,
-        copiedConfig: Boolean(ensured?.copiedConfig),
-        soulMode: ensured?.soul?.mode ?? null,
-        ok,
-      })
-      return sendJson(res, ok ? 200 : 500, {
-        ok,
-        pilotProfile,
-        ...(ensured ? { soul: ensured.soul, copiedConfig: ensured.copiedConfig } : {}),
-        status: getOptimizeStatus({
-          hermesHome: cfg.hermesHome,
-          home: cfg.home,
-          skillsSrcDir: DEFAULT_SKILLS_SRC,
-          pilotProfile,
-        }),
-      })
-    }
-    if (b === 'optimize' && req.method === 'POST') {
-      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendError(res, 429, 'RATE_LIMITED')
-      }
-      const body = await readJson(req)
-      if (typeof body?.profile === 'string' && body.profile.trim()) {
-        writePilotProfile(cfg.configPath, body.profile)
-      }
-      const pilotProfile = getPilotProfile()
-      // 既定は SOUL とスキル配置の両方。片方だけ試したいときは明示的に false を渡す。
-      const doSoul = body?.soul !== false
-      const doSkills = body?.skills !== false
-      // 既定の専用プロファイル（`mobile`）のみに書き込み、普段使いの default SOUL は汚さない。
-      const ensured = doSoul ? ensurePilotProfile({ hermesHome: cfg.hermesHome, profile: pilotProfile }) : null
-      const soul = ensured ? ensured.soul : null
-      const profiles = ensured ? { ok: ensured.ok, profiles: ensured.profiles } : null
-      const skills = doSkills
-        ? optimizeAgentSkills({ home: cfg.home, hermesHome: cfg.hermesHome, skillsSrcDir: DEFAULT_SKILLS_SRC })
-        : null
-      const ok = (soul?.ok ?? true) && (profiles?.ok ?? true) && (skills?.ok ?? true)
-      auth.audit({
-        kind: 'pipeline.optimize',
-        profile: pilotProfile,
-        soul: soul?.mode ?? null,
-        soulChanged: Boolean(soul?.changed),
-        profileTargets: profiles?.profiles?.length ?? 0,
-        profileChanged: profiles?.profiles?.filter((p) => p.changed).length ?? 0,
-        skillTargets: skills?.targets?.length ?? 0,
-        ok,
-      })
-      return sendJson(res, ok ? 200 : 500, {
-        ok,
-        pilotProfile,
-        soul,
-        profiles,
-        skills,
-        status: getOptimizeStatus({
-          hermesHome: cfg.hermesHome,
-          home: cfg.home,
-          skillsSrcDir: DEFAULT_SKILLS_SRC,
-          pilotProfile,
-        }),
-      })
-    }
-    return sendError(res, 404, 'UNKNOWN_ENDPOINT', { path: url.pathname })
-  }
-
-  // --- Architect（仕様の種 → SPEC）／ハイブリッド A2B（SPEC V5 §3.2・§3.3① / D23・D25・D26①）--
-  // POST /api/architect/seed { repo?, board?, seedText, runner?, autoStart?, executionPolicy?, chat?, lang? }
-  //      … 202 で `{ok, jobId, status}` を即返し、Architect は背後で走る（画面を待たせない）
-  // GET  /api/architect/jobs?board=<slug>&repo=<id>
-  //      … ジョブ / 完成 SPEC（`spec_ready`）/ 未起票 SPEC（一括起票カードの材料）
-  // POST /api/architect/jobs/:id/dismiss
-  //      … ジョブ破棄をサーバー側に永続化する（再取得しても進行バーに出ない。SPEC V7 §3.1）
-  // GET  /api/architect/config ・ PUT /api/architect/config { runner }
-  //      … 実行ランナー（`hermes` 固定。他の値は INVALID_RUNNER = HTTP 400）
-  if (a === 'architect') {
-    if (b === 'config') {
-      if (req.method === 'GET') {
-        return sendJson(res, 200, { ok: true, ...architect.getConfig() })
-      }
-      if (req.method === 'PUT' || req.method === 'POST') {
-        if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-          return sendError(res, 429, 'RATE_LIMITED')
-        }
-        const body = await readJson(req)
-        // 正規化せずに渡す（未知のランナー名は INVALID_RUNNER で 400 にする）
-        const r = architect.setConfig({ runner: body?.runner })
-        auth.audit({ kind: 'architect.config', runner: r.runner ?? null, ok: Boolean(r.ok) })
-        if (!r.ok) return sendFailure(res, r.code === 'INVALID_RUNNER' ? 400 : 409, r)
-        return sendJson(res, 200, { ok: true, ...architect.getConfig() })
-      }
-      return sendError(res, 405, 'METHOD_NOT_ALLOWED')
-    }
-
-    if (b === 'seed' && req.method === 'POST') {
-      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendError(res, 429, 'RATE_LIMITED')
-      }
-      const body = await readJson(req)
-      const target = resolveSpecRepo({ repoId: body?.repo, boardSlug: body?.board })
-      if (!target) return sendError(res, 404, 'NOT_FOUND', { resource: 'repo' })
-      const board = String(body?.board ?? target.board ?? '').trim()
-      const r = await architect.seed({
-        repoPath: target.path,
-        board,
-        seedText: body?.seedText,
-        runner: body?.runner,
-        autoStart: Boolean(body?.autoStart),
-        executionPolicy: body?.executionPolicy,
-        chat: body?.chat,
-        lang: body?.lang,
-      })
-      auth.audit({
-        kind: 'architect.seed',
-        board,
-        repo: target.repo,
-        runner: r.runner ?? null,
-        executionPolicy: r.executionPolicy ?? null,
-        autoStart: Boolean(body?.autoStart),
-        chars: String(body?.seedText ?? '').length,
-        ok: Boolean(r.ok),
-      })
-      // 202: ジョブは動き出したが、SPEC はまだ無い（PWA は jobs をポーリングする）
-      return r.ok ? sendJson(res, 202, r) : sendFailure(res, 400, r)
-    }
-
-    if (b === 'jobs' && c && d === 'dismiss' && req.method === 'POST') {
-      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendError(res, 429, 'RATE_LIMITED')
-      }
-      const r = architect.dismiss(c)
-      auth.audit({ kind: 'architect.dismiss', jobId: String(c), ok: Boolean(r.ok), persisted: Boolean(r.persisted) })
-      if (!r.ok) return sendFailure(res, r.code === 'JOB_NOT_FOUND' ? 404 : 400, r)
-      return sendJson(res, 200, { ok: true, jobId: r.jobId, persisted: Boolean(r.persisted) })
-    }
-
-    if (b === 'jobs' && !c && req.method === 'GET') {
-      const board = String(url.searchParams.get('board') ?? '').trim()
-      // D42: 既定はアクティブジョブをボード横断で返す。`?strictBoard=1` で V7 互換の厳密一致。
-      const strictBoard = ['1', 'true', 'yes'].includes(String(url.searchParams.get('strictBoard') ?? '').trim().toLowerCase())
-      const target = resolveSpecRepo({ repoId: url.searchParams.get('repo'), boardSlug: board || null })
-      const snapshot = await architect.jobs({
-        board,
-        strictBoard,
-        ...(target?.path ? { include: { repoPath: target.path, board: target.board ?? board } } : {}),
-      })
-      return sendJson(res, 200, snapshot)
-    }
-    return sendError(res, 404, 'UNKNOWN_ENDPOINT', { path: url.pathname })
-  }
-
-  if (a === 'boards') {
-    // /api/boards                                        … ボード一覧
-    // /api/boards/:slug/tasks                            … タスク一覧（git / Discord 付き）
-    // /api/boards/:slug/tasks/:id                        … タスク詳細
-    // /api/boards/:slug/tasks/:id/diff                   … そのタスクのコミット差分
-    // POST /api/boards/:slug/tasks/:id/abort             … 実行中タスクの中断
-    if (!b) return sendJson(res, 200, { boards: kanban.boards() })
-    // クイック起票（POST /api/boards/:slug/tasks）
-    if (b && c === 'tasks' && !d && req.method === 'POST') {
-      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendError(res, 429, 'RATE_LIMITED')
-      }
-      const body = await readJson(req)
-      const assignee = String(body?.assignee ?? getPilotProfile()).trim() || 'mobile'
-      const r = await capture.create({ ...body, board: b, assignee })
-      auth.audit({
-        kind: 'kanban.create',
-        board: b,
-        task: r.task?.id ?? null,
-        assignee,
-        created: Boolean(r.created),
-        ok: Boolean(r.ok),
-      })
-      if (r.ok) nudgeWatchers()
-      return r.ok ? sendJson(res, 201, r) : sendFailure(res, 400, r)
-    }
-    if (b && c === 'tasks' && !d) {
-      // 一覧は本文を載せない（1 件 1.5KB 平均 × 60 件で 90KB になり、モバイル回線で重い）。
-      // 本文は詳細（/api/boards/:slug/tasks/:id）から取る。
-      // `archivedCount` は一覧の LIMIT と独立に数える（「アーカイブ済み (N)」の N。D92）。
-      const list = kanban.tasks(b, { limit: Number(url.searchParams.get('limit') ?? 60), withBody: false })
-      const archivedCount = kanban.statusCounts(b).archivedCount
-      // 履歴（kanban-sop）に記録があるタスクだけ git / Discord を添える
-      const enriched = await Promise.all(
-        list.map(async (t) => {
-          const entry = gitinfo.entryFor(t.id)
-          if (!entry) return t
-          const [g, dc] = await Promise.all([gitinfo.forTask(t.id), Promise.resolve(discord.forAnchor(entry.anchor))])
-          return { ...t, git: g, discord: dc }
-        }),
-      )
-      return sendJson(res, 200, { tasks: enriched, archivedCount })
-    }
-    // POST /api/boards/:slug/tasks/bulk-archive { taskIds: [1..50], reason?, by? }
-    //   … 「整理モード」の一括アーカイブ（D92）。実行中のタスクは**止めずに**スキップして返す。
-    if (b && c === 'tasks' && d === 'bulk-archive' && req.method === 'POST') {
-      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendError(res, 429, 'RATE_LIMITED')
-      }
-      const body = await readJson(req)
-      const ids = Array.isArray(body?.taskIds)
-        ? body.taskIds.map((x) => String(x ?? '').trim()).filter(Boolean)
-        : []
-      if (!ids.length || ids.length > BULK_ARCHIVE_MAX) {
-        return sendError(res, 400, 'TASK_IDS_INVALID', { count: ids.length, max: BULK_ARCHIVE_MAX })
-      }
-      const bad = ids.filter((id) => !TASK_ID_RE.test(id))
-      if (bad.length) return sendError(res, 400, 'TASK_ID_INVALID', { ids: bad.slice(0, 10) })
-      const by = String(body?.by ?? 'mobile').slice(0, 40)
-      const lang = langOf(req, url)
-      const reason = String(
-        body?.reason ?? (lang === 'ja' ? 'ゴミ整理（一括アーカイブ）' : 'Cleanup (bulk archive)'),
-      ).slice(0, 200)
-      const known = new Map(kanban.tasks(b, { limit: 200, withBody: false }).map((t) => [t.id, t.status]))
-      const archived = []
-      const skippedRunning = []
-      const skippedArchived = []
-      const failed = []
-      for (const id of ids) {
-        let status = known.get(id) ?? null
-        if (status == null) {
-          try {
-            status = kanban.task(b, id).status
-          } catch {
-            failed.push({ id, code: 'TASK_NOT_FOUND' })
-            continue
-          }
-        }
-        if (status === 'running') {
-          skippedRunning.push(id)
-          continue
-        }
-        if (status === 'archived') {
-          skippedArchived.push(id)
-          continue
-        }
-        try {
-          const out = await inbox.close(b, id, 'cancel', reason, by, lang)
-          if (out?.status === 'archived') archived.push(id)
-          else if (out?.noop) skippedArchived.push(id)
-          else failed.push({ id, reason: 'not_closed' })
-        } catch (err) {
-          failed.push({ id, code: err?.code ?? 'CLOSE_FAILED' })
-        }
-      }
-      auth.audit({
-        kind: 'kanban.bulk_archive',
-        board: b,
-        requested: ids.length,
-        archived: archived.length,
-        skippedRunning: skippedRunning.length,
-        skippedArchived: skippedArchived.length,
-        failed: failed.length,
-        by,
-      })
-      if (archived.length) nudgeWatchers()
-      return sendJson(res, 200, { ok: true, board: b, archived, skippedRunning, skippedArchived, failed })
-    }
-    if (b && c === 'tasks' && d && e === 'diff' && req.method === 'GET') {
-      const file = url.searchParams.get('file')
-      if (file) {
-        const patch = await gitinfo.filePatch(d, String(file).slice(0, 400))
-        return sendJson(res, patch.ok ? 200 : 404, patch)
-      }
-      const summary = await gitinfo.diffSummary(d)
-      return sendJson(res, summary.ok ? 200 : 404, summary)
-    }
-    if (b && c === 'tasks' && d && e === 'comment' && req.method === 'POST') {
-      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendError(res, 429, 'RATE_LIMITED')
-      }
-      const body = await readJson(req)
-      const out = await inbox.comment(b, d, body?.body ?? body?.text, String(body?.by ?? 'mobile'))
-      auth.audit({ kind: 'kanban.comment', board: b, task: d, chars: String(body?.body ?? body?.text ?? '').length })
-      return sendOutcome(res, out)
-    }
-    if (b && c === 'tasks' && d && e === 'close' && req.method === 'POST') {
-      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendError(res, 429, 'RATE_LIMITED')
-      }
-      const body = await readJson(req)
-      const out = await inbox.close(b, d, body?.action, body?.note ?? body?.reason ?? '', String(body?.by ?? 'mobile'), langOf(req, url))
-      auth.audit({
-        kind: 'kanban.close',
-        board: b,
-        task: d,
-        action: body?.action ?? null,
-        status: out.status,
-        noop: Boolean(out.noop),
-      })
-      if (!out?.noop) nudgeWatchers()
-      return sendOutcome(res, out)
-    }
-    if (b && c === 'tasks' && d && e === 'unblock' && req.method === 'POST') {
-      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendError(res, 429, 'RATE_LIMITED')
-      }
-      const body = await readJson(req)
-      const out = await inbox.unblock(b, d, body?.note ?? body?.reason ?? '', String(body?.by ?? 'mobile'), langOf(req, url))
-      auth.audit({
-        kind: 'kanban.unblock',
-        board: b,
-        task: d,
-        status: out.status,
-        noop: Boolean(out.noop),
-      })
-      if (!out?.noop) nudgeWatchers()
-      return sendOutcome(res, out)
-    }
-    if (b && c === 'tasks' && d && e === 'worker' && req.method === 'GET') {
-      // 任意のボードの実行中タスクでもワーカーのライブ進捗を読めるようにする（SPEC V8-B3）
-      const info = kanban.taskSession(b, d)
-      if (!info) return sendError(res, 404, 'NO_SESSION')
-      const { feed, db, profile } = await readWorkerFeed(info.sessionId, info, Number(url.searchParams.get('limit') ?? 40))
-      return sendJson(res, 200, {
-        taskId: d,
-        status: kanban.task(b, d).status,
-        sessionId: info.sessionId,
-        db,
-        profile,
-        feed,
-      })
-    }
-    if (b && c === 'tasks' && d && e === 'abort' && req.method === 'POST') {
-      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendError(res, 429, 'RATE_LIMITED')
-      }
-      const body = await readJson(req)
-      const reason = String(body?.reason ?? 'mobile kill switch').slice(0, 200)
-      const out = await kanban.abort(b, d, reason, langOf(req, url))
-      auth.audit({ kind: 'kanban.abort', board: b, task: d, reason, result: out })
-      if (!out?.ok) {
-        return sendJson(res, 502, {
-          ...out,
-          code: 'CLI_FAILED',
-          error: out?.output || 'Failed to abort task',
-        })
-      }
-      nudgeWatchers()
-      return sendJson(res, 200, out)
-    }
-    if (b && c === 'tasks' && d) {
-      const detail = kanban.task(b, d)
-      const entry = gitinfo.entryFor(d)
-      if (entry) {
-        detail.git = await gitinfo.forTask(d)
-        detail.discord = discord.forAnchor(entry.anchor)
-      }
-      return sendJson(res, 200, detail)
-    }
-    return sendError(res, 404, 'UNKNOWN_ENDPOINT', { path: url.pathname })
-  }
-
-
-  // --- レビュー（review）------------------------------------------------------
-  // 全ルートは SPEC §4.2。旧 `/api/akapen/*` は廃止し、ここに一本化する。
-  // /api/review                     … 一覧（review / ready / done）
-  // /api/review/:id/sheet           … シート HTML（常に sandbox・生成物）
-  // /api/review/:id/view            … 単体タブ用ラッパー（sandbox iframe + postMessage 中継）
-  // /api/review/:id/data            … sheet.json（PWA のネイティブフォーム用）
-  // POST /api/review/:id/answer     … 回答を保存 → comment → unblock（冪等）
-  // POST /api/review/:id/reopen     … 反映が違うとき review に戻す
-  if (a === 'review') {
-    if (!b) {
-      return sendJson(res, 200, {
-        board: review.board,
-        workdir: review.workdir(),
-        items: review.list(Number(url.searchParams.get('limit') ?? 80)),
-      })
-    }
-    // /api/review/feed?limit=&since= … 作業フィード（監視 cron が書く 1 行ログ）
-    if (b === 'feed' && req.method === 'GET') {
-      await ensureWatchersFresh()
-      return sendJson(res, 200, {
-        items: review.feed(
-          Number(url.searchParams.get('limit') ?? 20),
-          Number(url.searchParams.get('since') ?? 0),
-        ),
-      })
-    }
-    // /api/review/chat-reports?limit=&since= … 全会話ぶんの完了報告（未読の点を出すため）
-    // 会話一覧の行と下部ナビのチャットタブは「どの会話に新着があるか」を 1 回で要る。
-    if (b === 'chat-reports' && req.method === 'GET') {
-      await ensureWatchersFresh()
-      return sendJson(res, 200, {
-        items: review.chatReports({
-          limit: Number(url.searchParams.get('limit') ?? 200),
-          since: Number(url.searchParams.get('since') ?? 0),
-        }),
-      })
-    }
-    // /api/review/chat-report?session_id=&limit=&since= … その会話に流す完了報告
-    // （監視 cron が起票元の会話へ返す 1 行。端末はチャットタブが 15 秒ごとに読む）
-    if (b === 'chat-report' && req.method === 'GET') {
-      const sessionId = String(url.searchParams.get('session_id') || '')
-      if (!sessionId) return sendError(res, 400, 'SESSION_REQUIRED')
-      await ensureWatchersFresh()
-      return sendJson(res, 200, {
-        sessionId,
-        items: review.chatReport(sessionId, {
-          limit: Number(url.searchParams.get('limit') ?? 3),
-          since: Number(url.searchParams.get('since') ?? 0),
-        }),
-      })
-    }
-    // /api/review/:id/session        … 実行ワーカーの session_id を解決する
-    if (c === 'session' && req.method === 'GET') {
-      const info = review.sessionId(b)
-      if (!info) return sendError(res, 404, 'NO_SESSION')
-      return sendJson(res, 200, { taskId: b, status: info.status, sessionId: info.sessionId })
-    }
-    if (c === 'worker' && req.method === 'GET') {
-      // worker（profile mobile）の進行を読む。session.resume は通らないので state.db を直接読む
-      const info = review.sessionId(b)
-      if (!info) return sendError(res, 404, 'NO_SESSION')
-      const { feed, db, profile } = await readWorkerFeed(info.sessionId, info, Number(url.searchParams.get('limit') ?? 40))
-      return sendJson(res, 200, { taskId: b, status: info.status, sessionId: info.sessionId, db, profile, feed })
-    }
-    // /api/review/library            … 注釈の下地にできる画像（library + shots）
-    // /api/review/library/file?path= … その画像
-    // /api/review/from-image         … 画像から注釈タスクを1件作る
-    if (b === 'targets') {
-      return sendJson(res, 200, { targets: review.targets() })
-    }
-    if (b === 'library' && !c) {
-      return sendJson(res, 200, { items: review.library(Number(url.searchParams.get('limit') ?? 60)) })
-    }
-    if (b === 'library' && c === 'file' && req.method === 'GET') {
-      const r = review.libraryFile(String(url.searchParams.get('path') || ''))
-      if (!r.ok) return sendFailure(res, 404, r)
-      res.writeHead(200, { 'content-type': r.type, 'cache-control': 'private, max-age=600' })
-      return res.end(r.data)
-    }
-    // POST /api/review/annotation/new … 画像から注釈タスクを1件作る（SPEC §4.2）
-    // 旧 `/api/review/from-image` は、配信済み dist を掴んだ端末のために受け続ける。
-    if (((b === 'annotation' && c === 'new') || b === 'from-image') && req.method === 'POST') {
-      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendError(res, 429, 'RATE_LIMITED')
-      }
-      const body = await readJson(req, 12_000_000)
-      const r = await review.createFromImage(body || {}, langOf(req, url))
-      auth.audit({ kind: 'review.from_image', task: r.taskId ?? null, source: body?.source ?? 'upload', ok: Boolean(r.ok) })
-      if (r.ok) nudgeWatchers()
-      return r.ok ? sendJson(res, 201, r) : sendFailure(res, 400, r)
-    }
-    if (c === 'image' && req.method === 'GET') {
-      const r = review.image(b, {
-        annotated: url.searchParams.get('annotated') === '1',
-        // compare=1 … Before（前回の赤入れ／前ラウンド）画像。SPEC §5.2
-        compare: url.searchParams.get('compare') === '1',
-      })
-      if (!r.ok) return sendFailure(res, 404, r)
-      res.writeHead(200, { 'content-type': r.type, 'cache-control': 'private, max-age=120' })
-      return res.end(r.data)
-    }
-    if (c === 'annotation' && req.method === 'GET') {
-      const r = review.annotation(b)
-      return r.ok ? sendJson(res, 200, r) : sendFailure(res, 404, r)
-    }
-    if (c === 'annotation' && req.method === 'POST') {
-      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendError(res, 429, 'RATE_LIMITED')
-      }
-      // 画像は base64 で来るので、この経路だけ上限を上げる（既定は 1MB）
-      const body = await readJson(req, 12_000_000)
-      const r = await review.saveAnnotation(b, body || {}, langOf(req, url))
-      auth.audit({
-        kind: 'review.annotation',
-        task: b,
-        duplicate: Boolean(r.duplicate),
-        marks: r.marks ?? 0,
-        ok: Boolean(r.ok),
-      })
-      if (r.ok) nudgeWatchers()
-      return r.ok ? sendJson(res, 200, r) : sendFailure(res, 400, r)
-    }
-    if (c === 'sheet' && req.method === 'GET') {
-      const lang = langOf(req, url)
-      const r = review.sheetHtml(b, lang)
-      if (!r.ok) return sendFailure(res, r.code === 'NOT_FOUND' ? 404 : 409, r)
-      // D57: 埋め込みでも単体タブでも**同じ**厳格な CSP（sandbox = 不透明オリジン）で返す。
-      // シート内のスクリプトは same-origin Cookie にも /ws/term にも /api/* にも届かない。
-      // 回答は postMessage で親（PWA の iframe / :id/view ラッパー）へ渡し、親が POST する。
-      res.writeHead(200, reviewSheetHeaders())
-      return res.end(injectReviewBridge(r.html, b, lang))
-    }
-    // /api/review/:id/view … 単体タブ用のラッパー（D57）。
-    // シートを sandbox iframe で囲み、postMessage を受けて same-origin で回答を POST する。
-    // 存在判定は sheetHtml（.html が無くても .json から生成できる）に合わせる。
-    if (c === 'view' && req.method === 'GET') {
-      const lang = langOf(req, url)
-      const r = review.sheetHtml(b, lang)
-      if (!r.ok) return sendFailure(res, r.code === 'NOT_FOUND' ? 404 : 409, r)
-      res.writeHead(200, reviewViewHeaders())
-      return res.end(reviewViewHtml(b, lang))
-    }
-    if (c === 'thumb' && req.method === 'GET') {
-      const rel = url.pathname.split('/').slice(5).join('/')
-      const r = review.thumb(decodeURIComponent(rel))
-      if (!r.ok) return sendFailure(res, 404, r)
-      res.writeHead(200, { 'content-type': r.type, 'cache-control': 'private, max-age=600' })
-      return res.end(r.data)
-    }
-    if (c === 'data' && req.method === 'GET') {
-      const r = review.sheetData(b)
-      return r.ok ? sendJson(res, 200, r) : sendFailure(res, 409, r)
-    }
-    if (c === 'answer' && req.method === 'POST') {
-      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendError(res, 429, 'RATE_LIMITED')
-      }
-      const body = await readJson(req)
-      const r = await review.answer(b, body || {}, langOf(req, url))
-      auth.audit({
-        kind: 'review.answer',
-        task: b,
-        duplicate: Boolean(r.duplicate),
-        choiceCount: Array.isArray(body?.answers) ? body.answers.length : 0,
-        ok: Boolean(r.ok),
-      })
-      if (r.ok) nudgeWatchers()
-      // レビュー待ち以外への送信は 409（状態の衝突）として返す。他の失敗は 400。
-      return r.ok ? sendJson(res, 200, r) : sendFailure(res, r.code === 'NOT_WAITING' ? 409 : 400, r)
-    }
-    if (c === 'reopen' && req.method === 'POST') {
-      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendError(res, 429, 'RATE_LIMITED')
-      }
-      const body = await readJson(req)
-      const r = await review.reopen(b, body?.reason, langOf(req, url))
-      auth.audit({ kind: 'review.reopen', task: b, ok: Boolean(r.ok) })
-      if (r.ok) nudgeWatchers()
-      return r.ok ? sendJson(res, 200, r) : sendFailure(res, 400, r)
-    }
-    // POST /api/review/:id/approve … 赤入れせずに 1 タップ検収（SPEC §5.2.3）
-    // コメント `Visual check passed` を残して done（作業済み）または unblock（未作業）へ進める。
-    if (c === 'approve' && req.method === 'POST') {
-      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
-        return sendError(res, 429, 'RATE_LIMITED')
-      }
-      const body = await readJson(req)
-      const r = await review.approve(b, body || {}, langOf(req, url))
-      auth.audit({
-        kind: 'review.approve',
-        task: b,
-        duplicate: Boolean(r.duplicate),
-        moved: r.moved ?? null,
-        ok: Boolean(r.ok),
-      })
-      if (r.ok) nudgeWatchers()
-      return r.ok ? sendJson(res, 200, r) : sendFailure(res, r.code === 'NOT_WAITING' ? 409 : 400, r)
-    }
-    return sendError(res, 404, 'UNKNOWN_ENDPOINT', { path: url.pathname })
-  }
 
   // --- 読み取り専用トランスクリプト ------------------------------------------
   // /api/sessions/:id/transcript  … カンバン作業ログなど resume できない会話
@@ -1615,6 +723,9 @@ const server = http.createServer(async (req, res) => {
 
 // --- WebSocket -------------------------------------------------------------
 
+/* WS ハンドラは `server/ws-handlers.js` へ分割（アップグレード判定と wss の生成はここに残す）。 */
+const wsHandlers = createWsHandlers({ cfg, hermes, auth, pty, listProfiles, checkFrame, rejectionFrame })
+const { proxyChat, openTerm } = wsHandlers
 const wssChat = new WebSocketServer({ noServer: true })
 const wssTerm = new WebSocketServer({ noServer: true })
 
@@ -1642,180 +753,6 @@ server.on('upgrade', (req, socket, head) => {
   socket.destroy()
 })
 
-/**
- * チャット WS を Hermes の /api/ws へ中継する（プロトコルは素通し）。
- * 端末からは JSON-RPC がそのまま見えるので、探針テストと同じ経路になる。
- * @param {WebSocket} client 端末側
- */
-async function proxyChat(client) {
-  let upstream
-  const started = Date.now()
-  // この接続で送ってよいプロファイル名（serve 済み）。取れなければ default のみ。
-  // **listener より先に await しない**: 待つ間に届いた端末フレームは listener が無いと捨てられる
-  // （実測: 最初の session.list が消えて 20 秒タイムアウトした）。解決までは hold に溜める。
-  let allowed = []
-  let allowedReady = false
-  const hold = []
-  /** @type {string[]} */
-  const queue = []
-  listProfiles()
-    .then((list) => {
-      allowed = (list ?? []).map((p) => p.name).filter(Boolean)
-    })
-    .catch(() => {})
-    .finally(() => {
-      allowedReady = true
-      for (const t of hold.splice(0)) forward(t)
-    })
-
-  /** 1 フレームを検証して上流へ流す（プロファイル検証はここだけ）。 */
-  function forward(text) {
-    const checked = checkFrame(text, allowed)
-    if (!checked.ok) {
-      // 上流には流さない。端末には JSON-RPC エラーとして返す（SPEC-PROFILE-CHAT 決定 D1）
-      if (client.readyState === WebSocket.OPEN) client.send(rejectionFrame(checked.id, checked.message))
-      auth.audit({ kind: 'chat.profile', method: checked.method, profile: checked.profile, blocked: true })
-      return
-    }
-    if (checked.profile) auth.audit({ kind: 'chat.profile', method: checked.method, profile: checked.profile })
-    const out = checked.text
-    if (upstream?.readyState === WebSocket.OPEN) upstream.send(out)
-    else queue.push(out)
-  }
-
-  try {
-    // 端末が繋ぐたびにトークンを取り直す（gateway 再起動後の 403 を自己回復）
-    upstream = new WebSocket(await hermes.wsUrl('/api/ws', { fresh: true }), { headers: { Origin: cfg.hermesBase } })
-  } catch (err) {
-    client.send(JSON.stringify({ jsonrpc: '2.0', method: 'event', params: { type: 'bridge.error', payload: { message: String(err?.message ?? err) } } }))
-    client.close(1011)
-    return
-  }
-  client.on('message', (raw) => {
-    const text = raw.toString()
-    if (!allowedReady) {
-      hold.push(text)
-      return
-    }
-    forward(text)
-  })
-  // 上流は無音で切ることがある（実測: code=1005 が散発）。25秒ごとに ping して
-  // 「応答が来ないまま画面が止まる」を防ぐ。pong が90秒来なければ張り直す。
-  let ka = null
-  let lastPong = Date.now()
-
-  upstream.on('open', () => {
-    for (const q of queue.splice(0)) upstream.send(q)
-    client.send(JSON.stringify({ jsonrpc: '2.0', method: 'event', params: { type: 'bridge.ready', payload: {} } }))
-    console.log(`[chat] upstream open (${Date.now() - started}ms)`)
-    lastPong = Date.now()
-    ka = setInterval(() => {
-      if (upstream?.readyState !== WebSocket.OPEN) return
-      if (Date.now() - lastPong > 90_000) {
-        console.log('[chat] upstream silent 90s → close')
-        try {
-          upstream.terminate()
-        } catch {}
-        return
-      }
-      try {
-        upstream.ping()
-      } catch {}
-    }, 25_000)
-  })
-  upstream.on('pong', () => {
-    lastPong = Date.now()
-  })
-  upstream.on('message', (raw) => {
-    if (client.readyState === WebSocket.OPEN) client.send(raw.toString())
-  })
-  const closeBoth = (code = 1000, reason = '') => {
-    try {
-      if (client.readyState === WebSocket.OPEN) client.close(code, reason)
-    } catch {
-      /* noop */
-    }
-    try {
-      upstream.close()
-    } catch {
-      /* noop */
-    }
-  }
-  upstream.on('close', (code) => {
-    if (ka) clearInterval(ka)
-    console.log(`[chat] upstream closed code=${code} after ${Date.now() - started}ms`)
-    closeBoth(code === 1000 ? 1000 : 1011, `upstream ${code}`)
-  })
-  upstream.on('error', () => closeBoth(1011, 'upstream error'))
-  client.on('close', () => {
-    try {
-      upstream.close()
-    } catch {
-      /* noop */
-    }
-  })
-}
-
-/**
- * 端末（実 PTY）。Hermes 側に汎用シェルの口が無いためブリッジが PTY を持つ。
- * @param {WebSocket} ws 端末
- */
-function openTerm(ws) {
-  if (!pty) {
-    ws.send(JSON.stringify({ t: 'out', d: '\r\n[bridge] node-pty failed to load\r\n' }))
-    ws.close(1011)
-    return
-  }
-  const shell = process.env.SHELL || '/bin/zsh'
-  /** @type {any} */
-  let proc
-  try {
-    proc = pty.spawn(shell, ['-l'], {
-      name: 'xterm-256color',
-      cols: 80,
-      rows: 24,
-      cwd: process.env.HOME,
-      env: { ...process.env, TERM: 'xterm-256color' },
-    })
-  } catch (err) {
-    // ここで例外を投げるとプロセスごと落ちる（実測: spawn-helper の実行権限欠落）
-    auth.audit({ kind: 'term.error', message: String(err?.message ?? err) })
-    ws.send(JSON.stringify({ t: 'out', d: `\r\n[bridge] Failed to start PTY: ${err?.message ?? err}\r\n` }))
-    ws.close(1011)
-    return
-  }
-  auth.audit({ kind: 'term.open', pid: proc.pid, shell })
-  proc.onData((d) => {
-    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'out', d }))
-  })
-  proc.onExit(({ exitCode }) => {
-    auth.audit({ kind: 'term.exit', pid: proc.pid, exitCode })
-    try {
-      ws.close(1000, 'exit')
-    } catch {
-      /* noop */
-    }
-  })
-  ws.on('message', (raw) => {
-    let msg
-    try {
-      msg = JSON.parse(raw.toString())
-    } catch {
-      proc.write(raw.toString())
-      return
-    }
-    if (msg?.t === 'in') proc.write(String(msg.d ?? ''))
-    else if (msg?.t === 'resize') proc.resize(Math.max(20, Number(msg.c) || 80), Math.max(5, Number(msg.r) || 24))
-  })
-  ws.on('close', () => {
-    auth.audit({ kind: 'term.close', pid: proc.pid })
-    try {
-      proc.kill()
-    } catch {
-      /* noop */
-    }
-  })
-}
 
 server.on('error', (err) => {
   if (err?.code === 'EADDRINUSE') {

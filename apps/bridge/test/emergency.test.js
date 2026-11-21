@@ -18,9 +18,10 @@ import path from 'node:path'
 import { createOps } from '../src/ops.js'
 import { ERROR_MESSAGES } from '../src/api-errors.js'
 import { matchApiRoute } from '../src/contracts/routes.js'
+import { readServerSource } from './helpers/moduleSource.js'
 
 const ROOT = path.resolve(import.meta.dirname, '../../..')
-const SERVER_SRC = fs.readFileSync(path.join(ROOT, 'apps/bridge/src/server.js'), 'utf8')
+const SERVER_SRC = readServerSource()
 
 const readDict = (lang) => JSON.parse(fs.readFileSync(path.join(ROOT, 'apps/web/src/i18n', `${lang}.json`), 'utf8'))
 

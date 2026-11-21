@@ -33,11 +33,10 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-
+import { bundleServerSource } from './lib/source-bundle.mjs'
 const SELF = path.resolve(fileURLToPath(import.meta.url))
 const HERE = path.dirname(SELF)
 const DEFAULT_ROOT = path.resolve(HERE, '..')
-
 /** Repository layout facts used by the rules. */
 const LAYOUT = Object.freeze({
   config: '.hermes-coherence.json',
@@ -467,7 +466,7 @@ async function ruleApiParity(root, findings) {
   const rule = 'api-parity'
   const webFiles = walkCode(root, LAYOUT.webSrc).filter((file) => file.rel !== LAYOUT.mockApi)
   const webPaths = collectApiPaths(webFiles)
-  const serverText = readText(path.join(root, LAYOUT.serverFile))
+  const serverText = bundleServerSource(root, readText)
   if (serverText === null) {
     findings.soft(rule, `${LAYOUT.serverFile} not found; API parity skipped`)
     return
@@ -1154,7 +1153,7 @@ async function ruleCliInvocationGuard(root, findings) {
 async function ruleSilentFailureGuard(root, findings) {
   const rule = 'silent-failure-guard'
   const hits = []
-  const serverText = readText(path.join(root, LAYOUT.serverFile))
+  const serverText = bundleServerSource(root, readText)
   if (serverText === null) {
     findings.soft(rule, `${LAYOUT.serverFile} not found; write route audit skipped`)
   } else {

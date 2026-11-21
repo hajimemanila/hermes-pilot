@@ -29,9 +29,10 @@ import { findHardcodedVerification } from '../src/contracts/verify.js'
 import { MODE_CONTRACTS } from '../src/specs.js'
 import { A2B_RULES } from '../src/pipeline-optimizer.js'
 import { demoRoute } from '../../web/src/demo/mockApi.js'
+import { readServerSource } from './helpers/moduleSource.js'
 
 const ROOT = path.resolve(import.meta.dirname, '../../..')
-const SERVER_SRC = fs.readFileSync(path.join(ROOT, 'apps/bridge/src/server.js'), 'utf8')
+const SERVER_SRC = readServerSource()
 const WEB_SRC_DIR = path.join(ROOT, 'apps/web/src')
 
 /** デモの汎用フォールバック（`mocked` の受け皿にしてはいけない名前）。 */

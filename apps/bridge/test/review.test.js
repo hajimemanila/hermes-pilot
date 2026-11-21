@@ -19,6 +19,7 @@ import {
   renderSheetHtmlFromData,
   createReview,
 } from '../src/review.js'
+import { readServerSource } from './helpers/moduleSource.js'
 
 test('injectReviewBridge は設問見出しのマーカー装飾を注入し、保存物は変えない', () => {
   const base = '<html><body><section id="akForm"><div class="q"><h3>Q1. 問い</h3></div></section></body></html>'
@@ -766,7 +767,7 @@ test('injectReviewBridge は window.__reviewSubmit と互換エイリアス __ak
 
 // --- D57: レビューシートの常時サンドボックス化 & ラッパー経由 postMessage ---------
 
-const SERVER_SRC = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8')
+const SERVER_SRC = readServerSource()
 
 test('シートの CSP は sec-fetch-dest で分岐せず、常に sandbox を含む', () => {
   const headers = reviewSheetHeaders()

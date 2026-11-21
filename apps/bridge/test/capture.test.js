@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { normalizeCapture, buildCreateArgs, dedupeKey, createCapture } from '../src/capture.js'
+import { readServerSource } from './helpers/moduleSource.js'
 
 test('normalizeCapture はタイトルの空白を畳み、既定値を埋める', () => {
   const c = normalizeCapture({ board: 'hermes-mobile-pwa', title: '  音声で  起票する  ' })
@@ -105,7 +106,7 @@ test('create: 入力エラーは ok:false で返し、例外にしない', async
 })
 
 test('server.js の POST /api/boards/:slug/tasks は assignee 省略時に getPilotProfile() を補う', () => {
-  const src = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8')
+  const src = readServerSource()
   const match = /if\s*\(b && c === 'tasks' && !d && req\.method === 'POST'\)[\s\S]*?return r\.ok \? sendJson/.exec(src)
   assert.ok(match, 'POST /api/boards/:slug/tasks ハンドラが見つからない')
   assert.match(match[0], /getPilotProfile\(\)/, 'assignee 未指定時の既定パイロットプロファイル補完が欠けている')
