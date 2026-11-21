@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { useI18n } from '../i18n/index.js'
 import { haptic } from '../lib/haptic.js'
+import { isOfflineError } from '../lib/netRecovery.js'
+import { useWakeSync } from '../lib/useWakeSync.js'
 
 /**
  * 設定タブ「パイプライン＆Architect」（SPEC V5 §3.2・§3.3 / D25・D26①・
@@ -37,22 +39,24 @@ export function PipelinePanel({ notify, board = '' }) {
       } else {
         setStatusMissing(true)
       }
-    } catch {
-      setStatusMissing(true)
+    } catch (e) {
+      if (!isOfflineError(e)) setStatusMissing(true)
     }
     // Architect ジョブと未起票 SPEC の件数
     try {
       const qs = board ? `?board=${encodeURIComponent(board)}` : ''
       const j = await api(`/api/architect/jobs${qs}`)
       if (j?.ok) setJobs(j)
-    } catch {
-      setJobs(null)
+    } catch (e) {
+      if (!isOfflineError(e)) setJobs(null)
     }
   }, [board])
 
   useEffect(() => {
     load()
   }, [load])
+
+  useWakeSync(() => load())
 
   /** SOUL.md ＋ スキル配置を 1 タップで適用する。 */
   const optimize = useCallback(async () => {

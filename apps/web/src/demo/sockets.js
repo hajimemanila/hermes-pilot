@@ -90,7 +90,12 @@ function termShell(emit) {
       } catch {
         return
       }
-      if (!msg || msg.t !== 'in') return
+      if (!msg) return
+      if (msg.t === 'ping') {
+        setTimeout(() => emit({ t: 'pong' }), 0)
+        return
+      }
+      if (msg.t !== 'in') return
       const data = String(msg.d ?? '')
       buffer += data
       if (!/[\r\n]/.test(data)) return

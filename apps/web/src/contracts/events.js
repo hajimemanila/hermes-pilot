@@ -83,7 +83,7 @@ export const HM_EVENT_META = Object.freeze({
   [HM_EVENTS.OPEN_SEED]: { detail: '{ seed, repo?, board? }', from: 'MemosPane / ChatPane', to: 'App' },
   [HM_EVENTS.OPEN_BRAINSTORM]: { detail: '{ seed, memoId }', from: 'MemosPane', to: 'App' },
   [HM_EVENTS.DISCUSS_PIPELINE]: { detail: '{ sessionId, prompt, ... }', from: 'ChatPane / TasksPane / TaskToolSheets', to: 'App' },
-  [HM_EVENTS.WAKE_SYNC]: { detail: null, from: 'App / ReviewPane / TasksPane / ChatPane / LiveSheet', to: 'TasksPane / ChatPane / ReviewPane' },
+  [HM_EVENTS.WAKE_SYNC]: { detail: null, from: 'App / ReviewPane / TasksPane / ChatPane / LiveSheet', to: 'TasksPane / ReviewPane / MemosPane / ChatPane / TermPane / SettingsPane / PipelinePanel' },
   [HM_EVENTS.REFRESH_REPORTS]: { detail: null, from: 'ChatPane / TasksPane / ReviewPane', to: 'App' },
   [HM_EVENTS.REVIEW_ITEMS]: { detail: '{ items }', from: 'ReviewPane', to: 'App' },
   [HM_EVENTS.REVIEW_SEEN]: { detail: '{ at }', from: 'ReviewPane', to: 'App' },

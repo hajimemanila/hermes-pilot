@@ -32,6 +32,7 @@ import { consumePairToken } from './lib/pairing.js'
 import { isChunkLoadError, reloadForChunkError, retryImport } from './lib/lazyRetry.js'
 import { HM_EVENTS, emitHmEvent } from './contracts/events.js'
 import { HM_STORAGE } from './contracts/storage.js'
+import { OVERVIEW_TIMEOUT_MS, isConnectivityRecovery } from './lib/netRecovery.js'
 
 /*
  * ターミナルは初回にしか読み込まない（起動を速くするため）。ただしスリープ復帰や
@@ -155,12 +156,7 @@ export function App() {
   const { t } = useI18n()
   const [deepLink] = useState(() => readDeepLink())
 
-  /*
-   * テーマ（Dark / Light / System）の初期化と `prefers-color-scheme` の監視（SPEC §7.1）。
-   * 初回描画前に `main.jsx` が 1 度当てているので、ここは「購読を張り直す」役。
-   * `initTheme` は冪等（監視は 1 本だけ）で、`<html data-theme>` と
-   * `<meta name="theme-color">` の更新も内部で行う。
-   */
+  /* テーマ初期化と `prefers-color-scheme` 監視の再購読（SPEC §7.1・`initTheme` は冪等）。 */
   useEffect(() => initTheme(), [])
 
   /*
@@ -324,15 +320,7 @@ export function App() {
     }
   }, [])
 
-  /*
-   * バッジ即時同期エンジン（SPEC-PILOT-V3 §3.2 / D17②）。
-   *
-   * バッジの元になる 6 本（/api/overview, /api/review, /api/review/feed, /api/inbox,
-   * /api/review/chat-reports, /api/live）は、それぞれ独立した 15 秒ポーリングを持っている。
-   * スリープ復帰・タブ切替ではその「最大 15 秒」がそのまま体感の遅れになるので
-   * （実測: 復帰直後は古い数字が残った）、復帰の合図で全員を**並列に**叩き直す。
-   * 連打は 1,500 ms のスロットルで抑える（`force` のときだけ素通し）。
-   */
+  /* バッジ・各タブの即時同期（SPEC-PILOT-V3 §3.2 / D17②）。1,500ms スロットル、`force` は即時 */
   const WAKE_THROTTLE_MS = 1500
   const syncersRef = useRef([])
   const lastWakeAtRef = useRef(0)
@@ -344,11 +332,12 @@ export function App() {
     }
   }, [])
   const syncAllBadges = useCallback(
-    ({ force = false } = {}) => {
+    ({ force = false, skip = null } = {}) => {
       const now = Date.now()
       if (!force && now - lastWakeAtRef.current < WAKE_THROTTLE_MS) return
       lastWakeAtRef.current = now
       for (const fn of syncersRef.current) {
+        if (fn === skip) continue
         try {
           Promise.resolve(fn()).catch(() => {})
         } catch {
@@ -365,7 +354,7 @@ export function App() {
     [WAKE_THROTTLE_MS],
   )
 
-  // 復帰の合図: 表示に戻った / フォーカスした / オンラインに戻った
+  // 復帰の合図: 表示に戻った / ページ復元 / フォーカスした / オンラインに戻った
   useEffect(() => {
     const onVis = () => {
       if (document.visibilityState === 'visible') syncAllBadges()
@@ -373,10 +362,12 @@ export function App() {
     const onFocus = () => syncAllBadges()
     const onOnline = () => syncAllBadges({ force: true })
     document.addEventListener('visibilitychange', onVis)
+    window.addEventListener('pageshow', onVis)
     window.addEventListener('focus', onFocus)
     window.addEventListener('online', onOnline)
     return () => {
       document.removeEventListener('visibilitychange', onVis)
+      window.removeEventListener('pageshow', onVis)
       window.removeEventListener('focus', onFocus)
       window.removeEventListener('online', onOnline)
     }
@@ -554,32 +545,40 @@ export function App() {
     toastTimer.current = setTimeout(() => setToast(null), 2600)
   }, [])
 
+  const connRef = useRef('ok')
+  const refreshRef = useRef(null)
   const refresh = useCallback(async () => {
     try {
-      const data = await api('/api/overview')
+      const data = await api('/api/overview', { timeoutMs: OVERVIEW_TIMEOUT_MS })
+      const recovered = isConnectivityRecovery(connRef.current, 'ok')
+      connRef.current = 'ok'
       setOverview(data)
       setConn('ok')
       setAuthNeeded(false)
+      if (recovered) syncAllBadges({ force: true, skip: refreshRef.current })
       return data
     } catch (e) {
       if (e.status === 401) {
+        connRef.current = 'error'
         setAuthNeeded(true)
         return null
       }
-      setConn(e.code === 'OFFLINE' ? 'offline' : 'error')
+      const next = e.code === 'OFFLINE' ? 'offline' : 'error'
+      connRef.current = next
+      setConn(next)
       return null
     }
-  }, [])
+  }, [syncAllBadges])
+  refreshRef.current = refresh
 
   useEffect(() => {
     let alive = true
     ;(async () => {
-      // QR ペアリング（`?token=` / `#token=`）: Cookie を確立してから URL を掃除する（SPEC §8.2）。
-      // 失敗しても素のログイン画面に落ちるだけで、他は今までどおり動く。
+      // QR ペアリング（`?token=` / `#token=`）: 補助経路なので失敗時は素のログイン画面へ
       try {
         await consumePairToken()
       } catch {
-        /* ペアリングは補助経路 */
+        /* noop */
       }
       if (!alive) return
       await refresh()
@@ -755,10 +754,7 @@ export function App() {
     }
   }, [registerSyncer])
 
-  /*
-   * 計器盤の 💎（キャッシュ燃費）。SPEC §5.5 — `/api/usage` の集計を 60 秒キャッシュで読む。
-   * サーバ側も 30 秒キャッシュなので、端末側は 60 秒で十分（毎秒叩かない）。
-   */
+  /* 計器盤の 💎（キャッシュ燃費）。SPEC §5.5 — サーバ側 30 秒キャッシュに対し端末は 60 秒 */
   useEffect(() => {
     let alive = true
     const sync = async () => {
@@ -770,12 +766,14 @@ export function App() {
       }
     }
     sync()
+    const offSync = registerSyncer(sync)
     const id = setInterval(() => document.visibilityState === 'visible' && sync(), 60_000)
     return () => {
       alive = false
       clearInterval(id)
+      offSync()
     }
-  }, [])
+  }, [registerSyncer])
 
   // 計器盤の値（純関数で組み立てる。lib/telemetry.js）
   const gw = gwState({ conn, bridge: overview?.bridge ?? null })
@@ -873,7 +871,7 @@ export function App() {
           className={`t-pill gw ${gw}`}
           onClick={() => {
             haptic('tap')
-            refresh()
+            syncAllBadges({ force: true })
           }}
           aria-label={gw === 'ok' ? t('app.gwOkAria') : t('app.gwDownAria')}
           title={gw === 'ok' ? t('app.connected') : t('app.bridgeOffline')}
@@ -930,7 +928,7 @@ export function App() {
           <button
             onClick={() => {
               haptic('tap')
-              refresh()
+              syncAllBadges({ force: true })
             }}
           >
             {t('common.retry')}

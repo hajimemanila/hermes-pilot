@@ -28,6 +28,8 @@ import { localizeError, t } from '../i18n/lang.js'
 import { sep } from '../lib/format.js'
 import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
 import { HM_STORAGE } from '../contracts/storage.js'
+import { isOfflineError } from '../lib/netRecovery.js'
+import { useWakeSync } from '../lib/useWakeSync.js'
 import { ChatSessionList, DRAWER_REFRESH_THROTTLE_MS, MarkdownBody, PipelineReportCard, ToolRows, commitProgressToBlocks, fitComposer } from './chat/ChatParts.jsx'
 import { ChatDrawer } from './chat/ChatDrawer.jsx'
 
@@ -275,8 +277,8 @@ export function ChatPane({
       const qs = seedBoard ? `?board=${encodeURIComponent(seedBoard)}` : ''
       const d = await api(`/api/architect/jobs${qs}`)
       if (d?.ok) setSpecJobs(d)
-    } catch {
-      setSpecJobs(null)
+    } catch (e) {
+      if (!isOfflineError(e)) setSpecJobs(null)
     }
   }, [seedBoard])
 
@@ -785,16 +787,13 @@ export function ChatPane({
     }
   }, [storedSid, sid])
 
-  // 復帰（スリープ・タブ切替）の合図や Review 送信直後に会話一覧と Architect 進行バーを取り直す。
-  useEffect(() => {
-    const onWake = () => {
-      const rpcNow = sockRef.current?.rpc
-      if (rpcNow) loadSessions(rpcNow)
-      loadSpecJobs()
-    }
-    window.addEventListener(HM_EVENTS.WAKE_SYNC, onWake)
-    return () => window.removeEventListener(HM_EVENTS.WAKE_SYNC, onWake)
-  }, [loadSessions, loadSpecJobs])
+  // 復帰・回線回復時に会話一覧・Architect 進行バー・未取得スニペットを取り直す
+  useWakeSync(() => {
+    const rpcNow = sockRef.current?.rpc
+    if (rpcNow) loadSessions(rpcNow)
+    loadSpecJobs()
+    if (!snippets.length) loadSnippets()
+  })
 
   /**
    * ドロワーの一覧と完了報告を取り直す（D22②）。

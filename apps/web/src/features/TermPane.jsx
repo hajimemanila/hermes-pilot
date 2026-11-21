@@ -9,7 +9,8 @@ import { readSnippetBars, subscribeSnippetBars } from '../lib/snippetBars.js'
 import { termKeyBytes } from '../lib/termKey.js'
 import { reconnectDelay } from '../lib/termReconnect.js'
 import { useI18n } from '../i18n/index.js'
-import { HM_EVENTS } from '../contracts/events.js'
+import { HM_EVENTS, onHmEvent } from '../contracts/events.js'
+import { WS_HANDSHAKE_TIMEOUT_MS, WS_PROBE_TIMEOUT_MS } from '../lib/netRecovery.js'
 
 /**
  * ターミナルタブ。ブリッジが持つ実 PTY（node-pty）に WebSocket で繋ぐ。
@@ -80,20 +81,45 @@ export function TermPane({ notify, active = true }) {
     }
 
     let disposed = false
+    let handshakeTimer = null
+    let probeTimer = null
 
     /**
      * PTY ソケットを張る。切れたら自前でバックオフ再接続する
-     * （`onclose` は「置き換え済みの古いソケット」の close でも来るので、id を突き合わせて無視する）。
+     * （`onclose` は「置き換え済みの古いソケット」の close でも来るので、ws 参照で無視する）。
      */
-    const connect = () => {
+    const connect = (force = false) => {
       if (disposed) return
       const cur = wsRef.current
-      if (cur && cur.readyState <= WebSocket.OPEN) return
+      if (force && cur && cur.readyState !== WebSocket.CLOSED) {
+        wsRef.current = null
+        try {
+          cur.close()
+        } catch {
+          /* noop */
+        }
+      } else if (!force && cur && cur.readyState <= WebSocket.OPEN) {
+        return
+      }
+      clearTimeout(handshakeTimer)
+      clearTimeout(probeTimer)
+      probeTimer = null
       // 再試行中は「接続中」に戻さない（切断→接続中の点滅を避ける）
       setState((s) => (s === 'reconnecting' ? s : 'connecting'))
       const ws = openSocket('/ws/term')
       wsRef.current = ws
+      handshakeTimer = setTimeout(() => {
+        if (!disposed && wsRef.current === ws && ws.readyState === WebSocket.CONNECTING) {
+          try {
+            ws.close()
+          } catch {
+            /* noop */
+          }
+        }
+      }, WS_HANDSHAKE_TIMEOUT_MS)
       ws.onopen = () => {
+        if (wsRef.current !== ws) return
+        clearTimeout(handshakeTimer)
         retryRef.current = 0
         droppedRef.current = false
         setState('open')
@@ -106,6 +132,9 @@ export function TermPane({ notify, active = true }) {
         ws.send(JSON.stringify({ t: 'resize', c: term.cols, r: term.rows }))
       }
       ws.onmessage = (ev) => {
+        if (wsRef.current !== ws) return
+        clearTimeout(probeTimer)
+        probeTimer = null
         let msg
         try {
           msg = JSON.parse(ev.data)
@@ -113,11 +142,18 @@ export function TermPane({ notify, active = true }) {
           term.write(ev.data)
           return
         }
+        if (msg.t === 'pong') return
         if (msg.t === 'out') term.write(msg.d)
       }
-      ws.onerror = () => setState('error')
+      ws.onerror = () => {
+        if (wsRef.current !== ws) return
+        setState('error')
+      }
       ws.onclose = () => {
         if (wsRef.current !== ws) return
+        clearTimeout(handshakeTimer)
+        clearTimeout(probeTimer)
+        probeTimer = null
         wsRef.current = null
         if (disposed) return
         setState('reconnecting')
@@ -130,7 +166,7 @@ export function TermPane({ notify, active = true }) {
         reconnectTimer.current = setTimeout(connect, reconnectDelay(retryRef.current))
       }
     }
-    connectRef.current = connect
+    connectRef.current = () => connect(true)
     connect()
 
     const sub = term.onData((d) => {
@@ -146,17 +182,35 @@ export function TermPane({ notify, active = true }) {
       const ws = wsRef.current
       if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'resize', c: term.cols, r: term.rows }))
     }
-    /** 復帰・回線復旧では待たずに繋ぎ直す（バックオフの残りを捨てる）。 */
+    /** 復帰・回線復旧時は未接続を即張り直し、OPEN のまま半開きなら ping で生存確認する。 */
     const reconnectNow = () => {
       if (disposed) return
-      if (wsRef.current?.readyState === WebSocket.OPEN) return
-      retryRef.current = 0
-      clearTimeout(reconnectTimer.current)
-      connect()
+      const ws = wsRef.current
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        retryRef.current = 0
+        clearTimeout(reconnectTimer.current)
+        connect(true)
+        return
+      }
+      if (probeTimer) return
+      try {
+        ws.send(JSON.stringify({ t: 'ping' }))
+        probeTimer = setTimeout(() => {
+          probeTimer = null
+          if (!disposed) {
+            retryRef.current = 0
+            connect(true)
+          }
+        }, WS_PROBE_TIMEOUT_MS)
+      } catch {
+        retryRef.current = 0
+        connect(true)
+      }
     }
     const onVisible = () => {
       if (document.visibilityState === 'visible') reconnectNow()
     }
+    const offWake = onHmEvent(HM_EVENTS.WAKE_SYNC, reconnectNow)
     window.addEventListener('resize', onResize)
     document.addEventListener('visibilitychange', onVisible)
     window.addEventListener('pageshow', onVisible)
@@ -169,8 +223,11 @@ export function TermPane({ notify, active = true }) {
     return () => {
       disposed = true
       connectRef.current = null
+      offWake()
       clearTimeout(focusTimer)
       clearTimeout(reconnectTimer.current)
+      clearTimeout(handshakeTimer)
+      clearTimeout(probeTimer)
       window.removeEventListener('resize', onResize)
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('pageshow', onVisible)
@@ -190,6 +247,8 @@ export function TermPane({ notify, active = true }) {
   // スニペットを読む（失敗してもターミナルは使える）。言語は URL に明示する（SPEC §3.1）
   const langRef = useRef(lang)
   langRef.current = lang
+  const snippetsRef = useRef(snippets)
+  snippetsRef.current = snippets
   useEffect(() => {
     let cancelled = false
     const load = () => {
@@ -200,10 +259,14 @@ export function TermPane({ notify, active = true }) {
         .catch(() => {})
     }
     load()
+    const offWake = onHmEvent(HM_EVENTS.WAKE_SYNC, () => {
+      if (!snippetsRef.current.length) load()
+    })
     window.addEventListener(HM_EVENTS.TERM_SNIPPETS, load)
     window.addEventListener(HM_EVENTS.LANG, load)
     return () => {
       cancelled = true
+      offWake()
       window.removeEventListener(HM_EVENTS.TERM_SNIPPETS, load)
       window.removeEventListener(HM_EVENTS.LANG, load)
     }

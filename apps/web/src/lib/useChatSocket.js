@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { openSocket } from '../api.js'
+import { HM_EVENTS, onHmEvent } from '../contracts/events.js'
+import { WS_HANDSHAKE_TIMEOUT_MS, WS_PROBE_TIMEOUT_MS } from './netRecovery.js'
 import { t } from '../i18n/lang.js'
 
 /**
@@ -22,6 +24,8 @@ export function useChatSocket({ onEvent, onReady, onState }) {
   const idRef = useRef(1)
   const retryRef = useRef(0)
   const timerRef = useRef(null)
+  const handshakeTimerRef = useRef(null)
+  const probingRef = useRef(false)
   const closedByUs = useRef(false)
   /** 切断が始まった時刻（null = つながっている）。 */
   const offlineSince = useRef(Date.now())
@@ -82,11 +86,24 @@ export function useChatSocket({ onEvent, onReady, onState }) {
 
     const ws = openSocket('/ws/chat')
     wsRef.current = ws
+    clearTimeout(handshakeTimerRef.current)
+    handshakeTimerRef.current = setTimeout(() => {
+      if (wsRef.current === ws && ws.readyState === WebSocket.CONNECTING) {
+        try {
+          ws.close()
+        } catch {
+          /* noop */
+        }
+      }
+    }, WS_HANDSHAKE_TIMEOUT_MS)
 
     ws.onopen = () => {
+      if (wsRef.current !== ws) return
+      clearTimeout(handshakeTimerRef.current)
       retryRef.current = 0
     }
     ws.onmessage = (ev) => {
+      if (wsRef.current !== ws) return
       let msg
       try {
         msg = JSON.parse(ev.data)
@@ -109,10 +126,13 @@ export function useChatSocket({ onEvent, onReady, onState }) {
       eventRef.current?.(msg)
     }
     ws.onerror = () => {
+      if (wsRef.current !== ws) return
       setState('error')
       stateRef.current?.('error')
     }
     ws.onclose = () => {
+      if (wsRef.current !== ws) return
+      clearTimeout(handshakeTimerRef.current)
       wsRef.current = null
       if (!offlineSince.current) offlineSince.current = Date.now()
       setState('closed')
@@ -126,39 +146,71 @@ export function useChatSocket({ onEvent, onReady, onState }) {
     }
   }, [failPending])
 
-  /** いますぐ繋ぎ直す（復帰時）。 */
+  /** いますぐ繋ぎ直す（復帰時・`CONNECTING` ハングも破棄して張り直す）。 */
   const reconnectNow = useCallback(() => {
     retryRef.current = 0
+    clearTimeout(timerRef.current)
+    clearTimeout(handshakeTimerRef.current)
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      try {
-        wsRef.current?.close()
-      } catch {
-        /* noop */
-      }
+      const old = wsRef.current
       wsRef.current = null
+      if (old) {
+        failPending(t('socket.disconnected'))
+        try {
+          old.close()
+        } catch {
+          /* noop */
+        }
+      }
       connect()
     }
-  }, [connect])
+  }, [connect, failPending])
+
+  /** 復帰・通信回復時に半開きソケットを ping 確認し、応答が無ければ張り直す。 */
+  const probeOrReconnect = useCallback(async () => {
+    const ws = wsRef.current
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      reconnectNow()
+      return
+    }
+    if (probingRef.current) return
+    probingRef.current = true
+    try {
+      const res = await rpc('bridge.ping', {}, WS_PROBE_TIMEOUT_MS)
+      if (res?.error && wsRef.current === ws) {
+        wsRef.current = null
+        failPending(t('socket.disconnected'))
+        try {
+          ws.close()
+        } catch {
+          /* noop */
+        }
+        connect()
+      }
+    } finally {
+      probingRef.current = false
+    }
+  }, [connect, failPending, reconnectNow, rpc])
 
   useEffect(() => {
     closedByUs.current = false
     connect()
     const onVisible = () => {
-      if (document.visibilityState !== 'visible') return
-      // 復帰時は状態に関わらずソケットの生死を確認する（死んでいれば繋ぎ直す）
-      const ws = wsRef.current
-      if (!ws || ws.readyState !== WebSocket.OPEN) reconnectNow()
+      if (document.visibilityState === 'visible') probeOrReconnect()
     }
-    const onOnline = () => reconnectNow()
+    const onOnline = () => probeOrReconnect()
+    const offWake = onHmEvent(HM_EVENTS.WAKE_SYNC, probeOrReconnect)
     document.addEventListener('visibilitychange', onVisible)
     window.addEventListener('online', onOnline)
     window.addEventListener('pageshow', onVisible)
     return () => {
       closedByUs.current = true
+      offWake()
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('online', onOnline)
       window.removeEventListener('pageshow', onVisible)
       clearTimeout(timerRef.current)
+      clearTimeout(handshakeTimerRef.current)
       try {
         wsRef.current?.close()
       } catch {
@@ -166,7 +218,7 @@ export function useChatSocket({ onEvent, onReady, onState }) {
       }
       wsRef.current = null
     }
-  }, [connect, reconnectNow])
+  }, [connect, probeOrReconnect])
 
   return { rpc, state, reconnectNow, showBanner }
 }

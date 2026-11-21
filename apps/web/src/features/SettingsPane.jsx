@@ -16,12 +16,9 @@ import { PipelinePanel } from './PipelinePanel.jsx'
 import { BOARD_KEY } from '../lib/repoPicker.js'
 import { sep } from '../lib/format.js'
 import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
+import { useWakeSync } from '../lib/useWakeSync.js'
 
-/**
- * 設定タブ。状態の参照・ログ末尾・監査ログ（キルスイッチの履歴）を置く。
- * 破壊的操作はタスクタブの「緊急操作」に集約し、ここは読み取り中心。
- * 表示言語（Auto / English / 日本語）の切替もここに置く（SPEC §6.1）。
- */
+/** 設定タブ（状態参照・ログ・監査・表示設定・SPEC §6.1）。破壊的操作はタスクタブに集約。 */
 
 /** インストール形態の判定（WebAPK は referrer が android-app://…）。表示名は呼び出し側で訳す。 */
 function launchSourceKind() {
@@ -64,18 +61,7 @@ const BAR_CHOICES = [
   { id: 'term', key: 'settings.barTerm' },
 ]
 
-/**
- * ペアリング QR を canvas に**整数ピクセル**で描く。
- *
- * SVG を CSS で縮小すると 1 モジュールが 6.34px のような半端な幅になり、
- * アンチエイリアスで境界がぼやけてスキャナが反応しない（実測）。canvas なら
- * モジュール幅を整数に固定でき、devicePixelRatio でもシャープに描ける。
- * @param {object} props 入力
- * @param {string[]} props.rows 0/1 の行（'1' = 暗モジュール）
- * @param {number} [props.margin] 余白モジュール数
- * @param {number} [props.size] 目標の表示サイズ（px）
- * @returns {React.ReactElement} canvas
- */
+/** ペアリング QR を整数ピクセル単位で canvas に描く（縮小ぼけによる読取不良対策）。 */
 function PairQr({ rows, margin = 4, size = 300 }) {
   const ref = React.useRef(null)
   useEffect(() => {
@@ -105,11 +91,7 @@ function PairQr({ rows, margin = 4, size = 300 }) {
   return <canvas ref={ref} className="pair-qr-canvas" role="img" aria-label="Pairing QR" />
 }
 
-/**
- * スニペット設定（チャット / 端末の共通モデル・SPEC §3.4 / D13）。
- * 組み込みの Hot / Hidden、ユーザー定義の追加・編集・削除、既定に戻す を扱う。
- * 保存に成功したら `hm:snippets` / `hm:term-snippets` を発火して各画面を即時再読込させる。
- */
+/** スニペット設定（チャット / 端末の共通モデル・SPEC §3.4 / D13）。 */
 function SnippetsSection({ notify, lang }) {
   const { t } = useI18n()
   const [kind, setKind] = useState('chat')
@@ -127,18 +109,23 @@ function SnippetsSection({ notify, lang }) {
   const builtin = (cur?.allSnippets ?? []).filter((s) => !s.custom)
   const mine = (cur?.allSnippets ?? []).filter((s) => s.custom)
 
-  const load = useCallback(async () => {
-    try {
-      const d = await api(`${path}?lang=${encodeURIComponent(lang)}`)
-      setData((prev) => ({ ...prev, [kind]: d }))
-    } catch (e) {
-      notify(e.message)
-    }
-  }, [path, kind, lang, notify])
+  const load = useCallback(
+    async ({ silent = false } = {}) => {
+      try {
+        const d = await api(`${path}?lang=${encodeURIComponent(lang)}`)
+        setData((prev) => ({ ...prev, [kind]: d }))
+      } catch (e) {
+        if (!silent) notify(e.message)
+      }
+    },
+    [path, kind, lang, notify],
+  )
 
   useEffect(() => {
     load()
   }, [load])
+
+  useWakeSync(() => load({ silent: true }))
 
   const save = useCallback(
     async (body, done) => {
@@ -476,17 +463,20 @@ export function SettingsPane({ overview, notify, refresh }) {
     [notify, t],
   )
 
-  const loadRepos = useCallback(async () => {
-    try {
-      const d = await api('/api/repos')
-      setRepoList(Array.isArray(d?.repos) ? d.repos : [])
-      setScanDirs(Array.isArray(d?.scanDirs) ? d.scanDirs : [])
-      return true
-    } catch (e) {
-      notify(e.message)
-      return false
-    }
-  }, [notify])
+  const loadRepos = useCallback(
+    async ({ silent = false } = {}) => {
+      try {
+        const d = await api('/api/repos')
+        setRepoList(Array.isArray(d?.repos) ? d.repos : [])
+        setScanDirs(Array.isArray(d?.scanDirs) ? d.scanDirs : [])
+        return true
+      } catch (e) {
+        if (!silent) notify(e.message)
+        return false
+      }
+    },
+    [notify],
+  )
 
   /** リポジトリ設定の書き込み（追加・削除・走査先の更新）。 */
   const saveRepos = useCallback(
@@ -508,24 +498,34 @@ export function SettingsPane({ overview, notify, refresh }) {
     [notify],
   )
 
-  const loadAudit = useCallback(async () => {
-    try {
-      const d = await api('/api/audit?lines=80')
-      setAudit(d.lines ?? [])
-      return true
-    } catch (e) {
-      notify(e.message)
-      return false
-    }
-  }, [notify])
+  const loadAudit = useCallback(
+    async ({ silent = false } = {}) => {
+      try {
+        const d = await api('/api/audit?lines=80')
+        setAudit(d.lines ?? [])
+        return true
+      } catch (e) {
+        if (!silent) notify(e.message)
+        return false
+      }
+    },
+    [notify],
+  )
 
+  const loadSessions = useCallback(
+    () => api('/api/sessions?limit=5').then((d) => setSessions(d.sessions ?? [])).catch(() => {}),
+    [],
+  )
   useEffect(() => {
     loadAudit()
     loadRepos()
-    api('/api/sessions?limit=5')
-      .then((d) => setSessions(d.sessions ?? []))
-      .catch(() => {})
-  }, [loadAudit, loadRepos])
+    loadSessions()
+  }, [loadAudit, loadRepos, loadSessions])
+  useWakeSync(() => {
+    loadAudit({ silent: true })
+    loadRepos({ silent: true })
+    loadSessions()
+  })
 
   const openLog = async (name) => {
     try {

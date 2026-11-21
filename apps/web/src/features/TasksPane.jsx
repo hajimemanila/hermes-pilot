@@ -37,7 +37,9 @@ import {
   visibleTasks,
 } from '../lib/tasksView.js'
 import { HM_STORAGE } from '../contracts/storage.js'
-import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
+import { HM_EVENTS, emitHmEvent, onHmEvent } from '../contracts/events.js'
+import { isOfflineError, shouldNotifyError } from '../lib/netRecovery.js'
+import { useWakeSync } from '../lib/useWakeSync.js'
 import { ModePill, SpecPicker } from './tasks/SpecPicker.jsx'
 import { STATUS_KEY, TaskDetailSheet } from './tasks/TaskDetailSheet.jsx'
 
@@ -205,24 +207,54 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     openInbox(initialInbox.task ?? null)
   }, [initialInbox, openInbox])
 
-  const loadBoards = useCallback(async () => {
-    try {
-      const d = await api('/api/boards')
-      const list = d.boards ?? []
-      setBoards(list)
-      setBoard((cur) => {
-        if (cur) return cur
-        // 直前に見ていたボードを優先（タブ往復・再読み込みで選択が飛ばないように）
+  const boardRef = useRef(board)
+  boardRef.current = board
+  const boardsFailedRef = useRef(false)
+  const tasksBoardRef = useRef(null)
+  const tasksSeqRef = useRef(0)
+  const specsBoardRef = useRef(null)
+  const archBoardRef = useRef(null)
+  const cohBoardRef = useRef(null)
+  const reportBoardRef = useRef(null)
+  const lastErrToastRef = useRef(0)
+
+  const notifyNetErr = useCallback(
+    (err, { silent = false } = {}) => {
+      const now = Date.now()
+      if (!shouldNotifyError({ silent, offline: isOfflineError(err), lastAt: lastErrToastRef.current, now })) return
+      lastErrToastRef.current = now
+      notify(err?.message ?? '')
+    },
+    [notify],
+  )
+
+  const loadBoards = useCallback(
+    async ({ silent = false } = {}) => {
+      try {
+        const d = await api('/api/boards')
+        const list = d.boards ?? []
+        boardsFailedRef.current = false
+        setBoards(list)
+        const cur = boardRef.current
         const saved = readStoredBoard()
-        if (saved && list.some((b) => b.slug === saved)) return saved
-        return list.find((b) => b.current)?.slug ?? list.find((b) => !b.archived)?.slug ?? list[0]?.slug ?? null
-      })
-    } catch (e) {
-      notify(e.message)
-    } finally {
-      setLoading(false)
-    }
-  }, [notify])
+        const next =
+          cur && (!list.length || list.some((b) => b.slug === cur))
+            ? cur
+            : saved && list.some((b) => b.slug === saved)
+              ? saved
+              : list.find((b) => b.current)?.slug ?? list.find((b) => !b.archived)?.slug ?? list[0]?.slug ?? null
+        setBoard(next)
+        return next
+      } catch (e) {
+        boardsFailedRef.current = true
+        notifyNetErr(e, { silent })
+        return null
+      } finally {
+        setLoading(false)
+      }
+    },
+    [notifyNetErr],
+  )
 
   // 選択したボードを覚える（TasksPane はタブ切替でアンマウントされるため）
   useEffect(() => {
@@ -233,21 +265,21 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     }
   }, [board])
 
-  /*
-   * A2B クイック起票カードの材料（GET /api/architect/jobs・SPEC V5 §3.2 D23）。
-   * Seed していなくても「未起票の新しい SPEC」があればカードを出す（pending）。
-   * 20 秒ごと。旧ブリッジ（404）ではカードを出さないだけ。
-   */
+  /* A2B クイック起票カードの材料（SPEC V5 §3.2 D23・20 秒ごと）。 */
   const loadArchitectJobs = useCallback(async () => {
     if (!board) {
+      archBoardRef.current = null
       setArchitectJobs(null)
       return
     }
     try {
       const d = await api(`/api/architect/jobs?board=${encodeURIComponent(board)}`)
-      if (d?.ok) setArchitectJobs(d)
-    } catch {
-      setArchitectJobs(null)
+      if (d?.ok) {
+        archBoardRef.current = board
+        setArchitectJobs(d)
+      }
+    } catch (e) {
+      if (!isOfflineError(e) || archBoardRef.current !== board) setArchitectJobs(null)
     }
   }, [board])
 
@@ -255,15 +287,16 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
   // 同じタスクを開き直したことを TaskDetailSheet に伝える世代番号
   const detailSeq = useRef(0)
   const loadTasks = useCallback(
-    async (slug) => {
+    async (slug, { silent = false } = {}) => {
       if (!slug) return false
+      const seq = ++tasksSeqRef.current
       try {
         const d = await api(`/api/boards/${encodeURIComponent(slug)}/tasks?limit=60`)
+        if (seq !== tasksSeqRef.current) return true
+        tasksBoardRef.current = slug
         const list = d.tasks ?? []
         setTasks(list)
-        // 「アーカイブ済み (N)」の N はサーバの件数を使う（一覧の LIMIT より正確・D92）。
         setArchivedTaskTotal(Number.isFinite(Number(d.archivedCount)) ? Number(d.archivedCount) : null)
-        // 未完了タスクが減った（完了へ抜けた）瞬間に完了報告と Architect 進行バーを即時更新する
         const openCount = list.filter((x) =>
           ['running', 'ready', 'todo', 'blocked'].includes(String(x?.status ?? '')),
         ).length
@@ -279,20 +312,17 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
         }
         return true
       } catch (e) {
-        setTasks([])
-        notify(e.message)
+        if (seq !== tasksSeqRef.current) return false
+        // 同一ボードの一時的な瞬断・オフライン時は既存のタスク一覧を消さずに保持する
+        if (tasksBoardRef.current !== slug) setTasks([])
+        notifyNetErr(e, { silent })
         return false
       }
     },
-    [notify, loadArchitectJobs],
+    [notifyNetErr, loadArchitectJobs],
   )
 
-  /**
-   * 整理モードの一括アーカイブ（SPEC-RELIABILITY-GUARD RG-3 / D92）。
-   *
-   * 選択は `bulkArchivePayload()` で「選択可能なタスク」に絞ってから送る
-   * （実行中はサーバもスキップするが、UI 側でも押せない対象は送らない）。
-   */
+  /** 整理モードの一括アーカイブ（SPEC-RELIABILITY-GUARD RG-3 / D92）。 */
   const bulkArchiveSelected = async () => {
     if (!board) return
     const ids = bulkArchivePayload(organizeSel, tasks)
@@ -393,25 +423,16 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     return () => clearInterval(id)
   }, [loadInbox, active])
 
-  /*
-   * Spec Launchpad 用の SPEC 検出（SPEC §5.4）。ボードを変えるたびに 1 回だけ問い合わせる
-   * （ファイル走査はサーバ側で安いが、タスク一覧のように 5 秒ごとに叩く必要は無い）。
-   * バッチが 1 つも無い SPEC（TOC だけ・別形式）はバーに出さない。
-   *
-   * **切り出してある理由（SPEC V6 §3.3 ③ / D31）**: Seed で新しい SPEC が書かれても、
-   * タブをリロードするまで `🚀 仕様ランチャー` に出ない不整合を無くすため、
-   * ①ボード変更 ②更新ボタン（`refreshAll`）③一括起票の直後 ④`architectJobs` の変化
-   * の 4 か所から同じ関数を呼ぶ。
-   */
+  /* Spec Launchpad 用 SPEC 検出（SPEC §5.4 / D31: ボード変更・refreshAll・一括起票・architectJobs で呼ぶ）。 */
   const loadSpecs = useCallback(async (slug) => {
     if (!slug) {
+      specsBoardRef.current = null
       setSpecsInfo(null)
       return
     }
     try {
       const d = await api(`/api/specs?board=${encodeURIComponent(slug)}`)
-      // 既定はアクティブ SPEC だけ（サーバが `archivedSpecs` を返す）。
-      // 旧ブリッジ（`archivedSpecs` 無し）でも `archived` フラグで分けられるようにしておく。
+      specsBoardRef.current = slug
       const keep = (s) => (s.batches ?? []).length > 0
       const raw = (Array.isArray(d?.specs) ? d.specs : []).filter(keep)
       const split = Array.isArray(d?.archivedSpecs)
@@ -425,11 +446,10 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
       setSpecPath((cur) => {
         const all = [...split.active, ...split.archived]
         if (cur && all.some((s) => s.path === cur)) return cur
-        // アクティブが無いリポジトリでは、アーカイブを 1 件だけ出してトグルへ辿れるようにする
         return split.active[0]?.path ?? split.archived[0]?.path ?? null
       })
-    } catch {
-      setSpecsInfo(null)
+    } catch (e) {
+      if (!isOfflineError(e) || specsBoardRef.current !== slug) setSpecsInfo(null)
     }
   }, [])
 
@@ -437,25 +457,19 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     loadSpecs(board)
   }, [board, loadSpecs])
 
-  /*
-   * 完走予兆の提案バナー（SPEC-COHERENCE §3.6 / D83）。
-   *
-   * 情報源は 2 系統ある。「生の診断（`GET /api/coherence/report`）」があればそれを優先し、
-   * 無い（＝ 旧ブリッジで 404）ときは直近の完走レポートの `coherence_alert` を見る。
-   * どちらも無ければ**何も出さない**（診断は飾りにしない・画面を壊さない）。
-   * 読み取り専用で、ここから勝手にカンバンへ起票しない（D55）。
-   */
+  /* 完走予兆の提案バナー（SPEC-COHERENCE §3.6 / D83・読み取り専用・D55）。 */
   const loadCoherence = useCallback(async (slug, { fresh = false } = {}) => {
     if (!slug) {
+      cohBoardRef.current = null
       setCoherenceReport(null)
       return
     }
     try {
       const d = await api(`/api/coherence/report?board=${encodeURIComponent(slug)}${fresh ? '&fresh=1' : ''}`)
+      cohBoardRef.current = slug
       setCoherenceReport(d && typeof d === 'object' ? d : null)
-    } catch {
-      // ルート未実装・オフラインでは黙って諦める（完走レポート側の材料で代替する）
-      setCoherenceReport(null)
+    } catch (e) {
+      if (!isOfflineError(e) || cohBoardRef.current !== slug) setCoherenceReport(null)
     }
   }, [])
 
@@ -468,22 +482,30 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
   }, [board, active, loadCoherence])
 
   const refreshAll = useCallback(async () => {
+    const activeBoard = board || (await loadBoards())
     const results = await Promise.all([
-      board ? loadTasks(board) : Promise.resolve(true),
+      activeBoard ? loadTasks(activeBoard) : Promise.resolve(false),
+      board ? loadBoards({ silent: true }) : Promise.resolve(activeBoard),
       loadInbox(),
-      loadSpecs(board),
-      board ? loadCoherence(board, { fresh: true }) : Promise.resolve(),
+      loadSpecs(activeBoard),
+      activeBoard ? loadCoherence(activeBoard, { fresh: true }) : Promise.resolve(),
       refresh ? refresh() : Promise.resolve(true),
     ])
-    return results[0] !== false
-  }, [board, loadTasks, loadInbox, loadSpecs, loadCoherence, refresh])
+    return Boolean(activeBoard) && results[0] !== false
+  }, [board, loadBoards, loadTasks, loadInbox, loadSpecs, loadCoherence, refresh])
 
   useEffect(() => {
-    if (!board || !active) return undefined
-    loadTasks(board)
-    const id = setInterval(() => document.visibilityState === 'visible' && loadTasks(board), 5000)
+    if (!active) return undefined
+    if (!board) {
+      const id = setInterval(() => {
+        if (document.visibilityState === 'visible' && boardsFailedRef.current) loadBoards({ silent: true })
+      }, 5000)
+      return () => clearInterval(id)
+    }
+    loadTasks(board, { silent: tasksBoardRef.current === board })
+    const id = setInterval(() => document.visibilityState === 'visible' && loadTasks(board, { silent: true }), 5000)
     return () => clearInterval(id)
-  }, [board, loadTasks, active])
+  }, [board, loadBoards, loadTasks, active])
 
   /**
    * 進行バーに出すジョブ（`running` / `awaiting_review` / `awaiting_spec` / `failed` の 1 件）。
@@ -520,25 +542,26 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     return () => clearInterval(id)
   }, [loadArchitectJobs, pollMs, active])
 
-  // スリープ復帰・Review 回答・パイプライン完走通知の直後にタスク一覧・進行バー・Coherence 診断を即時再同期する
-  useEffect(() => {
-    const onWake = () => {
-      loadArchitectJobs()
-      if (board) {
-        loadTasks(board)
-        loadCoherence(board, { fresh: true })
-      }
+  // スリープ復帰・回線回復・Review 回答の直後に未取得ボード／タスク一覧・進行バー・Coherence を再同期する
+  useWakeSync(() => {
+    loadInbox()
+    if (!board) {
+      loadBoards({ silent: true })
+      return
     }
-    const onRefreshReports = () => {
-      if (board) loadCoherence(board, { fresh: true })
-    }
-    window.addEventListener(HM_EVENTS.WAKE_SYNC, onWake)
-    window.addEventListener(HM_EVENTS.REFRESH_REPORTS, onRefreshReports)
-    return () => {
-      window.removeEventListener(HM_EVENTS.WAKE_SYNC, onWake)
-      window.removeEventListener(HM_EVENTS.REFRESH_REPORTS, onRefreshReports)
-    }
-  }, [board, loadArchitectJobs, loadTasks, loadCoherence])
+    if (boardsFailedRef.current) loadBoards({ silent: true })
+    loadArchitectJobs()
+    loadTasks(board, { silent: true })
+    loadSpecs(board)
+    loadCoherence(board, { fresh: true })
+  })
+  useEffect(
+    () =>
+      onHmEvent(HM_EVENTS.REFRESH_REPORTS, () => {
+        if (board) loadCoherence(board, { fresh: true })
+      }),
+    [board, loadCoherence],
+  )
 
   /*
    * 新 SPEC の即時同期（SPEC V6 §3.3 ③ / D31）。
@@ -604,27 +627,25 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
   /* 稼働中（running / ready / todo）が 0 か。0 に変わった瞬間に完走レポートを取り直す。 */
   const idle = !tasks.some((x) => x.status === 'running' || x.status === 'ready' || x.status === 'todo')
 
-  /*
-   * 直近のパイプライン完走サマリ（SPEC-PILOT-V4 §3.3 ③ / D20③）。
-   * ブリッジ（V4-2 の watcher）が `GET /api/specs/reports` を生やす前は 404 になるので、
-   * 取れないことは異常ではない — バナーを出さないだけで画面は壊さない。
-   */
+  /* 直近のパイプライン完走サマリ（SPEC-PILOT-V4 §3.3 ③ / D20③）。未実装時の 404 は無視。 */
   useEffect(() => {
     if (!board) {
+      reportBoardRef.current = null
       setLatestReport(null)
       return undefined
     }
-    if (!board || !active) return undefined
+    if (!active) return undefined
     let alive = true
     const load = () =>
       api(`/api/specs/reports?board=${encodeURIComponent(board)}&limit=1`)
         .then((d) => {
           if (!alive) return
+          reportBoardRef.current = board
           const list = Array.isArray(d?.reports) ? d.reports : Array.isArray(d?.items) ? d.items : []
           setLatestReport(list[0] ?? null)
         })
-        .catch(() => {
-          if (alive) setLatestReport(null)
+        .catch((e) => {
+          if (alive && (!isOfflineError(e) || reportBoardRef.current !== board)) setLatestReport(null)
         })
     load()
     const id = setInterval(() => document.visibilityState === 'visible' && load(), 30_000)
@@ -708,11 +729,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     }
   }, [latestReport, board])
 
-  /*
-   * ChatPane の「📋 ボードを見る」で Tasks タブへ来たとき、そのボードを選ぶ。
-   * `taskId` 付き（`ArchitectJobBar` / `LiveSheet` の「進捗詳細・タスク」・D43）なら、
-   * ボード一覧が揃った時点でそのタスク詳細も開く。
-   */
+  /* ChatPane からの「📋 ボードを見る」および `taskId` 付き詳細オープン（D43）。 */
   useEffect(() => {
     if (!focusBoard?.board) return
     // ボード一覧の取得前に消費すると選択が空振りする（実測: チップが既定のまま残った）
@@ -725,13 +742,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusBoard, boards, onConsumedFocusBoard])
 
-  /**
-   * タスク詳細を開く（取得・表示は `TaskDetailSheet` が持つ。親は対象だけを覚える）。
-   *
-   * @param {{id: string, title?: string}} task タスク（最低限 id）
-   * @param {string} [boardSlug] そのタスクのボード（別ボードのジョブから開くとき・D43）。
-   *        省略時は表示中のボード。取得先 URL と、詳細の再同期先をこのボードに固定する。
-   */
+  /** タスク詳細を開く（`boardSlug` は別ボードのジョブから開くときの固定用・D43）。 */
   const openTask = (task, boardSlug = board) => {
     detailSeq.current += 1
     setDetailTarget({
@@ -743,15 +754,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     })
   }
 
-  /*
-   * Architect ジョブの「🔍 進捗詳細」（SPEC-PILOT-V9 §3.3 ② / D43 後半）。
-   *
-   * - `taskId` あり（Hermes Native）… そのタスクの詳細を開く（実行中なら WorkerFeed も出る）
-   * - `taskId` なし（Agy Opt-in。カンバンタスクを作らない）… 全体の `LiveSheet` を開く
-   *
-   * 別ボードのジョブでも、取得先はジョブの `board` をそのまま使う（表示中ボードに無いタスクでも
-   * 詳細 API は開ける）。ボード一覧に居る場合だけ選択も切り替える。
-   */
+  /* Architect ジョブの「🔍 進捗詳細」（SPEC-PILOT-V9 §3.3 ② / D43 後半）。 */
   const inspectArchitectJob = (job) => {
     const taskId = String(job?.taskId ?? '').trim()
     const targetBoard = String(job?.board ?? board ?? '').trim()
@@ -785,12 +788,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     }
   }
 
-  /**
-   * 全タスク緊急停止（ESTOP ＋ 実行中一括中断）。
-   *
-   * 本番は失敗を HTTP 502 で返すので `api()` が例外にするが、デモは `{ok:false}` を返す。
-   * どちらでも「成功トーストを出さない」ために両方を見る（D90 のエラー可視化）。
-   */
+  /** 全タスク緊急停止（ESTOP ＋ 一括中断）。本番 502 / デモ `{ok:false}` の両方を捕捉（D90）。 */
   const stopAllAction = async () => {
     setBusy(true)
     try {
@@ -872,23 +870,13 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
   // 境界は lib/layout.js の 1 箇所だけ（CSS の @media と一致させる）
   const { split } = useSplitLayout()
 
-  /*
-   * Spec Launchpad（SPEC §5.4）。ボード上に同じ `[<ID>]` のタスクがあるバッチは
-   * 「起票済み」として先に見せる（サーバ側の冪等チェックと同じ規則）。
-   * 既定で選ぶのは**まだ一度も起票していない**バッチだけ — 完了済みのバッチを
-   * うっかり再起票しないため（選び直せば起票できる）。
-   */
+  /* Spec Launchpad（SPEC §5.4）: 既定選択は未起票バッチのみ。 */
   const specParts = { active: specsInfo?.active ?? [], archived: specsInfo?.archived ?? [] }
   const specArchivedCount = specParts.archived.length
   // `Show archived` の状態で並びを切り替える（既定はアクティブのみ・純関数でテスト済み）
   const specList = specPickerList(specParts, specShowArchived)
   const currentSpec = specList.find((s) => s.path === specPath) ?? specList[0] ?? null
-  /*
-   * 起票・完了の判定は lib/specProgress.js に集約（単体テストで固定）。
-   * allDone のときだけカードを「✅ 全バッチ完了」にし、タップ先を履歴へ切り替える（Q3=A）。
-   */
-  // `pipeline-runs.json` の taskIds と SPEC の mtime を照合の補助に渡す（D91/D92。
-  // 無印レガシータスク・別 SPEC の同名 ID を誤って拾わない）。
+  /* 起票・完了判定は lib/specProgress.js（allDone 時は履歴を開く・Q3=A / D91・D92）。 */
   const specOpts = { specMtime: currentSpec?.mtime ?? null, runTaskIds: currentSpec?.runTaskIds ?? null }
   const specProg = specProgress(currentSpec?.batches ?? [], tasks, currentSpec?.path, specOpts)
   const filedBatchIds = new Set(specProg.byId.keys())
@@ -950,14 +938,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     setSpecHistoryOpen(true)
   }
 
-  /**
-   * 上部セレクタで SPEC を切り替える（SPEC-PILOT-V6 §3.5 ①）。
-   *
-   * Launchpad（`forLaunch`）では、**選んだ SPEC のバッチ**で未起票の選択を作り直す。
-   * 旧実装は切替前の `currentSpec` から作った `filedBatchIds` を見ていたため、
-   * 別 SPEC に切り替えても未起票の既定選択が古いままだった（実測バグ）。
-   * ここで `specProgress(next.batches, tasks)` を計算し直してから選ぶ。
-   */
+  /** 上部セレクタで SPEC を切り替え、Launchpad では切替先 SPEC の未起票を選び直す（SPEC V6 §3.5 ①）。 */
   const pickSpec = (next, forLaunch = false) => {
     if (!next) return
     setSpecPath(next.path)
@@ -1240,11 +1221,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
         </button>
       ) : null}
 
-      {/*
-        直近のパイプライン完走サマリ（SPEC-PILOT-V4 §3.3 ③ / D20③）。
-        Spec Launchpad の直下に控えめに出し、展開すると統合 Markdown の全文が読める。
-        稼働中タスクがあるときは「直近 24 時間の完走」だけを出す（進行中の邪魔をしない）。
-      */}
+      {/* 直近のパイプライン完走サマリ（SPEC-PILOT-V4 §3.3 ③ / D20③）。 */}
       {latestReport && (idle || reportRecent) ? (
         <details className={`pipeline-summary-card${String(latestReport.status ?? '') === 'halted' ? ' is-halted' : ''}`}>
           <summary className="pipeline-summary-head">

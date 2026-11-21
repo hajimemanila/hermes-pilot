@@ -1,5 +1,6 @@
 /** ブラウザ側 API クライアント。同一オリジン（:8444）なので Cookie がそのまま乗る。 */
 import { getLang, translate } from './i18n/lang.js'
+import { resolveTimeoutMs } from './lib/netRecovery.js'
 
 export const BASE = ''
 
@@ -30,18 +31,29 @@ function localizedMessage(code, fallback, params) {
 /**
  * JSON リクエスト。表示言語を `Accept-Language` で送る（SPEC §6.1）。
  * @param {string} path `/api/...`
- * @param {{method?: string, body?: any}} [opts] オプション
+ * @param {{method?: string, body?: any, timeoutMs?: number|null}} [opts] オプション
  * @returns {Promise<any>} 応答
  */
-export async function api(path, { method = 'GET', body } = {}) {
+export async function api(path, { method = 'GET', body, timeoutMs } = {}) {
   // デモビルドでは全リクエストをインメモリのモックが返す（バックエンド不要・SPEC-PILOT-V5 §3.4 ②）
   const demo = demoFetchImpl()
   if (demo) return demo(path, { method, body })
+  const ms = resolveTimeoutMs(method, timeoutMs)
+  const controller = ms > 0 && typeof AbortController !== 'undefined' ? new AbortController() : null
+  let timedOut = false
+  const timer = controller
+    ? setTimeout(() => {
+        timedOut = true
+        controller.abort()
+      }, ms)
+    : null
   let res
+  let text
   try {
     res = await fetch(`${BASE}${path}`, {
       method,
       credentials: 'same-origin',
+      signal: controller?.signal,
       headers: {
         ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
         'accept-language': getLang(),
@@ -49,13 +61,16 @@ export async function api(path, { method = 'GET', body } = {}) {
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     })
+    text = await res.text()
   } catch {
     // 表示文は `t('err.OFFLINE')`（SW の 503 も同じコードを返す・SPEC §1.2 G4）
     const err = new Error(localizedMessage('OFFLINE', 'Cannot reach the bridge'))
     err.code = 'OFFLINE'
+    if (timedOut) err.timedOut = true
     throw err
+  } finally {
+    if (timer) clearTimeout(timer)
   }
-  const text = await res.text()
   let data = null
   try {
     data = text ? JSON.parse(text) : null

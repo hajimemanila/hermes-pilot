@@ -16,6 +16,7 @@ import { useSplitLayout } from '../lib/useSplitLayout.js'
 import { sep } from '../lib/format.js'
 import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
 import { HM_STORAGE } from '../contracts/storage.js'
+import { useWakeSync } from '../lib/useWakeSync.js'
 
 export { parsePastedReply }
 
@@ -28,19 +29,7 @@ function toZoom(taskId, option, qIndex, question, thumb) {
   return { src: `/api/review/${taskId}/thumb/${thumb}`, head, sub }
 }
 
-/**
- * レビュー（review）ビュー。
- *
- * 契約: `~/Projects/review/CONTRACT.md`。カンバン board `mobile` の状態が真実で、
- * 標準モードは sheet.json から**ネイティブフォーム**を描き（=モバイルで一番速い）、
- * 指摘/添削モードはシート自体を iframe で開く（注釈UIは再現しない）。
- *
- * 送信は `POST /api/review/:id/answer` のみ。サーバが回答ファイルを書き、
- * カンバンを comment → unblock するので、この画面は状態を推測しない。
- *
- * 表示仕様は `docs/REVIEW-VIEW.md`（レビュー akapen-view-01 の回答で確定）:
- * 既定は「判断待ち」だけを見せ、送信後は次の判断待ちへ移る。
- */
+/** レビュービュー（標準は `sheet.json` からネイティブフォーム、既定は判断待ちのみ・送信で次へ）。 */
 
 /** 状態 → 辞書キー（未知は生の値）。 */
 const STATUS_KEY = {
@@ -998,7 +987,7 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
       return items
     } catch (e) {
       lastLoadOkRef.current = false
-      setState({ loading: false, items: [], error: e?.message || t('review.loadFailed') })
+      setState((prev) => ({ loading: false, items: prev.items, error: e?.message || t('review.loadFailed') }))
       return []
     }
   }, [])
@@ -1124,6 +1113,11 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
     return () => clearInterval(id)
   }, [loadFeed, active])
 
+  useWakeSync(() => {
+    load()
+    if (active) loadFeed()
+  })
+
   /**
    * 送信後（レビュー回答 Q2-B）: 閉じずに次の判断待ちを開く。
    * 残りが無いときだけ閉じる。送れた実感はトーストで補う。
@@ -1178,12 +1172,7 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
     notify?.(t('review.noneLeft', { head }))
   }
 
-  /**
-   * 推奨案で一括承認（SPEC §5.1 / D15①）。
-   *
-   * 送信先は通常のフォームと同じ `/answer`（推奨の無い問は `choice: null` = お任せ）。
-   * 送信後は `handleSubmitted` が次の判断待ちへスライドする。
-   */
+  /** 推奨案で一括承認（SPEC §5.1 / D15①）。推奨の無い問は `choice: null` = お任せ。 */
   async function acceptRecommended() {
     if (!open || fastBusy || !fastTrack.canFastTrack) return
     setFastBusy(true)

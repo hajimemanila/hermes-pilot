@@ -4,6 +4,36 @@
  */
 import { WebSocket } from 'ws'
 
+/** 端末側 WebSocket の半開き（VPN/回線切替）を検知して切断する keepalive。 */
+export function attachClientKeepalive(ws, { intervalMs = 25_000, timeoutMs = 60_000 } = {}) {
+  let lastSeen = Date.now()
+  const touch = () => {
+    lastSeen = Date.now()
+  }
+  ws.on('pong', touch)
+  ws.on('message', touch)
+  const timer = setInterval(() => {
+    if (ws.readyState !== undefined && ws.readyState !== WebSocket.OPEN) return
+    if (Date.now() - lastSeen > timeoutMs) {
+      clearInterval(timer)
+      try {
+        if (typeof ws.terminate === 'function') ws.terminate()
+        else ws.close?.()
+      } catch {
+        /* noop */
+      }
+      return
+    }
+    try {
+      ws.ping?.()
+    } catch {
+      /* noop */
+    }
+  }, intervalMs)
+  timer.unref?.()
+  return () => clearInterval(timer)
+}
+
 export function createWsHandlers(ctx = {}) {
   const { cfg, hermes, auth, pty, listProfiles, checkFrame, rejectionFrame } = ctx
 
@@ -13,8 +43,10 @@ export function createWsHandlers(ctx = {}) {
  * @param {WebSocket} client 端末側
  */
 async function proxyChat(client) {
-  let upstream
+  let upstream = null
+  let clientClosed = false
   const started = Date.now()
+  const stopClientKa = attachClientKeepalive(client)
   // この接続で送ってよいプロファイル名（serve 済み）。取れなければ default のみ。
   // **listener より先に await しない**: 待つ間に届いた端末フレームは listener が無いと捨てられる
   // （実測: 最初の session.list が消えて 20 秒タイムアウトした）。解決までは hold に溜める。
@@ -48,22 +80,56 @@ async function proxyChat(client) {
     else queue.push(out)
   }
 
-  try {
-    // 端末が繋ぐたびにトークンを取り直す（gateway 再起動後の 403 を自己回復）
-    upstream = new WebSocket(await hermes.wsUrl('/api/ws', { fresh: true }), { headers: { Origin: cfg.hermesBase } })
-  } catch (err) {
-    client.send(JSON.stringify({ jsonrpc: '2.0', method: 'event', params: { type: 'bridge.error', payload: { message: String(err?.message ?? err) } } }))
-    client.close(1011)
-    return
-  }
   client.on('message', (raw) => {
     const text = raw.toString()
+    let parsed = null
+    try {
+      parsed = JSON.parse(text)
+    } catch {
+      /* noop */
+    }
+    if (parsed?.method === 'bridge.ping' && parsed.id != null) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(JSON.stringify({ jsonrpc: '2.0', id: parsed.id, result: { ok: true } }))
+      }
+      return
+    }
     if (!allowedReady) {
       hold.push(text)
       return
     }
     forward(text)
   })
+  client.on('close', () => {
+    clientClosed = true
+    stopClientKa()
+    try {
+      upstream?.close()
+    } catch {
+      /* noop */
+    }
+  })
+
+  try {
+    // 端末が繋ぐたびにトークンを取り直す（gateway 再起動後の 403 を自己回復）
+    upstream = new WebSocket(await hermes.wsUrl('/api/ws', { fresh: true }), { headers: { Origin: cfg.hermesBase } })
+  } catch (err) {
+    stopClientKa()
+    if (!clientClosed) {
+      client.send(JSON.stringify({ jsonrpc: '2.0', method: 'event', params: { type: 'bridge.error', payload: { message: String(err?.message ?? err) } } }))
+      client.close(1011)
+    }
+    return
+  }
+  if (clientClosed) {
+    stopClientKa()
+    try {
+      upstream.close()
+    } catch {
+      /* noop */
+    }
+    return
+  }
   // 上流は無音で切ることがある（実測: code=1005 が散発）。25秒ごとに ping して
   // 「応答が来ないまま画面が止まる」を防ぐ。pong が90秒来なければ張り直す。
   let ka = null
@@ -95,6 +161,7 @@ async function proxyChat(client) {
     if (client.readyState === WebSocket.OPEN) client.send(raw.toString())
   })
   const closeBoth = (code = 1000, reason = '') => {
+    stopClientKa()
     try {
       if (client.readyState === WebSocket.OPEN) client.close(code, reason)
     } catch {
@@ -112,13 +179,6 @@ async function proxyChat(client) {
     closeBoth(code === 1000 ? 1000 : 1011, `upstream ${code}`)
   })
   upstream.on('error', () => closeBoth(1011, 'upstream error'))
-  client.on('close', () => {
-    try {
-      upstream.close()
-    } catch {
-      /* noop */
-    }
-  })
 }
 
 /**
@@ -150,10 +210,12 @@ function openTerm(ws) {
     return
   }
   auth.audit({ kind: 'term.open', pid: proc.pid, shell })
+  const stopClientKa = attachClientKeepalive(ws)
   proc.onData((d) => {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'out', d }))
   })
   proc.onExit(({ exitCode }) => {
+    stopClientKa()
     auth.audit({ kind: 'term.exit', pid: proc.pid, exitCode })
     try {
       ws.close(1000, 'exit')
@@ -169,10 +231,15 @@ function openTerm(ws) {
       proc.write(raw.toString())
       return
     }
+    if (msg?.t === 'ping') {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'pong' }))
+      return
+    }
     if (msg?.t === 'in') proc.write(String(msg.d ?? ''))
     else if (msg?.t === 'resize') proc.resize(Math.max(20, Number(msg.c) || 80), Math.max(5, Number(msg.r) || 24))
   })
   ws.on('close', () => {
+    stopClientKa()
     auth.audit({ kind: 'term.close', pid: proc.pid })
     try {
       proc.kill()

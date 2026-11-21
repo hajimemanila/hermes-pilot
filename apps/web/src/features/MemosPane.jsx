@@ -8,6 +8,7 @@ import { memoMenuRows, showsCardButtons, showsListMenu } from '../lib/memoListMe
 import { checklistPreview, readMemosView, rememberMemosView } from '../lib/memoView.js'
 import { celebrate } from '../lib/vibe.js'
 import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
+import { useWakeSync } from '../lib/useWakeSync.js'
 
 const COLORS = ['default', 'teal', 'amber', 'violet']
 
@@ -77,6 +78,8 @@ export function MemosPane({ notify, onOpenChat }) {
     window.addEventListener(HM_EVENTS.MEMOS_CHANGED, onChanged)
     return () => window.removeEventListener(HM_EVENTS.MEMOS_CHANGED, onChanged)
   }, [loadAll])
+
+  useWakeSync(() => loadAll())
 
   const allTags = useMemo(() => {
     const set = new Set()
