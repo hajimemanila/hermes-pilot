@@ -42,7 +42,6 @@
  * `review/sheets/spec-*.json` の中間シートを `sheetPath` として観測し、
  * `phase`（`spawning`〜`failed`）と `stalled`（3 分無進展）を `publicJob()` で返す。
  */
-
 import fs from 'node:fs'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
@@ -51,534 +50,106 @@ import { appendChatReport } from './pipeline-watcher.js'
 import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'
 import { DEFAULT_LANG } from './lang.js'
 import { isJaLang, languageRule } from './language-rule.js'
+import {
+  ACTIVE_JOB_STATUSES,
+  ARCHITECT_PHASES,
+  BOARD_RE,
+  DEFAULT_EXECUTION_POLICY,
+  DEFAULT_REVIEW_BOARD,
+  DEFAULT_RUNNER,
+  DISMISSED_MAX,
+  EXECUTION_POLICIES,
+  JOBS_MAX,
+  RUNNERS,
+  RUNNER_LABELS,
+  RUNNER_TIMEOUT_MS,
+  SEED_MAX,
+  SEED_MIN,
+  SPEC_LAUNCH_KIND,
+  SPEC_MTIME_SLACK_MS,
+  SPEC_READY_KIND,
+  STALLED_AFTER_MS,
+  TERMINAL_TASK_STATUSES,
+  executionModeLabel,
+  executionPolicyLines,
+  isSupportedRunner,
+  normalizeExecutionPolicy,
+  runnerLabel,
+  sanitizeRunner,
+} from './architect/labels.js'
+import { EXISTING_SPECS_MAX, SPEC_SLUG_MAX, buildArchitectTaskTitle, buildSeedPrompt, makeJobId, normalizeSeed, recentSpecPaths, round2Headings, suggestSpecSlug } from './architect/seed.js'
+import {
+  buildArchitectTaskBody,
+  buildKanbanCreateArgs,
+  findActiveJobReviewTask,
+  findJobReviewTask,
+  findJobSpec,
+  isReviewTask,
+  taskSpecPath,
+} from './architect/task.js'
+import {
+  batchIdPrefixForSlug,
+  batchIdPrefixOf,
+  filedBatchIds,
+  filedBatchIdsForSpec,
+  pendingSpecs,
+  queueStateOf,
+  reviewBoardsFor,
+  usedBatchIdPrefixes,
+} from './architect/batch.js'
+import { computePhase, findRecentSheet, isJobStalled, publicJob } from './architect/job-view.js'
 
-/** `chat-reports.jsonl` の行種別（仕様書が完成した）。 */
-export const SPEC_READY_KIND = 'spec_ready'
-/** `chat-reports.jsonl` の行種別（autoStart がバッチを起票した）。 */
-export const SPEC_LAUNCH_KIND = 'spec_launch'
-
-/**
- * 選べるランナー。**`Hermes Native` の 1 本だけ**（SPEC V11 D50）。
- *
- * 外部 AI CLI をラップ起動するランナーは規約違反（サブスク枠の消費）なので、
- * 検出もパス解決も子プロセス起動もこのファイルには置かない。
+/*
+ * 分割したモジュールの再エクスポート。`./architect.js` からの import 契約は 1 つも変えない
+ * （呼び出し側 = `server.js` / テストは従来どおりこのファイルだけを見る）。
  */
-export const RUNNERS = ['hermes']
-
-/**
- * 実行方針（生成する SPEC 各バッチの既定 Execution Mode）。SPEC V7 §3.1 / D35。
- *
- * どちらの方針でも Round 1 の Quick Review インタビューは必ず行い、
- * 変わるのは「各バッチを止まらずに完走させるか・要所で視覚確認を挟むか」だけ。
- */
-export const EXECUTION_POLICIES = ['zero-stop', 'visual-gate']
-/** 実行方針の既定値（未指定・不正値はこれへ正規化する）。 */
-export const DEFAULT_EXECUTION_POLICY = 'zero-stop'
-
-/** 親 `[ARCH]` タスクがこの状態になったらジョブは終端（進行バーに残さない）。 */
-export const TERMINAL_TASK_STATUSES = ['done', 'archived']
-
-/**
- * Quick Review（`[review]`）が撒かれる既定ボード（SPEC V9 D42）。
- *
- * 種は `hermes-pilot` などリポジトリ固有ボードで撒かれても、Round 1 のシートは `mobile` に届く。
- * 走査対象を `[job.board, DEFAULT_REVIEW_BOARD]` に広げないと `awaiting_review` を取りこぼす。
- */
-export const DEFAULT_REVIEW_BOARD = 'mobile'
-
-/** 進行バーに残す「アクティブ」状態（ボード横断で返す対象。`failed` も人が気づくまで残す）。 */
-export const ACTIVE_JOB_STATUSES = ['running', 'awaiting_spec', 'awaiting_review', 'failed']
-
-/** `publicJob().phase` が返すフェーズ（SPEC V9 D42）。 */
-export const ARCHITECT_PHASES = [
-  'spawning',
-  'round1_sheet',
-  'awaiting_review',
-  'round2_spec',
-  'spec_ready',
-  'launched',
-  'failed',
-]
-
-/** 進展が無いままこの時間を超えたら `stalled`（3 分。SPEC V9 D42/D43）。 */
-export const STALLED_AFTER_MS = 180_000
-/** 破棄したジョブ ID を保持する上限（古いものから落とす）。 */
-export const DISMISSED_MAX = 500
-
-/** 0 行の種はインタビューにならない。長すぎる種はプロンプトを壊す。 */
-export const SEED_MIN = 1
-/** 種の最大文字数。 */
-export const SEED_MAX = 4000
-/** 保持するジョブ数（古いものから落とす）。 */
-export const JOBS_MAX = 40
-/** 「このジョブが作った SPEC」と見なす mtime の猶予（秒ズレ対策）。 */
-export const SPEC_MTIME_SLACK_MS = 5000
-/** ランナーの既定タイムアウト（ミリ秒）。 */
-export const RUNNER_TIMEOUT_MS = 15 * 60 * 1000
-/** ボード名の書式（`specs.launchSpec` と同じ）。 */
-export const BOARD_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/i
-
-/** ランナーの表示名（ランナーは 1 本だけ）。 */
-export const RUNNER_LABELS = {
-  hermes: 'Hermes Native',
-}
-
-/** ランナー名として受け付ける値（空・未指定は Hermes Native へ倒す）。 */
-export const DEFAULT_RUNNER = 'hermes'
-
-/**
- * ランナー ID を正規化する（**常に `hermes`**。SPEC V11 D50）。
- *
- * 受け付ける値は `hermes` だけだが、`sanitizeRunner()` は表示用の緩い正規化なので
- * 未知の値も既定へ倒す。API 入力の可否判定は `isSupportedRunner()` で行う。
- * @param {unknown} value 入力
- * @returns {'hermes'} ランナー
- */
-export function sanitizeRunner(value) {
-  return DEFAULT_RUNNER
-}
-
-/**
- * 明示されたランナーが受け付けられるか（`''` / 未指定は既定として許す）。
- * @param {unknown} value 入力
- * @returns {boolean} `hermes` か未指定なら true
- */
-export function isSupportedRunner(value) {
-  const text = String(value ?? '')
-    .trim()
-    .toLowerCase()
-  return text === '' || text === DEFAULT_RUNNER
-}
-
-/**
- * ランナーの表示名。
- * @param {unknown} value 入力
- * @returns {string} 表示名
- */
-export function runnerLabel(value) {
-  return RUNNER_LABELS[sanitizeRunner(value)]
-}
-
-/**
- * 実行方針を正規化する（未指定・不正値は `zero-stop`）。
- * @param {unknown} value 入力
- * @returns {'zero-stop'|'visual-gate'} 実行方針
- */
-export function normalizeExecutionPolicy(value) {
-  const text = String(value ?? '')
-    .trim()
-    .toLowerCase()
-    .replace(/_/g, '-')
-  return EXECUTION_POLICIES.includes(text) ? text : DEFAULT_EXECUTION_POLICY
-}
-
-/**
- * 実行方針に対応する SPEC バッチの `Execution Mode` 表記。
- * @param {unknown} value 実行方針
- * @returns {string} `[Mode: Zero-Stop]` / `[Mode: Visual Gate]`
- */
-export function executionModeLabel(value) {
-  return normalizeExecutionPolicy(value) === 'visual-gate' ? '[Mode: Visual Gate]' : '[Mode: Zero-Stop]'
-}
-
-/**
- * プロンプトへ差し込む実行方針の指示（両方針共通で Quick Review は必須）。
- * @param {unknown} value 実行方針
- * @returns {string[]} 行
- */
-function executionPolicyLines(value) {
-  const policy = normalizeExecutionPolicy(value)
-  const mode = executionModeLabel(policy)
-  const intent =
-    policy === 'visual-gate'
-      ? 'pause at the visual checkpoints and wait for approval before going further'
-      : 'do not stop for approval: run every batch autonomously to done'
-  return [
-    `- Round 1 Quick Review interview is mandatory under both policies: still write the sheet and stop.`,
-    `- Execution policy chosen by the user: \`${policy}\`. Every batch in the generated SPEC must default to`,
-    `  **Execution Mode**: \`${mode}\` : ${intent}.`,
-  ]
-}
-
-/**
- * [`[ARCH]` タスクのタイトル]（カンバン起票に載る 1 行）。
- * @param {{seedText?: string, prompt?: string}} input 入力
- * @returns {string} タイトル
- */
-export function buildArchitectTaskTitle({ seedText, prompt } = {}) {
-  const line = String(seedText ?? prompt ?? '')
-    .split('\n')
-    .map((s) => s.trim())
-    .find(Boolean)
-  return `[ARCH] ${String(line ?? 'Spec seed').slice(0, 80)}`
-}
-
-/** 推奨スラッグの最大長（`docs/SPEC-<SLUG>.md` のファイル名が長くなりすぎないように）。 */
-export const SPEC_SLUG_MAX = 28
-/** プロンプトへ注入する既存 SPEC の最大件数（探索ターンとトークンの節約）。 */
-export const EXISTING_SPECS_MAX = 6
-
-/**
- * 種から「推奨スラッグ」を作る（純関数。SPEC V11 D54）。
- *
- * Round 1 のシート名（`review/sheets/spec-<slug>-1.json`）と Round 2 の SPEC 名
- * （`docs/SPEC-<SLUG>.md`）が、種を撒くたびに違う名前になるのを防ぐための**目安**。
- * 先頭付近の ASCII 英数字（`[A-Za-z0-9]`）を小文字ハイフン区切りにし、最大 28 文字。
- * ASCII が 1 つも無ければ `jobId` の末尾セグメントを使う。
- *
- * @param {unknown} seedText 種の本文
- * @param {unknown} jobId ジョブ ID（`arch-<base36>-<tail>`）
- * @returns {string} スラッグ（空にはならない）
- */
-export function suggestSpecSlug(seedText, jobId) {
-  /** @type {string[]} */
-  const words = []
-  for (const line of String(seedText ?? '')
-    .split('\n')
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .slice(0, 3)) {
-    for (const token of line.match(/[A-Za-z0-9]+/g) ?? []) words.push(token)
-    if (words.length >= 4) break
-  }
-  const shape = (text) =>
-    String(text ?? '')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-  let slug = shape(words.join('-'))
-  if (!slug) {
-    const tail = String(jobId ?? '')
-      .trim()
-      .split('-')
-      .filter(Boolean)
-      .pop()
-    slug = shape(tail)
-  }
-  if (!slug) return 'spec'
-  const clipped = slug.slice(0, SPEC_SLUG_MAX).replace(/-+$/g, '')
-  return clipped || slug.slice(0, SPEC_SLUG_MAX)
-}
-
-/**
- * 既存 `docs/SPEC-*.md` の相対パスを「直近 N 件」で返す（SPEC V11 D54）。
- *
- * 名前の衝突と全量探索を減らすためにプロンプトへ注入する。走査に失敗しても
- * 起票は止めない（空配列を返す）。
- * @param {Function} listSpecsFn SPEC 走査（`specs.listSpecs`）
- * @param {string} repoPath リポジトリ
- * @param {number} [limit] 最大件数
- * @returns {string[]} 相対パス（mtime の新しい順）
- */
-export function recentSpecPaths(listSpecsFn, repoPath, limit = EXISTING_SPECS_MAX) {
-  try {
-    const list = listSpecsFn(repoPath) ?? []
-    return (Array.isArray(list) ? list : [])
-      .filter((s) => s && s.path)
-      .sort((a, b) => Number(b.mtime ?? 0) - Number(a.mtime ?? 0) || String(a.path).localeCompare(String(b.path)))
-      .slice(0, Math.max(1, Number(limit) || EXISTING_SPECS_MAX))
-      .map((s) => String(s.path))
-  } catch {
-    return []
-  }
-}
-
-/**
- * Round 2 で SPEC の各バッチに要求する見出し（`lang` ごと・SPEC-i18n-gen D3）。
- *
- * 機械キー（`**Execution Mode**`）は ASCII 固定、人が読む見出しだけを言語に追従させる。
- * パーサ（`specs.js` の `OBJECTIVE_RE` / `EXECUTION_MODE_RE`）は両言語を受けるので、
- * ここを切り替えても読み取りは壊れない。
- */
-const ROUND2_HEADINGS = {
-  en: {
-    inline: 'each carrying **Execution Mode** / **Objective** / **Files** / **Verify**.',
-    lines: [
-      '  - **Execution Mode**: [Mode: Zero-Stop | Fast-Track Review | Visual Gate]',
-      '  - **Objective**: one paragraph of intent',
-      '  - **Files**: the exact paths to touch',
-      '  - **Verify**: the command that proves it works',
-    ],
-  },
-  ja: {
-    inline: 'each carrying **Execution Mode** / **目的** / **変更・新規ファイル** / **受入条件（Verify）**.',
-    lines: [
-      '  - **Execution Mode**: [Mode: Zero-Stop | Fast-Track Review | Visual Gate]',
-      '  - **目的**: one paragraph of intent',
-      '  - **変更・新規ファイル**: the exact paths to touch',
-      '  - **受入条件（Verify）**: the command that proves it works',
-    ],
-  },
-}
-
-/**
- * 言語に合った Round 2 の見出しを返す（未知・未指定は既定 `en`）。
- *
- * @param {unknown} [lang] 言語
- * @returns {{inline: string, lines: string[]}} 見出し（1 行要約と箇条書き）
- */
-function round2Headings(lang) {
-  return isJaLang(lang) ? ROUND2_HEADINGS.ja : ROUND2_HEADINGS.en
-}
-
-/**
- * [`[ARCH]` タスクの本文]（spec-architect プロトコル＋実行契約）。
- *
- * カンバン起票に載せるので、ワーカーが**チャットを見なくても**完走できる内容にする。
- * `executionPolicy` は**生成する SPEC の各バッチ**に付す既定 Execution Mode を決める
- * （Architect 自身は止まらずに書き切るので、この本文の契約は常に zero-stop）。
- *
- * SPEC V11 D54: `suggestedSlug` / `existingSpecs` を渡すと、ファイル名の衝突回避と
- * Round 1 の探索コスト削減の指示が本文に入る。
- *
- * @param {{prompt: string, board: string, repoPath: string, jobId: string, executionPolicy?: string, suggestedSlug?: string, existingSpecs?: string[], usedBatchPrefixes?: string[], lang?: string}} input 入力
- * @returns {string} 本文
- */
-export function buildArchitectTaskBody({
-  prompt,
-  board,
-  repoPath,
-  jobId,
-  executionPolicy = DEFAULT_EXECUTION_POLICY,
-  suggestedSlug,
-  existingSpecs,
-  usedBatchPrefixes,
-  lang = DEFAULT_LANG,
-}) {
-  const policy = normalizeExecutionPolicy(executionPolicy)
-  const slug = String(suggestedSlug ?? '').trim() || suggestSpecSlug(prompt, jobId)
-  const specs = (Array.isArray(existingSpecs) ? existingSpecs : []).map((s) => String(s ?? '').trim()).filter(Boolean)
-  const prefix = batchIdPrefixForSlug(slug)
-  const prefixes = (Array.isArray(usedBatchPrefixes) ? usedBatchPrefixes : [])
-    .map((p) => String(p ?? '').trim().toUpperCase())
-    .filter(Boolean)
-  const batchRule = [
-    `Batch ID rule: every batch heading MUST read "### Batch ${prefix}-<n>: <Title>" — an UPPERCASE slug prefix`,
-    `plus a number (e.g. "### Batch ${prefix}-1: ..."). A bare "### <ID>:" heading or a lowercase prefix is rejected.`,
-  ].join(' ')
-  const usedLine = prefixes.length
-    ? `Batch ID prefixes already used by active SPECs: ${prefixes.join(', ')} (do not reuse one as-is; pick a distinct slug)`
-    : `Batch ID prefixes already used by active SPECs: none (the ${prefix} prefix above is free)`
-  return [
-    `[hermes-pilot:architect job=${jobId}] Architect (Kanban native)`,
-    '',
-    prompt,
-    '',
-    '---',
-    '[Hermes Pilot Execution Contract]',
-    'Mode: zero-stop',
-    `Execution Policy: ${policy} (applies to the batches of the SPEC you write)`,
-    'Follow the `spec-architect` skill protocol for the seed above.',
-    `Suggested slug: ${slug} (use it for review/sheets/spec-${slug}-1.json and docs/SPEC-<SLUG>.md unless it clearly clashes)`,
-    specs.length
-      ? `Existing specs: ${specs.join(', ')} (do not reuse these file names; pick a distinct slug)`
-      : 'Existing specs: none in docs/ yet (the slug above is free)',
-    batchRule,
-    usedLine,
-    'Round 1: write the Quick Review JSON sheet under review/sheets/',
-    '(spec-<slug>-1.json, "mode": "standard", 2-5 decisions) and file it as a blocked `[review]` task',
-    'whose machine line is `mode=standard sheet=sheets/spec-<slug>-1.json`. Do not wait in chat.',
-    'Round 1 speed: locate only the relevant symbols (rg/grep), skip running npm test / npm run verify / browser_exec during Round 1, write the JSON sheet and block immediately.',
-    'Round 1 speed: skip bespoke HTML sheets and browser mockups (browser_exec screenshots) unless',
-    'the question itself is a visual UI layout comparison; the JSON alone renders the native form.',
-    `Round 2: after the answers arrive, write \`docs/SPEC-<SLUG>.md\` with \`### Batch ${prefix}-<n>: <Title>\` sections`,
-    round2Headings(lang).inline,
-    ...executionPolicyLines(policy),
-    'Stay inside the official local CLI: the only runner is `hermes kanban create` (no external AI CLI is launched).',
-    `Board: ${board}`,
-    `Repository: ${repoPath}`,
-  ].join('\n')
-}
-
-/**
- * `hermes kanban create` の引数（`specs.js` / `capture.js` と同じ正規ルート）。
- * @param {{board: string, title: string, body: string, assignee?: string}} input 入力
- * @returns {string[]} 引数
- */
-export function buildKanbanCreateArgs({ board, title, body, assignee = 'mobile' }) {
-  return ['kanban', '--board', String(board ?? ''), 'create', String(title ?? ''), '--json', '--body', String(body ?? ''), '--assignee', String(assignee ?? 'mobile')]
-}
-
-/**
- * 「[review] タスク」かどうか（タイトル・本文・ラベルを見る。読むだけ）。
- * @param {object} task タスク
- * @returns {boolean} review タスクなら true
- */
-export function isReviewTask(task) {
-  if (!task) return false
-  const labels = [task.label, ...(Array.isArray(task.labels) ? task.labels : [])].filter(Boolean).map((l) => String(l))
-  const text = [task.title, task.body].filter(Boolean).map((v) => String(v)).join('\n')
-  return /\[review\]/i.test(text) || labels.some((l) => /^\[?review\]?$/i.test(l.trim()))
-}
-
-const ACTIVE_REVIEW_STATUSES = new Set(['ready', 'running', 'claimed', 'in_progress'])
-const BLOCKED_REVIEW_STATUSES = new Set(['blocked'])
-
-/**
- * ジョブに紐づく Quick Review タスクを指定ステータス集合で探す（純関数）。
- *
- * 条件: ① `job.taskId`（または `job.reviewTaskId`）と一致する、または `startedAt - 猶予` 以降に作成。
- * ② `[review]` の印を持ち、状態が `statuses` に含まれる。
- *
- * @param {{taskId?: string|null, reviewTaskId?: string|null, startedAt: number}} job ジョブ
- * @param {Array<object>} tasks ボードのタスク
- * @param {Set<string>} statuses 対象ステータス集合
- * @param {{slackMs?: number}} [opts] 制約
- * @returns {{taskId: string, title: string, status: string}|null} 一致タスク（無ければ null）
- */
-function matchJobReviewTask(job, tasks, statuses, { slackMs = SPEC_MTIME_SLACK_MS } = {}) {
-  const since = Number(job?.startedAt ?? 0) - slackMs
-  const ownId = job?.taskId ? String(job.taskId) : ''
-  const revId = job?.reviewTaskId ? String(job.reviewTaskId) : ''
-  const list = Array.isArray(tasks) ? tasks : []
-  for (const task of list) {
-    if (!task || !task.id) continue
-    const id = String(task.id)
-    const same = (ownId && id === ownId) || (revId && id === revId)
-    const fresh = Number(task.createdAt ?? 0) >= since
-    if (!same && !fresh) continue
-    if (!isReviewTask(task)) continue
-    const status = String(task.status ?? '').trim().toLowerCase()
-    if (!statuses.has(status)) continue
-    return { taskId: id, title: String(task.title ?? ''), status }
-  }
-  return null
-}
-
-/**
- * ジョブが待っている Quick Review タスクを見つける（純関数）。
- *
- * 条件: ① `job.taskId` と一致するタスク、または `startedAt - 猶予` 以降に作られた `[review]` タスク。
- * ② そのタスクが `blocked` で、`[review]` の印を持つ（＝人の回答待ち）。
- *
- * @param {{taskId?: string|null, reviewTaskId?: string|null, startedAt: number}} job ジョブ
- * @param {Array<object>} tasks ボードのタスク
- * @param {{slackMs?: number}} [opts] 制約
- * @returns {{taskId: string, title: string, status: string}|null} 待機中タスク（無ければ null）
- */
-export function findJobReviewTask(job, tasks, opts) {
-  return matchJobReviewTask(job, tasks, BLOCKED_REVIEW_STATUSES, opts)
-}
-
-/**
- * Round 1 回答後に動き出した別タスクの `[review]`（ready / running 等）を見つける（純関数）。
- *
- * @param {{taskId?: string|null, reviewTaskId?: string|null, startedAt: number}} job ジョブ
- * @param {Array<object>} tasks ボードのタスク
- * @param {{slackMs?: number}} [opts] 制約
- * @returns {{taskId: string, title: string, status: string}|null} 進行中タスク（無ければ null）
- */
-export function findActiveJobReviewTask(job, tasks, opts) {
-  return matchJobReviewTask(job, tasks, ACTIVE_REVIEW_STATUSES, opts)
-}
-
-/**
- * ジョブ ID（`arch-<base36 時刻>-<乱数 4>`）。
- * @param {number} [ms] 時刻
- * @param {Function} [rand] 乱数（テスト用）
- * @returns {string} ジョブ ID
- */
-export function makeJobId(ms = Date.now(), rand = Math.random) {
-  const tail = Math.floor(rand() * 36 ** 4)
-    .toString(36)
-    .padStart(4, '0')
-  return `arch-${ms.toString(36)}-${tail}`
-}
-
-/**
- * 種の本文を整える（前後の空白だけ落とし、改行は保つ）。
- * @param {unknown} value 入力
- * @returns {string} 本文（不正なら空文字）
- */
-export function normalizeSeed(value) {
-  const text = String(value ?? '')
-    .replace(/\r\n?/g, '\n')
-    .trim()
-  if (text.length < SEED_MIN) return ''
-  return text.slice(0, SEED_MAX)
-}
-
-/**
- * Architect へ渡すプロンプト（`spec-architect` プロトコル）。
- *
- * 長文の質問を並べるのではなく、Quick Review シート → 1 タップ承認 → SPEC 生成、の順を固定する。
- * `executionPolicy` は**生成する SPEC の各バッチ**の既定 Execution Mode を決める（D35）。
- * SPEC V11 D54: 推奨スラッグと既存 SPEC 一覧を先に渡し、Round 1 の探索と名前衝突を減らす。
- * @param {{jobId: string, seedText: string, board: string, repoPath: string, autoStart?: boolean, executionPolicy?: string, lang?: string, suggestedSlug?: string, existingSpecs?: string[], usedBatchPrefixes?: string[]}} input 入力
- * @returns {string} プロンプト
- */
-export function buildSeedPrompt({
-  jobId,
-  seedText,
-  board,
-  repoPath,
-  autoStart = false,
-  executionPolicy = DEFAULT_EXECUTION_POLICY,
-  lang = DEFAULT_LANG,
-  suggestedSlug,
-  existingSpecs,
-  usedBatchPrefixes,
-}) {
-  const auto = autoStart
-    ? 'The PWA will file the batches automatically as soon as this SPEC appears, so do not file them yourself.'
-    : 'Do not file anything yet: the user taps "File batches & start" once the SPEC is ready.'
-  const slug = String(suggestedSlug ?? '').trim() || suggestSpecSlug(seedText, jobId)
-  const specs = (Array.isArray(existingSpecs) ? existingSpecs : []).map((s) => String(s ?? '').trim()).filter(Boolean)
-  // バッチ ID は「大文字スラッグ接頭辞 + 連番」を必須にし、使用済み接頭辞を渡して衝突を防ぐ（D91）。
-  const prefix = batchIdPrefixForSlug(slug)
-  const prefixes = (Array.isArray(usedBatchPrefixes) ? usedBatchPrefixes : [])
-    .map((p) => String(p ?? '').trim().toUpperCase())
-    .filter(Boolean)
-  const batchRule = `Batch ID rule: every batch heading MUST read "### Batch ${prefix}-<n>: <Title>" with an UPPERCASE slug prefix and a number (e.g. "### Batch ${prefix}-1: ...").`
-  const usedLine = prefixes.length
-    ? `Batch ID prefixes already used by active SPECs: ${prefixes.join(', ')} (do not reuse one as-is; pick a distinct slug)`
-    : `Batch ID prefixes already used by active SPECs: none (the ${prefix} prefix above is free)`
-  return [
-    `[hermes-pilot:architect job=${jobId}]`,
-    'You are the spec-architect. Follow the `spec-architect` skill protocol (Round 1 → Round 2).',
-    '',
-    'Seed (the user dictation, verbatim):',
-    '"""',
-    seedText,
-    '"""',
-    '',
-    `Repository: ${repoPath}`,
-    `Board: ${board}`,
-    `UI language: ${lang}`,
-    // 「その言語で書け」の規則本体（3 スキルと同じ 1 文・SPEC-i18n-gen §3.4 D2）
-    languageRule(lang),
-    `Suggested slug: ${slug}`,
-    specs.length
-      ? `Existing specs: ${specs.join(', ')}`
-      : 'Existing specs: none in docs/ yet (the suggested slug is free)',
-    batchRule,
-    usedLine,
-    '',
-    'Round 1 — instead of a wall of chat questions, write ONE structured sheet as JSON:',
-    `\`review/sheets/spec-${slug}-1.json\` with \`"mode": "standard"\` and 2-5 design decisions`,
-    '(each option marked `recommended: true` for the best one), then file it as a blocked [review]',
-    'kanban task whose machine line reads',
-    `\`[review] label=spec-${slug} round=1 mode=standard sheet=sheets/spec-${slug}-1.json target=<repo>\``,
-    'so the phone renders the native 1-tap form. Stop there.',
-    'Do not reuse a file name from Existing specs above: pick a distinct slug if it would clash.',
-    '',
-    'Round 1 speed rule — the JSON is the deliverable. Locate only the relevant symbols (rg/grep);',
-    'do NOT run npm test / npm run verify, and do NOT hand-write a long bespoke HTML sheet or launch',
-    'a headless browser (browser_exec or similar) to screenshot mockups unless the question itself is',
-    'a visual UI-layout comparison (placement, density, colour) that words cannot settle; even then it',
-    'is optional and comes after the JSON. For spec, logic, string, API and data questions just check',
-    'the cited file:line, write the sheet and block immediately.',
-    `Round 2 — after the answers arrive, write docs/SPEC-<SLUG>.md. Every batch heading`,
-    `\`### Batch ${prefix}-<n>: <Title>\` must be followed by:`,
-    '  - **Execution Mode**: [Mode: Zero-Stop | Fast-Track Review | Visual Gate]',
-    ...round2Headings(lang).lines.slice(1),
-    '',
-    'Execution policy for the batches you generate:',
-    ...executionPolicyLines(executionPolicy),
-    '',
-    auto,
-  ].join('\n')
-}
+export {
+  ACTIVE_JOB_STATUSES,
+  ARCHITECT_PHASES,
+  BOARD_RE,
+  DEFAULT_EXECUTION_POLICY,
+  DEFAULT_REVIEW_BOARD,
+  DEFAULT_RUNNER,
+  DISMISSED_MAX,
+  EXECUTION_POLICIES,
+  JOBS_MAX,
+  RUNNERS,
+  RUNNER_LABELS,
+  RUNNER_TIMEOUT_MS,
+  SEED_MAX,
+  SEED_MIN,
+  SPEC_LAUNCH_KIND,
+  SPEC_MTIME_SLACK_MS,
+  SPEC_READY_KIND,
+  STALLED_AFTER_MS,
+  TERMINAL_TASK_STATUSES,
+  executionModeLabel,
+  executionPolicyLines,
+  isSupportedRunner,
+  normalizeExecutionPolicy,
+  runnerLabel,
+  sanitizeRunner,
+} from './architect/labels.js'
+export { EXISTING_SPECS_MAX, SPEC_SLUG_MAX, buildArchitectTaskTitle, buildSeedPrompt, makeJobId, normalizeSeed, recentSpecPaths, suggestSpecSlug } from './architect/seed.js'
+export {
+  buildArchitectTaskBody,
+  buildKanbanCreateArgs,
+  findActiveJobReviewTask,
+  findJobReviewTask,
+  findJobSpec,
+  isReviewTask,
+} from './architect/task.js'
+export {
+  batchIdPrefixForSlug,
+  batchIdPrefixOf,
+  filedBatchIds,
+  filedBatchIdsForSpec,
+  pendingSpecs,
+  queueStateOf,
+  reviewBoardsFor,
+  usedBatchIdPrefixes,
+} from './architect/batch.js'
+export { computePhase, findRecentSheet, isJobStalled, publicJob } from './architect/job-view.js'
 
 /**
  * 既定のランナー実行（公式 CLI の子プロセス。シェルは介さない）。
@@ -634,314 +205,6 @@ export function createCliRunner(cfg = {}) {
       )
     })
 }
-
-/**
- * ジョブが作ったと見なせる SPEC を 1 つ選ぶ。
- *
- * 条件: バッチを持つ / `startedAt` 以降に更新された（猶予あり） / 他のジョブが先に取っていない。
- * @param {{startedAt: number}} job ジョブ
- * @param {Array<{path: string, title: string, mtime: number, batches: Array<object>}>} specs SPEC 一覧
- * @param {{taken?: Set<string>, slackMs?: number}} [opts] 制約
- * @returns {object|null} SPEC（無ければ null）
- */
-export function findJobSpec(job, specs, { taken = new Set(), slackMs = SPEC_MTIME_SLACK_MS } = {}) {
-  const since = Number(job?.startedAt ?? 0) - slackMs
-  const candidates = (Array.isArray(specs) ? specs : []).filter(
-    (s) => s && (s.batches ?? []).length > 0 && Number(s.mtime ?? 0) >= since && !taken.has(String(s.path)),
-  )
-  if (!candidates.length) return null
-  // 一番新しいもの（同じ秒に複数あればパス順で安定させる）
-  return [...candidates].sort((a, b) => Number(b.mtime) - Number(a.mtime) || String(a.path).localeCompare(String(b.path)))[0]
-}
-
-/** タスク本文/フィールドから SPEC パスを読む（別 SPEC の同名バッチ ID 衝突を防ぐ）。 */
-function taskSpecPath(task) {
-  const direct = String(task?.spec ?? '').replace(/\\/g, '/').replace(/^\.\//, '').trim()
-  if (direct) return direct
-  const body = String(task?.body ?? '')
-  if (!body) return null
-  const m = /^Spec:\s*(.+?)\s*$/m.exec(body)
-  if (m) return m[1].replace(/\\/g, '/').replace(/^\.\//, '').trim() || null
-  const head = body.split(/\r?\n/).slice(0, 5).join('\n')
-  const leg = /(?:docs\/)?SPEC[A-Za-z0-9._-]*\.md/i.exec(head)
-  return leg ? leg[0].replace(/\\/g, '/').replace(/^\.\//, '').trim() : null
-}
-
-/**
- * slug から推奨バッチ ID 接頭辞を作る（大文字・短く保つ。`specs.BATCH_ID_RE` の 16 文字制限内）。
- *
- * `reliability-guard` → `RG` / `coherence` → `COH` / `v5` → `V5`
- *
- * @param {unknown} slug スラッグ
- * @returns {string} 接頭辞（読めなければ `B`）
- */
-export function batchIdPrefixForSlug(slug) {
-  const parts = String(slug ?? '')
-    .trim()
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter(Boolean)
-  if (!parts.length) return 'B'
-  if (parts.length === 1) return parts[0].slice(0, 3).toUpperCase()
-  return parts
-    .slice(0, 4)
-    .map((p) => p[0])
-    .join('')
-    .toUpperCase()
-}
-
-/**
- * バッチ ID の接頭辞（`RG-1` → `RG`、`C1` → `C`）。大文字化して返す（D91 の衝突防止）。
- * @param {unknown} batchId バッチ ID
- * @returns {string} 接頭辞（読めなければ空文字）
- */
-export function batchIdPrefixOf(batchId) {
-  const s = String(batchId ?? '').trim().toUpperCase()
-  if (!s) return ''
-  const dash = s.indexOf('-')
-  if (dash > 0) return s.slice(0, dash)
-  const m = /^[A-Z]+/.exec(s)
-  return m ? m[0] : ''
-}
-
-/**
- * アクティブ SPEC 群で使用済みのバッチ ID 接頭辞（Architect へ渡して衝突を防ぐ）。
- *
- * @param {Array<{archived?: boolean, batches?: Array<{id?: string}>}>} specs `listSpecs()` の結果
- * @returns {string[]} 接頭辞（昇順・重複なし）
- */
-export function usedBatchIdPrefixes(specs) {
-  const out = new Set()
-  for (const spec of Array.isArray(specs) ? specs : []) {
-    if (!spec || spec.archived) continue
-    for (const batch of Array.isArray(spec.batches) ? spec.batches : []) {
-      const prefix = batchIdPrefixOf(batch?.id)
-      if (prefix) out.add(prefix)
-    }
-  }
-  return [...out].sort()
-}
-
-/**
- * 指定 SPEC に結びついた「起票済みバッチ ID」を集める（別 SPEC に属する `[ID]` は除外）。
- *
- * - `opts.specMtime` を渡すと、無印（Spec 行の無い）レガシータスクは `specMtime - 猶予` 以降の
- *   ものだけを数える（過去の無印 `[C1]` が新規 SPEC を「起票済み」に見せない。D91）。
- * - `archived`（破棄済み）は**起票済みに数えない**（再起票できる。D92）。
- *
- * @param {Array<{title?: string, status?: string, spec?: string|null, body?: string}>} tasks ボードのタスク
- * @param {string|null} specRelPath SPEC 相対パス
- * @param {{specMtime?: number|null, slackMs?: number}} [opts] 無印タスクの時刻ガード
- * @returns {Set<string>} バッチ ID
- */
-export function filedBatchIdsForSpec(tasks, specRelPath = null, opts = {}) {
-  const wantSpec = String(specRelPath ?? '').replace(/\\/g, '/').replace(/^\.\//, '').trim() || null
-  const specMtime = Number(opts?.specMtime)
-  const slack = Number.isFinite(Number(opts?.slackMs)) ? Number(opts.slackMs) : SPEC_MTIME_SLACK_MS
-  const since = wantSpec && Number.isFinite(specMtime) && specMtime > 0 ? specMtime - slack : null
-  const out = new Set()
-  for (const task of Array.isArray(tasks) ? tasks : []) {
-    if (!task) continue
-    if (String(task.status ?? '').trim().toLowerCase() === 'archived') continue
-    const m = /^\[([^\]]+)\]/.exec(String(task?.title ?? '').trim())
-    if (!m || !m[1].trim()) continue
-    if (wantSpec) {
-      const ts = taskSpecPath(task)
-      if (ts && ts !== wantSpec) continue
-      if (!ts && since !== null && !(taskStampMs(task) >= since)) continue
-    }
-    out.add(m[1].trim())
-  }
-  return out
-}
-
-/**
- * タスク一覧から「起票済みのバッチ ID」を集める（`done` は起票済み・`archived` は未起票）。
- *
- * 完了済み（`done`）を未起票と数えると、バナーが「起票して開始」を出して
- * 同じバッチをもう一度起票してしまう（`specs.launchSpec` がスキップするのは
- * **未完了**の重複だけ）。ここは「タスクが 1 つでもあるか」で数える。
- * ただし `archived`（破棄済み）は再起票できるので数えない（D92）。
- *
- * @param {Array<{title?: string, status?: string}>} tasks ボードのタスク
- * @returns {Set<string>} バッチ ID
- */
-export function filedBatchIds(tasks) {
-  return filedBatchIdsForSpec(tasks, null)
-}
-
-/**
- * 未起票の SPEC を数える（A2B の 1 タップ一括起票カード用）。
- * @param {Array<object>} specs `specs.listSpecs` の結果
- * @param {Array<{id: string, title: string, status?: string, spec?: string|null, body?: string}>} tasks ボードのタスク
- * @returns {Array<{path: string, title: string, batchCount: number, pendingCount: number, pending: string[], mtime: number}>} 未起票ありの SPEC
- */
-export function pendingSpecs(specs, tasks) {
-  const out = []
-  for (const spec of Array.isArray(specs) ? specs : []) {
-    if (!spec || spec.archived) continue
-    const batches = (spec?.batches ?? []).filter((b) => b?.id)
-    if (!batches.length) continue
-    const filed = filedBatchIdsForSpec(tasks, spec.path, { specMtime: Number(spec.mtime ?? 0) })
-    const pending = batches.filter((b) => !filed.has(String(b.id))).map((b) => b.id)
-    if (!pending.length) continue
-    out.push({
-      path: String(spec.path),
-      title: String(spec.title ?? spec.path),
-      batchCount: batches.length,
-      pendingCount: pending.length,
-      pending,
-      mtime: Number(spec.mtime ?? 0),
-    })
-  }
-  return out.sort((a, b) => b.mtime - a.mtime || a.path.localeCompare(b.path))
-}
-
-/**
- * 親タスクの状態から「キュー待ち（queued）」と「実行中（running）」を判別する（SPEC V7 §3.1）。
- *
- * `ready` は着手中ではない＝キュー待ち。`running` / `claimed` は実行中。
- * 判定できない状態（`blocked` など）は `null`（UI は従来の表示にフォールバック）。
- *
- * @param {unknown} taskStatus 親 `[ARCH]` タスクの status
- * @returns {'queued'|'running'|null} キュー状態
- */
-export function queueStateOf(taskStatus) {
-  const s = String(taskStatus ?? '')
-    .trim()
-    .toLowerCase()
-  if (['running', 'claimed', 'in_progress'].includes(s)) return 'running'
-  if (['ready', 'todo', 'scheduled', 'blocked'].includes(s)) return 'queued'
-  return null
-}
-
-/**
- * `[review]` を探すボード（`[job.board, 'mobile']`・重複除去・空文字除外）。SPEC V9 D42。
- * @param {unknown} jobBoard ジョブのボード
- * @returns {string[]} 走査するボード（先頭がジョブ自身のボード）
- */
-export function reviewBoardsFor(jobBoard) {
-  const own = String(jobBoard ?? '').trim()
-  return [...new Set([own, DEFAULT_REVIEW_BOARD].filter(Boolean))]
-}
-
-/**
- * `reviewDir/sheets/` の中で「このジョブが書いた」Round 1 シートを 1 枚選ぶ（SPEC V9 D42）。
- *
- * `spec-<slug>-1.json` のような JSON シートだけを見る（HTML は対象外）。
- * `mtime >= job.startedAt - 猶予` の最新 1 枚を `sheets/<name>` の相対パスで返す。
- *
- * @param {string|null|undefined} reviewDir レビューディレクトリ（`sheets/` の親）
- * @param {{startedAt?: number}} job ジョブ
- * @param {{slackMs?: number}} [opts] 猶予（秒ズレ対策）
- * @returns {string|null} 相対パス（無ければ null）
- */
-export function findRecentSheet(reviewDir, job, { slackMs = SPEC_MTIME_SLACK_MS } = {}) {
-  const dir = reviewDir ? path.join(String(reviewDir), 'sheets') : ''
-  if (!dir) return null
-  let entries = []
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true })
-  } catch {
-    return null // ディレクトリが無い環境では無害に null
-  }
-  const since = Number(job?.startedAt ?? 0) - Number(slackMs)
-  let best = null
-  for (const entry of entries) {
-    if (!entry?.isFile?.()) continue
-    const name = String(entry.name ?? '')
-    if (!/^spec-.+\.json$/i.test(name)) continue
-    let mtime = 0
-    try {
-      mtime = Number(fs.statSync(path.join(dir, name)).mtimeMs)
-    } catch {
-      continue
-    }
-    if (mtime < since) continue
-    if (!best || mtime > best.mtime) best = { name, mtime }
-  }
-  return best ? `sheets/${best.name}` : null
-}
-
-/**
- * ジョブの現在フェーズ（SPEC V9 D42）。`publicJob().phase` の実体。
- * @param {object} job ジョブ
- * @returns {'spawning'|'round1_sheet'|'awaiting_review'|'round2_spec'|'spec_ready'|'launched'|'failed'} フェーズ
- */
-export function computePhase(job) {
-  const status = String(job?.status ?? '').trim()
-  if (status === 'failed') return 'failed'
-  if (status === 'launched') return 'launched'
-  if (status === 'spec_ready') return 'spec_ready'
-  if (status === 'awaiting_review') return 'awaiting_review'
-  // 一度 Review を通過して回答後に `awaiting_spec` へ戻った = Round 2（SPEC 執筆中）
-  if (job?.reviewSeenOnce) return 'round2_spec'
-  if (job?.sheetPath) return 'round1_sheet'
-  return 'spawning'
-}
-
-/**
- * ジョブが停滞しているか（SPEC V9 D42）。
- *
- * Hermes Native は起票後にカンバンタスクが動くので、`running` / `awaiting_spec` のまま
- * `STALLED_AFTER_MS` を超えたら停滞とみなす（`queued` は人が着火待ちなので対象外）。
- *
- * @param {object} job ジョブ
- * @param {number} [at] 現在時刻（ミリ秒）
- * @returns {boolean} 停滞なら true
- */
-export function isJobStalled(job, at = Date.now()) {
-  const status = String(job?.status ?? '').trim()
-  if (!['running', 'awaiting_spec'].includes(status)) return false
-  if (String(job?.queueState ?? '').trim() === 'queued') return false
-  const since = Number(job?.startedAt ?? job?.createdAt ?? 0)
-  if (!Number.isFinite(since) || since <= 0) return false
-  const elapsed = Number(at) - since
-  return Number.isFinite(elapsed) && elapsed >= STALLED_AFTER_MS
-}
-
-/**
- * 保存するジョブの形（機密を持たない。種は先頭 400 字だけ）。
- * @param {object} job 内部ジョブ
- * @param {{at?: number}} [opts] 現在時刻（`stalled` の算出に使う）
- * @returns {object} 公開用
- */
-export function publicJob(job, { at = Date.now() } = {}) {
-  return {
-    id: job.id,
-    board: job.board,
-    status: job.status,
-    stage: job.stage ?? job.status,
-    runner: job.runner,
-    runnerLabel: runnerLabel(job.runner),
-    requestedRunner: job.requestedRunner ?? job.runner ?? null,
-    fallbackFrom: job.fallbackFrom ?? null,
-    fallbackReason: job.fallbackReason ?? null,
-    taskId: job.taskId ?? null,
-    taskStatus: job.taskStatus ?? null,
-    queueState: job.queueState ?? queueStateOf(job.taskStatus),
-    executionPolicy: normalizeExecutionPolicy(job.executionPolicy),
-    dismissed: Boolean(job.dismissed),
-    reviewTaskId: job.reviewTaskId ?? null,
-    reviewTitle: job.reviewTitle ?? null,
-    reviewBoard: job.reviewBoard ?? null,
-    phase: computePhase(job),
-    stalled: isJobStalled(job, at),
-    sheetPath: job.sheetPath ?? null,
-    autoStart: Boolean(job.autoStart),
-    seed: String(job.seedText ?? '').slice(0, 400),
-    lang: job.lang,
-    chat: job.chat ?? null,
-    createdAt: job.createdAt,
-    startedAt: job.startedAt,
-    finishedAt: job.finishedAt ?? null,
-    spec: job.spec ?? null,
-    completedSpec: job.completedSpec ?? null,
-    launched: job.launched ?? null,
-    error: job.error ?? null,
-  }
-}
-
 /**
  * Architect を作る。
  *

@@ -4,8 +4,51 @@ import { execFile } from 'node:child_process'
 import { ApiError } from './api-errors.js'
 import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'
 import { DEFAULT_LANG, normalizeLang } from './lang.js'
-import { languageRule } from './language-rule.js'
-import { SCREEN_CHECK_CONTRACT, VERIFY_CONTRACT } from './contracts/verify.js'
+import { CLOSED_STATUSES, extractExecutionMode, extractRecommendedRole } from './specs/mode.js'
+import { buildTaskBody, buildTaskTitle, findOpenBatchTask, sanitizeSpecChat } from './specs/task-body.js'
+import { appendRun, makeRunId } from './specs/runs.js'
+
+/*
+ * 分割したモジュールの再エクスポート。`./specs.js` からの import 契約は 1 つも変えない
+ * （呼び出し側 = `server.js` / `architect.js` / テストは従来どおりこのファイルだけを見る）。
+ */
+export {
+  ABSTRACT_ROLES,
+  BODY_MAX,
+  CLOSED_STATUSES,
+  CONTRACT_HEADER,
+  EXECUTION_MODE_RE,
+  MODE_CONTRACTS,
+  RECOMMENDED_ROLE_RE,
+  buildExecutionContract,
+  extractExecutionMode,
+  extractRecommendedRole,
+  normalizeExecutionMode,
+  normalizeRecommendedRole,
+} from './specs/mode.js'
+export {
+  SPEC_CHAT_RE,
+  SPEC_MTIME_SLACK_MS,
+  bodyHeadings,
+  buildTaskBody,
+  buildTaskTitle,
+  extractTaskSpec,
+  findOpenBatchTask,
+  normalizeSpecRelPath,
+  sanitizeSpecChat,
+  taskStampMs,
+} from './specs/task-body.js'
+export {
+  RUNS_MAX,
+  appendRun,
+  attachRunTaskIds,
+  makeRunId,
+  pruneRuns,
+  readRuns,
+  runTaskIdsForSpec,
+  runsPathFor,
+  writeRuns,
+} from './specs/runs.js'
 
 /**
  * Spec Launchpad — `docs/SPEC-*.md` を検出し、バッチ見出しをカンバンへ一括起票する。
@@ -27,9 +70,6 @@ export const SPEC_FILE_RE = /^SPEC.*\.md$/i
 /** バッチ ID の規則（英字始まり・16 文字まで）。`### 1.1 見出し` のような番号見出しを拾わない。 */
 export const BATCH_ID_RE = /^[A-Za-z][A-Za-z0-9._-]{0,15}$/
 
-/** 完了してよい状態（これ以外を「未完了」とみなして重複起票を止める）。 */
-export const CLOSED_STATUSES = new Set(['done', 'archived'])
-
 /**
  * SPEC のアーカイブ宣言（`- **Status**: archived` / `- **状態**: アーカイブ`）。
  * バックティック・大文字小文字・補足テキストを許容する。
@@ -41,19 +81,6 @@ export const SPEC_ARCHIVED_RE = /^\s*[-*]?\s*\*\*\s*(?:Status|状態)\s*\*\*\s*[
  * `extractSpecStatus()` が先頭 40 行で読む書式と 1:1 で対応させる。
  */
 export const SPEC_ARCHIVE_LINE = '- **Status**: archived'
-
-/** タスク本文の上限（カンバン側の実用上限に合わせる）。 */
-export const BODY_MAX = 6000
-
-/**
- * 起票元チャット ID の書式（`Chat:` 行に載せる値）。
- * セッション ID・`local-…`・`__latest__` を通しつつ、改行や空白は弾く（本文を壊さない）。
- */
-export const SPEC_CHAT_RE = /^[A-Za-z0-9_.:-]{1,128}$/
-
-/** `pipeline-runs.json` に保持するランの上限（古い完了分から剪定する）。 */
-export const RUNS_MAX = 50
-
 /** `### Batch <ID>: <Title>` / `### <ID>: <Title>`。 */
 const BATCH_HEADING_RE = /^###\s+(?:Batch\s+)?([A-Za-z][A-Za-z0-9._-]{0,15})\s*[:：]\s*(.+?)\s*$/
 
@@ -62,160 +89,6 @@ const SECTION_END_RE = /^#{1,3}\s/
 
 /** 目的の行（`- **目的**: …` / `**Objective**: …`）。 */
 const OBJECTIVE_RE = /^[-*]?\s*\*\*\s*(?:目的|Objective)\s*\*\*\s*[:：]\s*(.+)$/i
-
-/**
- * 実行モード宣言の行（`- **Execution Mode**: `[Mode: Zero-Stop]`` / `- **実行モード**: [Mode: …]`）。
- * バックティック・角括弧・`Mode:` 前置・大小文字をすべて許容する。
- */
-export const EXECUTION_MODE_RE =
-  /^[-*]?\s*\*\*\s*(?:Execution\s*Mode|実行モード)\s*\*\*\s*[:：]\s*[`\s]*\[?\s*(?:Mode\s*[:：]\s*)?(Zero-Stop|Fast-Track\s*Review|Visual\s*Gate)/im
-
-/**
- * 実行モード表記を正規化する（未知の値・未宣言は `null`）。
- *
- * @param {unknown} raw `Zero-Stop` / `[Mode: Visual Gate]` / `visual-gate` など
- * @returns {'zero-stop'|'fast-track-review'|'visual-gate'|null} 正規化したモード
- */
-export function normalizeExecutionMode(raw) {
-  const s = String(raw ?? '')
-    .toLowerCase()
-    // `[Mode: Visual Gate]` のような生の宣言もそのまま受けられるように前置を落とす
-    .replace(/mode\s*[:：]/g, ' ')
-    .replace(/[^a-z-]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
-  if (!s) return null
-  if (s === 'zero-stop' || s === 'zerostop' || s === 'zero') return 'zero-stop'
-  if (s === 'fast-track-review' || s === 'fast-track' || s === 'fasttrack-review') return 'fast-track-review'
-  if (s === 'visual-gate' || s === 'visualgate' || s === 'visual') return 'visual-gate'
-  return null
-}
-
-/**
- * バッチ本文から実行モードを読む（未宣言は `null`＝後方互換）。
- *
- * @param {string[]|string} section バッチ本文の行（または本文）
- * @returns {'zero-stop'|'fast-track-review'|'visual-gate'|null} モード
- */
-export function extractExecutionMode(section) {
-  const text = Array.isArray(section) ? section.join('\n') : String(section ?? '')
-  const m = EXECUTION_MODE_RE.exec(text)
-  return m ? normalizeExecutionMode(m[1]) : null
-}
-
-/** 行動契約ブロックの見出し（本文中で一意）。 */
-export const CONTRACT_HEADER = '[Hermes Pilot Execution Contract]'
-
-/**
- * 抽象ロールの語彙（D60）。公開コードは**この 4 つだけ**を知り、実モデル名は知らない
- * （プロファイルメモリの割当表が実モデルを決める）。
- */
-export const ABSTRACT_ROLES = ['role:planner', 'role:builder', 'role:visual-reviewer', 'role:decision-framer']
-
-/**
- * バッチ本文の推奨ロール宣言行（`- **Recommended Role**: \`role:builder\`` / `- **推奨ロール**: role:planner`）。
- * バックティック・大小文字・全角コロンを許容する。
- */
-export const RECOMMENDED_ROLE_RE = /^[-*]?\s*\*\*\s*(?:Recommended Role|推奨ロール)\s*\*\*\s*[:：]\s*(.+)$/im
-
-/**
- * 推奨ロール表記を正規化する（未知・未宣言は `null`）。
- *
- * `role:` 接頭辞の有無、バックティック、前後の空白・句読点を吸収する。
- * 抽象ロール 4 つ以外は**推測せず** `null`（後方互換）。
- *
- * @param {unknown} raw `role:builder` / `builder` / `` `role:planner` `` など
- * @returns {'role:planner'|'role:builder'|'role:visual-reviewer'|'role:decision-framer'|null} 正規化したロール
- */
-export function normalizeRecommendedRole(raw) {
-  const text = String(raw ?? '')
-    .replace(/[`'"「」]/g, '')
-    .trim()
-    .toLowerCase()
-  if (!text) return null
-  // 行末に説明が続く場合（`role:builder — 通常実装`）は最初の語だけを見る。
-  const token = text.split(/[\s,;/|、。]+/)[0].replace(/^role\s*[:：]\s*/, '')
-  const role = `role:${token}`
-  return ABSTRACT_ROLES.includes(role) ? role : null
-}
-
-/**
- * バッチ本文から推奨ロールを読む（未宣言は `null`＝後方互換）。
- *
- * @param {string[]|string} section バッチ本文の行（または本文）
- * @returns {'role:planner'|'role:builder'|'role:visual-reviewer'|'role:decision-framer'|null} ロール
- */
-export function extractRecommendedRole(section) {
-  const text = Array.isArray(section) ? section.join('\n') : String(section ?? '')
-  const m = RECOMMENDED_ROLE_RE.exec(text)
-  return m ? normalizeRecommendedRole(m[1]) : null
-}
-
-/** モード別の行動契約（`buildTaskBody` が本文末尾へ注入する）。 */
-export const MODE_CONTRACTS = {
-  'zero-stop': [
-    '- Do not ask confirmation questions in chat.',
-    `- Repair autonomously until ${VERIFY_CONTRACT} passes, then mark the task done.`,
-    '- Only when a design contradiction is unresolvable, file a `quick-review` sheet and block on it.',
-  ],
-  'fast-track-review': [
-    '- If the change forces a choice between options, file a `quick-review` sheet (each question with `recommended: true`) before implementing, and wait for the 1-tap approval.',
-    `- Everything else proceeds without asking: implement, run ${VERIFY_CONTRACT}, then mark the task done.`,
-  ],
-  'visual-gate': [
-    `- After implementing, deploy and verify the real screen at ${SCREEN_CHECK_CONTRACT}; capture the screenshots.`,
-    '- If the rendered result differs from the intent, file an `annotation` review (screenshot + marks) and wait for it.',
-    `- ${VERIFY_CONTRACT} must pass before you mark the task done.`,
-  ],
-}
-
-/**
- * モード別の行動契約ブロック（`[Hermes Pilot Execution Contract]`）を組み立てる。
- *
- * モード未宣言でも `recommendedRole` があれば契約を出す（ロール指針だけは届ける）。
- * `recommendedRole` 指定時・`visual-gate` のときは、ネイティブ `delegate_task` ＋
- * フォールバックと外部 AI CLI 禁止を 2 行だけ添える（D61 / D63）。
- *
- * @param {string} mode 正規化済みモード
- * @param {{recommendedRole?: string|null}} [opts] 推奨ロール（未宣言は `null`）
- * @returns {string} 本文末尾に足すブロック（モードもロールも無ければ空文字＝後方互換）
- */
-export function buildExecutionContract(mode, { recommendedRole = null } = {}) {
-  const key = normalizeExecutionMode(mode)
-  const role = normalizeRecommendedRole(recommendedRole)
-  const gate = key === 'visual-gate'
-  if (!key && !role) return ''
-  const rules = key ? (MODE_CONTRACTS[key] ?? []) : []
-
-  const delegation = []
-  if (role) {
-    delegation.push(
-      `- Recommended role: \`${role}\` — resolve it against the profile's abstract-role table before starting.`,
-    )
-  } else if (gate) {
-    delegation.push(
-      '- Recommended role: `role:visual-reviewer` — delegate screenshot / annotated-image review through native delegation.',
-    )
-  }
-  if (role || gate) {
-    delegation.push(
-      '- Delegate only through Hermes native delegation; on error, rate limit, timeout or an unsupported model, continue down the fallback chain instead of blocking.',
-      '- Never launch an external AI CLI as a subprocess (no wrapped CLI runs); native providers only.',
-    )
-  }
-
-  return [
-    '',
-    CONTRACT_HEADER,
-    '',
-    ...(key ? [`Mode: ${key}`, ''] : []),
-    'This task was filed by the Hermes Pilot Spec Launchpad. The contract below overrides any habit of asking first.',
-    ...rules,
-    ...delegation,
-    '- Finish with a short report: what changed, the verification command and its exit code, and what is still unverified.',
-  ].join('\n')
-}
-
 /** タイトル行（`# …`）。 */
 const TITLE_RE = /^#\s+(.+?)\s*$/
 
@@ -391,157 +264,6 @@ export function listSpecs(repoPath, deps = {}) {
 
   return out.sort((a, b) => b.mtime - a.mtime || a.path.localeCompare(b.path))
 }
-
-/**
- * 起票するタスクのタイトル（`[<BatchID>] <BatchTitle>`）。
- * @param {{id: string, title: string}} batch バッチ
- * @returns {string} タイトル
- */
-export function buildTaskTitle(batch) {
-  return `[${batch?.id ?? ''}] ${batch?.title ?? ''}`.trim().slice(0, 200)
-}
-
-/**
- * タスク本文の見出し（`lang` ごと・キー集合は両言語で同一）。機械キーは ASCII のまま。
- * 読み取り側（`parseSpec` の `OBJECTIVE_RE` / `EXECUTION_MODE_RE`）は両言語を受ける。
- */
-const BODY_HEADINGS = {
-  en: {
-    objective: '## Objective',
-    excerpt: '## Excerpt (acceptance criteria + Verify)',
-    objectiveFallback: '(see the excerpt of the batch body below)',
-  },
-  ja: {
-    objective: '## 目的',
-    excerpt: '## 抜粋（受入条件 / Verify を含む）',
-    objectiveFallback: '（バッチ本文の抜粋を参照）',
-  },
-}
-
-/**
- * タスク本文の見出し表を返す（未知・未指定は既定 `en`）。
- *
- * @param {unknown} lang 言語（`en` / `ja` / `ja-JP` など）
- * @returns {{objective: string, excerpt: string, objectiveFallback: string}} 見出し
- */
-export function bodyHeadings(lang) {
-  return BODY_HEADINGS[normalizeLang(lang) ?? DEFAULT_LANG] ?? BODY_HEADINGS[DEFAULT_LANG]
-}
-
-/**
- * 起票するタスクの本文（spec パス・target・抜粋・受入条件）。
- *
- * @param {{specRelPath: string, repoPath: string, board: string, batch: {id: string, title: string, objective: string, section: string}, chat?: string, lang?: string}} input 入力
- * @returns {string} 本文
- */
-export function buildTaskBody({ specRelPath, repoPath, board, batch, chat, lang }) {
-  const chatId = sanitizeSpecChat(chat)
-  const mode = normalizeExecutionMode(batch?.mode)
-  const h = bodyHeadings(lang)
-  const head = [
-    `Spec: ${specRelPath}`,
-    `Target: ${repoPath}`,
-    `Board: ${board}`,
-    `Batch: ${batch?.id ?? ''} — ${batch?.title ?? ''}`,
-    ...(chatId ? [`Chat: ${chatId}`] : []),
-    ...(mode ? [`Mode: ${mode}`] : []),
-    '',
-    // 出力言語の規則（`language-rule.js` の 1 文をそのまま置く。スキル側と同じ文＝D2）。
-    languageRule(lang),
-    '',
-    h.objective,
-    '',
-    batch?.objective || h.objectiveFallback,
-    '',
-    h.excerpt,
-    '',
-  ].join('\n')
-  // 契約ブロックは**末尾に必ず残す**（抜粋だけを切り詰める）。6000 字上限で契約が消えると
-  // 自走の保証が壊れるため、順序は「見出し → 抜粋 → 契約」で固定する。
-  const contract = buildExecutionContract(mode, { recommendedRole: batch?.recommendedRole })
-  const room = Math.max(0, BODY_MAX - head.length - contract.length)
-  const section = String(batch?.section ?? '').slice(0, room)
-  return `${head}${section}${contract}`.slice(0, BODY_MAX)
-}
-
-/** SPEC 相対パスを比較用に正規化する。 */
-function normalizeSpecRelPath(p) {
-  const s = String(p ?? '').replace(/\\/g, '/').replace(/^\.\//, '').trim()
-  return s || null
-}
-
-/** タスクが属する SPEC パスを取り出す（`task.spec` 優先、無ければ本文の `Spec:` / 先頭 5 行）。 */
-export function extractTaskSpec(task) {
-  const direct = normalizeSpecRelPath(task?.spec)
-  if (direct) return direct
-  const body = String(task?.body ?? '')
-  if (!body) return null
-  const m = /^Spec:\s*(.+?)\s*$/m.exec(body)
-  if (m) return normalizeSpecRelPath(m[1])
-  const head = body.split(/\r?\n/).slice(0, 5).join('\n')
-  const leg = /(?:docs\/)?SPEC[A-Za-z0-9._-]*\.md/i.exec(head)
-  return leg ? normalizeSpecRelPath(leg[0]) : null
-}
-
-/**
- * タスクの時刻（作成・開始・完了のうち最も新しいもの）。カンバン API は ms・DB は秒なので
- * 1e12 未満は秒として扱う（`telemetry.toMs` と同じ規約）。
- *
- * @param {{createdAt?: unknown, startedAt?: unknown, completedAt?: unknown}} task タスク
- * @returns {number} epoch ms（不明は 0）
- */
-export function taskStampMs(task) {
-  const ms = (value) => {
-    if (value === null || value === undefined || value === '') return 0
-    const n = typeof value === 'number' ? value : Number(value)
-    if (!Number.isFinite(n) || n <= 0) {
-      const parsed = Date.parse(String(value))
-      return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
-    }
-    return n < 1e12 ? Math.round(n * 1000) : Math.round(n)
-  }
-  return Math.max(ms(task?.createdAt), ms(task?.startedAt), ms(task?.completedAt))
-}
-
-/** 無印タスクを拾ってよい猶予（ms）。SPEC の mtime とタスク時刻の丸め差を吸収する。 */
-export const SPEC_MTIME_SLACK_MS = 5000
-
-/**
- * 既存タスクの中に同じバッチの未完了タスクがあるか。
- *
- * `specRelPath` 指定時は別 SPEC に属する `[ID]` を無視する（異なる SPEC で同じ ID を使っても衝突しない）。
- * `opts.specMtime` を渡すと、**無印（Spec 行の無い）レガシータスク**は `specMtime - 猶予` 以降に
- * 触られたものだけを対象にする（過去の無印 `[C1]` が新規 SPEC の起票を塞がない。D91）。
- * `archived`（破棄済み）は完了扱いなので、同じバッチを再起票できる（D92）。
- *
- * @param {Array<{title?: string, status?: string, id?: string, spec?: string|null, body?: string}>} tasks 同じボードのタスク
- * @param {string} batchId バッチ ID
- * @param {string|null} [specRelPath] 対象の SPEC 相対パス
- * @param {{specMtime?: number|null, slackMs?: number}} [opts] 無印タスクの時刻ガード
- * @returns {{id: string, title: string, status: string}|null} 見つかった未完了タスク
- */
-export function findOpenBatchTask(tasks, batchId, specRelPath = null, opts = {}) {
-  const want = `[${String(batchId ?? '').trim()}]`
-  if (!want || want === '[]') return null
-  const wantSpec = normalizeSpecRelPath(specRelPath)
-  const specMtime = Number(opts?.specMtime)
-  const slack = Number.isFinite(Number(opts?.slackMs)) ? Number(opts.slackMs) : SPEC_MTIME_SLACK_MS
-  const since = wantSpec && Number.isFinite(specMtime) && specMtime > 0 ? specMtime - slack : null
-  for (const t of Array.isArray(tasks) ? tasks : []) {
-    if (!t) continue
-    if (CLOSED_STATUSES.has(String(t.status ?? ''))) continue
-    if (!String(t.title ?? '').trim().startsWith(want)) continue
-    if (wantSpec) {
-      const ts = extractTaskSpec(t)
-      if (ts && ts !== wantSpec) continue
-      // 無印タスク: 対象 SPEC より前のものは別 SPEC の残骸（誤検知）として無視する。
-      if (!ts && since !== null && !(taskStampMs(t) >= since)) continue
-    }
-    return { id: String(t.id ?? ''), title: String(t.title ?? ''), status: String(t.status ?? '') }
-  }
-  return null
-}
-
 /**
  * `repoPath` 配下に収まる形で相対パスを解決する（`../` で外へ出る指定は拒否）。
  *
@@ -690,159 +412,6 @@ export function archiveSpec(repoPath, specRelPath) {
   }
 
   return { ok: true, path: rel, noop: false, archived: true, status: 'archived', insertedAt: insertAt }
-}
-
-/**
- * 起票元チャット ID をサニタイズする（書式に合わなければ空＝`Chat:` 行を書かない）。
- *
- * @param {unknown} raw 入力（セッション ID 等）
- * @returns {string} 安全な ID（無効なら空文字）
- */
-export function sanitizeSpecChat(raw) {
-  const s = String(raw ?? '').trim()
-  return SPEC_CHAT_RE.test(s) ? s : ''
-}
-
-/**
- * `pipeline-runs.json` のパス（レビューディレクトリ配下。`review-watcher` と同じ解決規則）。
- *
- * @param {object} cfg ブリッジ設定（`reviewDir` / `pluginDataDir` / `kanbanRoot`）
- * @returns {string} 絶対パス
- */
-export function runsPathFor(cfg = {}) {
-  const root =
-    cfg.reviewDir ??
-    path.join(
-      cfg.pluginDataDir ?? path.join(cfg.kanbanRoot ?? '.', '..', 'plugin-data', 'hermes-pilot'),
-      'review',
-    )
-  return path.join(root, 'pipeline-runs.json')
-}
-
-/**
- * ラン記録を読む（壊れていても空。補助情報なので落とさない）。
- *
- * @param {string} file パス
- * @returns {Array<object>} ラン（新しい順は保証しない）
- */
-export function readRuns(file) {
-  let raw = ''
-  try {
-    raw = fs.readFileSync(file, 'utf8')
-  } catch {
-    return []
-  }
-  try {
-    const j = JSON.parse(raw)
-    const list = Array.isArray(j) ? j : j?.runs
-    if (!Array.isArray(list)) return []
-    return list.filter((r) => r && typeof r === 'object' && String(r.id ?? '').trim())
-  } catch {
-    return []
-  }
-}
-
-/**
- * `pipeline-runs.json` のランから、対象 SPEC に紐づく `taskIds` を集める（D91 の第 1 優先）。
- *
- * @param {Array<object>} runs ラン記録（`specRelPath` / `taskIds`）
- * @param {string|null} specRelPath 対象 SPEC 相対パス
- * @returns {string[]} タスク ID（重複なし）
- */
-export function runTaskIdsForSpec(runs, specRelPath) {
-  const want = normalizeSpecRelPath(specRelPath)
-  if (!want) return []
-  const out = new Set()
-  for (const run of Array.isArray(runs) ? runs : []) {
-    if (!run) continue
-    if (normalizeSpecRelPath(run.specRelPath ?? run.spec) !== want) continue
-    for (const id of Array.isArray(run.taskIds) ? run.taskIds : []) {
-      const v = String(id ?? '').trim()
-      if (v) out.add(v)
-    }
-  }
-  return [...out]
-}
-
-/**
- * SPEC 一覧の各要素へ `runTaskIds` を添付する（`GET /api/specs` の応答契約）。
- *
- * @param {Array<{path: string}>} specs `listSpecs()` の結果
- * @param {Array<object>} runs `readRuns()` の結果
- * @returns {Array<object>} `runTaskIds` 付きの SPEC 一覧
- */
-export function attachRunTaskIds(specs, runs) {
-  const list = Array.isArray(specs) ? specs : []
-  const records = Array.isArray(runs) ? runs : []
-  return list.map((spec) => ({ ...spec, runTaskIds: records.length ? runTaskIdsForSpec(records, spec?.path) : [] }))
-}
-
-/**
- * 上限まで剪定する（**古い完了分から**落とす。未報告ランは最後まで残す）。
- *
- * @param {Array<object>} runs ラン
- * @param {number} [max] 上限（既定 50）
- * @returns {Array<object>} 剪定後（元の順序を保つ）
- */
-export function pruneRuns(runs, max = RUNS_MAX) {
-  const list = Array.isArray(runs) ? runs.slice() : []
-  let over = list.length - Math.max(0, Number(max) || 0)
-  if (over <= 0) return list
-  const byAge = list.slice().sort((a, b) => Number(a?.createdAt ?? 0) - Number(b?.createdAt ?? 0))
-  const drop = new Set()
-  for (const r of byAge) {
-    if (over <= 0) break
-    if (!r?.reportedAt) continue
-    drop.add(r)
-    over -= 1
-  }
-  for (const r of byAge) {
-    if (over <= 0) break
-    if (drop.has(r)) continue
-    drop.add(r)
-    over -= 1
-  }
-  return list.filter((r) => !drop.has(r))
-}
-
-/**
- * ラン記録を `.tmp` → `renameSync` でアトミックに書く。
- *
- * @param {string} file パス
- * @param {Array<object>} runs ラン
- * @returns {void}
- */
-export function writeRuns(file, runs) {
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  const tmp = `${file}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify({ version: 1, runs: pruneRuns(runs) }, null, 2), 'utf8')
-  fs.renameSync(tmp, file)
-}
-
-/**
- * ランを 1 件追記する（同じ ID は置き換え）。
- *
- * @param {object} cfg ブリッジ設定
- * @param {object} run ラン
- * @returns {Array<object>} 書いた内容
- */
-export function appendRun(cfg, run) {
-  const file = runsPathFor(cfg)
-  const runs = readRuns(file)
-  const next = [...runs.filter((r) => r.id !== run.id), run]
-  writeRuns(file, next)
-  return pruneRuns(next)
-}
-
-/**
- * ランの ID（`run_<UTC 秒>_<乱数 4>`）。同じ秒に 2 回落としても衝突しない。
- * @param {number} [ms] epoch ms
- * @returns {string} ID
- */
-export function makeRunId(ms = Date.now()) {
-  const stamp = new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\..+$/, '')
-  const tail = Math.random().toString(36).slice(2, 6).padEnd(4, '0')
-  return `run_${stamp}_${tail}`
 }
 
 /**
