@@ -3,7 +3,17 @@ import os from 'node:os'
 import fs from 'node:fs'
 import { DEFAULT_PILOT_PROFILE, sanitizePilotProfile } from './pipeline-optimizer.js'
 
-export const VERSION = '0.1.0'
+function readPackageVersion() {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(new URL('../../../package.json', import.meta.url), 'utf8'))
+    if (typeof pkg?.version === 'string' && pkg.version.trim()) return pkg.version.trim()
+  } catch {
+    /* fallback below */
+  }
+  return '0.2.4'
+}
+
+export const VERSION = readPackageVersion()
 
 /**
  * `config.json` から Pilot / A2B パイプライン専用のプロファイル名を読む。

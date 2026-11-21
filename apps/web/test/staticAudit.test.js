@@ -339,41 +339,194 @@ test('全ソースに未定義識別子（import 漏れ・分割残存）が無�
   assert.deepEqual(hits, [])
 })
 
-test('server.js の apiCtx は分割ハンドラが要求する ctx キーをすべて持つ', () => {
-  const serverAst = parse(fs.readFileSync(path.join(ROOT, 'apps/bridge/src/server.js'), 'utf8'), { sourceType: 'module' })
-  let provided = null
-  for (const st of serverAst.program.body) {
-    if (st.type !== 'VariableDeclaration') continue
-    for (const d of st.declarations) {
-      if (d.id?.name === 'apiCtx' && d.init?.type === 'ObjectExpression') {
-        provided = new Set(d.init.properties.map((p) => p.key?.name || p.argument?.name).filter(Boolean))
-      }
+const SPLIT_FACTORIES = [
+  { callerRel: 'apps/bridge/src/server.js', factoryRel: 'apps/bridge/src/server/api-boards.js', fnName: 'createBoardsApi' },
+  { callerRel: 'apps/bridge/src/server.js', factoryRel: 'apps/bridge/src/server/api-specs.js', fnName: 'createSpecsApi' },
+  { callerRel: 'apps/bridge/src/server.js', factoryRel: 'apps/bridge/src/server/helpers.js', fnName: 'createServerHelpers' },
+  { callerRel: 'apps/bridge/src/server.js', factoryRel: 'apps/bridge/src/server/ws-handlers.js', fnName: 'createWsHandlers' },
+  { callerRel: 'apps/bridge/src/review.js', factoryRel: 'apps/bridge/src/review/media.js', fnName: 'createReviewMedia' },
+  { callerRel: 'apps/bridge/src/review.js', factoryRel: 'apps/bridge/src/review/feeds.js', fnName: 'createReviewFeeds' },
+]
+
+function walkAst(node, fn, parent = null, key = null) {
+  if (!node || typeof node !== 'object') return
+  if (Array.isArray(node)) {
+    for (const item of node) walkAst(item, fn, parent, key)
+    return
+  }
+  if (!node.type) return
+  if (fn(node, parent, key) === false) return
+  for (const [k, v] of Object.entries(node)) {
+    if (!['loc', 'start', 'end', 'type', 'leadingComments', 'trailingComments', 'innerComments'].includes(k)) {
+      walkAst(v, fn, node, k)
     }
   }
-  assert.ok(provided, 'apiCtx が見つからない')
+}
 
-  for (const [rel, fnName] of [
-    ['apps/bridge/src/server/api-boards.js', 'createBoardsApi'],
-    ['apps/bridge/src/server/api-specs.js', 'createSpecsApi'],
-  ]) {
-    const ast = parse(fs.readFileSync(path.join(ROOT, rel), 'utf8'), { sourceType: 'module' })
-    let needed = []
+function collectObjectExprKeys(objExpr, namedObjects, out = new Set()) {
+  if (!objExpr || objExpr.type !== 'ObjectExpression') return out
+  for (const p of objExpr.properties) {
+    if (p.type === 'SpreadElement') {
+      if (p.argument?.type === 'Identifier' && namedObjects.has(p.argument.name)) {
+        collectObjectExprKeys(namedObjects.get(p.argument.name), namedObjects, out)
+      }
+      continue
+    }
+    if ((p.type === 'ObjectProperty' || p.type === 'ObjectMethod') && !p.computed) {
+      const k = p.key?.name ?? p.key?.value
+      if (k != null) out.add(String(k))
+    }
+  }
+  return out
+}
+
+function extractCallerProvidedKeys(callerRel, fnName) {
+  const ast = parse(fs.readFileSync(path.join(ROOT, callerRel), 'utf8'), {
+    sourceType: 'module',
+    plugins: ['importAttributes'],
+  })
+  const namedObjects = new Map()
+  let callNode = null
+  walkAst(ast.program, (node) => {
+    if (node.type === 'VariableDeclarator' && node.id?.type === 'Identifier' && node.init?.type === 'ObjectExpression') {
+      namedObjects.set(node.id.name, node.init)
+    }
+    if (node.type === 'CallExpression' && node.callee?.type === 'Identifier' && node.callee.name === fnName) {
+      callNode = node
+    }
+  })
+  assert.ok(callNode, `${callerRel} で ${fnName}(...) の呼び出しが見つからない`)
+  const arg = callNode.arguments[0]
+  if (arg?.type === 'Identifier' && namedObjects.has(arg.name)) {
+    return collectObjectExprKeys(namedObjects.get(arg.name), namedObjects)
+  }
+  if (arg?.type === 'ObjectExpression') {
+    return collectObjectExprKeys(arg, namedObjects)
+  }
+  return new Set()
+}
+
+function collectReferencedNames(bodyStmts, skipDeclarator) {
+  const used = new Set()
+  const scopes = []
+  const topScope = new Set()
+  hoistScope(bodyStmts, topScope)
+  scopes.push(topScope)
+
+  const shadowed = (name) => {
+    for (let i = scopes.length - 1; i >= 1; i -= 1) {
+      if (scopes[i].has(name)) return true
+    }
+    return false
+  }
+
+  function visit(node, parent, key) {
+    if (!node || typeof node !== 'object') return
+    if (Array.isArray(node)) {
+      for (const x of node) visit(x, parent, key)
+      return
+    }
+    if (!node.type) return
+    if (node === skipDeclarator) return
+    if (node.type === 'MetaProperty' || node.type === 'ImportDeclaration') return
+    if (node.type === 'Identifier') {
+      if (parent) {
+        if ((parent.type === 'MemberExpression' || parent.type === 'OptionalMemberExpression') && key === 'property' && !parent.computed) return
+        if ((parent.type === 'ObjectProperty' || parent.type === 'ObjectMethod' || parent.type === 'ClassMethod' || parent.type === 'ClassProperty') && key === 'key' && !parent.computed) return
+        if (parent.type === 'VariableDeclarator' && key === 'id') return
+        if ((parent.type === 'FunctionDeclaration' || parent.type === 'FunctionExpression' || parent.type === 'ClassDeclaration' || parent.type === 'ClassExpression') && key === 'id') return
+        if (parent.type === 'ExportSpecifier' && key === 'exported') return
+      }
+      if (!shadowed(node.name)) used.add(node.name)
+      return
+    }
+    if (['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression', 'ObjectMethod', 'ClassMethod'].includes(node.type)) {
+      const sc = new Set()
+      if (node.id) sc.add(node.id.name)
+      for (const p of node.params || []) collectPattern(p, sc)
+      if (node.body?.type === 'BlockStatement') hoistScope(node.body.body, sc)
+      scopes.push(sc)
+      for (const p of node.params || []) {
+        if (p.type === 'AssignmentPattern') visit(p.right, p, 'right')
+      }
+      visit(node.body, node, 'body')
+      scopes.pop()
+      return
+    }
+    if (node.type === 'BlockStatement') {
+      const sc = new Set()
+      hoistScope(node.body, sc)
+      scopes.push(sc)
+      for (const st of node.body) visit(st, node, 'body')
+      scopes.pop()
+      return
+    }
+    if (['ForStatement', 'ForInStatement', 'ForOfStatement'].includes(node.type)) {
+      const sc = new Set()
+      const init = node.init || node.left
+      if (init?.type === 'VariableDeclaration') for (const d of init.declarations) collectPattern(d.id, sc)
+      scopes.push(sc)
+      for (const [k, v] of Object.entries(node)) {
+        if (!['loc', 'start', 'end', 'type', 'leadingComments', 'trailingComments', 'innerComments'].includes(k)) visit(v, node, k)
+      }
+      scopes.pop()
+      return
+    }
+    if (node.type === 'CatchClause') {
+      const sc = new Set()
+      if (node.param) collectPattern(node.param, sc)
+      scopes.push(sc)
+      visit(node.body, node, 'body')
+      scopes.pop()
+      return
+    }
+    for (const [k, v] of Object.entries(node)) {
+      if (!['loc', 'start', 'end', 'type', 'leadingComments', 'trailingComments', 'innerComments'].includes(k)) visit(v, node, k)
+    }
+  }
+
+  for (const st of bodyStmts) visit(st, null, null)
+  return used
+}
+
+test('全分割ファクトリ（server / review）が要求する ctx キーに不足・未使用が無い', () => {
+  for (const { callerRel, factoryRel, fnName } of SPLIT_FACTORIES) {
+    const provided = extractCallerProvidedKeys(callerRel, fnName)
+    const ast = parse(fs.readFileSync(path.join(ROOT, factoryRel), 'utf8'), {
+      sourceType: 'module',
+      plugins: ['importAttributes'],
+    })
+    let factoryFn = null
+    let ctxDeclarator = null
+    const pairs = []
     for (const st of ast.program.body) {
       const fn = st.type === 'ExportNamedDeclaration' ? st.declaration : st
       if (fn?.type === 'FunctionDeclaration' && fn.id?.name === fnName) {
+        factoryFn = fn
         for (const inner of fn.body.body) {
           if (inner.type !== 'VariableDeclaration') continue
           for (const d of inner.declarations) {
             if (d.init?.name === 'ctx' && d.id?.type === 'ObjectPattern') {
-              needed = d.id.properties.map((p) => p.key?.name).filter(Boolean)
+              ctxDeclarator = d
+              for (const p of d.id.properties) {
+                const key = p.key?.name
+                const localNode = p.value?.type === 'AssignmentPattern' ? p.value.left : p.value
+                const local = localNode?.name ?? key
+                if (key && local) pairs.push({ key, local })
+              }
             }
           }
         }
       }
     }
-    assert.ok(needed.length > 0, `${rel} の ctx 分割が見つからない`)
-    const missing = needed.filter((k) => !provided.has(k))
-    assert.deepEqual(missing, [], `${rel} が要求するキーが apiCtx に無い: ${missing.join(', ')}`)
+    assert.ok(factoryFn && ctxDeclarator && pairs.length > 0, `${factoryRel} (${fnName}) の ctx 分割が見つからない`)
+
+    const missing = pairs.map((x) => x.key).filter((k) => !provided.has(k))
+    assert.deepEqual(missing, [], `${factoryRel} が要求するキーが ${callerRel} の ${fnName} 引数に無い: ${missing.join(', ')}`)
+
+    const used = collectReferencedNames(factoryFn.body.body, ctxDeclarator)
+    const unused = pairs.filter((x) => !used.has(x.local)).map((x) => x.key)
+    assert.deepEqual(unused, [], `${factoryRel} で ctx から分割代入したまま未使用のキーがある: ${unused.join(', ')}`)
   }
 })
 

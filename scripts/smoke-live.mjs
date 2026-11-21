@@ -9,7 +9,10 @@
  *   1. the real CLI answers `hermes --help` and `hermes kanban --help` and still
  *      lists the subcommands the bridge drives,
  *   2. the running bridge serves the read only surface
- *      (`/api/overview`, `/api/coherence/report`, `/api/specs`, `/api/snippets/term`),
+ *      (`/api/me`, `/api/overview`, `/api/coherence/report`, `/api/specs`, `/api/specs/reports`,
+ *       `/api/snippets/term`, `/api/boards`, `/api/repos`, `/api/review/feed`,
+ *       `/api/review/chat-reports`, `/api/memos`, `/api/inbox`, `/api/live`,
+ *       `/api/pipeline/status`, `/api/architect/jobs`),
  *   3. the destructive endpoints reject a wrong `confirm` with HTTP 400, which proves
  *      the validation gate is in front of the side effect.
  *
@@ -50,10 +53,21 @@ const USAGE = [
 
 /** Read only API surface that must answer 200 with JSON. */
 export const READ_ONLY_ROUTES = Object.freeze([
+  '/api/me',
   '/api/overview',
   '/api/coherence/report',
   '/api/specs',
+  '/api/specs/reports',
   '/api/snippets/term',
+  '/api/boards',
+  '/api/repos',
+  '/api/review/feed',
+  '/api/review/chat-reports',
+  '/api/memos',
+  '/api/inbox',
+  '/api/live',
+  '/api/pipeline/status',
+  '/api/architect/jobs',
 ])
 
 /**
