@@ -158,14 +158,53 @@ export function initialReviewItems(now = Date.now()) {
  * 先頭 SPEC だけが `[DEMO-n]` バッチを持つ（起票→進行→レシートのツアーはこの 3 件で回す）。
  */
 export function demoSpects(now = Date.now()) {
+  // Launchpad は既定でアクティブ SPEC だけを出す（`?includeArchived=1` は本番のみ）。
+  // アーカイブ済みは `archivedSpecs` に分けて返し、「Show archived (N)」の材料にする（D84）。
+  const all = currentSpecs(now)
+  const active = all.filter((s) => !s.archived)
+  const archived = all.filter((s) => s.archived)
   return {
     ok: true,
     repo: DEMO_REPO,
     label: 'hermes-pilot (demo)',
     path: DEMO_REPO_PATH,
     board: DEMO_BOARD,
-    specs: currentSpecs(now),
+    specs: active,
+    archivedSpecs: archived,
+    archivedCount: archived.length,
   }
+}
+
+/**
+ * アーカイブ済みのデモ SPEC（3 件）。
+ *
+ * `Show archived (3)` を実機幅で確認するための固定データ。バッチは 1〜2 件だけ持ち、
+ * `archived: true` / `status: 'archived'` を付ける（本番の `specs.listSpecs` と同じ形）。
+ *
+ * @param {number} [now] 時刻
+ * @returns {Array<object>} アーカイブ済み SPEC
+ */
+export function demoArchivedSpecList(now = Date.now()) {
+  const mk = (path, title, n, ageDays) => ({
+    path,
+    title,
+    mtime: now - ageDays * 24 * 60 * MIN,
+    valid: true,
+    archived: true,
+    status: 'archived',
+    batches: Array.from({ length: n }, (_, i) => ({
+      id: `AR${i + 1}`,
+      title: `${title.split('—')[0].trim()} step ${i + 1}`,
+      objective: 'Shipped earlier; kept for history.',
+      mode: 'zero-stop',
+      section: '',
+    })),
+  })
+  return [
+    mk('docs/SPEC-DEMO-V3.md', 'SPEC: Demo — three tabs and the review sheet', 2, 9),
+    mk('docs/SPEC-DEMO-V2.md', 'SPEC: Demo — first kanban round trip', 2, 16),
+    mk('docs/SPEC-DEMO-V1.md', 'SPEC: Demo — static shell', 1, 23),
+  ]
 }
 
 /**
@@ -176,7 +215,7 @@ export function demoSpects(now = Date.now()) {
  */
 export function currentSpecs(now = Date.now()) {
   const seeded = Array.isArray(state?.seededSpecs) ? state.seededSpecs : []
-  return [...demoSpecList(now), ...seeded]
+  return [...demoSpecList(now), ...demoArchivedSpecList(now), ...seeded]
 }
 
 /**
@@ -377,7 +416,13 @@ export function createDemoState(now = Date.now()) {
      * `pipeline.optimize` で true になり、`pipeline.status` がそのまま返す
      * （デモで「適用前 → 適用後」を目で見られる）。
      */
-    pipeline: { optimized: false },
+    pipeline: { optimized: false, profile: 'mobile' },
+    /**
+     * COH-2: 実行制御（緊急停止）の状態。本番の `ops.paused()` と同じ形で、
+     * `POST /api/gateway/{pause,resume}` が更新し、`/api/overview` の `paused` と
+     * タスク一覧の `paused` が同じ値を返す（デモでも停止バナーと解除を体験できる）。
+     */
+    demoOps: { paused: { engaged: false, reason: null, engagedAt: null } },
   }
 }
 
@@ -696,6 +741,8 @@ export function demoRoute(path) {
   if (p === '/api/review') return { name: 'review.list', params }
   if (p === '/api/review/feed') return { name: 'review.feed', params }
   if (p === '/api/review/chat-reports') return { name: 'review.chatReports', params }
+  // 1 会話ぶんの完了報告（`MemosPane` が未読バッジの材料に読む。本番 `/api/review/chat-report`）
+  if (p === '/api/review/chat-report') return { name: 'review.chatReport', params }
   if (p === '/api/review/library') return { name: 'review.library', params }
   if (p === '/api/review/targets') return { name: 'review.targets', params }
   if (p.startsWith('/api/review/annotation')) return { name: 'review.annotationNew', params }
@@ -708,6 +755,12 @@ export function demoRoute(path) {
     if (leaf === 'approve') return { name: 'review.approve', id, params }
     if (leaf === 'reopen') return { name: 'review.reopen', id, params }
     if (leaf === 'worker') return { name: 'review.worker', id, params }
+    if (leaf === 'session') return { name: 'review.session', id, params }
+    // 非 JSON（画像・HTML）。デモでは img/iframe のシムが差し替えるので、ここは marker を返す。
+    if (leaf === 'image') return { name: 'review.image', id, params }
+    if (leaf === 'thumb') return { name: 'review.thumb', id, params }
+    if (leaf === 'sheet') return { name: 'review.sheet', id, params }
+    if (leaf === 'view') return { name: 'review.view', id, params }
     return { name: 'review.misc', id, params }
   }
   if (p === '/api/boards') return { name: 'boards', params }
@@ -722,6 +775,8 @@ export function demoRoute(path) {
   }
   if (p === '/api/inbox') return { name: 'inbox', params }
   if (p === '/api/specs') return { name: 'specs', params }
+  // SPEC-COHERENCE §3.4: ライブ診断（デモは固定フィクスチャを返す）
+  if (p === '/api/coherence/report') return { name: 'coherence.report', params }
   // V6 §3.4: 仕様書の本文（MD プレビュー）
   if (p === '/api/specs/content') return { name: 'specs.content', params }
   if (p === '/api/specs/launch') return { name: 'specs.launch', params }
@@ -738,6 +793,7 @@ export function demoRoute(path) {
   if (p === '/api/usage') return { name: 'usage', params }
   // V10 §3.3 / D47: デモでも本番と同じエンドポイントを拾う（画面側にデモ分岐を作らない）
   if (p === '/api/pipeline/status') return { name: 'pipeline.status', params }
+  if (p === '/api/pipeline/profile') return { name: 'pipeline.profile', params }
   if (p === '/api/pipeline/optimize') return { name: 'pipeline.optimize', params }
   if (p === '/api/auth/pairing') return { name: 'auth.pairing', params }
   if (p === '/api/logs') return { name: 'logs', params }
@@ -754,8 +810,15 @@ export function demoRoute(path) {
   if (parts[1] === 'memos' && parts[2]) return { name: 'memos.item', id: decodeURIComponent(parts[2]), params }
   if (p === '/api/repos') return { name: 'repos', params }
   if (p === '/api/telemetry/receipt') return { name: 'receipt', params }
+  // Discord ディープリンク（本番 `/api/discord/session`）。デモは「リンク無し」を明示して返す。
+  if (p === '/api/discord/session') return { name: 'discord.session', params }
   if (p.startsWith('/api/auth/')) return { name: 'auth', params }
-  if (p.startsWith('/api/gateway/')) return { name: 'gateway', params }
+  if (p.startsWith('/api/gateway/')) {
+    // 緊急停止は状態を持つ（`/api/overview` の `paused` とタスク一覧へ連動する）
+    const action = parts[2] ?? ''
+    if (action === 'pause' || action === 'resume') return { name: `gateway.${action}`, action, params }
+    return { name: 'gateway', params }
+  }
   if (p === '/api/client-error') return { name: 'clientError', params }
   return { name: 'fallback', params }
 }
@@ -783,6 +846,8 @@ function overviewBody() {
     },
     runningTasks: running,
     checkedAt: Date.now(),
+    /** 緊急停止（本番 `ops.paused()` と同じ形）。`gateway.pause` / `gateway.resume` が更新する。 */
+    paused: state.demoOps.paused,
     demo: true,
   }
 }
@@ -844,9 +909,31 @@ function receiptBody() {
   }
 }
 
+/**
+ * 完走レポートに付く汎用予兆検知の見本（SPEC-COHERENCE §3.5 / COH-5 / D83）。
+ *
+ * 形は本番 `pipeline-watcher.js` の `coherence_alert`
+ * （`{summary, recommendedSweep, highlights, layers}`）と同じ。自動起票はしない。
+ *
+ * @returns {object} デモ用の `coherence_alert`
+ */
+function demoCoherenceAlert() {
+  return {
+    summary: { hardFailCount: 0, softSignalCount: 3, hotspotCount: 1 },
+    recommendedSweep: 'hotspots',
+    highlights: [
+      'apps/web/src/features/ChatPane.jsx changed 6 times in 14 days',
+      'apps/bridge/src/server.js is 1180 lines (limit 900)',
+      '3 active SPEC files (limit 6); archive finished specs',
+    ],
+    layers: { universal: true, repoConfig: true, repoChecker: true },
+  }
+}
+
 /** Step 2 の完了（全バッチ done）で統合サマリと完了レシートを作る。 */
 function finishPipeline() {
   const now = Date.now()
+  const coherenceAlert = demoCoherenceAlert()
   const reportMarkdown = [
     '# Demo pipeline — 3 batches',
     '',
@@ -855,8 +942,20 @@ function finishPipeline() {
     '- [DEMO-3] Summary and completion receipt — done',
     '',
     'verify: npm run verify -> exit 0; 402 tests',
+    '',
+    '#### 🧭 Coherence Signals',
+    '- Recommended sweep: hotspots',
+    '- 0 hard fail(s) · 3 soft signal(s) · 1 hotspot(s)',
+    ...coherenceAlert.highlights.map((h) => `- ${h}`),
   ].join('\n')
-  state.report = { at: now, board: DEMO_BOARD, spec: DEMO_SPEC_PATH, markdown: reportMarkdown, demo: true }
+  state.report = {
+    at: now,
+    board: DEMO_BOARD,
+    spec: DEMO_SPEC_PATH,
+    markdown: reportMarkdown,
+    coherence_alert: coherenceAlert,
+    demo: true,
+  }
   state.receipt = {
     ok: true,
     at: now,
@@ -1415,10 +1514,17 @@ export function demoArchitectJobs(board = DEMO_BOARD) {
  */
 export function demoPipelineStatus() {
   const optimized = Boolean(state.pipeline?.optimized)
+  const pilotProfile = String(state.pipeline?.profile || 'mobile')
   const bundled = ['quick-review', 'annotation', 'spec-architect']
   return {
     ok: true,
-    soul: { applied: optimized, path: '~/.hermes/SOUL.md' },
+    pilotProfile,
+    availableProfiles: ['mobile', 'default'],
+    soul: {
+      applied: optimized,
+      profile: pilotProfile,
+      path: pilotProfile === 'default' ? '~/.hermes/SOUL.md' : `~/.hermes/profiles/${pilotProfile}/SOUL.md`,
+    },
     hermes: { present: optimized ? bundled.slice() : ['quick-review', 'annotation'] },
     bundled: { names: bundled },
     demo: true,
@@ -1618,12 +1724,28 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
       return { ok: false, message: 'demo', demo: true }
     case 'review.misc':
       return { ok: true, demo: true }
+    // COH-2: 1 会話ぶんの完了報告（未読の点の材料）。`{ items: [...] }` は本番と同じ形。
+    case 'review.chatReport':
+      return {
+        sessionId: String(route.params.get('session_id') || ''),
+        items: state.chatReports.filter((x) => !route.params.get('session_id') || x.sessionId === route.params.get('session_id')),
+      }
+    // COH-2: 実行ワーカーの session_id 解決（`ChatPane` の worker 連携が読む）
+    case 'review.session':
+      return { taskId: route.id, status: 'running', sessionId: DEMO_SESSION, demo: true }
+    // COH-2: 非 JSON 応答（画像・HTML）。デモでは img/iframe のシムが差し替えるので marker を返す。
+    case 'review.image':
+    case 'review.thumb':
+    case 'review.sheet':
+    case 'review.view':
+      return { ok: true, nonJson: true, path: route.name, id: route.id, demo: true }
     case 'boards':
       return {
         boards: [{ slug: DEMO_BOARD, label: 'Mobile (demo)', current: true, counts: { running: state.tasks.filter((t) => t.status === 'running').length } }],
       }
     case 'board.tasks':
-      return { board: route.id, tasks: state.tasks.map((x) => ({ ...x })) }
+      // COH-2: 緊急停止の状態も返す（本番の `/api/overview` の `paused` と同じ値）。
+      return { board: route.id, tasks: state.tasks.map((x) => ({ ...x })), paused: state.demoOps.paused }
     // V6 §3.5: 履歴の詳細・差分（`🔍 タスク詳細・差分を見る`）
     case 'board.task': {
       const task = state.tasks.find((t) => t.id === route.taskId)
@@ -1663,6 +1785,9 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
       return { items: [] }
     case 'specs':
       return demoSpects(state.now)
+    // SPEC-COHERENCE §3.4 / D82: スイープシートのライブ診断（バッジ・推奨プリセットの材料）
+    case 'coherence.report':
+      return demoCoherenceReport()
     // V6 §3.4: 仕様書の本文（MD プレビュー）
     case 'specs.content':
       return demoSpecContent(route.params.get('path'), state.now)
@@ -1940,17 +2065,32 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
       return { repos: [{ id: 'hermes-pilot-demo', label: 'hermes-pilot (demo)', path: '/demo/hermes-pilot', board: DEMO_BOARD }] }
     case 'receipt':
       return receiptBody()
-    // V10 §3.3 / D47: 1 タップ環境最適化（SOUL.md ＋ 同梱 3 スキル）の状態と適用
+    // V10 §3.3 / D47: 1 タップ環境最適化（SOUL.md ＋ 同梱 3 スキル）と専用プロファイル選択
     case 'pipeline.status':
       return demoPipelineStatus()
+    case 'pipeline.profile': {
+      const next = String(payload?.profile || '').trim()
+      if (next) state.pipeline.profile = next === 'default' ? 'default' : next
+      publish('pipeline')
+      return {
+        ok: true,
+        pilotProfile: state.pipeline.profile,
+        status: demoPipelineStatus(),
+        demo: true,
+      }
+    }
     case 'pipeline.optimize': {
-      // 本番は書き込み（SOUL.md への冪等追記＋スキル配置）。デモはフラグを立てるだけ。
+      // 本番は書き込み（専用プロファイル SOUL.md への冪等追記＋スキル配置）。デモはフラグを立てるだけ。
+      if (typeof payload?.profile === 'string' && payload.profile.trim()) {
+        state.pipeline.profile = payload.profile.trim()
+      }
       const doSoul = payload?.soul !== false
       const doSkills = payload?.skills !== false
       if (doSoul && doSkills) state.pipeline.optimized = true
       publish('pipeline')
       return {
         ok: true,
+        pilotProfile: state.pipeline.profile,
         soul: { ok: true, applied: doSoul, changed: doSoul },
         skills: { ok: true, placed: doSkills ? 3 : 0 },
         status: demoPipelineStatus(),
@@ -1987,6 +2127,26 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
       return demoSearchHits(route.params.get('q') || '')
     case 'auth':
       return { ok: true, token: null, demo: true }
+    // COH-2: Discord スレッドへのリンク。デモは「リンク無し」を明示する（本番 404 と同じ意味）。
+    case 'discord.session':
+      return { ok: true, found: false, link: null, demo: true }
+    // COH-2: 緊急停止（新規作業のみ停止）。本番 `ops.pause()` / `ops.resume()` と同じ形の状態を返し、
+    // `/api/overview` の `paused` とタスク一覧と連動させる（デモでも停止バナーが出る）。
+    case 'gateway.pause':
+    case 'gateway.resume': {
+      const action = route.name === 'gateway.pause' ? 'pause' : 'resume'
+      const expected = action.toUpperCase()
+      // 本番は `confirm` が一致しないと 400（`CONFIRM_MISMATCH`）。デモも同じ扱いにする。
+      if (String(payload?.confirm ?? '').toUpperCase() !== expected) {
+        return { ok: false, code: 'CONFIRM_MISMATCH', expected, demo: true }
+      }
+      const nowIso = new Date().toISOString()
+      state.demoOps.paused = action === 'pause'
+        ? { engaged: true, reason: String(payload?.reason ?? 'mobile'), engagedAt: nowIso }
+        : { engaged: false, reason: null, engagedAt: null }
+      publish('overview')
+      return { ok: true, action, state: state.demoOps.paused, output: 'demo', at: Date.now(), demo: true }
+    }
     case 'gateway':
       return { ok: true, state: 'running', demo: true }
     case 'clientError':
@@ -2182,4 +2342,43 @@ export function demoSocket(path = '/ws/chat') {
     sock.onmessage?.({ data: JSON.stringify({ jsonrpc: '2.0', method: 'gateway.ready', params: { type: 'gateway.ready' } }) })
   }, 0)
   return sock
+}
+
+/**
+ * `GET /api/coherence/report` のデモ応答（SPEC-COHERENCE §3.4 / D82）。
+ *
+ * 本番は対象リポジトリで `analyzeCoherence()` を走らせる。デモはバックエンドを持たないので、
+ * スイープシートのバッジ・推奨プリセット・起点ファイルが成立する最小の信号集合を返す。
+ * `layers` も本番と同じ形（汎用 Layer 1 ＋ リポジトリ固有 Layer 2）で揃えておく。
+ * @returns {object} 診断レポート
+ */
+function demoCoherenceReport() {
+  return {
+    ok: false,
+    demo: true,
+    generatedAt: new Date().toISOString(),
+    repoRoot: '/demo/hermes-pilot',
+    layers: { universal: true, repoConfig: true, repoChecker: true },
+    hardFails: [
+      { rule: 'event-contract', file: 'apps/web/src/App.jsx', message: 'event dispatched outside the shared contract' },
+      { rule: 'api-parity', file: 'apps/web/src/demo/mockApi.js', message: 'route exists in the web layer only' },
+    ],
+    softSignals: [
+      { rule: 'debt-spike', file: 'apps/web/src/features/ChatPane.jsx', message: '9 TODO/FIXME markers in recently changed code' },
+      { rule: 'spec-sprawl', file: 'docs/SPEC-PILOT-V11.md', message: '7 active specs without an archive status' },
+    ],
+    hotspots: [
+      { file: 'apps/web/src/styles.css', touches: 10, lines: 7012 },
+      { file: 'apps/web/src/features/ChatPane.jsx', touches: 6, lines: 3331 },
+    ],
+    summary: {
+      hardFailCount: 2,
+      softSignalCount: 2,
+      hotspotCount: 2,
+      activeSpecCount: 7,
+      archivedSpecCount: 3,
+      deprecatedRoutes: 1,
+    },
+    recommendedSweep: 'contracts',
+  }
 }

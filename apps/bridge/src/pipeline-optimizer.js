@@ -18,6 +18,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import { VERIFY_COMMAND_NOUN } from './contracts/verify.js'
 
 /** リポジトリのルート（このファイルは `apps/bridge/src/` の下）。 */
 export const REPO_ROOT = path.resolve(import.meta.dirname, '../../..')
@@ -47,17 +48,23 @@ export const A2B_END = '<!-- hermes-pilot:a2b:end -->'
 export const A2B_RULES = [
   '## Hermes Pilot A2B pipeline',
   '',
+  'Apply the rules below ONLY when working on a Hermes Pilot kanban task or A2B spec run',
+  '(or when explicitly asked to use `spec-architect` / `quick-review` / `annotation`).',
+  'In normal chat conversations outside kanban tasks, reply normally in chat without filing kanban tasks.',
+  '',
   '- For specification work, follow the two-round `spec-architect` skill (question sheet → SPEC).',
   '- When a decision is needed, do not dump long questions into chat. Build a `quick-review` sheet,',
   '  file a task with a `[review] label=... round=...` line, and stop with `needs_input`.',
   '- Take visual sign-off through `annotation` (screenshot + red marks). Do not ask back in prose.',
-  // D60 / D61 / D63: 抽象ロール・ネイティブ委譲・外部 CLI 禁止（SOUL を太らせないため 3 行に抑える）
+  // D60 / D61 / D63: 抽象ロール・ネイティブ委譲・外部 CLI 禁止（未定義時は現在モデルで続行）
   '- Reason in abstract roles (`role:planner` / `role:builder` / `role:visual-reviewer` / `role:decision-framer`)',
   '  and delegate with `delegate_task` using the per-role model assignment and fallback order in profile memory.',
-  '  On delegation failure, rate limit, timeout or an unsupported model, fall back instead of stopping; never',
-  '  spawn an external AI CLI subprocess.',
+  '  If profile memory does not define a role table, or on delegation failure, rate limit, timeout or an',
+  '  unsupported model, fall back and continue with your current model instead of stopping; never spawn an',
+  '  external AI CLI subprocess.',
   '- If the task body carries `Mode: zero-stop` / `fast-track-review` / `visual-gate`, follow that contract.',
-  '  `zero-stop` self-repairs until `npm run verify` passes, then marks the task `done`.',
+  `  \`zero-stop\` self-repairs until ${VERIFY_COMMAND_NOUN} passes, then marks the task \`done\`.`,
+  '  The command and the screen sizes come from the target repository, never from a plugin-wide default.',
   '- Keep completion reports to four points: what changed / verification command and exit code / unverified / next step.',
 ].join('\n')
 
@@ -217,12 +224,30 @@ export function optimizeHermesSoul({ hermesHome, now = Date.now(), block = A2B_R
 }
 
 /**
+ * A2B パイプライン用の既定専用プロファイル（普段使いの `default` を汚さないため分離・D64 拡張）。
+ */
+export const DEFAULT_PILOT_PROFILE = 'mobile'
+
+const PROFILE_NAME_RE = /^[A-Za-z0-9._-]{1,64}$/
+
+/**
+ * プロファイル名を安全な識別子へ正規化する（不正値・パストラバーサルは既定 `mobile` へ）。
+ * @param {unknown} value 入力
+ * @returns {string} 正規化後のプロファイル名
+ */
+export function sanitizePilotProfile(value) {
+  const s = String(value ?? '').trim()
+  if (!s || s === '.' || s === '..' || !PROFILE_NAME_RE.test(s)) return DEFAULT_PILOT_PROFILE
+  return s
+}
+
+/**
  * プロファイル配下で `SOUL.md` を**新規作成してよい**名前（D64）。
  *
  * ディレクトリが既にある場合だけ、そして `mobile` だけ（実運用で毎ターン読ませたいプロファイル）。
  * それ以外のプロファイルは既存 `SOUL.md` があるときだけ更新する＝人の環境を勝手に増やさない。
  */
-export const PROFILE_SOUL_CREATE_IF_MISSING = ['mobile']
+export const PROFILE_SOUL_CREATE_IF_MISSING = [DEFAULT_PILOT_PROFILE]
 
 /**
  * `<hermesHome>/profiles` 配下のプロファイル名（ディレクトリのみ・隠しディレクトリ除外）。
@@ -244,14 +269,11 @@ export function listProfileNames(hermesHome) {
 }
 
 /**
- * プロファイル 1 つ分の `SOUL.md` 適用状況（**中身は返さない**）。
- *
- * @param {string} hermesHome Hermes のホーム
- * @param {string} name プロファイル名
- * @returns {{name: string, path: string, exists: boolean, applied: boolean, backups: number}} 状態
+ * 1 つの `SOUL.md` の適用状態とバックアップ数を読む（中身は返さない）。
+ * @param {string} soulPath パス
+ * @returns {{path: string, exists: boolean, applied: boolean, backups: number, latestBackup: string|null}} 状態
  */
-function profileSoulState(hermesHome, name) {
-  const soulPath = path.join(String(hermesHome), 'profiles', name, 'SOUL.md')
+function inspectSoulFile(soulPath) {
   let exists = false
   let applied = false
   try {
@@ -261,13 +283,131 @@ function profileSoulState(hermesHome, name) {
   } catch {
     exists = false
   }
-  let backups = 0
+  let backups = []
   try {
-    backups = fs.readdirSync(path.dirname(soulPath)).filter((n) => n.startsWith('SOUL.md.bak-')).length
+    backups = fs
+      .readdirSync(path.dirname(soulPath))
+      .filter((n) => n.startsWith('SOUL.md.bak-'))
+      .sort()
   } catch {
-    backups = 0
+    backups = []
   }
-  return { name, path: soulPath, exists, applied, backups }
+  return {
+    path: soulPath,
+    exists,
+    applied,
+    backups: backups.length,
+    latestBackup: backups.length ? backups[backups.length - 1] : null,
+  }
+}
+
+/**
+ * プロファイル 1 つ分の `SOUL.md` 適用状況（**中身は返さない**）。
+ *
+ * @param {string} hermesHome Hermes のホーム
+ * @param {string} name プロファイル名
+ * @returns {{name: string, path: string, exists: boolean, applied: boolean, backups: number}} 状態
+ */
+function profileSoulState(hermesHome, name) {
+  const s = inspectSoulFile(path.join(String(hermesHome), 'profiles', name, 'SOUL.md'))
+  return { name, path: s.path, exists: s.exists, applied: s.applied, backups: s.backups }
+}
+
+/**
+ * 選択された Pilot 専用プロファイル（既定 `mobile`）を非破壊・冪等に準備・適用する。
+ *
+ * - `profile !== 'default'`（既定 `mobile`）のときは `profiles/<profile>/SOUL.md` のみを対象とし、
+ *   ルートの `~/.hermes/SOUL.md` や他の未適用プロファイルへは 1 文字も追記しない（過干渉防止）。
+ * - ルートに `config.yaml` がありプロファイル側にまだ無ければ初期設定としてコピーする（`force: false`）。
+ * - 既にマーカーを持つ別 `SOUL.md` がある場合は最新ルールで冪等同期する（`create: false, append: false`）。
+ *
+ * @param {{hermesHome?: string, profile?: string, now?: number, block?: string}} [opts] 入力
+ * @returns {{ok: boolean, profile: string, soul: object, rootSoul: object, profiles: Array<object>, copiedConfig: boolean}} 結果
+ */
+export function ensurePilotProfile({
+  hermesHome,
+  profile = DEFAULT_PILOT_PROFILE,
+  now = Date.now(),
+  block = A2B_RULE_BLOCK,
+} = {}) {
+  const hh = String(hermesHome ?? process.env.HERMES_HOME ?? path.join(os.homedir(), '.hermes'))
+  const target = sanitizePilotProfile(profile)
+  let copiedConfig = false
+  let soul
+  let rootSoul
+
+  if (target === 'default') {
+    soul = optimizeHermesSoul({ hermesHome: hh, now, block })
+    rootSoul = soul
+  } else {
+    const profileDir = path.join(hh, 'profiles', target)
+    const memoriesDir = path.join(profileDir, 'memories')
+    fs.mkdirSync(memoriesDir, { recursive: true })
+    const rootConfig = path.join(hh, 'config.yaml')
+    const profileConfig = path.join(profileDir, 'config.yaml')
+    try {
+      if (fs.existsSync(rootConfig) && !fs.existsSync(profileConfig)) {
+        fs.cpSync(rootConfig, profileConfig, { force: false, errorOnExist: true })
+        copiedConfig = true
+      }
+    } catch {
+      copiedConfig = false
+    }
+    const { exists: _e, applied: _a, ...applied } = applySoulFile(path.join(profileDir, 'SOUL.md'), {
+      now,
+      block,
+      create: true,
+      append: true,
+    })
+    soul = applied
+    // ルートの SOUL.md は「既にマーカーが入っているときだけ」追従させ、未適用なら触らない。
+    const { exists: _re, applied: _ra, ...rootRes } = applySoulFile(path.join(hh, 'SOUL.md'), {
+      now,
+      block,
+      create: false,
+      append: false,
+    })
+    rootSoul = rootRes
+  }
+
+  const others = []
+  for (const name of listProfileNames(hh)) {
+    if (name === target) continue
+    if (!PROFILE_NAME_RE.test(name) || name === '.' || name === '..') continue
+    const r = applySoulFile(path.join(hh, 'profiles', name, 'SOUL.md'), {
+      now,
+      block,
+      create: false,
+      append: false,
+    })
+    const state = profileSoulState(hh, name)
+    others.push({
+      name,
+      path: r.path,
+      exists: r.exists,
+      applied: Boolean(r.applied),
+      changed: Boolean(r.changed),
+      mode: r.mode,
+      backupPath: r.backupPath ?? null,
+      backups: state.backups,
+      ...(r.error ? { error: r.error } : {}),
+    })
+  }
+  const targetEntry =
+    target === 'default'
+      ? []
+      : [
+          {
+            name: target,
+            ...profileSoulState(hh, target),
+            changed: Boolean(soul?.changed),
+            mode: soul?.mode,
+            backupPath: soul?.backupPath ?? null,
+          },
+        ]
+  const profilesList = [...targetEntry, ...others].sort((a, b) => a.name.localeCompare(b.name))
+  const ok = Boolean(soul?.ok) && Boolean(rootSoul?.ok ?? true) && others.every((p) => p.mode !== 'error')
+  return { ok, profile: target, soul, rootSoul, profiles: profilesList, copiedConfig }
 }
 
 /**
@@ -343,21 +483,14 @@ export function optimizeProfileSouls({ hermesHome, now = Date.now(), block = A2B
 }
 
 /**
- * Antigravity / 汎用エージェントのスキル置き場の候補。
- * `~/.gemini` や `~/.agents` が**無い**環境では配置しない（勝手にディレクトリを作らない）。
+ * Hermes 本体のスキル置き場候補（他エージェント領域 `~/.gemini` / `~/.agents` には書き込まない）。
  */
 export const SKILL_TARGET_CANDIDATES = [
   {
-    id: 'antigravity',
-    /** Antigravity のプラグイン・スキル置き場 */
-    dir: (home) => path.join(home, '.gemini', 'config', 'plugins', 'hermes-pilot-architect', 'skills'),
-    /** このディレクトリの親（`~/.gemini`）が存在するときだけ候補にする */
-    guard: (home) => path.join(home, '.gemini'),
-  },
-  {
-    id: 'agents',
-    dir: (home) => path.join(home, '.agents', 'skills'),
-    guard: (home) => path.join(home, '.agents'),
+    id: 'hermes',
+    /** Hermes 本体のスキル置き場（`~/.hermes/skills`） */
+    dir: (home, hermesHome) => path.join(hermesHome ?? path.join(home, '.hermes'), 'skills'),
+    guard: () => true,
   },
 ]
 
@@ -427,11 +560,13 @@ export function installSkill({ name, srcDir, destDir }) {
  */
 export function optimizeAntigravitySkills({
   home = os.homedir(),
+  hermesHome = null,
   skillsSrcDir = DEFAULT_SKILLS_SRC,
   targets = null,
   names = BUNDLED_SKILLS,
 } = {}) {
   const base = String(home || os.homedir())
+  const hh = String(hermesHome || path.join(base, '.hermes'))
   let list
   if (Array.isArray(targets) && targets.length) {
     // 明示指定（テスト・上級者向け）。`~` は展開する。
@@ -439,7 +574,7 @@ export function optimizeAntigravitySkills({
   } else {
     list = SKILL_TARGET_CANDIDATES.filter((c) => {
       try {
-        return fs.existsSync(c.guard(base))
+        return c.guard(base, hh)
       } catch {
         return false
       }
@@ -448,7 +583,7 @@ export function optimizeAntigravitySkills({
 
   const out = []
   for (const target of list) {
-    const dir = target.dir(base)
+    const dir = target.dir(base, hh)
     const entry = { id: target.id, path: dir, installed: [], skipped: [] }
     for (const name of names) {
       const r = installSkill({ name, srcDir: skillsSrcDir, destDir: dir })
@@ -471,36 +606,23 @@ export const optimizeAgentSkills = optimizeAntigravitySkills
 /**
  * 適用状況を返す（**中身は返さない**。真偽値・件数・ファイル名だけ）。
  *
- * @param {{hermesHome?: string, home?: string, skillsSrcDir?: string}} [opts] 入力
+ * @param {{hermesHome?: string, home?: string, skillsSrcDir?: string, pilotProfile?: string|null}} [opts] 入力
  * @returns {object} 状態
  */
 export function getOptimizeStatus({
   hermesHome = process.env.HERMES_HOME ?? path.join(os.homedir(), '.hermes'),
   home = os.homedir(),
   skillsSrcDir = DEFAULT_SKILLS_SRC,
+  pilotProfile = null,
 } = {}) {
   const hh = String(hermesHome)
   const base = String(home || os.homedir())
-  const soulPath = path.join(hh, 'SOUL.md')
-
-  let soulExists = false
-  let soulApplied = false
-  let backups = []
-  try {
-    const text = fs.readFileSync(soulPath, 'utf8')
-    soulExists = true
-    soulApplied = text.includes(A2B_START) && text.includes(A2B_END)
-  } catch {
-    soulExists = false
-  }
-  try {
-    backups = fs
-      .readdirSync(hh)
-      .filter((n) => n.startsWith('SOUL.md.bak-'))
-      .sort()
-  } catch {
-    backups = []
-  }
+  const activeProfile = pilotProfile ? sanitizePilotProfile(pilotProfile) : null
+  const rootSoul = inspectSoulFile(path.join(hh, 'SOUL.md'))
+  const soul =
+    activeProfile && activeProfile !== 'default'
+      ? { profile: activeProfile, ...inspectSoulFile(path.join(hh, 'profiles', activeProfile, 'SOUL.md')) }
+      : { ...(activeProfile ? { profile: activeProfile } : {}), ...rootSoul }
 
   const skillState = (dir) => {
     const present = []
@@ -517,25 +639,24 @@ export function getOptimizeStatus({
   }
 
   const antigravity = SKILL_TARGET_CANDIDATES.map((c) => {
-    const dir = c.dir(base)
+    const dir = c.dir(base, hh)
     let available = false
     try {
-      available = fs.existsSync(c.guard(base))
+      available = Boolean(c.guard(base, hh))
     } catch {
       available = false
     }
     return { id: c.id, available, ...skillState(dir) }
   })
 
+  const availableProfiles = [...new Set([DEFAULT_PILOT_PROFILE, ...listProfileNames(hh), 'default'])]
+
   return {
     ok: true,
-    soul: {
-      path: soulPath,
-      exists: soulExists,
-      applied: soulApplied,
-      backups: backups.length,
-      latestBackup: backups.length ? backups[backups.length - 1] : null,
-    },
+    pilotProfile: activeProfile ?? DEFAULT_PILOT_PROFILE,
+    availableProfiles,
+    soul,
+    rootSoul,
     // プロファイル配下（`profiles/<name>/SOUL.md`）も「適用済みか」だけを返す（中身は返さない）。
     profiles: listProfileNames(hh).map((name) => profileSoulState(hh, name)),
     hermes: skillState(path.join(hh, 'skills')),

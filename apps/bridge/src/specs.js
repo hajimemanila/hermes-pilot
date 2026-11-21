@@ -5,6 +5,7 @@ import { ApiError } from './api-errors.js'
 import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'
 import { DEFAULT_LANG, normalizeLang } from './lang.js'
 import { languageRule } from './language-rule.js'
+import { SCREEN_CHECK_CONTRACT, VERIFY_CONTRACT } from './contracts/verify.js'
 
 /**
  * Spec Launchpad — `docs/SPEC-*.md` を検出し、バッチ見出しをカンバンへ一括起票する。
@@ -17,8 +18,8 @@ import { languageRule } from './language-rule.js'
  * 二重タップ・再読み込み・再起動で同じバッチが積み上がらないようにするための規則。
  */
 
-/** 走査するディレクトリ（リポジトリ直下と `docs/`）。 */
-export const SPEC_DIRS = ['docs', '']
+/** 走査するディレクトリ（リポジトリ直下・`docs/`・アーカイブ置き場）。 */
+export const SPEC_DIRS = ['docs', 'docs/archive', '']
 
 /** ファイル名の規則（`SPEC*.md`。大文字小文字は問わない）。 */
 export const SPEC_FILE_RE = /^SPEC.*\.md$/i
@@ -28,6 +29,12 @@ export const BATCH_ID_RE = /^[A-Za-z][A-Za-z0-9._-]{0,15}$/
 
 /** 完了してよい状態（これ以外を「未完了」とみなして重複起票を止める）。 */
 export const CLOSED_STATUSES = new Set(['done', 'archived'])
+
+/**
+ * SPEC のアーカイブ宣言（`- **Status**: archived` / `- **状態**: アーカイブ`）。
+ * バックティック・大文字小文字・補足テキストを許容する。
+ */
+export const SPEC_ARCHIVED_RE = /^\s*[-*]?\s*\*\*\s*(?:Status|状態)\s*\*\*\s*[:：]\s*[`]?\s*(?:archived|アーカイブ)/i
 
 /** タスク本文の上限（カンバン側の実用上限に合わせる）。 */
 export const BODY_MAX = 6000
@@ -145,17 +152,17 @@ export function extractRecommendedRole(section) {
 export const MODE_CONTRACTS = {
   'zero-stop': [
     '- Do not ask confirmation questions in chat.',
-    '- Repair autonomously until `npm run verify` (tests, build, checks) passes, then mark the task done.',
+    `- Repair autonomously until ${VERIFY_CONTRACT} passes, then mark the task done.`,
     '- Only when a design contradiction is unresolvable, file a `quick-review` sheet and block on it.',
   ],
   'fast-track-review': [
     '- If the change forces a choice between options, file a `quick-review` sheet (each question with `recommended: true`) before implementing, and wait for the 1-tap approval.',
-    '- Everything else proceeds without asking: implement, run `npm run verify`, then mark the task done.',
+    `- Everything else proceeds without asking: implement, run ${VERIFY_CONTRACT}, then mark the task done.`,
   ],
   'visual-gate': [
-    '- After implementing, run `npm run deploy` and verify the real screen at `390×844` and `820×1180`; capture the screenshots.',
+    `- After implementing, deploy and verify the real screen at ${SCREEN_CHECK_CONTRACT}; capture the screenshots.`,
     '- If the rendered result differs from the intent, file an `annotation` review (screenshot + marks) and wait for it.',
-    '- `npm run verify` must pass before you mark the task done.',
+    `- ${VERIFY_CONTRACT} must pass before you mark the task done.`,
   ],
 }
 
@@ -289,6 +296,37 @@ function trimTrailingRule(text) {
 }
 
 /**
+ * SPEC のアーカイブ宣言を読む（SPEC-COHERENCE §3.4 / D84）。
+ *
+ * 先頭 40 行の `- **Status**: archived` / `- **状態**: アーカイブ` を見る。本文の奥に書かれた
+ * 過去の言及（「アーカイブ規約」等）を拾わないための行数制限。
+ *
+ * @param {string} text SPEC の全文
+ * @returns {{archived: boolean, status: 'active'|'archived'}} 判定結果
+ */
+export function extractSpecStatus(text) {
+  const head = String(text ?? '').split(/\r?\n/).slice(0, 40)
+  const archived = head.some((line) => SPEC_ARCHIVED_RE.test(line))
+  return { archived, status: archived ? 'archived' : 'active' }
+}
+
+/**
+ * SPEC 一覧をアクティブ / アーカイブに分ける（Launchpad の `Show archived (N)` 用）。
+ *
+ * @param {Array<{archived?: boolean}>} list `listSpecs()` の戻り値
+ * @returns {{active: Array<object>, archived: Array<object>}} 分割結果（順序は保つ）
+ */
+export function partitionSpecs(list) {
+  const active = []
+  const archived = []
+  for (const spec of Array.isArray(list) ? list : []) {
+    if (spec?.archived) archived.push(spec)
+    else active.push(spec)
+  }
+  return { active, archived }
+}
+
+/**
  * リポジトリ内の SPEC を走査する。
  *
  * @param {string} repoPath リポジトリの絶対パス
@@ -333,10 +371,15 @@ export function listSpecs(repoPath, deps = {}) {
       }
       const parsed = parseSpec(text)
       seen.add(rel)
+      // `docs/archive/` 配下は宣言なしでもアーカイブ（置き場を移すだけで完結する規約・D84）。
+      const declared = extractSpecStatus(text)
+      const status = rel.startsWith('docs/archive/') ? { archived: true, status: 'archived' } : declared
       out.push({
         path: rel,
         title: parsed.title || name.replace(/\.md$/i, ''),
         mtime: Number(st?.mtimeMs ?? st?.mtime ?? 0),
+        archived: status.archived,
+        status: status.status,
         batches: parsed.batches,
         valid: parsed.valid,
       })
@@ -418,20 +461,47 @@ export function buildTaskBody({ specRelPath, repoPath, board, batch, chat, lang 
   return `${head}${section}${contract}`.slice(0, BODY_MAX)
 }
 
+/** SPEC 相対パスを比較用に正規化する。 */
+function normalizeSpecRelPath(p) {
+  const s = String(p ?? '').replace(/\\/g, '/').replace(/^\.\//, '').trim()
+  return s || null
+}
+
+/** タスクが属する SPEC パスを取り出す（`task.spec` 優先、無ければ本文の `Spec:` / 先頭 5 行）。 */
+export function extractTaskSpec(task) {
+  const direct = normalizeSpecRelPath(task?.spec)
+  if (direct) return direct
+  const body = String(task?.body ?? '')
+  if (!body) return null
+  const m = /^Spec:\s*(.+?)\s*$/m.exec(body)
+  if (m) return normalizeSpecRelPath(m[1])
+  const head = body.split(/\r?\n/).slice(0, 5).join('\n')
+  const leg = /(?:docs\/)?SPEC[A-Za-z0-9._-]*\.md/i.exec(head)
+  return leg ? normalizeSpecRelPath(leg[0]) : null
+}
+
 /**
  * 既存タスクの中に同じバッチの未完了タスクがあるか。
  *
- * @param {Array<{title?: string, status?: string, id?: string}>} tasks 同じボードのタスク
+ * `specRelPath` 指定時は別 SPEC に属する `[ID]` を無視する（異なる SPEC で同じ ID を使っても衝突しない）。
+ *
+ * @param {Array<{title?: string, status?: string, id?: string, spec?: string|null, body?: string}>} tasks 同じボードのタスク
  * @param {string} batchId バッチ ID
+ * @param {string|null} [specRelPath] 対象の SPEC 相対パス
  * @returns {{id: string, title: string, status: string}|null} 見つかった未完了タスク
  */
-export function findOpenBatchTask(tasks, batchId) {
+export function findOpenBatchTask(tasks, batchId, specRelPath = null) {
   const want = `[${String(batchId ?? '').trim()}]`
   if (!want || want === '[]') return null
+  const wantSpec = normalizeSpecRelPath(specRelPath)
   for (const t of Array.isArray(tasks) ? tasks : []) {
     if (!t) continue
     if (CLOSED_STATUSES.has(String(t.status ?? ''))) continue
     if (!String(t.title ?? '').trim().startsWith(want)) continue
+    if (wantSpec) {
+      const ts = extractTaskSpec(t)
+      if (ts && ts !== wantSpec) continue
+    }
     return { id: String(t.id ?? ''), title: String(t.title ?? ''), status: String(t.status ?? '') }
   }
   return null
@@ -767,7 +837,7 @@ export function createSpecs(cfg = {}, deps = {}) {
     const skipped = []
     const failed = []
     for (const batch of batches) {
-      const open = findOpenBatchTask(existing, batch.id)
+      const open = findOpenBatchTask(existing, batch.id, specRelPath)
       if (open) {
         skipped.push({ id: batch.id, title: batch.title, reason: 'exists', taskId: open.id, status: open.status })
         continue

@@ -10,6 +10,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { findHardcodedVerification } from '../src/contracts/verify.js'
 import {
   BATCH_ID_RE,
   BODY_MAX,
@@ -21,6 +22,7 @@ import {
   bodyHeadings,
   createSpecs,
   extractRecommendedRole,
+  extractSpecStatus,
   findOpenBatchTask,
   listSpecs,
   makeRunId,
@@ -28,6 +30,7 @@ import {
   normalizeRecommendedRole,
   parseCreatedTask,
   parseSpec,
+  partitionSpecs,
   pruneRuns,
   readRuns,
   readSpecContent,
@@ -244,6 +247,30 @@ test('launchSpec は 2 回目に重複起票しない（未完了があるバッ
   )
   assert.equal(second.skipped[0].reason, 'exists')
   assert.equal(calls.length, 2, 'CLI 呼び出しも増えない')
+})
+
+test('launchSpec は別 SPEC の未完了同名バッチ ID（[C1] 等）でスキップしない', async () => {
+  const root = tempDir()
+  writeFile(root, 'docs/SPEC-B.md', '# SPEC: B\n\n### Batch P1: First of B\n\n- **目的**: Test\n')
+  const boardState = [
+    { id: 't_other', title: '[P1] From SPEC-A', status: 'running', spec: 'docs/SPEC-A.md' },
+  ]
+  const specs = createSpecs(
+    {},
+    {
+      runner: async (args) => ({ code: 0, stdout: JSON.stringify({ id: 't_b1', title: args[4] }), stderr: '' }),
+      tasks: () => boardState,
+    },
+  )
+  const res = await specs.launchSpec({
+    repoPath: root,
+    board: 'mobile',
+    specRelPath: 'docs/SPEC-B.md',
+    batchIds: ['P1'],
+  })
+  assert.equal(res.ok, true)
+  assert.deepEqual(res.created.map((c) => c.id), ['P1'])
+  assert.equal(res.skipped.length, 0)
 })
 
 test('launchSpec は完了済み（done）だけなら起票し直す', async () => {
@@ -516,8 +543,10 @@ test('buildTaskBody は Mode 行と [Hermes Pilot Execution Contract] を注入�
   assert.equal(lines[batchAt + 1], 'Chat: local-abc.def:1', 'Chat が Batch の直後に無い')
   assert.equal(lines[batchAt + 2], 'Mode: visual-gate', 'Mode 行が Chat の直後に無い')
   assert.ok(body.includes(CONTRACT_HEADER), '行動契約ブロックが無い')
-  assert.ok(body.includes('npm run deploy'), 'visual-gate の契約（deploy）が入っていない')
-  assert.ok(body.includes('390×844'), 'visual-gate の実画面検証が入っていない')
+  // D85: 決め打ち（`npm run deploy` / `390×844`）を書かず、対象リポジトリの宣言へ委ねる
+  assert.ok(body.includes('deploy and verify the real screen at'), 'visual-gate の実画面検証が入っていない')
+  assert.ok(body.includes('the screen sizes the target repository declares'), '画面サイズの委譲が入っていない')
+  assert.equal(findHardcodedVerification(body).ok, true, 'visual-gate の契約に決め打ちが残っている')
   assert.ok(body.includes('## Excerpt (acceptance criteria + Verify)'), '抜粋が消えている')
   assert.equal(body.indexOf(CONTRACT_HEADER) > body.indexOf('## Excerpt'), true, '契約は本文の末尾に置く')
 })
@@ -527,9 +556,9 @@ test('buildTaskBody の契約はモードごとに違う（zero-stop / fast-trac
   const zero = buildTaskBody({ specRelPath: 'docs/SPEC-MODE.md', repoPath: '/tmp/repo', board: 'b', batch: m1 })
   const fast = buildTaskBody({ specRelPath: 'docs/SPEC-MODE.md', repoPath: '/tmp/repo', board: 'b', batch: m2 })
   assert.ok(zero.includes('Do not ask confirmation questions'), 'zero-stop の契約が無い')
-  assert.ok(zero.includes('npm run verify'))
+  assert.ok(zero.includes('the verification command the target repository declares'))
   assert.ok(fast.includes('quick-review'), 'fast-track-review の契約が無い')
-  assert.equal(zero.includes('npm run deploy'), false, 'zero-stop に visual-gate の契約が混ざっている')
+  assert.equal(zero.includes('deploy and verify the real screen'), false, 'zero-stop に visual-gate の契約が混ざっている')
 })
 
 test('buildTaskBody は後方互換: モード未宣言なら Mode 行も契約も足さない', () => {
@@ -781,7 +810,7 @@ test('buildTaskBody は Recommended Role を [Hermes Pilot Execution Contract] �
   // visual-gate はロール未宣言でも `role:visual-reviewer` 併用を勧める（既存挙動＋1 行）
   const visual = buildTaskBody({ specRelPath: 'docs/SPEC-ROLE.md', repoPath: '/tmp/repo', board: 'b', batch: rb2 })
   assert.ok(visual.includes('`role:visual-reviewer`'))
-  assert.ok(visual.includes('npm run deploy'))
+  assert.ok(visual.includes('deploy and verify the real screen at'))
 
   // 後方互換: モードもロールも無ければ契約を足さない
   const legacy = buildTaskBody({ specRelPath: 'docs/SPEC-ROLE.md', repoPath: '/tmp/repo', board: 'b', batch: rb3 })
@@ -924,4 +953,55 @@ test('既存の ja SPEC を ja で起票した本文に `## 目的` が残る（
     }
   }
   assert.ok(checked > 0, 'ja SPEC のバッチが 1 件も読めていない')
+})
+
+/* --- SPEC アーカイブ規約（SPEC-COHERENCE §3.4 / D84） ------------------------- */
+
+test('extractSpecStatus は `- **Status**: archived` と `- **状態**: アーカイブ` を読む', () => {
+  assert.deepEqual(extractSpecStatus('# SPEC: A\n\n- **Status**: archived\n'), {
+    archived: true,
+    status: 'archived',
+  })
+  assert.deepEqual(extractSpecStatus('# SPEC: A\n\n- **状態**: アーカイブ（2026-11 完了）\n'), {
+    archived: true,
+    status: 'archived',
+  })
+  assert.deepEqual(extractSpecStatus('# SPEC: A\n\n- **状態**: 仕様確定\n'), {
+    archived: false,
+    status: 'active',
+  })
+  // 先頭 40 行より奥の言及は拾わない（本文中の規約説明に引っかからない）
+  assert.equal(extractSpecStatus(`# SPEC: A\n${'\n'.repeat(60)}- **Status**: archived\n`).archived, false)
+})
+
+test('listSpecs は archived / status を付け、docs/archive 配下も拾う', () => {
+  const root = tempDir()
+  try {
+    writeFile(root, 'docs/SPEC-NEW.md', '# SPEC: new\n\n### B1: one\n\nbody\n')
+    writeFile(root, 'docs/SPEC-OLD.md', '# SPEC: old\n\n- **Status**: archived\n\n### B1: one\n\nbody\n')
+    writeFile(root, 'docs/archive/SPEC-MOVED.md', '# SPEC: moved\n\n### B1: one\n\nbody\n')
+    const list = listSpecs(root)
+    const byPath = Object.fromEntries(list.map((s) => [s.path, s]))
+    assert.equal(byPath['docs/SPEC-NEW.md'].status, 'active')
+    assert.equal(byPath['docs/SPEC-NEW.md'].archived, false)
+    assert.equal(byPath['docs/SPEC-OLD.md'].status, 'archived')
+    assert.equal(byPath['docs/SPEC-OLD.md'].archived, true)
+    // 置き場を移しただけでもアーカイブ（`docs/archive/` 規約）
+    assert.equal(byPath['docs/archive/SPEC-MOVED.md'].archived, true)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('partitionSpecs はアクティブ / アーカイブへ順序を保って分ける', () => {
+  const list = [
+    { path: 'a', archived: false },
+    { path: 'b', archived: true },
+    { path: 'c' },
+    { path: 'd', archived: true },
+  ]
+  const { active, archived } = partitionSpecs(list)
+  assert.deepEqual(active.map((s) => s.path), ['a', 'c'])
+  assert.deepEqual(archived.map((s) => s.path), ['b', 'd'])
+  assert.deepEqual(partitionSpecs(null), { active: [], archived: [] })
 })

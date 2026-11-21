@@ -4,6 +4,8 @@ import crypto from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { readRuns, runsPathFor, writeRuns } from './specs.js'
 import { summarizeTasks } from './telemetry.js'
+import { analyzeCoherence, coherenceAlertFrom } from './coherence.js'
+import { VERIFY_CONTRACT, VERIFY_CONTRACT_JA } from './contracts/verify.js'
 
 /**
  * パイプライン完走ウォッチャー（SPEC §3.2 / D20 / D21）。
@@ -187,12 +189,44 @@ export function extractIssuesAndRemaining(tasks, opts = {}) {
 }
 
 /**
+ * 予兆アラート 1 件を「次の一手」の 1 行にする（純関数・汎用表現）。
+ *
+ * D83: コマンドを決め打ちしない（`npm run …` を書かない）・自動起票もしない。
+ * 対象スイープ名は `coherence.js` の `recommendedSweep` をそのまま使い、
+ * 無いときは「対象スイープ」とだけ言う。
+ *
+ * @param {object} coherence `coherenceAlertFrom()` の出力（`alert: true`）
+ * @param {{en?: boolean, board?: string}} [opts] 言語・ボード名
+ * @returns {string} 次の一手 1 行
+ */
+export function coherenceNextStep(coherence, { en = false, board = '' } = {}) {
+  const summary = coherence?.summary ?? {}
+  const hardFailCount = Number(summary.hardFailCount ?? 0) || 0
+  const softSignalCount = Number(summary.softSignalCount ?? 0) || 0
+  const hotspotCount = Number(summary.hotspotCount ?? 0) || 0
+  const sweep = String(coherence?.recommendedSweep ?? '').trim()
+  const place = board ? `board: ${board}` : 'board'
+  return en
+    ? `Coherence signals: run ${sweep ? `the ${sweep} sweep` : 'the relevant sweep'} from Refactor & audit (${place} · ${hardFailCount} hard fail(s) / ${softSignalCount} soft signal(s) / ${hotspotCount} hotspot(s))`
+    : `コヒーレンス予兆: ${sweep ? `${sweep} スイープ` : '対象スイープ'}を「Refactor & audit」から実行する（${place} · Hard Fail ${hardFailCount} / 予兆 ${softSignalCount} / ホットスポット ${hotspotCount}）`
+}
+
+/**
  * 状況に応じた推奨ネクストステップ（純関数・最大 3 件）。
  *
- * @param {{status: string, board?: string, specRelPath?: string|null, tasks?: Array<object>, issues?: Array<object>, counts?: object}} input 入力
+ * @param {{status: string, board?: string, specRelPath?: string|null, tasks?: Array<object>, issues?: Array<object>, counts?: object, coherence?: object|null}} input 入力
  * @returns {string[]} 次の一手
  */
-export function buildNextSteps({ status, board, specRelPath, tasks = [], issues = [], counts, lang = 'ja' } = {}) {
+export function buildNextSteps({
+  status,
+  board,
+  specRelPath,
+  tasks = [],
+  issues = [],
+  counts,
+  lang = 'ja',
+  coherence = null,
+} = {}) {
   const c = counts ?? countStatuses(tasks)
   const en = lang === 'en'
   const out = []
@@ -213,9 +247,16 @@ export function buildNextSteps({ status, board, specRelPath, tasks = [], issues 
       : `${specRelPath} の残バッチを Spec Launchpad から起動する（${board}）`)
   }
   if (status !== 'halted') {
+    // D85: 検証コマンドを決め打ちしない（対象リポジトリの宣言＝SPEC Verify 欄・メモリへ委ねる）
     out.push(en
-      ? 'Run `npm run verify` and the final device/screen check, then decide on release'
-      : '`npm run verify` と実機/画面の最終確認を行い、リリース判断をする')
+      ? `Run ${VERIFY_CONTRACT} and the final screen check, then decide on release`
+      : `${VERIFY_CONTRACT_JA}と実機/画面の最終確認を行い、リリース判断をする`)
+  }
+  // 完走時の予兆検知（COH-5 / D83）: 該当スイープを促す 1 行。先頭寄りに置き、3 件枠で落とさない。
+  if (coherence?.alert === true) {
+    const line = coherenceNextStep(coherence, { en, board })
+    if (status === 'halted' && out.length > 0) out.splice(1, 0, line)
+    else out.unshift(line)
   }
   if (out.length < 2) {
     out.push(en
@@ -263,6 +304,9 @@ const REPORT_LABELS = {
     tokensValue: (t, i, o, c) => `${t}（入力 ${i} · 出力 ${o} · キャッシュ読取 ${c}）`,
     emptyDone: '（完了タスクなし）',
     emptyIssues: '無し（全項目クリーン完走）',
+    hCoherence: '予兆シグナル / Coherence Signals',
+    sweepLine: '推奨スイープ',
+    cohCounts: (h, s, hs) => `Hard Fail ${h} · 予兆 ${s} · ホットスポット ${hs}`,
   },
   en: {
     headHalted: 'Action Required',
@@ -280,6 +324,9 @@ const REPORT_LABELS = {
     tokensValue: (t, i, o, c) => `${t} (in ${i} · out ${o} · cache read ${c})`,
     emptyDone: '(no completed tasks)',
     emptyIssues: 'None (all items completed cleanly)',
+    hCoherence: 'Coherence Signals',
+    sweepLine: 'Recommended sweep',
+    cohCounts: (h, s, hs) => `${h} hard fail(s) · ${s} soft signal(s) · ${hs} hotspot(s)`,
   },
 }
 
@@ -313,6 +360,34 @@ export function fmtTokenCount(value) {
 }
 
 /**
+ * 予兆検知の入力を `coherenceAlertFrom()` の形へ揃える（純関数・COH-5）。
+ *
+ * `analyzeCoherence()` の生レポートでも、`coherenceAlertFrom()` の出力でも受け、
+ * `alert === true` のときだけ `{summary, recommendedSweep, highlights, layers}` を返す。
+ * 予兆なし・壊れた入力は `null`（レポートには何も足さない）。
+ *
+ * @param {object|null|undefined} input 解析レポート or アラート
+ * @returns {{alert: true, summary: object, recommendedSweep: string|null, highlights: string[], layers: object}|null} 正規化したアラート
+ */
+function normalizeCoherenceAlert(input) {
+  if (!input || typeof input !== 'object') return null
+  const alert = typeof input.alert === 'boolean' ? input : coherenceAlertFrom(input)
+  if (!alert || alert.alert !== true) return null
+  const summary = alert.summary ?? {}
+  return {
+    alert: true,
+    summary: {
+      hardFailCount: Number(summary.hardFailCount ?? 0) || 0,
+      softSignalCount: Number(summary.softSignalCount ?? 0) || 0,
+      hotspotCount: Number(summary.hotspotCount ?? 0) || 0,
+    },
+    recommendedSweep: alert.recommendedSweep ?? null,
+    highlights: (Array.isArray(alert.highlights) ? alert.highlights : []).slice(0, 5).map((h) => String(h ?? '')),
+    layers: alert.layers ?? { universal: true, repoConfig: false, repoChecker: false },
+  }
+}
+
+/**
  * 統合 Markdown レポートを組み立てる（純関数）。
  *
  * 所要時間は `telemetry.js` の `summarizeTasks()` を共有し、並列タスクの重なりを
@@ -329,6 +404,7 @@ export function fmtTokenCount(value) {
  *   startedAt?: number,
  *   now?: number,
  *   usage?: {apiCalls?: number|null, totalTokens?: number|null, totals?: object|null, scope?: object|null}|null,
+ *   coherence?: object|null,
  * }} input 入力
  * @returns {{text: string, markdown: string, followUpPrompt: string, counts: object, issues: Array<object>, nextSteps: string[], timing: object}} レポート
  */
@@ -343,9 +419,11 @@ export function buildPipelineReport({
   now: nowMs = Date.now(),
   usage = null,
   lang = 'ja',
+  coherence = null,
 } = {}) {
   const counts = countStatuses(tasks)
   const issues = extractIssuesAndRemaining(tasks)
+  const cohAlert = normalizeCoherenceAlert(coherence)
   const title = String(label || board || specRelPath || 'pipeline')
   const halted = status === 'halted'
 
@@ -365,7 +443,7 @@ export function buildPipelineReport({
     const elapsed = elapsedLabel(startedAt, nowMs)
     const activeLabel = fmtDurationMin(timing.durationMin, l)
     const wallLabel = fmtDurationMin(timing.wallDurationMin, l)
-    const nextSteps = buildNextSteps({ status, board, specRelPath, tasks, issues, counts, lang: l })
+    const nextSteps = buildNextSteps({ status, board, specRelPath, tasks, issues, counts, lang: l, coherence: cohAlert })
 
     const usageBits = [
       callsLabel === null ? null : `🔌 ${callsLabel} API`,
@@ -397,6 +475,15 @@ export function buildPipelineReport({
 
     const nextLines = nextSteps.map((s) => `- ${s}`)
 
+    // 予兆シグナル（COH-5 / D83）: alert === true のときだけ 1 節を足す
+    const cohLines = cohAlert
+      ? [
+          ...(cohAlert.recommendedSweep ? [`- ${L.sweepLine}: ${cohAlert.recommendedSweep}`] : []),
+          `- ${L.cohCounts(cohAlert.summary.hardFailCount, cohAlert.summary.softSignalCount, cohAlert.summary.hotspotCount)}`,
+          ...cohAlert.highlights.map((h) => `- ${h}`),
+        ]
+      : []
+
     const usageLines = [
       `- ${L.activeLine}: ${activeLabel ?? '—'}`,
       `- ${L.wallLine}: ${wallLabel ?? '—'}`,
@@ -421,6 +508,7 @@ export function buildPipelineReport({
       `#### ⚠️ ${L.hIssues}`,
       ...issueLines,
       '',
+      ...(cohLines.length ? [`#### 🧭 ${L.hCoherence}`, ...cohLines, ''] : []),
       `#### 🚀 ${L.hNext}`,
       ...nextLines,
     ].join('\n')
@@ -471,6 +559,18 @@ export function buildPipelineReport({
     },
     issues,
     nextSteps: ja.nextSteps,
+    /*
+     * 完走時の汎用予兆検知（COH-5 / D83）。`alert === true` のときだけ形を返し、
+     * 未超過・解析失敗では `null`（レポート本文も従来どおり）。
+     */
+    coherence_alert: cohAlert
+      ? {
+          summary: cohAlert.summary,
+          recommendedSweep: cohAlert.recommendedSweep,
+          highlights: cohAlert.highlights,
+          layers: cohAlert.layers,
+        }
+      : null,
     timing: {
       activeDurationMin: timing.durationMin,
       wallDurationMin: timing.wallDurationMin,
@@ -526,6 +626,7 @@ export function readPipelineReports(rootDir, opts = {}) {
         markdownEn: String(j.markdown_en ?? ''),
         followUpPrompt: String(j.follow_up_prompt ?? ''),
         counts: j.counts ?? null,
+        coherence_alert: j.coherence_alert ?? null,
       })
     } catch {
       /* 書きかけ・壊れた行は捨てる（補助情報） */
@@ -929,6 +1030,38 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
     }
   }
 
+  /**
+   * 完走した瞬間だけ走らせる汎用予兆検知（COH-5 / D55 / D83）。
+   *
+   * - `coherenceAnalyzer`（既定 `analyzeCoherence`）を **読み取り専用** で 1 回だけ呼ぶ
+   * - 実ディレクトリが存在する `workdir`（ボード既定 → ランの repoPath）にだけ走らせる
+   * - 失敗は `log.warn` のみ。レポート生成は止めない（非干渉）
+   *
+   * @param {{board: string, run?: object|null}} group グループ
+   * @returns {Promise<object|null>} `normalizeCoherenceAlert()` 相当（予兆なしは null）
+   */
+  async function coherenceFor(group) {
+    const analyzer = typeof opts.coherenceAnalyzer === 'function' ? opts.coherenceAnalyzer : analyzeCoherence
+    const workdir = boardWorkdir(group?.board) ?? group?.run?.repoPath ?? null
+    if (!workdir) return null
+    try {
+      if (!fs.statSync(String(workdir)).isDirectory()) return null
+    } catch {
+      return null // 実ディレクトリが無い workdir では走らせない
+    }
+    try {
+      const thresholds = opts.coherenceThresholds && typeof opts.coherenceThresholds === 'object'
+        ? opts.coherenceThresholds
+        : {}
+      const report = await analyzer(String(workdir), thresholds)
+      const alert = coherenceAlertFrom(report)
+      return alert?.alert === true ? alert : null
+    } catch (err) {
+      log.warn?.(`[pipeline-watcher] coherence analysis skipped: ${err?.message ?? err}`)
+      return null
+    }
+  }
+
   /** 1 ティック分の走査。テストから直接 await できる。 */
   async function tick() {
     ticks += 1
@@ -998,6 +1131,8 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
         : boardLabel(g.board)
       const gitMap = await collectGit(g.tasks)
       const usageScope = scopedUsage(g, nowMs)
+      // 収束して統合レポートを出す瞬間だけ予兆検知を走らせる（定期ポーリングでは走らせない）
+      const coherence = await coherenceFor(g)
       const report = buildPipelineReport({
         status,
         label,
@@ -1006,6 +1141,7 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
         tasks: g.tasks,
         gitMap,
         usage: usageScope,
+        coherence,
         startedAt: g.tasks.reduce((a, t) => {
           const v = Number(t.started_at ?? t.created_at ?? 0) || 0
           return a === 0 ? v : Math.min(a, v || a)
@@ -1032,6 +1168,8 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
         follow_up_prompt: report.followUpPrompt,
         follow_up: report.followUp,
         counts: report.counts,
+        // 予兆あり（alert === true）のときだけ付く（D83・自動起票はしない）
+        ...(report.coherence_alert ? { coherence_alert: report.coherence_alert } : {}),
       }
       appendJsonl(chatReportsPath, row)
       appendJsonl(reportsPath, row)

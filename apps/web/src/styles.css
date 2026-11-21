@@ -6517,6 +6517,8 @@ html[data-vibe='dopamine'] details.history-row[open] > .history-body {
   font-weight: 600;
   cursor: pointer;
   list-style: none;
+  /* 見出しは 1 行（実測 21px）だが、タップ対象は 44px 必要（WCAG 2.5.5） */
+  min-height: 44px;
 }
 
 .memos-inbox-list {
@@ -6532,6 +6534,20 @@ html[data-vibe='dopamine'] details.history-row[open] > .history-body {
   gap: 8px;
   padding-top: 8px;
   border-top: 1px solid var(--line);
+}
+
+/*
+ * 受信箱の行に置く「メモへ保存」は、共通 `.btn`（padding 10px + 13px 文字 = 実測 42px）を
+ * そのまま使うとタップ対象が 44px を割る。行の中だけ当たり判定を確保する（WCAG 2.5.5）。
+ */
+.memos-inbox-row .btn {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  flex: 0 0 auto;
+  padding-inline: 12px;
 }
 
 .memos-inbox-main {

@@ -11,6 +11,14 @@
  *  ⑥ 同一ラン/ウェーブの重複通知抑止
  *  ⑦ `state.db` cwd マッチフォールバック ＆ `__latest__` フォールバック
  *  ⑧ `review/feed.jsonl` を汚さない
+ *
+ * 追加（COH-5 / D83）:
+ *  ⑨ 完走時に汎用予兆検知を 1 回だけ走らせ `coherence_alert` と EN/JA の次の一手を付ける
+ *  ⑩ 予兆が閾値未満なら何も足さない（レポートは従来どおり）
+ *  ⑪ 解析失敗は `log.warn` のみでレポートは正常配信
+ *  ⑫ 予兆検知は完走ティックだけで、10 秒ポーリングでは走らない
+ *  ⑬ `workdir` の実ディレクトリが無ければ解析しない
+ *  ⑭ 純関数（`coherenceNextStep` / `buildNextSteps` / `buildPipelineReport`）の汎用表現
  */
 
 import test from 'node:test'
@@ -23,6 +31,7 @@ import {
   buildNextSteps,
   buildPipelineReport,
   chatFromBody,
+  coherenceNextStep,
   createPipelineWatcher,
   extractIssuesAndRemaining,
   readPipelineReports,
@@ -516,7 +525,12 @@ test('buildNextSteps は halted / done で違う提案を返す', () => {
   })
   assert.match(halted[0], /blocked\/failed/)
   const done = buildNextSteps({ status: 'done', board: BOARD, tasks: [{ status: 'done' }], issues: [] })
-  assert.equal(done.some((s) => s.includes('npm run verify')), true)
+  const doneEn = buildNextSteps({ status: 'done', board: BOARD, tasks: [{ status: 'done' }], issues: [], lang: 'en' })
+  // D85: 検証コマンドは対象リポジトリの宣言へ委ね、決め打ちしない（EN / JA 両方）
+  assert.equal(doneEn.some((s) => s.includes('the verification command the target repository declares')), true)
+  assert.equal(done.some((s) => s.includes('対象リポジトリが宣言する検証コマンド')), true)
+  assert.equal(done.some((s) => s.includes('npm run verify')), false)
+  assert.equal(doneEn.some((s) => s.includes('npm run verify')), false)
 })
 
 test('specRelFromBody / chatFromBody は行頭の `Spec:` `Chat:` を読む', () => {
@@ -546,4 +560,264 @@ test('readPipelineReports はボードで絞り、新しい順に返す（壊れ
   const onlyB = readPipelineReports(env.reviewDir, { board: 'b' })
   assert.deepEqual(onlyB.map((r) => r.board), ['b'])
   assert.deepEqual(readPipelineReports(path.join(env.root, 'nope')), [])
+})
+
+/* ---------------------------------------------------------------------------
+ * COH-5 / D83: 完走フックの汎用予兆検知（`coherence.js` は読み取り専用）
+ * ------------------------------------------------------------------------- */
+
+/** `analyzeCoherence()` の出力契約を満たすダミーレポート。 */
+function fakeCoherenceReport({ hard = 0, soft = 0, hotspot = 0, sweep = null } = {}) {
+  const hardFails = Array.from({ length: hard }, (_, i) => ({
+    rule: 'forbidden-pattern',
+    severity: 'hard',
+    message: `forbidden pattern ${i}`,
+  }))
+  const softSignals = Array.from({ length: soft }, (_, i) => ({
+    rule: 'file-bloat',
+    severity: 'soft',
+    message: `apps/demo/file${i}.js is 1200 lines (limit 900)`,
+  }))
+  const hotspots = Array.from({ length: hotspot }, (_, i) => ({
+    file: `apps/demo/hot${i}.js`,
+    touches: 6,
+    lines: 300,
+  }))
+  return {
+    ok: hard === 0,
+    generatedAt: new Date(CLOCK).toISOString(),
+    repoRoot: '/tmp/repo',
+    layers: { universal: true, repoConfig: true, repoChecker: false },
+    hardFails,
+    softSignals,
+    hotspots,
+    summary: {
+      hardFailCount: hard,
+      softSignalCount: soft,
+      hotspotCount: hotspot,
+      activeSpecCount: 1,
+      archivedSpecCount: 0,
+      deprecatedRoutes: 0,
+    },
+    recommendedSweep: sweep,
+  }
+}
+
+/** 呼び出し回数と引数を記録する差し替えアナライザ。 */
+function countingAnalyzer(report) {
+  const calls = []
+  const fn = async (root, thresholds) => {
+    calls.push({ root, thresholds })
+    return report
+  }
+  fn.calls = calls
+  return fn
+}
+
+/** Spec 1 件だけの完走ランを仕込む（戻り値は `{env, spec}`）。 */
+function doneSpecEnv(chat) {
+  const env = tempEnv()
+  const spec = 'docs/SPEC-V4.md'
+  addTask(env.dbPath, { id: 't_c1', title: '[V4-1] 完走', body: specBody(spec, chat), status: 'ready' })
+  writeRuns(env, [
+    {
+      id: 'run_coh',
+      board: BOARD,
+      repoPath: env.repoPath,
+      specRelPath: spec,
+      title: 'SPEC: Coherence hook',
+      batchIds: ['V4-1'],
+      taskIds: ['t_c1'],
+      originSessionId: chat ?? null,
+      createdAt: CLOCK - 60_000,
+      reportedAt: null,
+    },
+  ])
+  return { env, spec }
+}
+
+/** その環境のタスクを done にして次のティックを進める。 */
+async function finishAndTick(env, w, clock) {
+  setStatus(env.dbPath, 't_c1', 'done', { completedAt: Math.floor(CLOCK / 1000), result: '予兆検知を繋いだ' })
+  clock.ms = CLOCK + 5 * 60_000
+  return w.tick()
+}
+
+test('⑨ 完走時に予兆検知を 1 回走らせ、coherence_alert と EN/JA の次の一手を付ける', async () => {
+  const { env } = doneSpecEnv('ses_coh')
+  const analyzer = countingAnalyzer(fakeCoherenceReport({ hotspot: 1, soft: 3, sweep: 'hotspots' }))
+  const { w, clock } = makeWatcher(env, {
+    coherenceAnalyzer: analyzer,
+    coherenceThresholds: { maxLines: 900 },
+  })
+
+  assert.equal((await w.tick()).baseline, true, '初回はベースライン')
+  assert.equal(analyzer.calls.length, 0, 'ベースライン（非完走）では解析しない')
+
+  const r = await finishAndTick(env, w, clock)
+  assert.equal(r.reported.length, 1)
+  assert.equal(analyzer.calls.length, 1, '完走 1 回につき 1 回だけ解析する')
+  assert.equal(analyzer.calls[0].root, env.repoPath, 'workdir（ボード既定）を渡す')
+  assert.deepEqual(analyzer.calls[0].thresholds, { maxLines: 900 }, 'coherenceThresholds を渡す')
+
+  const row = readJsonl(path.join(env.reviewDir, 'chat-reports.jsonl'))[0]
+  assert.deepEqual(
+    row.coherence_alert.summary,
+    { hardFailCount: 0, softSignalCount: 3, hotspotCount: 1 },
+    'summary は 3 つの件数',
+  )
+  assert.equal(row.coherence_alert.recommendedSweep, 'hotspots')
+  assert.deepEqual(row.coherence_alert.layers, { universal: true, repoConfig: true, repoChecker: false })
+  assert.equal(Array.isArray(row.coherence_alert.highlights), true)
+  assert.equal(row.coherence_alert.highlights.length, 3, 'highlights は hard+soft の先頭 5 件')
+  assert.match(row.coherence_alert.highlights[0], /1200 lines/, 'シグナルの本文がそのまま入る')
+
+  // 日本語本文（既定）: 節 ＋ 次の一手の 1 行
+  assert.match(row.markdown, /#### 🧭 予兆シグナル \/ Coherence Signals/)
+  assert.match(row.markdown, /推奨スイープ: hotspots/)
+  assert.match(row.markdown, /コヒーレンス予兆: hotspots スイープを「Refactor & audit」から実行する/)
+  assert.match(row.markdown, /Hard Fail 0 \/ 予兆 3 \/ ホットスポット 1/)
+  // 英語本文: 同じ情報を英語だけで（CJK を持ち込まない）
+  assert.match(row.markdown_en, /#### 🧭 Coherence Signals/)
+  assert.match(row.markdown_en, /Recommended sweep: hotspots/)
+  assert.match(row.markdown_en, /Coherence signals: run the hotspots sweep from Refactor & audit/)
+  for (const jp of ['予兆シグナル', '推奨スイープ', 'コヒーレンス予兆', 'ホットスポット']) {
+    assert.ok(!row.markdown_en.includes(jp), `英語版に「${jp}」が残っている`)
+  }
+
+  // D83: 予兆の 1 行にコマンド決め打ちを入れない（自動起票もしない）
+  const jaLine = row.markdown.split('\n').find((l) => l.includes('コヒーレンス予兆'))
+  assert.ok(jaLine, '日本語の予兆行がある')
+  assert.equal(jaLine.includes('npm run'), false, '予兆行に npm run を決め打ちしない')
+  assert.equal(jaLine.includes('kanban'), false, '予兆行に自動起票の指示を入れない')
+
+  // 直近レポート経由でも形がそのまま読める
+  const latest = readPipelineReports(env.reviewDir)[0]
+  assert.deepEqual(latest.coherence_alert, row.coherence_alert, 'pipeline-reports.jsonl 経由でも同じ形')
+})
+
+test('⑩ 予兆が閾値未満なら何も足さない（レポートは従来どおり配信）', async () => {
+  const { env } = doneSpecEnv('ses_coh')
+  const analyzer = countingAnalyzer(fakeCoherenceReport({ soft: 2 }))
+  const { w, clock } = makeWatcher(env, { coherenceAnalyzer: analyzer })
+
+  assert.equal((await w.tick()).baseline, true)
+  const r = await finishAndTick(env, w, clock)
+  assert.equal(r.reported.length, 1, 'レポートは配信する')
+  assert.equal(analyzer.calls.length, 1, '判定のために 1 回は走る')
+
+  const row = readJsonl(path.join(env.reviewDir, 'chat-reports.jsonl'))[0]
+  assert.equal('coherence_alert' in row, false, 'alert === false では付与しない')
+  assert.equal(row.markdown.includes('🧭'), false, '予兆の節を足さない')
+  assert.equal(row.markdown.includes('コヒーレンス予兆'), false, '次の一手にも足さない')
+  assert.match(row.markdown, /#### 🚀 次のステップ \/ Recommended Next Steps/, '従来の見出しはそのまま')
+  assert.match(row.markdown_en, /#### 🚀 Recommended Next Steps/)
+  assert.equal(readPipelineReports(env.reviewDir)[0].coherence_alert, null)
+})
+
+test('⑪ 解析が失敗しても warn だけでレポートは正常配信（非干渉）', async () => {
+  const { env } = doneSpecEnv('ses_coh')
+  const warns = []
+  const { w, clock } = makeWatcher(env, {
+    logger: { warn: (m) => warns.push(String(m)) },
+    coherenceAnalyzer: async () => {
+      throw new Error('boom')
+    },
+  })
+
+  assert.equal((await w.tick()).baseline, true)
+  const r = await finishAndTick(env, w, clock)
+  assert.equal(r.reported.length, 1, '解析が落ちてもレポートは出る')
+  assert.equal(warns.some((m) => m.includes('coherence analysis skipped: boom')), true, 'warn だけ残す')
+
+  const row = readJsonl(path.join(env.reviewDir, 'chat-reports.jsonl'))[0]
+  assert.equal('coherence_alert' in row, false)
+  assert.match(row.text, /🎉 SPEC: Coherence hook \(1\/1 done\)/, '本文は通常どおり')
+  assert.match(row.markdown, /#### ✅ 完了タスク \/ Completed Tasks/)
+})
+
+test('⑫ 予兆検知は完走ティックだけで、定期ポーリングでは走らない', async () => {
+  const { env } = doneSpecEnv('ses_coh')
+  const analyzer = countingAnalyzer(fakeCoherenceReport({ hotspot: 1, sweep: 'hotspots' }))
+  const { w, clock } = makeWatcher(env, { coherenceAnalyzer: analyzer })
+
+  assert.equal((await w.tick()).baseline, true)
+  assert.equal(analyzer.calls.length, 0)
+
+  await finishAndTick(env, w, clock)
+  assert.equal(analyzer.calls.length, 1, '収束した瞬間に 1 回')
+
+  clock.ms += 10_000
+  const second = await w.tick()
+  assert.deepEqual(second.reported, [], '2 回目は報告しない')
+  clock.ms += 10_000
+  await w.tick()
+  assert.equal(analyzer.calls.length, 1, 'ポーリングでは走らない（重複解析しない）')
+  assert.equal(readJsonl(path.join(env.reviewDir, 'chat-reports.jsonl')).length, 1)
+})
+
+test('⑬ workdir の実ディレクトリが無ければ解析しない（既定アナライザでも安全）', async () => {
+  const { env } = doneSpecEnv('ses_coh')
+  fs.rmSync(env.repoPath, { recursive: true, force: true })
+  const analyzer = countingAnalyzer(fakeCoherenceReport({ hotspot: 1, sweep: 'hotspots' }))
+  const { w, clock } = makeWatcher(env, { coherenceAnalyzer: analyzer })
+
+  assert.equal((await w.tick()).baseline, true)
+  const r = await finishAndTick(env, w, clock)
+  assert.equal(r.reported.length, 1, 'レポートは出る')
+  assert.equal(analyzer.calls.length, 0, '実在しない workdir では走らせない')
+  const row = readJsonl(path.join(env.reviewDir, 'chat-reports.jsonl'))[0]
+  assert.equal('coherence_alert' in row, false)
+})
+
+test('⑭ 純関数は予兆を汎用表現で受け、halted でも停止理由を先頭に残す', () => {
+  const alert = {
+    alert: true,
+    summary: { hardFailCount: 1, softSignalCount: 2, hotspotCount: 0 },
+    recommendedSweep: 'contracts',
+    highlights: ['forbidden pattern "eval" found in 1 file(s)'],
+    layers: { universal: true, repoConfig: true, repoChecker: true },
+  }
+  assert.equal(
+    coherenceNextStep(alert, { board: BOARD }),
+    'コヒーレンス予兆: contracts スイープを「Refactor & audit」から実行する（board: proj · Hard Fail 1 / 予兆 2 / ホットスポット 0）',
+  )
+  assert.match(coherenceNextStep(alert, { en: true, board: BOARD }), /^Coherence signals: run the contracts sweep/)
+  assert.match(coherenceNextStep({ ...alert, recommendedSweep: null }, { board: BOARD }), /対象スイープ/)
+
+  const done = buildNextSteps({ status: 'done', board: BOARD, tasks: [{ status: 'done' }], issues: [], coherence: alert })
+  assert.match(done[0], /contracts スイープ/, 'done では先頭に置く（3 件枠で落とさない）')
+  assert.equal(done.length <= 3, true)
+
+  const halted = buildNextSteps({
+    status: 'halted',
+    board: BOARD,
+    tasks: [{ status: 'blocked' }],
+    issues: [{ text: 'x', kind: 'blocked', title: 't' }],
+    coherence: alert,
+  })
+  assert.match(halted[0], /blocked\/failed/, '停止理由がいちばん先')
+  assert.equal(halted[1], coherenceNextStep(alert, { board: BOARD }), 'その次に予兆の 1 行')
+
+  const plain = buildNextSteps({ status: 'done', board: BOARD, tasks: [{ status: 'done' }], issues: [] })
+  assert.equal(plain.some((s) => s.includes('コヒーレンス予兆')), false, '予兆なしは従来どおり')
+
+  // 生レポート（analyzeCoherence の出力）も受け、alert のときだけ節を足す
+  const rep = buildPipelineReport({
+    status: 'done',
+    label: 'x',
+    board: BOARD,
+    tasks: [{ id: 't', title: 'T', status: 'done' }],
+    coherence: fakeCoherenceReport({ hard: 1, sweep: 'contracts' }),
+    now: CLOCK,
+  })
+  assert.equal(rep.coherence_alert.summary.hardFailCount, 1)
+  assert.equal(rep.coherence_alert.recommendedSweep, 'contracts')
+  assert.match(rep.markdown, /#### 🧭 予兆シグナル \/ Coherence Signals/)
+  assert.match(rep.markdown, /forbidden pattern 0/)
+  assert.equal(rep.markdownEn.includes('予兆シグナル'), false)
+
+  const quiet = buildPipelineReport({ status: 'done', label: 'x', board: BOARD, tasks: [{ id: 't', title: 'T', status: 'done' }], now: CLOCK })
+  assert.equal(quiet.coherence_alert, null)
+  assert.equal(quiet.markdown.includes('🧭'), false)
 })

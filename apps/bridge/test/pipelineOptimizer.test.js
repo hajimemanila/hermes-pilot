@@ -20,7 +20,9 @@ import {
   A2B_RULES,
   A2B_START,
   BUNDLED_SKILLS,
+  DEFAULT_PILOT_PROFILE,
   backupStamp,
+  ensurePilotProfile,
   getOptimizeStatus,
   installSkill,
   listProfileNames,
@@ -29,7 +31,9 @@ import {
   optimizeAntigravitySkills,
   optimizeHermesSoul,
   optimizeProfileSouls,
+  sanitizePilotProfile,
 } from '../src/pipeline-optimizer.js'
+import { readPilotProfile, writePilotProfile } from '../src/config.js'
 
 /** 一時ディレクトリ（後始末は呼び出し側）。 */
 function tempHome(prefix = 'hm-opt-') {
@@ -184,7 +188,7 @@ test('installSkill はリンクを作り、2 回目は exists でスキップす
   }
 })
 
-test('optimizeAntigravitySkills は存在する置き場にだけ配置し、冪等', () => {
+test('optimizeAntigravitySkills は Hermes の skills に配置し、外部エージェント領域へは書かない（冪等）', () => {
   const home = tempHome()
   try {
     const srcDir = path.join(home, 'skills-src')
@@ -192,18 +196,20 @@ test('optimizeAntigravitySkills は存在する置き場にだけ配置し、冪
       fs.mkdirSync(path.join(srcDir, name), { recursive: true })
       fs.writeFileSync(path.join(srcDir, name, 'SKILL.md'), `# ${name}\n`, 'utf8')
     }
-    // `~/.agents` だけがある環境（Antigravity 未インストール）
+    // 仮に ~/.gemini や ~/.agents がホストに存在しても一切書き込まない
+    fs.mkdirSync(path.join(home, '.gemini'), { recursive: true })
     fs.mkdirSync(path.join(home, '.agents'), { recursive: true })
 
     const first = optimizeAntigravitySkills({ home, skillsSrcDir: srcDir })
     assert.equal(first.ok, true)
     const ids = first.targets.map((t) => t.id)
-    assert.deepEqual(ids, ['agents'], `配置先が想定と違う: ${ids.join(',')}`)
+    assert.deepEqual(ids, ['hermes'], `配置先が想定と違う: ${ids.join(',')}`)
     assert.equal(first.targets[0].installed.length, BUNDLED_SKILLS.length)
     for (const name of BUNDLED_SKILLS) {
-      assert.ok(fs.existsSync(path.join(home, '.agents', 'skills', name, 'SKILL.md')), `${name} が無い`)
+      assert.ok(fs.existsSync(path.join(home, '.hermes', 'skills', name, 'SKILL.md')), `${name} が無い`)
     }
-    assert.equal(fs.existsSync(path.join(home, '.gemini')), false, '無い環境に .gemini を作っている')
+    assert.equal(fs.existsSync(path.join(home, '.agents', 'skills')), false, '.agents へ過干渉している')
+    assert.equal(fs.existsSync(path.join(home, '.gemini', 'config')), false, '.gemini へ過干渉している')
 
     const second = optimizeAntigravitySkills({ home, skillsSrcDir: srcDir })
     assert.deepEqual(second.targets[0].installed, [], '2 回目で再配置している')
@@ -381,9 +387,84 @@ test('A2B_RULES は英語（機械向け指示）で、CJK を含まない', () 
   assert.doesNotMatch(A2B_RULES, CJK, 'SOUL へ入れる規範に日本語が混ざっている')
   // 言語の指定はブロックに置かない（プロファイル設定と language-rule.js が持つ）
   assert.doesNotMatch(A2B_RULES, /write (user-facing )?prose in|in Japanese|日本語で/, '言語指定を SOUL ブロックに置かない')
-  // 機械トークンは ASCII のまま残す
-  for (const token of ['`spec-architect`', '`quick-review`', 'needs_input', '`Mode: zero-stop`', '`npm run verify`']) {
-    assert.ok(A2B_RULES.includes(token), `機械トークンが消えた: ${token}`)
+  // 機械トークン・非干渉スコープ・ロール未定義時フォールバックを含む
+  for (const token of [
+    '`spec-architect`',
+    '`quick-review`',
+    'needs_input',
+    '`Mode: zero-stop`',
+    'the verification command the target repository declares',
+    'ONLY when working on a Hermes Pilot kanban task',
+    'reply normally in chat without filing kanban tasks',
+    'does not define a role table',
+  ]) {
+    assert.ok(A2B_RULES.includes(token), `必要な規則・機械トークンが欠けている: ${token}`)
+  }
+})
+
+test('ensurePilotProfile は既定 mobile で専用プロファイルを隔離作成し、ルート SOUL.md に干渉しない', () => {
+  const home = tempHome()
+  try {
+    const hermesHome = path.join(home, '.hermes')
+    fs.mkdirSync(hermesHome, { recursive: true })
+    fs.writeFileSync(path.join(hermesHome, 'SOUL.md'), '# Default User Soul\n\nKeep daily chat casual.\n', 'utf8')
+    fs.writeFileSync(path.join(hermesHome, 'config.yaml'), 'model: main-chat\n', 'utf8')
+    const workSoul = writeProfileSoul(hermesHome, 'work', '# Work Profile\n')
+
+    const res = ensurePilotProfile({ hermesHome, profile: DEFAULT_PILOT_PROFILE })
+    assert.equal(res.ok, true)
+    assert.equal(res.profile, 'mobile')
+    assert.equal(res.copiedConfig, true)
+    assert.equal(res.soul.applied, undefined) // optimizeHermesSoul と同じ { ok, path, mode, changed, backupPath }
+    assert.equal(res.soul.mode, 'created')
+    assert.ok(fs.existsSync(path.join(hermesHome, 'profiles', 'mobile', 'memories')))
+    assert.equal(fs.readFileSync(path.join(hermesHome, 'profiles', 'mobile', 'config.yaml'), 'utf8'), 'model: main-chat\n')
+    assert.match(fs.readFileSync(path.join(hermesHome, 'profiles', 'mobile', 'SOUL.md'), 'utf8'), /hermes-pilot:a2b:start/)
+    // ルートの default SOUL.md と他プロファイル work は 1 文字も変更されない
+    assert.equal(
+      fs.readFileSync(path.join(hermesHome, 'SOUL.md'), 'utf8'),
+      '# Default User Soul\n\nKeep daily chat casual.\n',
+    )
+    assert.equal(fs.readFileSync(workSoul, 'utf8'), '# Work Profile\n')
+
+    // getOptimizeStatus(..., { pilotProfile: 'mobile' }) は専用プロファイルの状態を返す
+    const st = getOptimizeStatus({ hermesHome, home, skillsSrcDir: path.join(home, 'none'), pilotProfile: 'mobile' })
+    assert.equal(st.pilotProfile, 'mobile')
+    assert.equal(st.soul.applied, true)
+    assert.equal(st.soul.profile, 'mobile')
+    assert.equal(st.rootSoul.applied, false)
+    assert.ok(st.availableProfiles.includes('mobile'))
+    assert.ok(st.availableProfiles.includes('default'))
+    assert.ok(st.availableProfiles.includes('work'))
+
+    // 明示的に 'default' を選んだときだけルート SOUL.md に追記する
+    const def = ensurePilotProfile({ hermesHome, profile: 'default' })
+    assert.equal(def.ok, true)
+    assert.equal(def.profile, 'default')
+    assert.match(fs.readFileSync(path.join(hermesHome, 'SOUL.md'), 'utf8'), /hermes-pilot:a2b:start/)
+    assert.equal(sanitizePilotProfile('../bad'), 'mobile')
+    assert.equal(sanitizePilotProfile('custom-a2b'), 'custom-a2b')
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('readPilotProfile / writePilotProfile は config.json の他キーを保ったまま専用プロファイルを保存する', () => {
+  const dir = tempHome('hm-cfg-prof-')
+  try {
+    const cfgPath = path.join(dir, 'config.json')
+    assert.equal(readPilotProfile(cfgPath), 'mobile', 'ファイル不在の既定は mobile')
+    fs.writeFileSync(cfgPath, JSON.stringify({ lang: 'en', servicePort: 4097, scanDirs: ['~/Projects'] }), 'utf8')
+    assert.equal(readPilotProfile(cfgPath), 'mobile')
+
+    assert.equal(writePilotProfile(cfgPath, 'a2b-work'), 'a2b-work')
+    const saved = JSON.parse(fs.readFileSync(cfgPath, 'utf8'))
+    assert.equal(saved.pilotProfile, 'a2b-work')
+    assert.equal(saved.lang, 'en')
+    assert.equal(saved.servicePort, 4097)
+    assert.equal(readPilotProfile(cfgPath), 'a2b-work')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
   }
 })
 
