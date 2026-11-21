@@ -3,6 +3,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { execFile } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
+import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'
 
 /**
  * リポジトリ（作業ディレクトリ）の自動検出と、カンバンボードとの対応。
@@ -373,9 +374,9 @@ export function createRepos(cfg = {}, deps = {}) {
     ((args) =>
       new Promise((resolve) => {
         execFile(
-          cfg.hermesBin ?? 'hermes',
+          cfg.hermesBin ?? resolveHermesBin(),
           args,
-          { timeout: 30_000, maxBuffer: 1_000_000, env: { ...process.env } },
+          { timeout: 30_000, maxBuffer: 1_000_000, env: { ...process.env, PATH: buildAugmentedPath() } },
           (err, stdout, stderr) => {
             resolve({ code: err ? (err.code ?? 1) : 0, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') })
           },

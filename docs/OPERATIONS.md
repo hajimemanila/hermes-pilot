@@ -1379,3 +1379,70 @@ npm run deploy     # ビルド → index.html と /assets/ 参照の検証 → d
 - **タスク再開・赤ペン全件・Object URL 解放**: `InboxSheet` に `unblock` 再開導線、赤ペン「完了」タブに「すべて表示」切替、`ChatPane` 添付プレビューに `URL.revokeObjectURL` を追加
 - **ハプティック・ローダー統一**: `haptic.js`（設定タブで ON/OFF 可）、`Spinner` / `Loader` / `RefreshButton` を全タブに導入
 - 検証: `npm run verify`（単体テスト 808 件、PWA チェック 34 項目、OAuth 境界 0 違反、Vite ビルド、レスポンシブ監査）すべて通過
+
+## 信頼性ガード（check:coherence 拡張・状態マトリクス・非破壊ライブスモーク / 2026-11-21）
+
+仕様: `docs/SPEC-RELIABILITY-GUARD.md`（D94 / Batch RG-5）。単体テストがモックで飛ばす
+**実 CLI 境界・サイレント失敗・起票契約パリティ・状態 x 操作のデッドエンド**を、毎回の
+`npm run verify` と、必要なときの非破壊ライブスモークで捕まえる。
+
+### 追加した Layer 2 ルール（`scripts/check-coherence.mjs`）
+
+- **`cli-invocation-guard`** — `apps/bridge/src/` で `hermes` CLI を `execFile` / `spawn` する全箇所が
+  `resolveHermesBin()` と `buildAugmentedPath()`（`env.PATH`）を使っているか、`'--board'` を
+  `'kanban'` より前に置いていないかを見る。launchd の狭い PATH で `hermes` が見つからない事故と、
+  CLI がサブコマンドを取り違える引数順を止める。
+- **`silent-failure-guard`** — `apps/bridge/src/server.js` の書き込み系ルート（`abort` / `stop-all` /
+  `close` / `unblock` / `bulk-archive` / `gateway`）が、結果オブジェクトの `ok` を見ずに HTTP 200 を
+  返していないか、`apps/bridge/src/ops.js` が捕まえた失敗理由（`detail`）を捨てていないかを見る。
+- **`create-route-parity`** — カンバン起票経路（`specs.js` / `architect.js` / `review.js` / `capture.js`）が
+  `--assignee` を伴うか、`server.js` のクイック起票が `nudgeWatchers()` を呼ぶかを見る。担当の無い
+  タスク（誰も拾わない）と、次の 60 秒ティックまで放置される起票を止める。
+
+どれも Hard Fail。**出力は英語のみ**（`SPEC-EN-ZERO-LEAK`）。個別に確かめるときは:
+
+```sh
+npm run check:coherence            # まとめて
+node scripts/check-coherence.mjs --json | python3 -m json.tool   # 機械可読
+```
+
+違反が出たら、その場で呼び出し側を直す（例外を握り潰す／`'hermes'` を直書きする、が典型）。
+やむを得ず後続バッチで直す場合は `.hermes-coherence.json` の `checkerPending` に
+`{ "<rule>": "<batch>" }` を書く（soft signal として可視化され、`--strict` では落ちる）。
+
+### 状態 x 操作マトリクス（`apps/web/test/stateActionMatrix.test.js`）
+
+`todo` / `ready` / `running` / `blocked` / `failed` / `done` / `archived` の 7 状態 x
+（中断 / 完了 / アーカイブ / 一括整理 / 再開 / Spec 再起票）の到達性を表で固定する。期待値は
+`inbox.js` / `kanban.js` / `capture.js` を実際に叩いて判定するので、**ある状態でどの操作も
+届かないデッドエンド**が増えた瞬間に落ちる。表を変えるときは実装と同時に直す。
+
+```sh
+node --test apps/web/test/stateActionMatrix.test.js
+```
+
+### 非破壊ライブスモーク（`npm run smoke:live`）
+
+実バイナリと稼働中ブリッジの境界だけを、**読み取りと異常系だけで**確かめる。
+
+```sh
+npm run smoke:live                  # 3 秒ほど。カンバンも実データも変更しない
+npm run smoke:live -- --json        # 機械可読（1 行 1 オブジェクト）
+npm run smoke:live -- --strict      # skip も失敗として扱う（配備ゲート用）
+npm run smoke:live -- --base http://127.0.0.1:4098   # 別ポートの検証用ブリッジ
+```
+
+- ① 実 CLI: `hermes --help` が `kanban` を、`hermes kanban --help` が
+  `create` / `archive` / `complete` / `block` / `unblock` を出し、exit 0 であること
+- ② 稼働中ブリッジの読取系: `/api/overview`・`/api/coherence/report`・`/api/specs`・`/api/snippets/term`
+  が HTTP 200 の JSON を返すこと
+- ③ 破壊系のゲート: `POST /api/emergency/stop-all`・`POST /api/gateway/stop`・`POST /api/gateway/restart` に
+  **わざと誤った `confirm`**（`SMOKE_PROBE`）を送り、HTTP 400 で止まること。正しい `confirm` は
+  絶対に送らないので、停止も再起動も起きない
+- トークンは `--token` → `HP_TOKEN` → `HP_DATA_DIR/token` → `HM_DATA/token` → ブリッジ設定 →
+  `~/.hermes/plugin-data/hermes-pilot/token` の順に探し、401 のときだけ次の候補へ進む
+  （worker の `HERMES_HOME` がプロファイルを指していると本番トークンと違うため）。値は表示しない
+- ブリッジが落ちているとき、CLI が無いとき、ルートが未登録（HTTP 404）のときは **skip**（exit 0）。
+  配備判定では `--strict` を使う
+- 落とし穴: 稼働中ブリッジが**古いコード**のままだと、追加したばかりのルートは 404 = skip になる。
+  ブリッジを再起動してから流す（`node bin/hermes-pilot.mjs service restart`）

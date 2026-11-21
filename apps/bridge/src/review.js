@@ -5,6 +5,7 @@ import crypto from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
 import { readTailText } from './tail.js'
+import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'
 
 /**
  * レビュー（review）パイプラインのブリッジ側。
@@ -1150,9 +1151,9 @@ export function createReview(cfg, opts = {}) {
   const runKanban = opts.runKanban || function runKanbanReal(args) {
     return new Promise((resolve) => {
       execFile(
-        'hermes',
+        opts.hermesBin || resolveHermesBin(),
         ['kanban', '--board', board, ...args],
-        { timeout: 30000, maxBuffer: 1_000_000, env: { ...process.env } },
+        { timeout: 30000, maxBuffer: 1_000_000, env: { ...process.env, PATH: buildAugmentedPath() } },
         (err, stdout, stderr) => {
           resolve({ code: err ? (err.code ?? 1) : 0, out: `${stdout ?? ''}${stderr ?? ''}`.trim() })
         },

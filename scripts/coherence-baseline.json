@@ -18,7 +18,7 @@
     "apps/web/src/features/SettingsPane.jsx": 1136,
     "scripts/audit-responsive.mjs": 1133,
     "apps/bridge/src/pipeline-watcher.js": 1266,
-    "scripts/check-coherence.mjs": 1123,
+    "scripts/check-coherence.mjs": 1474,
     "apps/web/src/App.jsx": 1114,
     "apps/web/test/demoMode.test.js": 1040,
     "bin/hermes-pilot.mjs": 997,

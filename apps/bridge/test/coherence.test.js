@@ -27,13 +27,18 @@ import {
   runRepoChecker,
 } from '../src/coherence.js'
 import {
+  RULES,
   analyzeRepo,
   baselineRatchet,
+  cliInvocationProblems,
   containsCJK,
+  createParityProblems,
   namespaceMatches,
   normalizeApiPath,
   pathMatches,
+  silentServerProblems,
   stripComments,
+  unusedErrorDetails,
   updateBaseline,
 } from '../../../scripts/check-coherence.mjs'
 
@@ -567,5 +572,164 @@ test('gitHotspots は COHERENCE/ スイープコミットを境界に過去チ�
   }
   const afterDrift = await gitHotspots(root, { days: 14 })
   assert.deepEqual(afterDrift, [{ file: 'src/hot.js', touches: 5 }])
+})
+
+/* -------------------------------------------------------------------------- *
+ * Recurrence guards (SPEC-RELIABILITY-GUARD / D94, Batch RG-5)
+ *
+ * Three more Layer 2 rules pin the failure modes that unit tests with mocks
+ * cannot see: the real CLI boundary, swallowed failures, and filing parity.
+ * -------------------------------------------------------------------------- */
+
+/** A hermes CLI spawn that follows the contract (binary resolution + PATH). */
+const CLEAN_CLI_RUNNER = [
+  "import { execFile } from 'node:child_process'",
+  "import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'",
+  'export function run(args) {',
+  "  return execFile(resolveHermesBin(), ['kanban', '--board', 'mobile', ...args], {",
+  '    env: { ...process.env, PATH: buildAugmentedPath() },',
+  '  })',
+  '}',
+  '',
+].join('\n')
+
+test('cli-invocation-guard: a bare `execFile("hermes")` without binary resolution is a hard fail', async () => {
+  const root = ruleFixture({
+    'apps/bridge/src/review.js': [
+      "import { execFile } from 'node:child_process'",
+      'export function run(args) {',
+      "  return execFile('hermes', ['kanban', '--board', 'mobile', ...args], { env: { ...process.env } })",
+      '}',
+      '',
+    ].join('\n'),
+  })
+  const report = await analyzeRepo(root)
+  const issue = report.hardFails.find((entry) => entry.rule === 'cli-invocation-guard')
+  assert.ok(issue, 'the hardcoded binary must be reported')
+  const reasons = issue.files.map((file) => file.reason)
+  assert.ok(reasons.includes('hermes CLI spawn without resolveHermesBin()'))
+  assert.ok(reasons.includes('hermes CLI spawn without buildAugmentedPath() in the env PATH'))
+  assert.equal(issue.files[0].file, 'apps/bridge/src/review.js')
+})
+
+test('cli-invocation-guard: `--board` before `kanban` and a clean runner', () => {
+  const wrongOrder = [
+    "import { execFile } from 'node:child_process'",
+    "import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'",
+    'export const run = (args) =>',
+    "  execFile(resolveHermesBin(), ['--board', 'mobile', 'kanban', ...args], {",
+    '    env: { ...process.env, PATH: buildAugmentedPath() },',
+    '  })',
+    '',
+  ].join('\n')
+  const problems = cliInvocationProblems(wrongOrder)
+  assert.equal(problems.length, 1)
+  assert.match(problems[0].reason, /'--board' placed before 'kanban'/)
+
+  assert.deepEqual(cliInvocationProblems(CLEAN_CLI_RUNNER), [])
+  // Non hermes children (node, tailscale, pty) are out of scope.
+  assert.deepEqual(cliInvocationProblems("execFile(process.execPath, ['--json'], { cwd })"), [])
+})
+
+test('cli-invocation-guard: the whole apps/bridge/src tree is clean', async () => {
+  const report = await analyzeRepo(REPO_ROOT)
+  const hits = report.hardFails.filter((entry) => entry.rule === 'cli-invocation-guard')
+  assert.deepEqual(hits, [])
+})
+
+/** server.js where `close` answers HTTP 200 with the bare result object. */
+const SILENT_SERVER = [
+  'const b = url.pathname',
+  "if (b && c === 'tasks' && d && e === 'close' && req.method === 'POST') {",
+  '  const out = await inbox.close(b, d, body?.action)',
+  '  return sendJson(res, 200, out)',
+  '}',
+  '',
+].join('\n')
+
+test('silent-failure-guard: HTTP 200 on an unchecked write result is a hard fail, a guarded route is not', async () => {
+  const silent = silentServerProblems(SILENT_SERVER)
+  assert.equal(silent.length, 1)
+  assert.equal(silent[0].route, 'close')
+  assert.match(silent[0].reason, /without consulting 'out\.ok'/)
+
+  const guarded = SILENT_SERVER.replace(
+    '  return sendJson(res, 200, out)',
+    '  if (out?.ok === false) return sendFailure(res, 502, out)\n  return sendJson(res, 200, out)',
+  )
+  assert.deepEqual(silentServerProblems(guarded), [])
+
+  // A non tracked route (e.g. comment) is out of scope on purpose.
+  const comment = SILENT_SERVER.replace("e === 'close'", "e === 'comment'")
+  assert.deepEqual(silentServerProblems(comment), [])
+
+  const report = await analyzeRepo(ruleFixture({ 'apps/bridge/src/server.js': SILENT_SERVER }))
+  assert.ok(hardRules(report).includes('silent-failure-guard'))
+})
+
+test('silent-failure-guard: an error detail that is computed and dropped is a hard fail', async () => {
+  const dropped = [
+    'export function gateway(res) {',
+    '  const detail = res.data?.detail ?? `HTTP ${res.status}`',
+    "  throw new ApiError('HERMES_REJECTED', { status: res.status }, 502)",
+    '}',
+    '',
+  ].join('\n')
+  const problems = unusedErrorDetails(dropped)
+  assert.equal(problems.length, 1)
+  assert.equal(problems[0].name, 'detail')
+
+  const kept = dropped.replace('{ status: res.status }', '{ status: res.status, detail }')
+  assert.deepEqual(unusedErrorDetails(kept), [])
+
+  const report = await analyzeRepo(ruleFixture({ 'apps/bridge/src/ops.js': dropped }))
+  const issue = report.hardFails.find((entry) => entry.rule === 'silent-failure-guard')
+  assert.ok(issue)
+  assert.equal(issue.files[0].file, 'apps/bridge/src/ops.js')
+})
+
+test('create-route-parity: a filing route without --assignee or a watcher nudge is a hard fail', async () => {
+  const noAssignee = [
+    'export function buildCreateArgs(c) {',
+    "  const args = ['kanban', '--board', c.board, 'create', c.title, '--json']",
+    '  return args',
+    '}',
+    '',
+  ].join('\n')
+  const problems = createParityProblems('apps/bridge/src/capture.js', noAssignee)
+  assert.equal(problems.length, 1)
+  assert.match(problems[0].reason, /--assignee/)
+
+  const withAssignee = noAssignee.replace("  return args", "  if (c.assignee) args.push('--assignee', c.assignee)\n  return args")
+  assert.deepEqual(createParityProblems('apps/bridge/src/capture.js', withAssignee), [])
+
+  const noNudge = [
+    'const assignee = body?.assignee ?? "mobile"',
+    'const r = await capture.create({ ...body, board, assignee })',
+    'return r.ok ? sendJson(res, 201, r) : sendFailure(res, 400, r)',
+    '',
+  ].join('\n')
+  const nudgeProblems = createParityProblems('apps/bridge/src/server.js', noNudge)
+  assert.equal(nudgeProblems.length, 1)
+  assert.match(nudgeProblems[0].reason, /nudgeWatchers/)
+
+  const report = await analyzeRepo(
+    ruleFixture({
+      'apps/bridge/src/capture.js': noAssignee,
+      'apps/bridge/src/server.js': noNudge,
+    }),
+  )
+  assert.ok(hardRules(report).includes('create-route-parity'))
+})
+
+test('the three recurrence guards are registered rules and stay ASCII', () => {
+  assert.equal(RULES.length, 8)
+  for (const rule of ['cli-invocation-guard', 'silent-failure-guard', 'create-route-parity']) {
+    assert.ok(RULES.includes(rule), `${rule} must be registered`)
+    assert.equal(containsCJK(rule), false)
+  }
+  // The live smoke prints machine output only, so its source stays ASCII.
+  const smoke = fs.readFileSync(path.join(REPO_ROOT, 'scripts/smoke-live.mjs'), 'utf8')
+  assert.equal(containsCJK(smoke), false)
 })
 

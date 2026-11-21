@@ -49,6 +49,7 @@ const LAYOUT = Object.freeze({
   mockApi: 'apps/web/src/demo/mockApi.js',
   bridgeSrc: 'apps/bridge/src',
   serverFile: 'apps/bridge/src/server.js',
+  opsFile: 'apps/bridge/src/ops.js',
   routesContract: 'apps/bridge/src/contracts/routes.js',
   eventsContract: 'apps/web/src/contracts/events.js',
   storageContract: 'apps/web/src/contracts/storage.js',
@@ -76,6 +77,9 @@ export const RULES = Object.freeze([
   'storage-contract',
   'docs-scripts-parity',
   'legacy-reentry',
+  'cli-invocation-guard',
+  'silent-failure-guard',
+  'create-route-parity',
 ])
 
 /* ------------------------------------------------------------------ */
@@ -850,6 +854,350 @@ async function ruleLegacyReentry(root, findings) {
 }
 
 /* ------------------------------------------------------------------ */
+/* recurrence guards (D94)                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Every child process edge in `apps/bridge/src` must reach the real CLI the same
+ * way: resolve the binary once, and augment `PATH` for launchd's narrow default.
+ * A hand written `execFile('hermes', ...)` reintroduces the 2026-11 outage.
+ */
+const CLI_SPAWN_NAMES = ['execFile', 'execFileSync', 'spawn', 'spawnSync']
+const CLI_CONTEXT_CHARS = 2000
+
+/**
+ * Split a source string into top level call spans (`callee(...)`).
+ *
+ * Comments are blanked first, so offsets keep matching the raw text while a
+ * commented out call is invisible.
+ *
+ * @param {string} text source
+ * @param {string[]} [names] callee names to look for
+ * @returns {{callee: string, index: number, close: number, body: string}[]} spans
+ */
+export function callSpans(text, names = CLI_SPAWN_NAMES) {
+  const src = stripComments(text)
+  const out = []
+  const re = new RegExp(`\\b(${names.map((n) => n.replace(/[$]/g, '\\$&')).join('|')})\\s*\\(`, 'g')
+  for (const m of src.matchAll(re)) {
+    const open = m.index + m[0].length - 1
+    let depth = 0
+    let close = src.length - 1
+    for (let i = open; i < src.length; i += 1) {
+      const ch = src[i]
+      if (ch === '(') depth += 1
+      else if (ch === ')') {
+        depth -= 1
+        if (depth === 0) {
+          close = i
+          break
+        }
+      }
+    }
+    out.push({ callee: m[1], index: m.index, close, body: src.slice(open + 1, close) })
+  }
+  return out
+}
+
+/**
+ * Split a call body at top level commas (strings and nested brackets are kept).
+ *
+ * @param {string} body call argument text
+ * @returns {string[]} trimmed arguments
+ */
+export function splitTopLevelArgs(body) {
+  const parts = []
+  let depth = 0
+  let start = 0
+  let quote = null
+  for (let i = 0; i < body.length; i += 1) {
+    const ch = body[i]
+    if (quote) {
+      if (ch === '\\') i += 1
+      else if (ch === quote) quote = null
+      continue
+    }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      quote = ch
+      continue
+    }
+    if (ch === '(' || ch === '[' || ch === '{') depth += 1
+    else if (ch === ')' || ch === ']' || ch === '}') depth -= 1
+    else if (ch === ',' && depth === 0) {
+      parts.push(body.slice(start, i).trim())
+      start = i + 1
+    }
+  }
+  const tail = body.slice(start).trim()
+  if (tail) parts.push(tail)
+  return parts
+}
+
+/** True when the argument list is a hermes CLI invocation. */
+function isHermesInvocation(args, body) {
+  const bin = (args[0] ?? '').trim()
+  if (/^['"]hermes['"]$/.test(bin)) return true
+  if (/resolveHermesBin|hermesBin/.test(bin)) return true
+  return /['"]kanban['"]/.test(body) || /['"]--board['"]/.test(body)
+}
+
+/**
+ * (6) `cli-invocation-guard`: every hermes CLI spawn in `apps/bridge/src` must use
+ * `resolveHermesBin()` and `buildAugmentedPath()`, and must never put `'--board'`
+ * before `'kanban'` (the CLI parses the subcommand first).
+ *
+ * @param {string} text source of one file
+ * @returns {{line: number, reason: string, callee?: string}[]} problems
+ */
+export function cliInvocationProblems(text) {
+  const src = stripComments(text)
+  const problems = []
+  for (const call of callSpans(src)) {
+    const args = splitTopLevelArgs(call.body)
+    if (!isHermesInvocation(args, call.body)) continue
+    const line = lineOf(src, call.index)
+    const before = src.slice(Math.max(0, call.index - CLI_CONTEXT_CHARS), call.close + 1)
+    if (!/resolveHermesBin/.test(before)) {
+      problems.push({ line, reason: 'hermes CLI spawn without resolveHermesBin()', callee: call.callee })
+    }
+    if (!/buildAugmentedPath/.test(call.body)) {
+      problems.push({ line, reason: 'hermes CLI spawn without buildAugmentedPath() in the env PATH', callee: call.callee })
+    }
+    const kanbanAt = call.body.search(/['"]kanban['"]/)
+    const boardAt = call.body.search(/['"]--board['"]/)
+    if (kanbanAt >= 0 && boardAt >= 0 && boardAt < kanbanAt) {
+      problems.push({ line, reason: "'--board' placed before 'kanban' in the CLI argument list", callee: call.callee })
+    }
+  }
+  return problems
+}
+
+/** Write routes whose failures must never be reported as HTTP 200 (D90). */
+export const WRITE_ROUTES = Object.freeze(['abort', 'stop-all', 'close', 'unblock', 'bulk-archive', 'gateway'])
+
+/**
+ * Cut `server.js` into balanced `{...}` blocks, one per tracked write route.
+ *
+ * @param {string} text server.js source
+ * @param {string[]} [tokens] route names to track
+ * @returns {{route: string, line: number, text: string}[]} blocks
+ */
+export function routeBlocks(text, tokens = WRITE_ROUTES) {
+  const src = stripComments(text)
+  const lines = src.split('\n')
+  const offsets = []
+  let at = 0
+  for (const line of lines) {
+    offsets.push(at)
+    at += line.length + 1
+  }
+  const blocks = []
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i]
+    if (!/req\.method\s*===\s*'POST'/.test(line)) continue
+    const route = tokens.find((token) => line.includes(`'${token}'`))
+    if (!route) continue
+    let depth = 0
+    let started = false
+    let close = src.length - 1
+    for (let j = offsets[i]; j < src.length; j += 1) {
+      const ch = src[j]
+      if (ch === '{') {
+        depth += 1
+        started = true
+      } else if (ch === '}') {
+        depth -= 1
+        if (started && depth === 0) {
+          close = j
+          break
+        }
+      }
+    }
+    blocks.push({ route, line: i + 1, text: src.slice(offsets[i], close + 1) })
+  }
+  return blocks
+}
+
+/** `sendJson(res, <status>, <payload>)` occurrences inside one block. */
+function sendJsonCalls(blockText) {
+  const out = []
+  const re = /sendJson\s*\(\s*res\s*,\s*([0-9]{3})\s*,/g
+  for (const m of blockText.matchAll(re)) {
+    const from = m.index + m[0].length
+    let depth = 1
+    let i = from
+    for (; i < blockText.length && depth > 0; i += 1) {
+      const ch = blockText[i]
+      if (ch === '(') depth += 1
+      else if (ch === ')') depth -= 1
+    }
+    out.push({ status: Number(m[1]), index: m.index, payload: blockText.slice(from, Math.max(from, i - 1)).trim() })
+  }
+  return out
+}
+
+/**
+ * (7a) `silent-failure-guard` (server side): a tracked write route must not answer
+ * HTTP 200 with the bare result object of an awaited operation unless it consulted
+ * `<result>.ok` or converted the failure with `sendFailure()`.
+ *
+ * Routes that throw `ApiError` on failure are unaffected: their 200 body cannot
+ * carry `ok: false`.
+ *
+ * @param {string} text server.js source
+ * @returns {{route: string, line: number, reason: string}[]} problems
+ */
+export function silentServerProblems(text) {
+  const src = stripComments(text)
+  const problems = []
+  for (const block of routeBlocks(src)) {
+    const assigned = [...block.text.matchAll(/\b(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*await\b/g)].map((m) => m[1])
+    if (!assigned.length) continue
+    for (const call of sendJsonCalls(block.text)) {
+      if (call.status !== 200) continue
+      const id = /^[A-Za-z_$][\w$]*$/.exec(call.payload)?.[0]
+      if (!id || !assigned.includes(id)) continue
+      const consultsOk = new RegExp(`\\b${id}\\s*\\??\\.\\s*ok\\b`).test(block.text)
+      if (consultsOk) continue
+      problems.push({
+        route: block.route,
+        line: block.line,
+        reason: `write route '${block.route}' answers HTTP 200 with '${id}' without consulting '${id}.ok'`,
+      })
+    }
+  }
+  return problems
+}
+
+/**
+ * (7b) `silent-failure-guard` (ops side): an error detail captured from a failure
+ * must reach the caller; a local that is never read again drops the cause.
+ *
+ * @param {string} text ops.js source
+ * @returns {{line: number, name: string}[]} discarded locals
+ */
+export function unusedErrorDetails(text) {
+  const src = stripComments(text)
+  const out = []
+  for (const m of src.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*[^\n]*\b(?:detail|details|errorMessage|errDetail|stderr)\b[^\n]*/g)) {
+    const name = m[1]
+    const rest = src.slice(m.index + m[0].length)
+    if (new RegExp(`\\b${name}\\b`).test(rest)) continue
+    out.push({ line: lineOf(src, m.index), name })
+  }
+  return out
+}
+
+/** Files that build a `hermes kanban create` argument list. */
+export const CREATE_ARG_FILES = Object.freeze([
+  'apps/bridge/src/specs.js',
+  'apps/bridge/src/architect.js',
+  'apps/bridge/src/review.js',
+  'apps/bridge/src/capture.js',
+])
+
+/** Files whose in process quick create must wake the dispatcher. */
+export const NUDGE_ROUTE_FILES = Object.freeze(['apps/bridge/src/server.js'])
+
+/**
+ * (8) `create-route-parity`: every filing path must assign an owner and the in
+ * process quick create must nudge the watchers, otherwise a task lands unowned
+ * (never dispatched) or sits until the next 60 s tick.
+ *
+ * @param {string} rel repository relative path
+ * @param {string} text file source
+ * @returns {{line: number, reason: string}[]} problems
+ */
+export function createParityProblems(rel, text) {
+  const src = stripComments(text)
+  const problems = []
+  const filesTasks = /['"]create['"]/.test(src)
+  if (CREATE_ARG_FILES.includes(rel)) {
+    if (!filesTasks) return problems
+    if (!/['"]--assignee['"]/.test(src)) {
+      problems.push({ line: lineOf(src, src.search(/['"]create['"]/)), reason: 'kanban create argument list without --assignee' })
+    }
+    return problems
+  }
+  if (NUDGE_ROUTE_FILES.includes(rel)) {
+    if (!/capture\.create\s*\(/.test(src)) return problems
+    if (!/\bnudgeWatchers\s*\(\s*\)/.test(src)) {
+      problems.push({ line: 1, reason: 'quick create route does not call nudgeWatchers()' })
+    }
+    if (!/\bassignee\b/.test(src)) {
+      problems.push({ line: 1, reason: 'quick create route does not forward an assignee' })
+    }
+  }
+  return problems
+}
+
+/** (6) Recurrence guard: hermes CLI spawn contract across `apps/bridge/src`. */
+async function ruleCliInvocationGuard(root, findings) {
+  const rule = 'cli-invocation-guard'
+  const hits = []
+  for (const file of walkCode(root, LAYOUT.bridgeSrc)) {
+    const raw = readText(file.abs)
+    if (raw === null) continue
+    for (const problem of cliInvocationProblems(raw)) {
+      hits.push({ file: file.rel, line: problem.line, reason: problem.reason, callee: problem.callee })
+    }
+  }
+  if (hits.length) {
+    findings.violation(rule, `${hits.length} hermes CLI spawn(s) break the binary resolution / argument order contract`, {
+      value: hits.length,
+      files: hits.slice(0, 10),
+    })
+  }
+}
+
+/** (7) Recurrence guard: failures must not be swallowed into HTTP 200 / dropped details. */
+async function ruleSilentFailureGuard(root, findings) {
+  const rule = 'silent-failure-guard'
+  const hits = []
+  const serverText = readText(path.join(root, LAYOUT.serverFile))
+  if (serverText === null) {
+    findings.soft(rule, `${LAYOUT.serverFile} not found; write route audit skipped`)
+  } else {
+    for (const problem of silentServerProblems(serverText)) {
+      hits.push({ file: LAYOUT.serverFile, line: problem.line, route: problem.route, reason: problem.reason })
+    }
+  }
+  const opsText = readText(path.join(root, LAYOUT.opsFile))
+  if (opsText === null) {
+    findings.soft(rule, `${LAYOUT.opsFile} not found; discarded error detail audit skipped`)
+  } else {
+    for (const problem of unusedErrorDetails(opsText)) {
+      hits.push({ file: LAYOUT.opsFile, line: problem.line, name: problem.name, reason: `error detail '${problem.name}' is computed and never used` })
+    }
+  }
+  if (hits.length) {
+    findings.violation(rule, `${hits.length} silent failure risk(s): HTTP 200 on a failed result or a discarded error detail`, {
+      value: hits.length,
+      files: hits.slice(0, 10),
+    })
+  }
+}
+
+/** (8) Recurrence guard: filing routes stay at parity (assignee + watcher nudge). */
+async function ruleCreateRouteParity(root, findings) {
+  const rule = 'create-route-parity'
+  const hits = []
+  for (const rel of [...CREATE_ARG_FILES, ...NUDGE_ROUTE_FILES]) {
+    const text = readText(path.join(root, rel))
+    if (text === null) continue
+    for (const problem of createParityProblems(rel, text)) {
+      hits.push({ file: rel, line: problem.line, reason: problem.reason })
+    }
+  }
+  if (hits.length) {
+    findings.violation(rule, `${hits.length} kanban filing route(s) miss the assignee / watcher nudge contract`, {
+      value: hits.length,
+      files: hits.slice(0, 10),
+    })
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* ratchet + akapen soft signals                                        */
 /* ------------------------------------------------------------------ */
 
@@ -1004,6 +1352,9 @@ export async function analyzeRepo(root = DEFAULT_ROOT, options = {}) {
     ruleStorageContract,
     ruleDocsScriptsParity,
     ruleLegacyReentry,
+    ruleCliInvocationGuard,
+    ruleSilentFailureGuard,
+    ruleCreateRouteParity,
   ]) {
     try {
       await rule(absRoot, findings)
