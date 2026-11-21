@@ -10,7 +10,7 @@ import path from 'node:path'
 
 const root = path.resolve(import.meta.dirname, '../node_modules/node-pty/prebuilds')
 if (!existsSync(root)) {
-  console.log('[postinstall] node-pty の prebuilds が見つかりません（スキップ）')
+  console.log('[postinstall] node-pty prebuilds not found (skipping)')
   process.exit(0)
 }
 
@@ -25,8 +25,8 @@ for (const platform of readdirSync(root, { withFileTypes: true })) {
       fixed += 1
       console.log(`[postinstall] chmod +x ${path.relative(process.cwd(), file)}`)
     } catch (err) {
-      console.warn(`[postinstall] chmod 失敗: ${err?.message}`)
+      console.warn(`[postinstall] chmod failed: ${err?.message}`)
     }
   }
 }
-console.log(`[postinstall] node-pty spawn-helper: ${fixed} 件を修正`)
+console.log(`[postinstall] node-pty spawn-helper: fixed ${fixed} file(s)`)

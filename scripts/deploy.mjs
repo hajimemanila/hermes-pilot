@@ -21,20 +21,20 @@ const checkOnly = process.argv.includes('--check')
 
 function verify(dir, label) {
   const index = path.join(dir, 'index.html')
-  if (!fs.existsSync(index)) throw new Error(`${label}: index.html がありません (${dir})`)
+  if (!fs.existsSync(index)) throw new Error(`${label}: index.html not found (${dir})`)
   const html = fs.readFileSync(index, 'utf8')
   const refs = [...html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)].map((m) => m[1])
-  if (!refs.length) throw new Error(`${label}: index.html に /assets/ 参照がありません`)
+  if (!refs.length) throw new Error(`${label}: no /assets/ references in index.html`)
   for (const ref of refs) {
     const file = path.join(dir, ref.replace(/^\//, ''))
-    if (!fs.existsSync(file)) throw new Error(`${label}: 参照先が欠けています ${ref}`)
+    if (!fs.existsSync(file)) throw new Error(`${label}: missing referenced asset ${ref}`)
   }
   return { assets: refs.length, bytes: fs.statSync(index).size }
 }
 
 if (checkOnly) {
   const v = verify(dist, 'dist')
-  console.log(`検証: dist (index ${v.bytes}B / assets 参照 ${v.assets} 件)`)
+  console.log(`Verify: dist (index ${v.bytes}B / ${v.assets} asset refs)`)
   process.exit(0)
 }
 
@@ -46,7 +46,7 @@ execFileSync('npx', ['vite', 'build', '--config', 'apps/web/vite.config.js', '--
 })
 
 const v = verify(next, 'dist.next')
-console.log(`検証: index ${v.bytes}B / assets 参照 ${v.assets} 件`)
+console.log(`Verify: index ${v.bytes}B / ${v.assets} asset refs`)
 
 // 入れ替え（失敗しない限り dist は常に完全なビルド）
 if (fs.existsSync(dist)) {
@@ -55,4 +55,4 @@ if (fs.existsSync(dist)) {
 }
 fs.renameSync(next, dist)
 verify(dist, 'dist')
-console.log(`反映: dist ← 新ビルド（直前の正常ビルドは dist.prev）`)
+console.log('Deployed: dist <- new build (the previous good build is in dist.prev)')

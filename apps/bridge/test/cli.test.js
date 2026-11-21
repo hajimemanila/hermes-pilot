@@ -128,7 +128,7 @@ test('node bin/hermes-pilot.mjs qr はペアリング URL と QR を出す（受
     const r = runCli(['qr', '--port', '4097'], home)
     assert.equal(r.status, 0, r.out)
     // 本トークン（64 文字）を QR に焼くと高密度で読めないため、8 文字のワンタイムコードを使う
-    assert.match(r.out, /ワンタイムコード \/ one-time code: [A-Z2-9]{8}/, 'ワンタイムコードが出ていない')
+    assert.match(r.out, /One-time code: [A-Z2-9]{8}/, 'one-time code is missing')
     assert.match(r.out, /\?token=[A-Z2-9]{8}/, 'QR の URL にワンタイムコードが入っていない')
     assert.equal(r.out.includes(token), false, '本トークンが URL に出てしまっている（QR が高密度になる）')
     assert.match(r.out, /Pairing targets/)
@@ -146,8 +146,8 @@ test('qr: 端末に収まらない QR は出さず、URL と代替手段を案�
     assert.equal(r.status, 0, r.out)
     assert.match(r.out, /Pairing targets/)
     assert.match(r.out, /\?token=[A-Z2-9]{8}/)
-    // 収まる場合はブロック文字、収まらない場合は「省略しました」のどちらか（環境依存を許す）
-    assert.match(r.out, /[█▀▄]|省略しました/)
+    // 収まる場合はブロック文字、収まらない場合は省略メッセージのどちらか（環境依存を許す）
+    assert.match(r.out, /[█▀▄]|Terminal QR omitted/)
   } finally {
     fs.rmSync(home, { recursive: true, force: true })
   }
@@ -173,7 +173,7 @@ test('node bin/hermes-pilot.mjs service status は exit 0 で状態を出す（�
     assert.equal(r.status, 0, r.out)
     const unit = process.platform === 'darwin' ? SERVICE_LABEL : SYSTEMD_UNIT
     assert.ok(r.out.includes(unit), `ユニット名 ${unit} が出ていない`)
-    assert.match(r.out, /state|状態/)
+    assert.match(r.out, /state: /)
   } finally {
     fs.rmSync(home, { recursive: true, force: true })
   }
@@ -283,4 +283,42 @@ test('resolvePaths: データ先とスキル先が SPEC §3.2 の配置になる
   assert.equal(p.skillsDir, '/Users/x/.hermes/skills')
   const overridden = resolvePaths({ HOME: '/Users/x', HP_DATA_DIR: '/tmp/pilot-data' })
   assert.equal(overridden.dataDir, '/tmp/pilot-data')
+})
+
+// ── D72: CLI 出力は英語単一言語（CJK ゼロ）─────────────────────────────
+
+/** CLI 出力に混ざってはいけない文字（CJK・全角和文記号）。 */
+const CJK = /[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff01-\uff60]/
+
+/** 出力から CJK を含む行だけを返す（失敗メッセージ用）。 */
+function cjkLines(text) {
+  return text.split('\n').filter((line) => CJK.test(line)).slice(0, 3)
+}
+
+test('--help / qr / service status / init の出力に日本語が出ない（D72）', () => {
+  const home = tempHome()
+  try {
+    for (const args of [['--help'], ['service', 'status']]) {
+      const r = runCli(args, home)
+      assert.equal(r.status, 0, r.out)
+      assert.deepEqual(cjkLines(r.out), [], `${args.join(' ')} の出力に日本語が混ざっている`)
+    }
+    // ロケールに依存せず、英語表記そのものが出ていること
+    assert.match(runCli(['--help'], home).out, /Environment:/)
+    assert.match(runCli(['service', 'status'], home).out, /state: /)
+
+    const init = runCli(['init'], home)
+    assert.equal(init.status, 0, init.out)
+    assert.deepEqual(cjkLines(init.out), [], 'init の出力に日本語が混ざっている')
+    assert.match(init.out, /hermes-pilot init done/)
+
+    const qr = runCli(['qr'], home)
+    assert.equal(qr.status, 0, qr.out)
+    assert.deepEqual(cjkLines(qr.out), [], 'qr の出力に日本語が混ざっている')
+    assert.match(qr.out, /One-time code: [A-Z2-9]{8}/)
+    assert.match(qr.out, /Pairing targets:/)
+    assert.match(qr.out, /QR image \(PNG\):/)
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+  }
 })

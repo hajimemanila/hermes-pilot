@@ -170,7 +170,7 @@ test('migrate は kanban.db を書き換えない（[akapen] はそのまま・.
   assert.match(bodies.t_aaa00001, /^\[akapen\] /m)
   assert.match(bodies.t_aaa00002, /^\[akapen\] /m)
 
-  assert.match(formatReport(report), /kanban\.db: 1 個を確認 \/ \[akapen\] → \[review\] の書換は廃止/)
+  assert.match(formatReport(report), /kanban\.db: 1 found \/ rewriting \[akapen\] -> \[review\] is retired/)
 })
 
 test('migrate スクリプトは Hermes state を直接書き換えない（D55 の受入条件）', () => {
@@ -239,8 +239,8 @@ test('旧環境が無くても落ちず、レポートに skipped を残す', ()
   assert.equal(report.copied.sheets, 0)
   assert.ok(report.skipped.length > 0)
   const text = formatReport(report)
-  assert.match(text, /sheets : 新規 0/)
-  assert.match(text, /旧ディレクトリは削除していません/)
+  assert.match(text, /sheets : new 0/)
+  assert.match(text, /Old directories were NOT removed/)
 })
 
 test('findKanbanDbs はルートと各ボードの DB を拾う（開かずに存在だけ見る）', () => {
@@ -420,7 +420,7 @@ test('migrate は旧 cron を CLI 経由で片付け、レポートに削除件�
   assert.deepEqual(calls, ['hermes cron list', 'hermes cron remove c1aaaaaaaaaa'])
   // HERMES_HOME を移行対象の home に固定して、別プロファイルの cron を取り違えない
   assert.equal(envs[0].HERMES_HOME, env.hermesHome)
-  assert.match(formatReport(report), /旧 cron のクリーンアップ: 1 件を削除（hermes cron: mobile-akapen-watch）/)
+  assert.match(formatReport(report), /legacy cron cleanup: removed 1 \(hermes cron: mobile-akapen-watch\)/)
 })
 
 test('migrate の dryRun は旧 cron を検出するだけで remove を呼ばない', () => {
@@ -431,7 +431,7 @@ test('migrate の dryRun は旧 cron を検出するだけで remove を呼ば�
   assert.equal(report.crons.detected, 1)
   assert.equal(report.crons.removed, 0)
   assert.deepEqual(calls, ['hermes cron list'], 'dryRun では remove を呼ばない')
-  assert.match(formatReport(report, { dryRun: true }), /1 件を検出（dry run のため未削除: mobile-review-watch）/)
+  assert.match(formatReport(report, { dryRun: true }), /1 detected, not removed \(dry run: mobile-review-watch\)/)
   // dryRun でもコピーはしない
   assert.equal(fs.existsSync(path.join(env.hermesHome, 'plugin-data', 'hermes-pilot', 'review', 'sheets')), false)
 })
@@ -441,7 +441,39 @@ test('旧環境が無いときのレポートはクリーンアップ 0 件を�
   const hermesHome = path.join(home, '.hermes')
   fs.mkdirSync(hermesHome, { recursive: true })
   const text = formatReport(migrate({ home, hermesHome, runner: noCronRunner() }))
-  assert.match(text, /旧 cron のクリーンアップ: 0 件/)
+  assert.match(text, /legacy cron cleanup: 0/)
+})
+
+// ── D72: 移行レポートと運用スクリプトの出力は英語（CJK ゼロ）─────────────
+
+/** 出力に混ざってはいけない文字（CJK・全角和文記号）。 */
+const CJK_OUT = /[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff01-\uff60]/
+
+test('formatReport は英語だけで出る（CJK ゼロ・dryRun も含む）', () => {
+  const env = tempLegacy()
+  const text = formatReport(migrate({ home: env.home, hermesHome: env.hermesHome, runner: noCronRunner() }))
+  assert.deepEqual(text.split('\n').filter((l) => CJK_OUT.test(l)), [], 'レポートに日本語が混ざっている')
+
+  const dry = formatReport(
+    migrate({ home: env.home, hermesHome: env.hermesHome, runner: noCronRunner(), dryRun: true }),
+    { dryRun: true },
+  )
+  assert.deepEqual(dry.split('\n').filter((l) => CJK_OUT.test(l)), [], 'dry run のレポートに日本語が混ざっている')
+  assert.match(dry, /dry run: nothing was written/)
+  assert.match(text, /sheets : new \d+ \/ existing \d+/)
+  assert.match(text, /legacy cron cleanup: 0/)
+})
+
+test('postinstall / deploy の出力行に日本語が無い（D72・静的検査）', () => {
+  // これらは実際には走らせにくい（npm install 後・本番入れ替え）ので、出力呼び出しの行を直接見る。
+  for (const rel of ['scripts/postinstall.mjs', 'scripts/deploy.mjs']) {
+    const src = fs.readFileSync(new URL(`../../../${rel}`, import.meta.url), 'utf8')
+    const outLines = src
+      .split('\n')
+      .filter((l) => /console\.(?:log|warn|error)\(|throw new Error\(/.test(l))
+    assert.ok(outLines.length > 0, `${rel} に出力呼び出しが見つからない`)
+    assert.deepEqual(outLines.filter((l) => CJK_OUT.test(l)), [], `${rel} の出力に日本語が残っている`)
+  }
 })
 
 // ── D55: init の無言自動移行をやめる ────────────────────────────────────

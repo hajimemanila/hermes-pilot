@@ -169,12 +169,12 @@ export function helpText() {
     '  hermes-pilot migrate                     Copy data from the old akapen / mobile-pwa layout',
     '  hermes-pilot --help                      Show this help',
     '',
-    '環境 / Environment:',
+    'Environment:',
     '  HERMES_HOME   Hermes home (default ~/.hermes)',
     '  HP_DATA_DIR   Plugin data dir (default ~/.hermes/plugin-data/hermes-pilot)',
     '',
-    'データ先 / Data: ~/.hermes/plugin-data/hermes-pilot/',
-    '既存の ai.hermes.hermes-mobile は止めません（新ラベル ai.hermes.pilot を併設）。',
+    'Data: ~/.hermes/plugin-data/hermes-pilot/',
+    'The old ai.hermes.hermes-mobile service is left running; the new ai.hermes.pilot label runs alongside it.',
   ].join('\n')
 }
 
@@ -352,7 +352,7 @@ export function pairingInfo({ token, port, tlsPort = null, dnsName = null }) {
 export function mintPairCode(dataDir) {
   const { code, expiresAt } = createPairCodes({ dataDir }).mint()
   const minutes = Math.max(1, Math.round((expiresAt - Date.now()) / 60000))
-  out('', `ワンタイムコード / one-time code: ${code}（${minutes} 分有効・1 回限り）`)
+  out('', `One-time code: ${code} (valid for ${minutes} min, single-use)`)
   return code
 }
 
@@ -365,10 +365,10 @@ export function mintPairCode(dataDir) {
  */
 function printPairing({ token, port, tlsPort = null, dnsName = null, svg = false, pngPath = null }) {
   const info = pairingInfo({ token, port, tlsPort, dnsName })
-  out('', '接続先候補 / Pairing targets:')
+  out('', 'Pairing targets:')
   for (const t of info.targets) out(`  - ${t.label}: ${t.url}`)
   if (!info.best) {
-    out('', '到達可能なアドレスがありません（Tailscale か LAN を確認してください）。')
+    out('', 'No reachable address found (check Tailscale or your LAN connection).')
     return
   }
   // 端末の半角ブロックは行間が塗られず、カメラから見ると暗い横縞が QR を横切るため
@@ -378,9 +378,9 @@ function printPairing({ token, port, tlsPort = null, dnsName = null, svg = false
       const png = qrPng(info.best.url)
       fs.mkdirSync(path.dirname(pngPath), { recursive: true })
       fs.writeFileSync(pngPath, png, { mode: 0o600 })
-      out('', `QR 画像 / PNG: ${pngPath}`, `  → これを大きく開いてカメラで読み取ってください（${png.length} bytes）。`)
+      out('', `QR image (PNG): ${pngPath}`, `  -> Open this image at full size and scan it with your phone camera (${png.length} bytes).`)
     } catch (err) {
-      out('', `QR 画像を書けませんでした: ${err?.message ?? err}`)
+      out('', `Failed to write the QR image: ${err?.message ?? err}`)
     }
   }
   const cols = process.stdout.columns || 80
@@ -413,13 +413,13 @@ function printPairing({ token, port, tlsPort = null, dnsName = null, svg = false
     const d = dims(qrTerminal(info.best.url))
     out(
       '',
-      `端末 QR はこの端末（${cols}x${rows}）に収まらないため省略しました（${d.width} 桁 x ${d.height} 行）。`,
-      '  → 上の PNG を開いて読み取るか、PC のブラウザで「設定 → ペアリング QR」を大きく表示してください。',
+      `Terminal QR omitted: it does not fit this terminal (${cols}x${rows}; the QR needs ${d.width} cols x ${d.height} rows).`,
+      '  -> Open the PNG above instead, or show the pairing QR larger in the desktop browser (Settings -> Pairing QR).',
     )
     if (svg) out('', qrSvg(info.best.url))
     return
   }
-  out('', `端末表示の QR（${pick.label}・参考）— 読み取れないときは上の PNG を使ってください:`, '')
+  out('', `Terminal QR (${pick.label}, for reference) - if it does not scan, use the PNG above:`, '')
   out(qr)
   if (svg) out('', qrSvg(info.best.url))
 }
@@ -452,7 +452,7 @@ export function migrationDecision({ hasLegacy = false, yes = false, isTTY = fals
 export function askMigrate({ input = process.stdin, output = process.stdout, question } = {}) {
   const q =
     question ??
-    '旧環境（akapen / mobile-pwa）が見つかりました。今すぐ移行しますか? / Migrate legacy data now? [y/N]: '
+    'Legacy data (akapen / mobile-pwa) found. Migrate legacy data now? [y/N]: '
   const rl = readline.createInterface({ input, output })
   return new Promise((resolve) => {
     let answered = false
@@ -622,7 +622,7 @@ export async function runInit(
     if (proceed) {
       const { migrate, formatReport } = await loadMigrate()
       const report = migrate({ home: p.home, hermesHome: p.hermesHome, pluginDataDir: p.pluginDataDir })
-      out('旧環境が見つかったので移行しました / Migrated legacy data:', '', formatReport(report))
+      out('Migrated legacy data:', '', formatReport(report))
       migrated = true
       migration = 'migrate'
     } else {
@@ -631,9 +631,9 @@ export async function runInit(
   }
   if (migration === 'manual') {
     out(
-      '旧環境（akapen / mobile-pwa）はまだ残っていますが、移行していません / legacy data found; not migrated',
-      '  → 移行するには: node bin/hermes-pilot.mjs migrate',
-      '    （確認を省略する場合は init --yes）',
+      'Legacy data (akapen / mobile-pwa) is still present; not migrated.',
+      '  -> To migrate: node bin/hermes-pilot.mjs migrate',
+      '    (add init --yes to skip the prompt)',
     )
   }
 
@@ -653,26 +653,25 @@ export async function runInit(
   const dashboard = installDashboardPlugin(p, { force, targetDir })
   out(
     '',
-    'hermes-pilot init 完了 / done',
-    `  データ / data : ${p.dataDir}`,
-    `  トークン / token: ${p.tokenPath}${created ? '（新規作成 0600）' : '（既存）'}`,
-    `  スキル / skills: ${installed.length ? installed.join(', ') : '（既に配置済み）'}`,
-    `  移行 / migrate: ${migrated ? '実行' : migration === 'manual' ? '未実行（migrate サブコマンドで実行）' : '不要'}`,
+    'hermes-pilot init done',
+    `  data   : ${p.dataDir}`,
+    `  token  : ${p.tokenPath}${created ? ' (created, 0600)' : ' (existing)'}`,
+    `  skills : ${installed.length ? installed.join(', ') : '(already installed)'}`,
+    `  migrate: ${migrated ? 'done' : migration === 'manual' ? 'not run (use the migrate subcommand)' : 'not needed'}`,
   )
   if (dashboard.selfHosted) {
     // リポジトリルート自体がプラグインディレクトリ（`hermes plugins install` 直後の形）。
     // ルートに `__init__.py` / `dashboard/` がコミット済みなのでコピーはしない。
     out(
-      `  ダッシュボード / dashboard tab: ${dashboard.root}`,
-      '    リポジトリルートがプラグインディレクトリなのでコピーは省略（自己上書きの回避）。',
-      '    / plugin dir == repo root: nothing to copy, the layout is already committed.',
-      '    → 初回は `hermes plugins enable hermes-pilot` とダッシュボードの再起動が必要です。',
+      `  dashboard tab: ${dashboard.root}`,
+      '    plugin dir == repo root: nothing to copy, the layout is already committed.',
+      '    -> First run needs `hermes plugins enable hermes-pilot` and a dashboard restart.',
     )
   } else {
     out(
-      `  ダッシュボード / dashboard tab: ${dashboard.root}`,
-      `    ${dashboard.installed.length} ファイル配置${dashboard.installed.length ? '' : '（既に配置済み。--force で上書き）'}`,
-      '    → Hermes ダッシュボード（:9119）の「Hermes Pilot」タブに出ます。初回は `hermes plugins enable hermes-pilot` とダッシュボードの再起動が必要です。',
+      `  dashboard tab: ${dashboard.root}`,
+      `    ${dashboard.installed.length} file(s) installed${dashboard.installed.length ? '' : ' (already installed; --force overwrites)'}`,
+      '    -> It shows up as the "Hermes Pilot" tab in the Hermes dashboard (:9119). First run needs `hermes plugins enable hermes-pilot` and a dashboard restart.',
     )
   }
   printPairing({ token: mintPairCode(p.dataDir), port, tlsPort, pngPath: path.join(p.dataDir, 'pair-qr.png') })
@@ -734,9 +733,9 @@ export function runService(sub, { paths, port, host, dryRun = false }) {
         out(`launchctl bootstrap: ${(boot.stderr || boot.stdout || '').trim() || 'already loaded'}`)
         out(`launchctl kickstart: exit ${kick.status}`)
       } else {
-        out(`launchctl bootstrap: ok（${domain}）`)
+        out(`launchctl bootstrap: ok (${domain})`)
       }
-      out(`常駐を開始しました / service installed: ${SERVICE_LABEL}`)
+      out(`Service installed: ${SERVICE_LABEL}`)
       return 0
     }
     if (sub === 'uninstall') {
@@ -746,11 +745,11 @@ export function runService(sub, { paths, port, host, dryRun = false }) {
       out(`launchctl bootout: exit ${r.status}`)
       try {
         fs.rmSync(plistPath, { force: true })
-        out('plist を削除しました')
+        out('plist removed')
       } catch (err) {
-        out(`plist の削除に失敗: ${err?.message ?? err}`)
+        out(`Failed to remove plist: ${err?.message ?? err}`)
       }
-      out('旧 ai.hermes.hermes-mobile はそのままです（必要なら手動で bootout）。')
+      out('The old ai.hermes.hermes-mobile service was left as-is (boot it out manually if needed).')
       return 0
     }
     if (sub === 'restart') {
@@ -765,7 +764,7 @@ export function runService(sub, { paths, port, host, dryRun = false }) {
       const off = spawnSync('launchctl', ['bootout', `${domain}/${SERVICE_LABEL}`], { encoding: 'utf8' })
       out(`launchctl bootout: exit ${off.status}`)
       if (!fs.existsSync(plistPath)) {
-        out(`plist がありません（先に service install を実行してください）: ${plistPath}`)
+        out(`plist missing (run service install first): ${plistPath}`)
         return 1
       }
       // bootout 直後の bootstrap は "Input/output error (5)" で失敗することがある
@@ -777,7 +776,7 @@ export function runService(sub, { paths, port, host, dryRun = false }) {
         if (on.status === 0) break
       }
       if (on.status === 0) {
-        out('launchctl bootstrap: ok（plist を読み直した）')
+        out('launchctl bootstrap: ok (plist reloaded)')
         return 0
       }
       out(`launchctl bootstrap: exit ${on.status}${on.stderr ? ` (${on.stderr.trim()})` : ''}`)
@@ -788,8 +787,8 @@ export function runService(sub, { paths, port, host, dryRun = false }) {
     if (sub === 'status' || !sub) {
       const st = launchdLoaded(SERVICE_LABEL)
       out(`service: ${SERVICE_LABEL}`)
-      out(`plist: ${plistPath}${fs.existsSync(plistPath) ? '（あり）' : '（なし）'}`)
-      out(st.loaded ? '状態 / state: running' : '状態 / state: not installed（hermes-pilot service install）')
+      out(`plist: ${plistPath}${fs.existsSync(plistPath) ? ' (present)' : ' (missing)'}`)
+      out(st.loaded ? 'state: running' : 'state: not installed (run hermes-pilot service install)')
       return 0
     }
     out(`unknown service subcommand: ${sub}`)
@@ -849,8 +848,8 @@ export function runService(sub, { paths, port, host, dryRun = false }) {
   if (sub === 'status' || !sub) {
     const r = sys(['is-active', SYSTEMD_UNIT])
     out(`service: ${SYSTEMD_UNIT}`)
-    out(`unit: ${unitPath}${fs.existsSync(unitPath) ? '（あり）' : '（なし）'}`)
-    out(`状態 / state: ${String(r.stdout ?? '').trim() || 'unknown'}（exit ${r.status}）`)
+    out(`unit: ${unitPath}${fs.existsSync(unitPath) ? ' (present)' : ' (missing)'}`)
+    out(`state: ${String(r.stdout ?? '').trim() || 'unknown'} (exit ${r.status})`)
     return 0
   }
   out(`unknown service subcommand: ${sub}`)
@@ -869,10 +868,10 @@ export function runService(sub, { paths, port, host, dryRun = false }) {
 export async function runStart({ paths, port, host, tlsPort = null, dnsName = null, noQr = false }) {
   const index = path.join(ROOT, 'apps', 'web', 'dist', 'index.html')
   if (!fs.existsSync(index)) {
-    out('UI が未ビルドなのでビルドします / building the UI…')
+    out('Building the UI (not built yet)…')
     const build = spawnSync('npm', ['run', 'build'], { cwd: ROOT, stdio: 'inherit' })
     if (build.status !== 0) {
-      out('ビルドに失敗しました / build failed')
+      out('build failed')
       process.exit(1)
     }
   }
@@ -916,7 +915,7 @@ export async function main(argv = process.argv.slice(2)) {
 
   if (command === 'qr') {
     const { created } = ensureToken(paths.tokenPath)
-    if (created) out(`トークンを新規作成しました / token created: ${paths.tokenPath}`)
+    if (created) out(`Token created: ${paths.tokenPath}`)
     printPairing({
       token: mintPairCode(paths.dataDir),
       port,

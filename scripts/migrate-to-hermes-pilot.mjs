@@ -379,7 +379,7 @@ export function migrate(opts = {}) {
     const src = path.join(srcRoot, sub)
     const r = copyDirIfExists(src, path.join(reviewDir, sub))
     if (r.skipped) {
-      report.skipped.push(`${sub}: 旧ディレクトリが無い`)
+      report.skipped.push(`${sub}: old directory missing`)
       continue
     }
     report.copied[key] = r.copied
@@ -390,7 +390,7 @@ export function migrate(opts = {}) {
   fs.mkdirSync(reviewDir, { recursive: true })
   for (const name of ['feed.jsonl', 'chat-reports.jsonl', 'task-chats.json']) {
     const r = copyFileIfExists(path.join(oldPluginData, name), path.join(reviewDir, name))
-    if (r.skipped) report.skipped.push(`${name}: 既にあるか旧ファイルが無い`)
+    if (r.skipped) report.skipped.push(`${name}: already present or missing in the old layout`)
     report.copied.reviewFiles += r.copied
   }
 
@@ -398,7 +398,7 @@ export function migrate(opts = {}) {
   fs.mkdirSync(pluginDataDir, { recursive: true })
   for (const name of ['token', 'snippets.json', 'audit.jsonl']) {
     const r = copyFileIfExists(path.join(oldMobilePwa, name), path.join(pluginDataDir, name))
-    if (r.skipped) report.skipped.push(`${name}: 既にあるか旧ファイルが無い`)
+    if (r.skipped) report.skipped.push(`${name}: already present or missing in the old layout`)
     report.copied.session += r.copied
   }
 
@@ -423,36 +423,36 @@ export function formatReport(r, { tagOld = TAG_OLD, tagNew = TAG_NEW, dryRun = f
   lines.push('=== hermes-pilot migration ===')
   lines.push(`from: ${r.srcRoot}`)
   lines.push(`to:   ${r.pluginDataDir}`)
-  lines.push(`home: ${r.hermesHome}${dryRun ? '（dry run: 何も書き換えていません）' : ''}`)
+  lines.push(`home: ${r.hermesHome}${dryRun ? ' (dry run: nothing was written)' : ''}`)
   lines.push('')
-  lines.push(`sheets : 新規 ${r.copied.sheets} / 既存 ${r.existing.sheets}`)
-  lines.push(`shots  : 新規 ${r.copied.shots} / 既存 ${r.existing.shots}`)
-  lines.push(`library: 新規 ${r.copied.library} / 既存 ${r.existing.library}`)
-  lines.push(`review/*.jsonl + task-chats: 新規 ${r.copied.reviewFiles}`)
-  lines.push(`token/snippets/audit: 新規 ${r.copied.session}`)
+  lines.push(`sheets : new ${r.copied.sheets} / existing ${r.existing.sheets}`)
+  lines.push(`shots  : new ${r.copied.shots} / existing ${r.existing.shots}`)
+  lines.push(`library: new ${r.copied.library} / existing ${r.existing.library}`)
+  lines.push(`review/*.jsonl + task-chats: new ${r.copied.reviewFiles}`)
+  lines.push(`token/snippets/audit: new ${r.copied.session}`)
   lines.push('')
   lines.push(
-    `kanban.db: ${r.kanban.length} 個を確認 / ${tagOld} → ${tagNew} の書換は廃止（review.js が両タグを読みます・DB は開きません）`,
+    `kanban.db: ${r.kanban.length} found / rewriting ${tagOld} -> ${tagNew} is retired (review.js reads both tags; the DB is never opened)`,
   )
   for (const k of r.kanban) lines.push(`  * ${k.db}`)
   if (r.boards.length) {
-    lines.push(`board の default_workdir 更新: ${r.boards.length} 件`)
+    lines.push(`board default_workdir updated: ${r.boards.length}`)
     for (const b of r.boards) lines.push(`  * ${b}`)
   }
   const crons = r.crons ?? { detected: 0, removed: 0, names: [], scanned: 0, errors: [], dryRun: false }
   const cronErrs = crons.errors ?? []
   lines.push('')
   if (crons.removed) {
-    lines.push(`旧 cron のクリーンアップ: ${crons.removed} 件を削除（${crons.via ?? 'hermes cron remove'}: ${crons.names.join(', ')}）`)
+    lines.push(`legacy cron cleanup: removed ${crons.removed} (${crons.via ?? 'hermes cron remove'}: ${crons.names.join(', ')})`)
   } else if (crons.detected) {
-    lines.push(`旧 cron のクリーンアップ: ${crons.detected} 件を検出（dry run のため未削除: ${crons.names.join(', ')}）`)
+    lines.push(`legacy cron cleanup: ${crons.detected} detected, not removed (dry run: ${crons.names.join(', ')})`)
   } else if (!cronErrs.length) {
-    lines.push('旧 cron のクリーンアップ: 0 件（mobile-akapen-watch / mobile-review-watch は既に無い）')
+    lines.push('legacy cron cleanup: 0 (mobile-akapen-watch / mobile-review-watch are already gone)')
   }
   for (const e of cronErrs.slice(0, 3)) lines.push(`  ! ${e.cmd}: ${e.error}${e.stderr ? ` (${e.stderr.split('\n')[0]})` : ''}`)
-  if (cronErrs.length > 3) lines.push(`  ! …他 ${cronErrs.length - 3} 件`)
+  if (cronErrs.length > 3) lines.push(`  ! ...and ${cronErrs.length - 3} more`)
   lines.push('')
-  lines.push('旧ディレクトリは削除していません（物理コピーのみ）。')
+  lines.push('Old directories were NOT removed (physical copy only).')
   return lines.join('\n')
 }
 
@@ -466,7 +466,7 @@ if (invokedDirectly) {
     const report = migrate({ dryRun })
     console.log(formatReport(report, { dryRun }))
   } catch (err) {
-    console.error(`[migrate] 失敗: ${err?.stack ?? err}`)
+    console.error(`[migrate] failed: ${err?.stack ?? err}`)
     process.exit(1)
   }
 }
