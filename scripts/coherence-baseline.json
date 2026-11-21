@@ -3,9 +3,9 @@
   "maxLines": 800,
   "files": {
     "apps/web/src/styles.css": 31,
-    "apps/web/src/features/ChatPane.jsx": 2992,
+    "apps/web/src/features/ChatPane.jsx": 2783,
     "apps/web/src/demo/mockApi.js": 96,
-    "apps/web/src/features/TasksPane.jsx": 2107,
+    "apps/web/src/features/TasksPane.jsx": 1982,
     "apps/dashboard/index.js": 2014,
     "apps/bridge/src/review.js": 798,
     "apps/bridge/src/server.js": 792,
