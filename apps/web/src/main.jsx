@@ -3,10 +3,13 @@ import { createRoot } from 'react-dom/client'
 import { App } from './App.jsx'
 import { I18nProvider } from './i18n/index.js'
 import { initTheme } from './lib/theme.js'
+import { installViewportVars } from './lib/viewport.js'
 import './styles.css'
 
 // 最初の描画より前にテーマを当てる（React の effect を待つと Dark が一瞬見える）
 initTheme()
+// ソフトキーボードの高さを `--kb-inset` に入れる（fixed の下端要素がキーボードの裏に隠れるのを防ぐ）
+installViewportVars()
 
 /**
  * デモビルド（`npm run build:demo` / `VITE_DEMO_MODE=1`）かどうか。

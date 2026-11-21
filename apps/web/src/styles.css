@@ -2300,6 +2300,12 @@ ol.md-list {
   color: var(--good);
 }
 
+/* 切断してバックオフ再接続中（自動で戻る。タブ切替は不要） */
+.term-state.reconnecting {
+  border-style: dashed;
+  color: var(--accent-2, var(--muted));
+}
+
 .term-hint {
   flex: none;
   padding: 8px 12px calc(8px + var(--safe-b));
@@ -2763,6 +2769,19 @@ html[data-vibe='dopamine'] .row-mode.resumable {
 .toast.chat,
 .toast.term {
   bottom: calc(var(--nav-h) + var(--safe-b) + 108px);
+}
+
+/* ソフトキーボードが出ている間は「見えている領域の下端」を基準にする。
+   `position: fixed` は**レイアウト**ビューポート基準なので、キーボードが出ても動かず
+   裏に隠れる（実測: 端末タブの「再接続中」トーストがキーボードの下で見えなかった）。
+   `--kb-inset` は lib/viewport.js が visualViewport から書く（キーボード無しなら 0px）。 */
+html[data-kb='1'] .toast {
+  bottom: calc(var(--kb-inset, 0px) + var(--safe-b) + 12px);
+}
+
+html[data-kb='1'] .toast.chat,
+html[data-kb='1'] .toast.term {
+  bottom: calc(var(--kb-inset, 0px) + var(--safe-b) + 74px);
 }
 
 /* ---------- ログイン（殻だけ公開しているため） ---------- */

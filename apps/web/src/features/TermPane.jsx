@@ -7,6 +7,7 @@ import { Icon, Sheet } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
 import { readSnippetBars, subscribeSnippetBars } from '../lib/snippetBars.js'
 import { termKeyBytes } from '../lib/termKey.js'
+import { reconnectDelay } from '../lib/termReconnect.js'
 import { useI18n } from '../i18n/index.js'
 
 /**
@@ -22,6 +23,12 @@ import { useI18n } from '../i18n/index.js'
  *   同じ textarea のキャプチャ段なので、ここで `stopPropagation` すれば書き手は 1 つに保たれる
  *   （xterm が同時に `\r` を送って二重実行になることはない）。IME 変換中でも実行する。
  *   タブに戻ってきたときは xterm へフォーカスを戻す（隠し textarea にキーボードを繋ぎ直す）。
+ *
+ * 再接続:
+ *   ブリッジの再起動（`launchctl kickstart -k …`）は端末ソケットも切る。ペインはタブ切替で
+ *   破棄されない（`visibility:hidden + inert` で生かしたまま）ので、mount 時の 1 回きりの接続だと
+ *   **「未接続」のまま二度と戻らない**（実測）。close で 1s→2s→4s…最大 15s のバックオフ再接続、
+ *   タブ復帰・`visibilitychange`・`online`・送信時の失敗でも即座に繋ぎ直す。
  */
 export function TermPane({ notify, active = true }) {
   const { lang, t } = useI18n()
@@ -31,6 +38,12 @@ export function TermPane({ notify, active = true }) {
   const termRef = useRef(null)
   const fitRef = useRef(null)
   const wsRef = useRef(null)
+  /** 再接続を起こす関数（mount effect が入れ、送信失敗やタブ復帰から呼ぶ）。 */
+  const connectRef = useRef(null)
+  const retryRef = useRef(0)
+  const reconnectTimer = useRef(null)
+  /** 切断の行を書いたか（再試行のたびに積まない）。 */
+  const droppedRef = useRef(false)
   const [state, setState] = useState('connecting')
   const [snippets, setSnippets] = useState([])
   const [sheet, setSheet] = useState(false)
@@ -65,33 +78,63 @@ export function TermPane({ notify, active = true }) {
       /* 幅 0 のときなど */
     }
 
-    const ws = openSocket('/ws/term')
-    wsRef.current = ws
-    ws.onopen = () => {
-      setState('open')
-      term.write(`\r\n\x1b[2m${tRef.current('term.connected')}\x1b[0m\r\n`)
-      try {
-        fit.fit()
-      } catch {
-        /* noop */
+    let disposed = false
+
+    /**
+     * PTY ソケットを張る。切れたら自前でバックオフ再接続する
+     * （`onclose` は「置き換え済みの古いソケット」の close でも来るので、id を突き合わせて無視する）。
+     */
+    const connect = () => {
+      if (disposed) return
+      const cur = wsRef.current
+      if (cur && cur.readyState <= WebSocket.OPEN) return
+      // 再試行中は「接続中」に戻さない（切断→接続中の点滅を避ける）
+      setState((s) => (s === 'reconnecting' ? s : 'connecting'))
+      const ws = openSocket('/ws/term')
+      wsRef.current = ws
+      ws.onopen = () => {
+        retryRef.current = 0
+        droppedRef.current = false
+        setState('open')
+        term.write(`\r\n\x1b[2m${tRef.current('term.connected')}\x1b[0m\r\n`)
+        try {
+          fit.fit()
+        } catch {
+          /* noop */
+        }
+        ws.send(JSON.stringify({ t: 'resize', c: term.cols, r: term.rows }))
       }
-      ws.send(JSON.stringify({ t: 'resize', c: term.cols, r: term.rows }))
-    }
-    ws.onmessage = (ev) => {
-      let msg
-      try {
-        msg = JSON.parse(ev.data)
-      } catch {
-        term.write(ev.data)
-        return
+      ws.onmessage = (ev) => {
+        let msg
+        try {
+          msg = JSON.parse(ev.data)
+        } catch {
+          term.write(ev.data)
+          return
+        }
+        if (msg.t === 'out') term.write(msg.d)
       }
-      if (msg.t === 'out') term.write(msg.d)
+      ws.onerror = () => setState('error')
+      ws.onclose = () => {
+        if (wsRef.current !== ws) return
+        wsRef.current = null
+        if (disposed) return
+        setState('reconnecting')
+        if (!droppedRef.current) {
+          droppedRef.current = true
+          term.write(`\r\n\x1b[2m${tRef.current('term.reconnectLine')}\x1b[0m\r\n`)
+        }
+        retryRef.current += 1
+        clearTimeout(reconnectTimer.current)
+        reconnectTimer.current = setTimeout(connect, reconnectDelay(retryRef.current))
+      }
     }
-    ws.onclose = () => setState('closed')
-    ws.onerror = () => setState('error')
+    connectRef.current = connect
+    connect()
 
     const sub = term.onData((d) => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'in', d }))
+      const ws = wsRef.current
+      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'in', d }))
     })
     const onResize = () => {
       try {
@@ -99,19 +142,46 @@ export function TermPane({ notify, active = true }) {
       } catch {
         /* noop */
       }
-      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'resize', c: term.cols, r: term.rows }))
+      const ws = wsRef.current
+      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'resize', c: term.cols, r: term.rows }))
+    }
+    /** 復帰・回線復旧では待たずに繋ぎ直す（バックオフの残りを捨てる）。 */
+    const reconnectNow = () => {
+      if (disposed) return
+      if (wsRef.current?.readyState === WebSocket.OPEN) return
+      retryRef.current = 0
+      clearTimeout(reconnectTimer.current)
+      connect()
+    }
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') reconnectNow()
     }
     window.addEventListener('resize', onResize)
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('pageshow', onVisible)
+    window.addEventListener('online', reconnectNow)
     const focusTimer = setTimeout(() => {
       term.focus()
       onResize()
     }, 120)
 
     return () => {
+      disposed = true
+      connectRef.current = null
       clearTimeout(focusTimer)
+      clearTimeout(reconnectTimer.current)
       window.removeEventListener('resize', onResize)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('pageshow', onVisible)
+      window.removeEventListener('online', reconnectNow)
       sub.dispose()
-      ws.close()
+      const ws = wsRef.current
+      wsRef.current = null
+      try {
+        ws?.close()
+      } catch {
+        /* noop */
+      }
       term.dispose()
     }
   }, [])
@@ -138,9 +208,15 @@ export function TermPane({ notify, active = true }) {
     }
   }, [lang])
 
-  /** バー増減・タブ復帰時に PTY の桁数を合わせ直す。 */
+  /** バー増減・タブ復帰時に PTY の桁数を合わせ直す。切れていれば繋ぎ直す。 */
   useEffect(() => {
     if (!active) return undefined
+    // タブに戻ってきたら待たずに繋ぎ直す（バックオフ中でも試す）
+    if (wsRef.current?.readyState !== WebSocket.OPEN) {
+      retryRef.current = 0
+      clearTimeout(reconnectTimer.current)
+      connectRef.current?.()
+    }
     const fitTimer = setTimeout(() => {
       try {
         fitRef.current?.fit()
@@ -174,11 +250,15 @@ export function TermPane({ notify, active = true }) {
     return () => clearTimeout(focusTimer)
   }, [active])
 
-  /** PTY へ生バイトを書く（未接続なら理由を出す）。Enter の明示送信と定型コマンドが使う。 */
+  /** PTY へ生バイトを書く（未接続なら即再接続を試みて理由を出す）。Enter の明示送信と定型コマンドが使う。 */
   const writeToPty = useCallback(
     (data) => {
       const ws = wsRef.current
       if (ws?.readyState !== WebSocket.OPEN) {
+        // 待たずに 1 回だけ繋ぎ直し、それでも駄目なら理由を出す（キーボードの裏に隠れない位置に出る）
+        retryRef.current = 0
+        clearTimeout(reconnectTimer.current)
+        connectRef.current?.()
         notify(t('term.notConnected'))
         return false
       }
