@@ -6,6 +6,7 @@ import { api, openSocket } from '../api.js'
 import { Icon, Sheet } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
 import { readSnippetBars, subscribeSnippetBars } from '../lib/snippetBars.js'
+import { termKeyBytes } from '../lib/termKey.js'
 import { useI18n } from '../i18n/index.js'
 
 /**
@@ -15,6 +16,12 @@ import { useI18n } from '../i18n/index.js'
  * 定型コマンド（`GET /api/snippets/term`）:
  *   タップ = 入力欄に挿入（Enter は送らない）
  *   長押し = 挿入して実行（`run: true` のものだけ）
+ *
+ * Enter（SPEC-enter-enter-discuss-next-ste Q1/Q2 = A）:
+ *   `.term-host` のキャプチャ段で Enter を拾い、`\r` を自分で PTY へ書く。xterm の keydown は
+ *   同じ textarea のキャプチャ段なので、ここで `stopPropagation` すれば書き手は 1 つに保たれる
+ *   （xterm が同時に `\r` を送って二重実行になることはない）。IME 変換中でも実行する。
+ *   タブに戻ってきたときは xterm へフォーカスを戻す（隠し textarea にキーボードを繋ぎ直す）。
  */
 export function TermPane({ notify, active = true }) {
   const { lang, t } = useI18n()
@@ -149,21 +156,66 @@ export function TermPane({ notify, active = true }) {
     return () => clearTimeout(fitTimer)
   }, [snippets.length, bars.term, active])
 
-  /** 端末へ送る（exec=true で「現在の行を消して Enter まで」）。 */
-  const sendToPty = useCallback(
-    (text, exec) => {
+  /**
+   * タブに戻ってきたら xterm へフォーカスを戻す（SPEC-enter-enter-discuss-next-ste Q1）。
+   * タブは `display:none` ではなく `visibility:hidden + inert` で生かしたまま隠れるので
+   * （`App.jsx` の `TabHost`）、隠し textarea はフォーカスを失ったままになり、
+   * 戻ってもキーボードが端末に繋がらない。表示に戻った直後に繋ぎ直す。
+   */
+  useEffect(() => {
+    if (!active) return undefined
+    const focusTimer = setTimeout(() => {
+      try {
+        termRef.current?.focus()
+      } catch {
+        /* 端末がまだ無い */
+      }
+    }, 60)
+    return () => clearTimeout(focusTimer)
+  }, [active])
+
+  /** PTY へ生バイトを書く（未接続なら理由を出す）。Enter の明示送信と定型コマンドが使う。 */
+  const writeToPty = useCallback(
+    (data) => {
       const ws = wsRef.current
       if (ws?.readyState !== WebSocket.OPEN) {
         notify(t('term.notConnected'))
         return false
       }
-      // 実行は「入力中の行を捨ててから流す」（前のコマンドに連結される事故を防ぐ）
-      ws.send(JSON.stringify({ t: 'in', d: exec ? `\x15${text}\r` : text }))
+      ws.send(JSON.stringify({ t: 'in', d: data }))
+      return true
+    },
+    [notify, t],
+  )
+
+  /**
+   * Enter はホストのキャプチャ段で拾い、`\r` を自分で書く（Q1=A・Q2=A: IME 変換中でも実行）。
+   * xterm の keydown は同じ textarea のキャプチャ段に登録されているので、ここで
+   * `stopPropagation` すれば xterm は動かず、`\r` の書き手は 1 つに保たれる（二重実行しない）。
+   */
+  useEffect(() => {
+    const host = hostRef.current
+    if (!host) return undefined
+    const onKeyDown = (e) => {
+      const bytes = termKeyBytes(e)
+      if (bytes == null) return
+      e.preventDefault()
+      e.stopPropagation()
+      writeToPty(bytes)
+    }
+    host.addEventListener('keydown', onKeyDown, true)
+    return () => host.removeEventListener('keydown', onKeyDown, true)
+  }, [writeToPty])
+
+  /** 端末へ送る（exec=true で「現在の行を消して Enter まで」）。 */
+  const sendToPty = useCallback(
+    (text, exec) => {
+      if (!writeToPty(exec ? `\x15${text}\r` : text)) return false
       termRef.current?.focus()
       haptic(exec ? 'action' : 'tap')
       return true
     },
-    [notify, t],
+    [writeToPty],
   )
 
   const useSnippet = useCallback(

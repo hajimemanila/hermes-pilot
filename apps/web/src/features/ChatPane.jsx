@@ -2216,8 +2216,11 @@ export function ChatPane({
               /*
                * 宛先の会話が決まらなかった統合レポート（`__latest__`・§3.2 ②）:
                *  - すでに通常会話を開いている → そのタイムラインへ合流（`reportIdsFor` が載せる）
-               *  - まだ開いていない → repo を突き合わせて新しい会話を作り、相談文まで置く
+               *  - まだ開いていない → repo を突き合わせて新しい会話を作る
                * 会話 ID が分かっている通常の報告は従来どおりその会話を開く。
+               * **`Open` は移動だけ**（SPEC-enter-enter-discuss-next-ste Q3=A）。相談文を置くのは
+               * 到着先のレポートカードの「💬 次の一手を相談」= `discussReport` の役目で、
+               * ここで prefill すると「ラベルと動作が違う」「入力欄が勝手に埋まる」になる。
                */
               if (u.sessionId === LATEST_REPORT_ID) {
                 const target = storedRef.current ?? sidRef.current
@@ -2230,7 +2233,6 @@ export function ChatPane({
                   return
                 }
                 markReportsSeen(LATEST_REPORT_ID)
-                prefillComposer(followUpPromptFor(u, t('chat.discussFallback'), { t, lang }))
                 findRepoByPath(u.repoPath).then((matched) => {
                   startSession(profile || DEFAULT_PROFILE, matched ?? null, u.board ? { slug: u.board } : null)
                 })
@@ -2238,7 +2240,6 @@ export function ChatPane({
               }
               const found = sessions.find((s) => String(s.id) === u.sessionId)
               openSessionSafe(u.sessionId, null, found?.profile || profile || DEFAULT_PROFILE)
-              prefillComposer(followUpPromptFor(u, t('chat.discussFallback'), { t, lang }))
             }}
           >
             {t('chat.open')}

@@ -58,7 +58,8 @@
     "check:pwa:live": "python3 scripts/check-pwa.py --url http://127.0.0.1:4097",
     "check:pwa:selftest": "python3 scripts/check-pwa.py --self-test",
     "audit:responsive": "node scripts/audit-responsive.mjs",
-    "verify": "npm test && npm run check:dashboard && npm run check:pwa && npm run check:oauth && npm run build && npm run audit:responsive",
+    "check:term-enter": "node scripts/check-term-enter.mjs",
+    "verify": "npm test && npm run check:dashboard && npm run check:pwa && npm run check:oauth && npm run build && npm run audit:responsive && npm run check:term-enter",
     "deploy": "node scripts/deploy.mjs",
     "migrate:pilot": "node scripts/migrate-to-hermes-pilot.mjs"
   },
