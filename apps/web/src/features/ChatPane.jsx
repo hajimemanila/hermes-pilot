@@ -2730,7 +2730,7 @@ export function ChatPane({
             ))}
           </div>
           <button className="snippet-chip add" onClick={() => setSnippetSheet(true)} aria-label={t('chat.snippetListAria')}>
-            <span className="snippet-chip-add-glyph">＋</span>
+            <span className="snippet-chip-add-glyph">+</span>
           </button>
         </div>
       ) : null}
@@ -2748,7 +2748,7 @@ export function ChatPane({
           onClick={() => setAttachSheet(true)}
           disabled={streaming}
         >
-          <span aria-hidden="true">＋</span>
+          <span aria-hidden="true">+</span>
         </button>
         <textarea
           ref={taRef}

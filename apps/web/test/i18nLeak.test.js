@@ -364,3 +364,31 @@ test('メタ行の区切りは sep() 経由（`・` を直書きしない）', (
   }
   assert.deepEqual(bad, [], `sep() を使うこと: ${bad.join(' / ')}`)
 })
+
+test('en.json の値に CJK・全角和文記号が残っていない（`settings.languageJa` を除く）', () => {
+  // 英語 UI の辞書そのもの。`日本語` というラベルだけは英語画面に「日本語」と出す必要があるので例外。
+  // 全角 `＋`（U+FF0B）も `\uff01-\uff60` に入るので、ASCII `+` への正規化をここで固定する。
+  const CJK = /[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff01-\uff60]/u
+  const dict = JSON.parse(fs.readFileSync(path.join(WEB_SRC, 'i18n', 'en.json'), 'utf8'))
+  const entries = Object.entries(dict).filter(([k]) => k !== 'settings.languageJa')
+  assert.ok(entries.length > 300, `辞書の読み込みが足りない（${entries.length} 件）`)
+
+  const bad = entries
+    .filter(([, v]) => typeof v === 'string' && CJK.test(v))
+    .map(([k, v]) => `${k}: ${String(v).slice(0, 80)}`)
+  assert.deepEqual(bad, [], `en.json に日本語が残っています: \n${bad.join('\n')}`)
+})
+
+test('LiveSheet はオフライン/API エラーでも辞書翻訳できる形で保持する', () => {
+  // `code` を落とすと `localizeError()` が `err.BAD_REQUEST` に落ち、辞書翻訳（EN/JA）が効かない。
+  // 失敗形状の保持と分岐をソースで固定する（SPEC-EN-ZERO-LEAK §3.5 / D74）。
+  const live = stripComments(fs.readFileSync(path.join(WEB_SRC, 'features', 'LiveSheet.jsx'), 'utf8'))
+  assert.match(live, /code:\s*e\?\.code/, 'catch で code を捨てている')
+  assert.match(live, /params:\s*e\?\.params/, 'catch で params を捨てている')
+  assert.match(live, /error:\s*e\?\.message/, 'catch で error を捨てている')
+  assert.match(
+    live,
+    /data\.code \|\| data\.error \? localizeError\(data\) : data\.reason \|\| t\('live\.failed'\)/,
+    '理由だけ返る経路（/api/live の HTTP 200 失敗）が辞書翻訳に落ちていない',
+  )
+})

@@ -11,7 +11,8 @@
  *    `note:` / `Overall Note:` / `(unselected` の**両方**を読む）。生成側が実行時言語で出し分けるので、
  *    読み取り側に ja 表記が残るのは意図どおり
  *
- * 装飾用の記号（`＋` U+FF0B）は文字列ではないので判定前に落とす。
+ * 装飾用の記号も対象に含める（全角 `＋` U+FF0B は `\uff01-\uff60` に入るので、ASCII `+` へ
+ * 正規化済みであることをこのテストが固定する。SPEC-EN-ZERO-LEAK §3.5）。
  */
 
 import test from 'node:test'
@@ -26,8 +27,7 @@ const SRC = path.join(here, '..', 'src')
 /** ひらがな・カタカナ・漢字・全角記号（`・` と長音 `ー` は区切り記号なので除外）。 */
 const JP = /[\u3040-\u309f\u30a0-\u30fa\u30fd-\u30ff\u4e00-\u9fff\uff01-\uff60]/
 
-/** 判定前に落とす装飾記号（文字ではなく図形）。 */
-const GLYPHS = /＋/g
+/** 判定前に落とす記号は無い（全角 `＋` も違反として拾う）。 */
 
 /** 走査対象外のファイルと、その理由。 */
 const SKIP = new Map([
@@ -55,7 +55,7 @@ function walk(dir, acc = []) {
  * @returns {Array<{line: number, text: string}>} 違反
  */
 export function findJapanese(file) {
-  const source = stripComments(fs.readFileSync(file, 'utf8')).replace(GLYPHS, '')
+  const source = stripComments(fs.readFileSync(file, 'utf8'))
   const out = []
   source.split('\n').forEach((line, idx) => {
     if (JP.test(line)) out.push({ line: idx + 1, text: line.trim().slice(0, 140) })

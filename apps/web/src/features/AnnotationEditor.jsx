@@ -416,7 +416,7 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
               }}
               aria-label={t('annot.stampsMore')}
             >
-              ＋
+              +
             </button>
           </div>
           ) : null}

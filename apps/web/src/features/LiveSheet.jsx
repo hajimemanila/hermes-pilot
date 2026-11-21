@@ -66,7 +66,7 @@ export function LiveSheet({ onClose, notify, onAbortTask }) {
       const d = await api('/api/live')
       setData(d)
     } catch (e) {
-      setData({ ok: false, reason: e.message, turns: [], tasks: [] })
+      setData({ ok: false, code: e?.code, params: e?.params, error: e?.message, reason: e?.message, turns: [], tasks: [] })
     }
   }, [])
 
@@ -138,7 +138,11 @@ export function LiveSheet({ onClose, notify, onAbortTask }) {
 
   return (
     <Sheet title={t('live.title')} onClose={onClose}>
-      {data && !data.ok ? <div className="empty">{localizeError(data) || t('live.failed')}</div> : null}
+      {data && !data.ok ? (
+        <div className="empty">
+          {data.code || data.error ? localizeError(data) : data.reason || t('live.failed')}
+        </div>
+      ) : null}
 
       <div
         className="strip"
