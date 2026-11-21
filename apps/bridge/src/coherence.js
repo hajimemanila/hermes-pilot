@@ -6,8 +6,8 @@ import { execFile } from 'node:child_process'
  * コヒーレンス診断エンジン（SPEC-COHERENCE §3.3 / D80）。
  *
  * **2 層構成**:
- *  - **Layer 1（universal）**: 設定ゼロで全言語・全 Git リポジトリに効く 4 シグナル
- *    （`git-hotspot` / `file-bloat` / `spec-sprawl` / `debt-spike`）。
+ *  - **Layer 1（universal）**: 設定ゼロで全言語・全 Git リポジトリに効く 5 シグナル
+ *    （`git-hotspot` / `file-bloat` / `spec-sprawl` / `debt-spike` / `duplicate-batch-id`）。
  *    Node / npm / `hm:*` / `mockApi` を一切仮定しない（Python / Go / Rust でも動く）。
  *  - **Layer 2（repo config）**: 対象リポジトリ直下の `.hermes-coherence.json` がある時だけ
  *    宣言型ルール（`ignoreGlobs` / `maxLines` / `hotspotDays` / `hotspotTouches` /
@@ -109,6 +109,9 @@ const ARCHIVED_RE = /^\s*[-*]?\s*\*\*\s*(?:Status|状態)\s*\*\*\s*[:：]\s*(?:a
 
 /** 負債マーカー（Layer 1 の `debt-spike`）。 */
 const DEBT_RE = /\b(TODO|FIXME|HACK|XXX)\b/g
+
+/** バッチ見出し（`### Batch <ID>: <title>` / `### <ID>: <title>`。`specs.js` と同じ規則）。 */
+const BATCH_HEADING_RE = /^###\s+(?:Batch\s+)?([A-Za-z][A-Za-z0-9._-]{0,15})\s*[:：]\s*(.+?)\s*$/
 
 /** glob（`*` / `**` / `?`）をリポジトリ相対パスの正規表現へ変換する。 */
 function globToRegExp(glob) {
@@ -287,6 +290,60 @@ function countSpecs(repoRoot) {
     }
   }
   return { active, archived }
+}
+
+/**
+ * アクティブ（非アーカイブ）な SPEC 間で重複しているバッチ ID を集める（Layer 1 / D91）。
+ *
+ * `docs/archive/` 配下と `- **Status**: archived` の SPEC は数えない（退避済みの履歴は
+ * 衝突しても害が無い）。同じファイル内の重複（目次からの再掲）も 1 件として扱う。
+ *
+ * @param {string} repoRoot リポジトリの絶対パス
+ * @returns {Array<{batchId: string, files: string[]}>} 重複 ID（ファイル数の多い順・ID 昇順）
+ */
+export function duplicateBatchIds(repoRoot) {
+  const dirs = [repoRoot, path.join(repoRoot, 'docs'), path.join(repoRoot, 'docs', 'archive')]
+  const seen = new Set()
+  /** @type {Map<string, Set<string>>} */
+  const byId = new Map()
+  for (const dir of dirs) {
+    let names = []
+    try {
+      names = fs.readdirSync(dir)
+    } catch {
+      continue
+    }
+    for (const name of names) {
+      if (!SPEC_FILE_RE.test(name)) continue
+      const abs = path.join(dir, name)
+      let st
+      try {
+        st = fs.statSync(abs)
+      } catch {
+        continue
+      }
+      if (!st.isFile()) continue
+      const rel = path.relative(repoRoot, abs).split(path.sep).join('/')
+      if (seen.has(rel)) continue
+      seen.add(rel)
+      if (rel.startsWith('docs/archive/')) continue
+      const text = readText(abs, 1024 * 1024)
+      if (text === null || isArchivedSpecText(text)) continue
+      const own = new Set()
+      for (const line of text.split(/\r?\n/)) {
+        const m = BATCH_HEADING_RE.exec(line)
+        if (m && !own.has(m[1])) own.add(m[1])
+      }
+      for (const id of own) {
+        if (!byId.has(id)) byId.set(id, new Set())
+        byId.get(id).add(rel)
+      }
+    }
+  }
+  return [...byId.entries()]
+    .filter(([, files]) => files.size > 1)
+    .map(([batchId, files]) => ({ batchId, files: [...files].sort() }))
+    .sort((a, b) => b.files.length - a.files.length || a.batchId.localeCompare(b.batchId))
 }
 
 /**
@@ -507,6 +564,19 @@ export async function analyzeCoherence(repoRoot, opts = {}) {
     })
   }
 
+  /* --- Layer 1: duplicate-batch-id（アクティブ SPEC 間の ID 衝突。D91） --- */
+  const duplicateBatches = duplicateBatchIds(root)
+  for (const dup of duplicateBatches.slice(0, 20)) {
+    softSignals.push({
+      rule: 'duplicate-batch-id',
+      severity: 'soft',
+      message: `batch id ${dup.batchId} is used by ${dup.files.length} active SPEC files (${dup.files.join(', ')}); give each spec its own uppercase slug prefix`,
+      batchId: dup.batchId,
+      files: dup.files,
+      value: dup.files.length,
+    })
+  }
+
   /* --- Layer 1: debt-spike（直近変更ファイルの TODO/FIXME/HACK 集中） --- */
   const debtTargets = [...new Set([...hotspots.map((h) => h.file), ...bloat.slice(0, 5).map((b) => b.file)])]
   let debtTotal = 0
@@ -591,6 +661,7 @@ export async function analyzeCoherence(repoRoot, opts = {}) {
       hotspotCount: hotspots.length,
       activeSpecCount: specCounts.active,
       archivedSpecCount: specCounts.archived,
+      duplicateBatchIdCount: duplicateBatches.length,
       deprecatedRoutes: 0,
     },
     recommendedSweep: recommendSweep({ hardFails, bloat, hotspots, sprawl: specCounts.active > specSprawlLimit }),

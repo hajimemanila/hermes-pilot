@@ -36,6 +36,12 @@ export const CLOSED_STATUSES = new Set(['done', 'archived'])
  */
 export const SPEC_ARCHIVED_RE = /^\s*[-*]?\s*\*\*\s*(?:Status|状態)\s*\*\*\s*[:：]\s*[`]?\s*(?:archived|アーカイブ)/i
 
+/**
+ * アーカイブ退避でメタデータ部へ挿入する 1 行（機械キーは ASCII のまま・D92 / D84）。
+ * `extractSpecStatus()` が先頭 40 行で読む書式と 1:1 で対応させる。
+ */
+export const SPEC_ARCHIVE_LINE = '- **Status**: archived'
+
 /** タスク本文の上限（カンバン側の実用上限に合わせる）。 */
 export const BODY_MAX = 6000
 
@@ -478,19 +484,49 @@ export function extractTaskSpec(task) {
 }
 
 /**
+ * タスクの時刻（作成・開始・完了のうち最も新しいもの）。カンバン API は ms・DB は秒なので
+ * 1e12 未満は秒として扱う（`telemetry.toMs` と同じ規約）。
+ *
+ * @param {{createdAt?: unknown, startedAt?: unknown, completedAt?: unknown}} task タスク
+ * @returns {number} epoch ms（不明は 0）
+ */
+export function taskStampMs(task) {
+  const ms = (value) => {
+    if (value === null || value === undefined || value === '') return 0
+    const n = typeof value === 'number' ? value : Number(value)
+    if (!Number.isFinite(n) || n <= 0) {
+      const parsed = Date.parse(String(value))
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+    }
+    return n < 1e12 ? Math.round(n * 1000) : Math.round(n)
+  }
+  return Math.max(ms(task?.createdAt), ms(task?.startedAt), ms(task?.completedAt))
+}
+
+/** 無印タスクを拾ってよい猶予（ms）。SPEC の mtime とタスク時刻の丸め差を吸収する。 */
+export const SPEC_MTIME_SLACK_MS = 5000
+
+/**
  * 既存タスクの中に同じバッチの未完了タスクがあるか。
  *
  * `specRelPath` 指定時は別 SPEC に属する `[ID]` を無視する（異なる SPEC で同じ ID を使っても衝突しない）。
+ * `opts.specMtime` を渡すと、**無印（Spec 行の無い）レガシータスク**は `specMtime - 猶予` 以降に
+ * 触られたものだけを対象にする（過去の無印 `[C1]` が新規 SPEC の起票を塞がない。D91）。
+ * `archived`（破棄済み）は完了扱いなので、同じバッチを再起票できる（D92）。
  *
  * @param {Array<{title?: string, status?: string, id?: string, spec?: string|null, body?: string}>} tasks 同じボードのタスク
  * @param {string} batchId バッチ ID
  * @param {string|null} [specRelPath] 対象の SPEC 相対パス
+ * @param {{specMtime?: number|null, slackMs?: number}} [opts] 無印タスクの時刻ガード
  * @returns {{id: string, title: string, status: string}|null} 見つかった未完了タスク
  */
-export function findOpenBatchTask(tasks, batchId, specRelPath = null) {
+export function findOpenBatchTask(tasks, batchId, specRelPath = null, opts = {}) {
   const want = `[${String(batchId ?? '').trim()}]`
   if (!want || want === '[]') return null
   const wantSpec = normalizeSpecRelPath(specRelPath)
+  const specMtime = Number(opts?.specMtime)
+  const slack = Number.isFinite(Number(opts?.slackMs)) ? Number(opts.slackMs) : SPEC_MTIME_SLACK_MS
+  const since = wantSpec && Number.isFinite(specMtime) && specMtime > 0 ? specMtime - slack : null
   for (const t of Array.isArray(tasks) ? tasks : []) {
     if (!t) continue
     if (CLOSED_STATUSES.has(String(t.status ?? ''))) continue
@@ -498,6 +534,8 @@ export function findOpenBatchTask(tasks, batchId, specRelPath = null) {
     if (wantSpec) {
       const ts = extractTaskSpec(t)
       if (ts && ts !== wantSpec) continue
+      // 無印タスク: 対象 SPEC より前のものは別 SPEC の残骸（誤検知）として無視する。
+      if (!ts && since !== null && !(taskStampMs(t) >= since)) continue
     }
     return { id: String(t.id ?? ''), title: String(t.title ?? ''), status: String(t.status ?? '') }
   }
@@ -570,6 +608,7 @@ export function readSpecContent(repoPath, specRelPath) {
   if (truncated && markdown.endsWith('\uFFFD')) markdown = markdown.slice(0, -1)
 
   const parsed = parseSpec(markdown)
+  const status = extractSpecStatus(markdown)
   return {
     ok: true,
     path: rel,
@@ -580,7 +619,77 @@ export function readSpecContent(repoPath, specRelPath) {
     markdown,
     // 実際に返した本文のバイト数（PWA が「切り詰め」を出せるように）
     bytes: Buffer.byteLength(markdown, 'utf8'),
+    // アーカイブ退避ボタンの表示判定（D92）。`docs/archive/` 配下も含めて宣言で判定する
+    archived: status.archived,
+    status: status.status,
   }
+}
+
+/**
+ * SPEC を「ヘッダに `- **Status**: archived` を足す」だけで退避する（D92 / D84 互換）。
+ *
+ * ファイルは消さない・移動しない（パスを維持するので、起票済みタスクの `Spec:` 行も
+ * 既存のリンクも壊れない）。書き込みは `.tmp` → `rename` のアトミック更新なので、
+ * 途中で落ちても半端な SPEC が残らない。
+ *
+ * - 既にアーカイブ済み（先頭 40 行に宣言がある）なら `{ ok: true, noop: true }`（冪等）
+ * - `../` などでリポジトリの外へ出る指定は 400、`SPEC*.md` 以外は 400
+ *
+ * @param {string} repoPath リポジトリの絶対パス
+ * @param {string} specRelPath リポジトリからの相対パス（`docs/SPEC-….md`）
+ * @returns {{ok: true, path: string, noop: boolean, archived: true, status: 'archived', insertedAt: number|null}} 結果
+ * @throws {ApiError} 不正パス（400）／非 SPEC（400）／未検出・書けない（404・500）
+ */
+export function archiveSpec(repoPath, specRelPath) {
+  const rel = String(specRelPath ?? '').trim().split(path.sep).join('/')
+  const abs = resolveSpecPath(repoPath, rel)
+  if (!SPEC_FILE_RE.test(path.basename(abs))) {
+    throw new ApiError('SPEC_FILE_INVALID', { path: rel }, 400)
+  }
+
+  let st
+  try {
+    st = fs.statSync(abs)
+  } catch {
+    throw new ApiError('SPEC_READ_FAILED', { path: rel }, 404)
+  }
+  if (typeof st?.isFile === 'function' && !st.isFile()) {
+    throw new ApiError('SPEC_READ_FAILED', { path: rel }, 404)
+  }
+
+  let text
+  try {
+    text = fs.readFileSync(abs, 'utf8')
+  } catch {
+    throw new ApiError('SPEC_READ_FAILED', { path: rel }, 404)
+  }
+
+  const declared = extractSpecStatus(text)
+  if (declared.archived) {
+    return { ok: true, path: rel, noop: true, archived: true, status: 'archived', insertedAt: null }
+  }
+
+  const lines = text.split(/\r?\n/)
+  // 見出し（`# SPEC: …`）の直後へ入れる。見出しが無いファイルは先頭に入れる。
+  // どちらも先頭 40 行の内側なので `extractSpecStatus()` が次回から読める。
+  const headEnd = lines.findIndex((line, i) => i > 0 && line.trim() === '')
+  const insertAt = lines.length && /^#\s/.test(lines[0]) ? Math.min(Math.max(headEnd + 1, 1), 40) : 0
+  const next = [...lines.slice(0, insertAt), SPEC_ARCHIVE_LINE, ...lines.slice(insertAt)]
+
+  const tmp = `${abs}.tmp`
+  try {
+    fs.writeFileSync(tmp, next.join('\n'), 'utf8')
+    fs.renameSync(tmp, abs)
+  } catch {
+    try {
+      fs.unlinkSync(tmp)
+    } catch {
+      /* 残骸が無ければ noop */
+    }
+    throw new ApiError('SPEC_ARCHIVE_FAILED', { path: rel }, 500)
+  }
+
+  return { ok: true, path: rel, noop: false, archived: true, status: 'archived', insertedAt: insertAt }
 }
 
 /**
@@ -631,6 +740,41 @@ export function readRuns(file) {
   } catch {
     return []
   }
+}
+
+/**
+ * `pipeline-runs.json` のランから、対象 SPEC に紐づく `taskIds` を集める（D91 の第 1 優先）。
+ *
+ * @param {Array<object>} runs ラン記録（`specRelPath` / `taskIds`）
+ * @param {string|null} specRelPath 対象 SPEC 相対パス
+ * @returns {string[]} タスク ID（重複なし）
+ */
+export function runTaskIdsForSpec(runs, specRelPath) {
+  const want = normalizeSpecRelPath(specRelPath)
+  if (!want) return []
+  const out = new Set()
+  for (const run of Array.isArray(runs) ? runs : []) {
+    if (!run) continue
+    if (normalizeSpecRelPath(run.specRelPath ?? run.spec) !== want) continue
+    for (const id of Array.isArray(run.taskIds) ? run.taskIds : []) {
+      const v = String(id ?? '').trim()
+      if (v) out.add(v)
+    }
+  }
+  return [...out]
+}
+
+/**
+ * SPEC 一覧の各要素へ `runTaskIds` を添付する（`GET /api/specs` の応答契約）。
+ *
+ * @param {Array<{path: string}>} specs `listSpecs()` の結果
+ * @param {Array<object>} runs `readRuns()` の結果
+ * @returns {Array<object>} `runTaskIds` 付きの SPEC 一覧
+ */
+export function attachRunTaskIds(specs, runs) {
+  const list = Array.isArray(specs) ? specs : []
+  const records = Array.isArray(runs) ? runs : []
+  return list.map((spec) => ({ ...spec, runTaskIds: records.length ? runTaskIdsForSpec(records, spec?.path) : [] }))
 }
 
 /**
@@ -805,6 +949,13 @@ export function createSpecs(cfg = {}, deps = {}) {
     } catch {
       return { ok: false, created: [], skipped: [], failed: [], code: 'SPEC_READ_FAILED', params: { path: specRelPath } }
     }
+    // 無印レガシータスクの誤検知を避けるための基準時刻（D91）。
+    let specMtime = 0
+    try {
+      specMtime = Number(fs.statSync(file).mtimeMs) || 0
+    } catch {
+      specMtime = 0
+    }
     const parsed = parseSpec(text)
     if (!parsed.batches.length) {
       return { ok: false, created: [], skipped: [], failed: [], code: 'SPEC_BATCH_HEADING_MISSING' }
@@ -834,7 +985,7 @@ export function createSpecs(cfg = {}, deps = {}) {
     const skipped = []
     const failed = []
     for (const batch of batches) {
-      const open = findOpenBatchTask(existing, batch.id, specRelPath)
+      const open = findOpenBatchTask(existing, batch.id, specRelPath, { specMtime })
       if (open) {
         skipped.push({ id: batch.id, title: batch.title, reason: 'exists', taskId: open.id, status: open.status })
         continue

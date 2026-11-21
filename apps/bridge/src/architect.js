@@ -46,7 +46,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
-import { listSpecs as scanSpecs, parseCreatedTask } from './specs.js'
+import { listSpecs as scanSpecs, parseCreatedTask, taskStampMs } from './specs.js'
 import { appendChatReport } from './pipeline-watcher.js'
 import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'
 import { DEFAULT_LANG } from './lang.js'
@@ -331,7 +331,7 @@ function round2Headings(lang) {
  * SPEC V11 D54: `suggestedSlug` / `existingSpecs` を渡すと、ファイル名の衝突回避と
  * Round 1 の探索コスト削減の指示が本文に入る。
  *
- * @param {{prompt: string, board: string, repoPath: string, jobId: string, executionPolicy?: string, suggestedSlug?: string, existingSpecs?: string[], lang?: string}} input 入力
+ * @param {{prompt: string, board: string, repoPath: string, jobId: string, executionPolicy?: string, suggestedSlug?: string, existingSpecs?: string[], usedBatchPrefixes?: string[], lang?: string}} input 入力
  * @returns {string} 本文
  */
 export function buildArchitectTaskBody({
@@ -342,11 +342,23 @@ export function buildArchitectTaskBody({
   executionPolicy = DEFAULT_EXECUTION_POLICY,
   suggestedSlug,
   existingSpecs,
+  usedBatchPrefixes,
   lang = DEFAULT_LANG,
 }) {
   const policy = normalizeExecutionPolicy(executionPolicy)
   const slug = String(suggestedSlug ?? '').trim() || suggestSpecSlug(prompt, jobId)
   const specs = (Array.isArray(existingSpecs) ? existingSpecs : []).map((s) => String(s ?? '').trim()).filter(Boolean)
+  const prefix = batchIdPrefixForSlug(slug)
+  const prefixes = (Array.isArray(usedBatchPrefixes) ? usedBatchPrefixes : [])
+    .map((p) => String(p ?? '').trim().toUpperCase())
+    .filter(Boolean)
+  const batchRule = [
+    `Batch ID rule: every batch heading MUST read "### Batch ${prefix}-<n>: <Title>" — an UPPERCASE slug prefix`,
+    `plus a number (e.g. "### Batch ${prefix}-1: ..."). A bare "### <ID>:" heading or a lowercase prefix is rejected.`,
+  ].join(' ')
+  const usedLine = prefixes.length
+    ? `Batch ID prefixes already used by active SPECs: ${prefixes.join(', ')} (do not reuse one as-is; pick a distinct slug)`
+    : `Batch ID prefixes already used by active SPECs: none (the ${prefix} prefix above is free)`
   return [
     `[hermes-pilot:architect job=${jobId}] Architect (Kanban native)`,
     '',
@@ -361,13 +373,15 @@ export function buildArchitectTaskBody({
     specs.length
       ? `Existing specs: ${specs.join(', ')} (do not reuse these file names; pick a distinct slug)`
       : 'Existing specs: none in docs/ yet (the slug above is free)',
+    batchRule,
+    usedLine,
     'Round 1: write the Quick Review JSON sheet under review/sheets/',
     '(spec-<slug>-1.json, "mode": "standard", 2-5 decisions) and file it as a blocked `[review]` task',
     'whose machine line is `mode=standard sheet=sheets/spec-<slug>-1.json`. Do not wait in chat.',
     'Round 1 speed: locate only the relevant symbols (rg/grep), skip running npm test / npm run verify / browser_exec during Round 1, write the JSON sheet and block immediately.',
     'Round 1 speed: skip bespoke HTML sheets and browser mockups (browser_exec screenshots) unless',
     'the question itself is a visual UI layout comparison; the JSON alone renders the native form.',
-    'Round 2: after the answers arrive, write `docs/SPEC-<SLUG>.md` with `### Batch <ID>: <Title>` sections,',
+    `Round 2: after the answers arrive, write \`docs/SPEC-<SLUG>.md\` with \`### Batch ${prefix}-<n>: <Title>\` sections`,
     round2Headings(lang).inline,
     ...executionPolicyLines(policy),
     'Stay inside the official local CLI: the only runner is `hermes kanban create` (no external AI CLI is launched).',
@@ -490,7 +504,7 @@ export function normalizeSeed(value) {
  * 長文の質問を並べるのではなく、Quick Review シート → 1 タップ承認 → SPEC 生成、の順を固定する。
  * `executionPolicy` は**生成する SPEC の各バッチ**の既定 Execution Mode を決める（D35）。
  * SPEC V11 D54: 推奨スラッグと既存 SPEC 一覧を先に渡し、Round 1 の探索と名前衝突を減らす。
- * @param {{jobId: string, seedText: string, board: string, repoPath: string, autoStart?: boolean, executionPolicy?: string, lang?: string, suggestedSlug?: string, existingSpecs?: string[]}} input 入力
+ * @param {{jobId: string, seedText: string, board: string, repoPath: string, autoStart?: boolean, executionPolicy?: string, lang?: string, suggestedSlug?: string, existingSpecs?: string[], usedBatchPrefixes?: string[]}} input 入力
  * @returns {string} プロンプト
  */
 export function buildSeedPrompt({
@@ -503,12 +517,22 @@ export function buildSeedPrompt({
   lang = DEFAULT_LANG,
   suggestedSlug,
   existingSpecs,
+  usedBatchPrefixes,
 }) {
   const auto = autoStart
     ? 'The PWA will file the batches automatically as soon as this SPEC appears, so do not file them yourself.'
     : 'Do not file anything yet: the user taps "File batches & start" once the SPEC is ready.'
   const slug = String(suggestedSlug ?? '').trim() || suggestSpecSlug(seedText, jobId)
   const specs = (Array.isArray(existingSpecs) ? existingSpecs : []).map((s) => String(s ?? '').trim()).filter(Boolean)
+  // バッチ ID は「大文字スラッグ接頭辞 + 連番」を必須にし、使用済み接頭辞を渡して衝突を防ぐ（D91）。
+  const prefix = batchIdPrefixForSlug(slug)
+  const prefixes = (Array.isArray(usedBatchPrefixes) ? usedBatchPrefixes : [])
+    .map((p) => String(p ?? '').trim().toUpperCase())
+    .filter(Boolean)
+  const batchRule = `Batch ID rule: every batch heading MUST read "### Batch ${prefix}-<n>: <Title>" with an UPPERCASE slug prefix and a number (e.g. "### Batch ${prefix}-1: ...").`
+  const usedLine = prefixes.length
+    ? `Batch ID prefixes already used by active SPECs: ${prefixes.join(', ')} (do not reuse one as-is; pick a distinct slug)`
+    : `Batch ID prefixes already used by active SPECs: none (the ${prefix} prefix above is free)`
   return [
     `[hermes-pilot:architect job=${jobId}]`,
     'You are the spec-architect. Follow the `spec-architect` skill protocol (Round 1 → Round 2).',
@@ -527,6 +551,8 @@ export function buildSeedPrompt({
     specs.length
       ? `Existing specs: ${specs.join(', ')}`
       : 'Existing specs: none in docs/ yet (the suggested slug is free)',
+    batchRule,
+    usedLine,
     '',
     'Round 1 — instead of a wall of chat questions, write ONE structured sheet as JSON:',
     `\`review/sheets/spec-${slug}-1.json\` with \`"mode": "standard"\` and 2-5 design decisions`,
@@ -542,8 +568,8 @@ export function buildSeedPrompt({
     'a visual UI-layout comparison (placement, density, colour) that words cannot settle; even then it',
     'is optional and comes after the JSON. For spec, logic, string, API and data questions just check',
     'the cited file:line, write the sheet and block immediately.',
-    'Round 2 — after the answers arrive, write docs/SPEC-<SLUG>.md. Every batch heading',
-    '`### Batch <ID>: <Title>` must be followed by:',
+    `Round 2 — after the answers arrive, write docs/SPEC-<SLUG>.md. Every batch heading`,
+    `\`### Batch ${prefix}-<n>: <Title>\` must be followed by:`,
     '  - **Execution Mode**: [Mode: Zero-Stop | Fast-Track Review | Visual Gate]',
     ...round2Headings(lang).lines.slice(1),
     '',
@@ -576,6 +602,7 @@ export function createCliRunner(cfg = {}) {
     lang = DEFAULT_LANG,
     suggestedSlug,
     existingSpecs,
+    usedBatchPrefixes,
     timeoutMs = RUNNER_TIMEOUT_MS,
   }) =>
     new Promise((resolve) => {
@@ -590,6 +617,7 @@ export function createCliRunner(cfg = {}) {
         executionPolicy,
         suggestedSlug: slug,
         existingSpecs,
+        usedBatchPrefixes,
         lang,
       })
       const rawAssignee = typeof cfg?.pilotProfile === 'function' ? cfg.pilotProfile() : cfg?.pilotProfile
@@ -640,20 +668,87 @@ function taskSpecPath(task) {
 }
 
 /**
+ * slug から推奨バッチ ID 接頭辞を作る（大文字・短く保つ。`specs.BATCH_ID_RE` の 16 文字制限内）。
+ *
+ * `reliability-guard` → `RG` / `coherence` → `COH` / `v5` → `V5`
+ *
+ * @param {unknown} slug スラッグ
+ * @returns {string} 接頭辞（読めなければ `B`）
+ */
+export function batchIdPrefixForSlug(slug) {
+  const parts = String(slug ?? '')
+    .trim()
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+  if (!parts.length) return 'B'
+  if (parts.length === 1) return parts[0].slice(0, 3).toUpperCase()
+  return parts
+    .slice(0, 4)
+    .map((p) => p[0])
+    .join('')
+    .toUpperCase()
+}
+
+/**
+ * バッチ ID の接頭辞（`RG-1` → `RG`、`C1` → `C`）。大文字化して返す（D91 の衝突防止）。
+ * @param {unknown} batchId バッチ ID
+ * @returns {string} 接頭辞（読めなければ空文字）
+ */
+export function batchIdPrefixOf(batchId) {
+  const s = String(batchId ?? '').trim().toUpperCase()
+  if (!s) return ''
+  const dash = s.indexOf('-')
+  if (dash > 0) return s.slice(0, dash)
+  const m = /^[A-Z]+/.exec(s)
+  return m ? m[0] : ''
+}
+
+/**
+ * アクティブ SPEC 群で使用済みのバッチ ID 接頭辞（Architect へ渡して衝突を防ぐ）。
+ *
+ * @param {Array<{archived?: boolean, batches?: Array<{id?: string}>}>} specs `listSpecs()` の結果
+ * @returns {string[]} 接頭辞（昇順・重複なし）
+ */
+export function usedBatchIdPrefixes(specs) {
+  const out = new Set()
+  for (const spec of Array.isArray(specs) ? specs : []) {
+    if (!spec || spec.archived) continue
+    for (const batch of Array.isArray(spec.batches) ? spec.batches : []) {
+      const prefix = batchIdPrefixOf(batch?.id)
+      if (prefix) out.add(prefix)
+    }
+  }
+  return [...out].sort()
+}
+
+/**
  * 指定 SPEC に結びついた「起票済みバッチ ID」を集める（別 SPEC に属する `[ID]` は除外）。
- * @param {Array<{title?: string, spec?: string|null, body?: string}>} tasks ボードのタスク
+ *
+ * - `opts.specMtime` を渡すと、無印（Spec 行の無い）レガシータスクは `specMtime - 猶予` 以降の
+ *   ものだけを数える（過去の無印 `[C1]` が新規 SPEC を「起票済み」に見せない。D91）。
+ * - `archived`（破棄済み）は**起票済みに数えない**（再起票できる。D92）。
+ *
+ * @param {Array<{title?: string, status?: string, spec?: string|null, body?: string}>} tasks ボードのタスク
  * @param {string|null} specRelPath SPEC 相対パス
+ * @param {{specMtime?: number|null, slackMs?: number}} [opts] 無印タスクの時刻ガード
  * @returns {Set<string>} バッチ ID
  */
-export function filedBatchIdsForSpec(tasks, specRelPath = null) {
+export function filedBatchIdsForSpec(tasks, specRelPath = null, opts = {}) {
   const wantSpec = String(specRelPath ?? '').replace(/\\/g, '/').replace(/^\.\//, '').trim() || null
+  const specMtime = Number(opts?.specMtime)
+  const slack = Number.isFinite(Number(opts?.slackMs)) ? Number(opts.slackMs) : SPEC_MTIME_SLACK_MS
+  const since = wantSpec && Number.isFinite(specMtime) && specMtime > 0 ? specMtime - slack : null
   const out = new Set()
   for (const task of Array.isArray(tasks) ? tasks : []) {
+    if (!task) continue
+    if (String(task.status ?? '').trim().toLowerCase() === 'archived') continue
     const m = /^\[([^\]]+)\]/.exec(String(task?.title ?? '').trim())
     if (!m || !m[1].trim()) continue
     if (wantSpec) {
       const ts = taskSpecPath(task)
       if (ts && ts !== wantSpec) continue
+      if (!ts && since !== null && !(taskStampMs(task) >= since)) continue
     }
     out.add(m[1].trim())
   }
@@ -661,13 +756,14 @@ export function filedBatchIdsForSpec(tasks, specRelPath = null) {
 }
 
 /**
- * タスク一覧から「起票済みのバッチ ID」を集める（**状態を問わない**）。
+ * タスク一覧から「起票済みのバッチ ID」を集める（`done` は起票済み・`archived` は未起票）。
  *
  * 完了済み（`done`）を未起票と数えると、バナーが「起票して開始」を出して
  * 同じバッチをもう一度起票してしまう（`specs.launchSpec` がスキップするのは
  * **未完了**の重複だけ）。ここは「タスクが 1 つでもあるか」で数える。
+ * ただし `archived`（破棄済み）は再起票できるので数えない（D92）。
  *
- * @param {Array<{title?: string}>} tasks ボードのタスク
+ * @param {Array<{title?: string, status?: string}>} tasks ボードのタスク
  * @returns {Set<string>} バッチ ID
  */
 export function filedBatchIds(tasks) {
@@ -685,7 +781,7 @@ export function pendingSpecs(specs, tasks) {
   for (const spec of Array.isArray(specs) ? specs : []) {
     const batches = (spec?.batches ?? []).filter((b) => b?.id)
     if (!batches.length) continue
-    const filed = filedBatchIdsForSpec(tasks, spec.path)
+    const filed = filedBatchIdsForSpec(tasks, spec.path, { specMtime: Number(spec.mtime ?? 0) })
     const pending = batches.filter((b) => !filed.has(String(b.id))).map((b) => b.id)
     if (!pending.length) continue
     out.push({
@@ -1031,8 +1127,16 @@ export function createArchitect(cfg = {}, deps = {}) {
 
     // SPEC V11 D54: 推奨スラッグと既存 SPEC 一覧を先に決めてプロンプトへ入れる
     // （Round 1 の探索ターンとファイル名衝突を減らす）。
+    // D91: アクティブ SPEC で使用済みのバッチ ID 接頭辞も渡し、ID の衝突を防ぐ。
     const suggestedSlug = suggestSpecSlug(seedText, job.id)
-    const existingSpecs = recentSpecPaths(listSpecsFn, repoPath)
+    let specScan = []
+    try {
+      specScan = listSpecsFn(repoPath) ?? []
+    } catch {
+      specScan = []
+    }
+    const existingSpecs = recentSpecPaths(() => specScan, repoPath)
+    const usedBatchPrefixes = usedBatchIdPrefixes(specScan)
     job.suggestedSlug = suggestedSlug
 
     const prompt = buildSeedPrompt({
@@ -1045,6 +1149,7 @@ export function createArchitect(cfg = {}, deps = {}) {
       lang: job.lang,
       suggestedSlug,
       existingSpecs,
+      usedBatchPrefixes,
     })
     job.prompt = prompt
 
@@ -1062,6 +1167,7 @@ export function createArchitect(cfg = {}, deps = {}) {
           lang: job.lang,
           suggestedSlug,
           existingSpecs,
+          usedBatchPrefixes,
         }),
       )
       .then(async (res) => {

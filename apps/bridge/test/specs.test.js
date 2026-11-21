@@ -17,6 +17,10 @@ import {
   CONTRACT_HEADER,
   RECOMMENDED_ROLE_RE,
   SPEC_CONTENT_MAX,
+  SPEC_MTIME_SLACK_MS,
+  SPEC_ARCHIVE_LINE,
+  archiveSpec,
+  attachRunTaskIds,
   buildTaskBody,
   buildTaskTitle,
   bodyHeadings,
@@ -35,8 +39,10 @@ import {
   readRuns,
   readSpecContent,
   resolveSpecPath,
+  runTaskIdsForSpec,
   runsPathFor,
   sanitizeSpecChat,
+  taskStampMs,
 } from '../src/specs.js'
 
 const SPEC = `# SPEC: Demo (SPEC-DEMO)
@@ -165,6 +171,67 @@ test('findOpenBatchTask は未完了だけを拾う（done / archived は無視�
   assert.equal(findOpenBatchTask(tasks, 'P3'), null)
 })
 
+test('findOpenBatchTask は無印タスクに時刻ガードを掛け、archived は再起票できる（D91/D92）', () => {
+  const specMtime = 1_700_000_000_000
+  const tasks = [
+    // 過去 SPEC の無印 [P1]（今の SPEC より前）
+    { id: 't_old', title: '[P1] Legacy', status: 'running', createdAt: specMtime - 600_000 },
+    // 今の SPEC と同時刻に起票された無印（ワーカーが直接起票したケース）
+    { id: 't_new', title: '[P2] Fresh', status: 'running', createdAt: specMtime - 1000 },
+    // 破棄済み: 同じバッチを再起票できる
+    { id: 't_arch', title: '[P3] Dropped', status: 'archived', spec: 'docs/SPEC-DEMO.md' },
+    // 別 SPEC の [P4]
+    { id: 't_other', title: '[P4] Elsewhere', status: 'running', spec: 'docs/SPEC-OTHER.md' },
+  ]
+  assert.equal(findOpenBatchTask(tasks, 'P1', 'docs/SPEC-DEMO.md', { specMtime }), null)
+  assert.equal(findOpenBatchTask(tasks, 'P2', 'docs/SPEC-DEMO.md', { specMtime }).id, 't_new')
+  assert.equal(findOpenBatchTask(tasks, 'P3', 'docs/SPEC-DEMO.md', { specMtime }), null)
+  assert.equal(findOpenBatchTask(tasks, 'P4', 'docs/SPEC-DEMO.md', { specMtime }), null)
+  // specMtime を渡さなければ従来どおり無印を拾う（後方互換）
+  assert.equal(findOpenBatchTask(tasks, 'P1', 'docs/SPEC-DEMO.md').id, 't_old')
+  // 猶予の境界は >= （specMtime - 5000ms ちょうどは許可）
+  assert.equal(
+    findOpenBatchTask(
+      [{ id: 't_edge', title: '[P5] Edge', status: 'ready', startedAt: specMtime - SPEC_MTIME_SLACK_MS }],
+      'P5',
+      'docs/SPEC-DEMO.md',
+      { specMtime },
+    ).id,
+    't_edge',
+  )
+})
+
+test('runTaskIdsForSpec / attachRunTaskIds は pipeline-runs.json の taskIds を SPEC ごとに集める（D91）', () => {
+  const runs = [
+    { id: 'run_1', specRelPath: './docs/SPEC-DEMO.md', taskIds: ['t_a', 't_b'] },
+    { id: 'run_2', specRelPath: 'docs/SPEC-DEMO.md', taskIds: ['t_b', 't_c'] },
+    { id: 'run_3', specRelPath: 'docs/SPEC-OTHER.md', taskIds: ['t_z'] },
+    { id: 'run_4', specRelPath: null, taskIds: ['t_none'] },
+  ]
+  assert.deepEqual(runTaskIdsForSpec(runs, 'docs/SPEC-DEMO.md').sort(), ['t_a', 't_b', 't_c'])
+  assert.deepEqual(runTaskIdsForSpec(runs, 'docs/SPEC-OTHER.md'), ['t_z'])
+  assert.deepEqual(runTaskIdsForSpec(runs, 'docs/SPEC-MISSING.md'), [])
+  assert.deepEqual(runTaskIdsForSpec(null, 'docs/SPEC-DEMO.md'), [])
+
+  const attached = attachRunTaskIds(
+    [{ path: 'docs/SPEC-DEMO.md' }, { path: 'docs/SPEC-OTHER.md' }],
+    runs,
+  )
+  assert.deepEqual(attached[0].runTaskIds.sort(), ['t_a', 't_b', 't_c'])
+  assert.deepEqual(attached[1].runTaskIds, ['t_z'])
+  // ラン記録が無くても各要素は `runTaskIds: []` を持つ（GET /api/specs の応答契約）
+  assert.deepEqual(attachRunTaskIds([{ path: 'docs/SPEC-DEMO.md' }], []), [
+    { path: 'docs/SPEC-DEMO.md', runTaskIds: [] },
+  ])
+})
+
+test('taskStampMs は秒 / ms / ISO を ms に揃える', () => {
+  assert.equal(taskStampMs({ createdAt: 1_700_000_000_000 }), 1_700_000_000_000)
+  assert.equal(taskStampMs({ createdAt: 1_700_000_000 }), 1_700_000_000_000)
+  assert.equal(taskStampMs({ createdAt: '2023-11-14T22:13:20.000Z' }), 1_700_000_000_000)
+  assert.equal(taskStampMs({}), 0)
+})
+
 test('resolveSpecPath はリポジトリの外を指すパスを拒否する', () => {
   const root = tempDir()
   assert.equal(resolveSpecPath(root, 'docs/SPEC-A.md'), path.join(root, 'docs/SPEC-A.md'))
@@ -208,7 +275,7 @@ test('launchSpec は 2 回目に重複起票しない（未完了があるバッ
     calls.push(args)
     const title = args[4]
     const id = `t_${String(boardState.length + 1).padStart(3, '0')}`
-    boardState.push({ id, title, status: 'ready' })
+    boardState.push({ id, title, status: 'ready', spec: 'docs/SPEC-A.md' })
     return { code: 0, stdout: JSON.stringify({ id, title, status: 'ready' }), stderr: '' }
   }
   const specs = createSpecs({}, { runner, tasks: () => boardState })
@@ -420,11 +487,11 @@ test('既定の recordRun は review/pipeline-runs.json に書く（既存 skip 
   const root = tempDir()
   writeFile(root, 'docs/SPEC-A.md', SPEC)
   const reviewDir = path.join(root, 'plugin-data', 'hermes-pilot', 'review')
-  const boardState = [{ id: 't_old', title: '[P1] First batch', status: 'blocked' }]
+  const boardState = [{ id: 't_old', title: '[P1] First batch', status: 'blocked', spec: 'docs/SPEC-A.md' }]
   const runner = async (args) => {
     const title = args[4]
     const id = `t_${title.replace(/[^A-Za-z0-9]/g, '')}`
-    boardState.push({ id, title, status: 'ready' })
+    boardState.push({ id, title, status: 'ready', spec: 'docs/SPEC-A.md' })
     return { code: 0, stdout: JSON.stringify({ id, status: 'ready' }), stderr: '' }
   }
   const specs = createSpecs({ reviewDir }, { runner, tasks: () => boardState })
@@ -1004,4 +1071,70 @@ test('partitionSpecs はアクティブ / アーカイブへ順序を保って�
   assert.deepEqual(active.map((s) => s.path), ['a', 'c'])
   assert.deepEqual(archived.map((s) => s.path), ['b', 'd'])
   assert.deepEqual(partitionSpecs(null), { active: [], archived: [] })
+})
+
+/* ------------------------------------------------------------------ *
+ * D92 / RG-3: SPEC のアーカイブ退避（ヘッダ追記・ファイルは消さない）
+ * ------------------------------------------------------------------ */
+
+const ARCHIVE_SPEC = '# SPEC: 退避テスト\n\n- **状態**: 仕様確定\n\n## 1. 目的\n\n本文。\n'
+
+test('archiveSpec は見出し直後のメタデータ部へ Status: archived を 1 行だけ足す', () => {
+  const root = tempDir()
+  writeFile(root, 'docs/SPEC-ARCHIVE-TEST.md', ARCHIVE_SPEC)
+  const out = archiveSpec(root, 'docs/SPEC-ARCHIVE-TEST.md')
+  assert.equal(out.ok, true)
+  assert.equal(out.noop, false)
+  assert.equal(out.path, 'docs/SPEC-ARCHIVE-TEST.md')
+  assert.equal(out.status, 'archived')
+
+  const lines = fs.readFileSync(path.join(root, 'docs/SPEC-ARCHIVE-TEST.md'), 'utf8').split(/\r?\n/)
+  const at = lines.indexOf(SPEC_ARCHIVE_LINE)
+  assert.ok(at >= 0, '挿入した 1 行が無い')
+  // 先頭 40 行の内側（`extractSpecStatus` が読む範囲）で、見出しより後ろ
+  assert.ok(at > 0 && at < 40, `挿入位置が先頭 40 行の外: ${at}`)
+  assert.equal(lines[0], '# SPEC: 退避テスト')
+  // 元の行は消さない（既存メタデータも本文も残る）
+  assert.match(lines.join('\n'), /- \*\*状態\*\*: 仕様確定/)
+  assert.match(lines.join('\n'), /## 1\. 目的/)
+  assert.equal(extractSpecStatus(lines.join('\n')).archived, true)
+})
+
+test('archiveSpec は冪等（既にアーカイブ済みなら noop で書き換えない）', () => {
+  const root = tempDir()
+  writeFile(root, 'docs/SPEC-ARCHIVE-TWICE.md', ARCHIVE_SPEC)
+  const first = archiveSpec(root, 'docs/SPEC-ARCHIVE-TWICE.md')
+  assert.equal(first.noop, false)
+  const before = fs.readFileSync(path.join(root, 'docs/SPEC-ARCHIVE-TWICE.md'), 'utf8')
+  const second = archiveSpec(root, 'docs/SPEC-ARCHIVE-TWICE.md')
+  assert.equal(second.ok, true)
+  assert.equal(second.noop, true)
+  const after = fs.readFileSync(path.join(root, 'docs/SPEC-ARCHIVE-TWICE.md'), 'utf8')
+  assert.equal(after, before, 'noop のとき本文を書き換えない')
+  assert.equal(after.split(SPEC_ARCHIVE_LINE).length - 1, 1, '宣言は 1 行だけ')
+})
+
+test('archiveSpec は ../ でリポジトリの外へ出る指定を 400 で拒否する', () => {
+  const root = tempDir()
+  writeFile(root, 'docs/SPEC-ARCHIVE-IN.md', ARCHIVE_SPEC)
+  // 外側に実在する SPEC を置いても、境界の外なので読ませない・書かせない
+  const outside = path.resolve(root, '..', `SPEC-OUTSIDE-${Date.now()}.md`)
+  fs.writeFileSync(outside, ARCHIVE_SPEC, 'utf8')
+  try {
+    assert.throws(
+      () => archiveSpec(root, `../${path.basename(outside)}`),
+      (e) => e.statusCode === 400,
+      '../ が 400 にならない',
+    )
+    assert.equal(fs.readFileSync(outside, 'utf8'), ARCHIVE_SPEC, '外側のファイルを書き換えた')
+  } finally {
+    fs.rmSync(outside, { force: true })
+  }
+})
+
+test('archiveSpec は SPEC*.md 以外と未検出を拒否する（400 / 404）', () => {
+  const root = tempDir()
+  writeFile(root, 'docs/NOTES.md', '# notes\n')
+  assert.throws(() => archiveSpec(root, 'docs/NOTES.md'), (e) => e.statusCode === 400)
+  assert.throws(() => archiveSpec(root, 'docs/SPEC-MISSING.md'), (e) => e.statusCode === 404)
 })

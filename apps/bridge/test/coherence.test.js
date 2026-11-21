@@ -19,6 +19,7 @@ import {
   CONFIG_MAX_BYTES,
   analyzeCoherence,
   coherenceAlertFrom,
+  duplicateBatchIds,
   gitHotspots,
   isArchivedSpecText,
   listSourceFiles,
@@ -240,6 +241,38 @@ test('isArchivedSpecText は EN / JA のアーカイブ宣言を先頭 40 行か
   assert.equal(isArchivedSpecText('# SPEC: X\n\n- **状態**: アーカイブ（2026-11）\n'), true)
   assert.equal(isArchivedSpecText('# SPEC: X\n\n- **状態**: 仕様確定\n'), false)
   assert.equal(isArchivedSpecText(`# SPEC: X\n${'\n'.repeat(60)}- **Status**: archived\n`), false)
+})
+
+test('duplicate-batch-id: アクティブ SPEC 間の同名バッチ ID を検知する（アーカイブは除外・D91）', async () => {
+  const root = tempDir()
+  write(root, 'docs/SPEC-A.md', '# SPEC: A\n\n### Batch RG-1: one\n\nbody\n### RG-1: same id inside one file\n')
+  write(root, 'docs/SPEC-B.md', '# SPEC: B\n\n### Batch RG-1: one again\n\n### Batch RG-2: two\n')
+  // 退避済み（宣言・置き場）は履歴なので数えない
+  write(root, 'docs/SPEC-OLD.md', '# SPEC: OLD\n\n- **Status**: archived\n\n### Batch RG-2: old\n')
+  write(root, 'docs/archive/SPEC-MOVED.md', '# SPEC: moved\n\n### Batch RG-1: moved\n')
+
+  assert.deepEqual(duplicateBatchIds(root), [
+    { batchId: 'RG-1', files: ['docs/SPEC-A.md', 'docs/SPEC-B.md'] },
+  ])
+
+  const report = await analyzeCoherence(root, { gitHotspots: noGit })
+  const signal = report.softSignals.find((s) => s.rule === 'duplicate-batch-id')
+  assert.ok(signal, 'duplicate-batch-id が soft signal に出る')
+  assert.equal(signal.batchId, 'RG-1')
+  assert.equal(signal.value, 2)
+  assert.deepEqual(signal.files, ['docs/SPEC-A.md', 'docs/SPEC-B.md'])
+  assert.equal(report.summary.duplicateBatchIdCount, 1)
+  // 汎用 Layer 1 のシグナルなので Hard Fail にはしない（ok は保つ）
+  assert.equal(report.ok, true)
+  assert.equal(report.hardFails.length, 0)
+
+  // 衝突が無ければシグナルは出ない
+  const clean = tempDir()
+  write(clean, 'docs/SPEC-A.md', '# SPEC: A\n\n### Batch AA-1: one\n')
+  write(clean, 'docs/SPEC-B.md', '# SPEC: B\n\n### Batch BB-1: one\n')
+  const cleanReport = await analyzeCoherence(clean, { gitHotspots: noGit })
+  assert.equal(cleanReport.softSignals.some((s) => s.rule === 'duplicate-batch-id'), false)
+  assert.equal(cleanReport.summary.duplicateBatchIdCount, 0)
 })
 
 test('coherenceAlertFrom は閾値超過だけ alert=true（D83・自動起票しない）', () => {

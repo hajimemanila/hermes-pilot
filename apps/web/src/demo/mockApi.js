@@ -52,6 +52,28 @@ export function emptyProgress() {
 
 const MIN = 60_000
 
+/** 無印（Spec 行の無い）タスクを拾ってよい猶予（ms）。`specs.SPEC_MTIME_SLACK_MS` と同じ値。 */
+const SPEC_MTIME_SLACK_MS = 5000
+
+/** デモタスクの Spec パス（`spec` 優先・本文の `Spec:` 行・先頭 5 行の `docs/SPEC-*.md`）。 */
+function demoTaskSpecOf(task) {
+  const direct = String(task?.spec ?? '').replace(/\\/g, '/').replace(/^\.\//, '').trim()
+  if (direct) return direct
+  const body = String(task?.body ?? '')
+  if (!body) return null
+  const line = /^Spec:\s*(.+?)\s*$/m.exec(body)
+  if (line) return String(line[1]).replace(/\\/g, '/').replace(/^\.\//, '').trim() || null
+  const head = body.split(/\r?\n/).slice(0, 5).join('\n')
+  const leg = /(?:docs\/)?SPEC[A-Za-z0-9._-]*\.md/i.exec(head)
+  return leg ? leg[0].replace(/\\/g, '/').replace(/^\.\//, '').trim() : null
+}
+
+/** デモタスクの最新タイムスタンプ（ms）。不明は 0。 */
+function demoTaskStampMs(task) {
+  const n = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : 0)
+  return Math.max(n(task?.createdAt), n(task?.startedAt), n(task?.completedAt))
+}
+
 /** 3 問の設計判断（各問に推奨 1 つ。`⚡ Accept All Recommended` の材料）。 */
 export function demoQuestions() {
   return [
@@ -160,19 +182,36 @@ export function initialReviewItems(now = Date.now()) {
 export function demoSpects(now = Date.now()) {
   // Launchpad は既定でアクティブ SPEC だけを出す（`?includeArchived=1` は本番のみ）。
   // アーカイブ済みは `archivedSpecs` に分けて返し、「Show archived (N)」の材料にする（D84）。
-  const all = currentSpecs(now)
+  // D92: デモで退避した SPEC（`archivedSpecPaths`）も同じ扱いに落とす。
+  const all = demoSpecsWithArchive(now)
   const active = all.filter((s) => !s.archived)
   const archived = all.filter((s) => s.archived)
+  // `GET /api/specs` の応答契約（D91）: 各要素は `runTaskIds` を持つ（デモはラン記録を持たない）。
+  const withRuns = (list) => list.map((spec) => ({ ...spec, runTaskIds: [] }))
   return {
     ok: true,
     repo: DEMO_REPO,
     label: 'hermes-pilot (demo)',
     path: DEMO_REPO_PATH,
     board: DEMO_BOARD,
-    specs: active,
-    archivedSpecs: archived,
+    specs: withRuns(active),
+    archivedSpecs: withRuns(archived),
     archivedCount: archived.length,
   }
+}
+
+/**
+ * デモの SPEC 一覧に「このセッションで退避したもの」（`state.archivedSpecPaths`）を重ねる。
+ *
+ * `demoSpects`（Launchpad）と `demoSpecContent`（MD プレビュー）が同じ状態を見るための 1 箇所。
+ *
+ * @param {number} [now] 時刻
+ * @returns {Array<object>} SPEC 一覧（アーカイブ済みは `archived: true`）
+ */
+function demoSpecsWithArchive(now = Date.now()) {
+  return currentSpecs(now).map((s) =>
+    state.archivedSpecPaths.includes(s.path) ? { ...s, archived: true, status: 'archived' } : s,
+  )
 }
 
 /**
@@ -323,7 +362,7 @@ export function demoSpecList(now = Date.now()) {
  */
 export function demoSpecContent(specPath, now = Date.now()) {
   const wanted = String(specPath ?? '').trim()
-  const spec = currentSpecs(now).find((s) => s.path === wanted) || null
+  const spec = demoSpecsWithArchive(now).find((s) => s.path === wanted) || null
   if (!spec) {
     return { ok: false, code: 'NOT_FOUND', error: 'spec not found', path: wanted, demo: true }
   }
@@ -364,6 +403,9 @@ export function demoSpecContent(specPath, now = Date.now()) {
     batchCount: spec.batches.length,
     truncated: false,
     markdown: lines.join('\n'),
+    // D92: アーカイブ退避ボタンの表示判定（`SpecMarkdownSheet` が読む）
+    archived: Boolean(spec.archived),
+    status: spec.archived ? 'archived' : 'active',
     demo: true,
   }
 }
@@ -411,6 +453,8 @@ export function createDemoState(now = Date.now()) {
     architect: createArchitectState(now),
     /** Seed で生まれた SPEC（`demoSpecs` / `/api/specs/content` に出る）。 */
     seededSpecs: [],
+    /** D92: `POST /api/specs/archive` で退避した SPEC のパス（デモはファイルを持たない）。 */
+    archivedSpecPaths: [],
     /**
      * V10 §3.3 / D47: 1 タップ環境最適化の適用状態。
      * `pipeline.optimize` で true になり、`pipeline.status` がそのまま返す
@@ -766,6 +810,8 @@ export function demoRoute(path) {
   if (p === '/api/boards') return { name: 'boards', params }
   if (parts[1] === 'boards' && parts[2] && parts[3] === 'tasks') {
     const boardSlug = decodeURIComponent(parts[2])
+    // D92: 整理モードの一括アーカイブ（`/tasks/bulk-archive` を taskId と誤読しない）
+    if (parts[4] === 'bulk-archive') return { name: 'board.bulkArchive', id: boardSlug, params }
     const taskId = parts[4] ? decodeURIComponent(parts[4]) : ''
     if (!taskId) return { name: 'board.tasks', id: boardSlug, params }
     if (parts[5] === 'diff') return { name: 'board.taskDiff', id: boardSlug, taskId, params }
@@ -779,6 +825,8 @@ export function demoRoute(path) {
   if (p === '/api/coherence/report') return { name: 'coherence.report', params }
   // V6 §3.4: 仕様書の本文（MD プレビュー）
   if (p === '/api/specs/content') return { name: 'specs.content', params }
+  // D92: SPEC のアーカイブ退避（ヘッダ追記）
+  if (p === '/api/specs/archive') return { name: 'specs.archive', params }
   if (p === '/api/specs/launch') return { name: 'specs.launch', params }
   if (p === '/api/specs/reports') return { name: 'specs.reports', params }
   // V6 §3.2: Architect（仕様策定 → SPEC）と進行バーの材料
@@ -1449,12 +1497,36 @@ export function advanceArchitectJob(id, gen = state.gen) {
   return job
 }
 
-/** 起票済みバッチ ID（`[DEMO-1] ...` の先頭から取る。`architect.filedBatchIds` と同じ規則）。 */
-function filedBatchIds(tasks) {
+/**
+ * 指定 SPEC に起票済みのバッチ ID（`architect.filedBatchIdsForSpec` と同じ規則・D91/D92）。
+ *
+ * - 別 SPEC に属する `[ID]` は除外する（未スコープの照合で他 SPEC の同名バッチを
+ *   「起票済み」に見せない）。
+ * - `archived`（破棄済み）は起票済みに数えない（再起票できる）。
+ * - 無印（Spec 行の無い）タスクは、対象 SPEC の mtime 以降に触られたものだけを数える。
+ *
+ * @param {Array<object>} tasks デモのタスク
+ * @param {string|null} [specPath] 対象 SPEC の相対パス
+ * @param {{specMtime?: number|null, slackMs?: number}} [opts] 無印タスクの時刻ガード
+ * @returns {Set<string>} バッチ ID
+ */
+function filedBatchIdsForSpec(tasks, specPath = null, opts = {}) {
+  const want = String(specPath ?? '').trim() || null
+  const specMtime = Number(opts?.specMtime)
+  const slack = Number.isFinite(Number(opts?.slackMs)) ? Number(opts.slackMs) : SPEC_MTIME_SLACK_MS
+  const since = want && Number.isFinite(specMtime) && specMtime > 0 ? specMtime - slack : null
   const out = new Set()
   for (const task of Array.isArray(tasks) ? tasks : []) {
+    if (!task) continue
+    if (String(task.status ?? '').trim().toLowerCase() === 'archived') continue
     const m = /^\[([^\]]+)\]/.exec(String(task?.title ?? '').trim())
-    if (m && m[1].trim()) out.add(m[1].trim())
+    if (!m || !m[1].trim()) continue
+    if (want) {
+      const ts = demoTaskSpecOf(task)
+      if (ts && ts !== want) continue
+      if (!ts && since !== null && !(demoTaskStampMs(task) >= since)) continue
+    }
+    out.add(m[1].trim())
   }
   return out
 }
@@ -1477,9 +1549,10 @@ export function demoArchitectJobs(board = DEMO_BOARD) {
       launched: j.status === 'launched',
       launchedCount: j.launched?.created?.length ?? 0,
     }))
-  const filed = filedBatchIds(state.tasks)
   const pending = []
   for (const spec of currentSpecs(state.now)) {
+    // 未起票の判定は SPEC スコープで行う（別 SPEC の同名バッチを「起票済み」にしない・D91）。
+    const filed = filedBatchIdsForSpec(state.tasks, spec.path, { specMtime: spec.mtime })
     const ids = spec.batches.map((b) => b.id).filter((id) => !filed.has(id))
     if (!ids.length) continue
     pending.push({
@@ -1747,7 +1820,41 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
       }
     case 'board.tasks':
       // COH-2: 緊急停止の状態も返す（本番の `/api/overview` の `paused` と同じ値）。
-      return { board: route.id, tasks: state.tasks.map((x) => ({ ...x })), paused: state.demoOps.paused }
+      // D92: `archivedCount` は一覧の LIMIT と独立に数える（「アーカイブ済み (N)」の N）。
+      return {
+        board: route.id,
+        tasks: state.tasks.map((x) => ({ ...x })),
+        archivedCount: state.tasks.filter((t) => t.status === 'archived').length,
+        paused: state.demoOps.paused,
+      }
+    // D92: 整理モードの一括アーカイブ（本番と同じく running はスキップして返す）
+    case 'board.bulkArchive': {
+      const ids = Array.isArray(payload?.taskIds) ? payload.taskIds.map((x) => String(x ?? '').trim()).filter(Boolean) : []
+      const archived = []
+      const skippedRunning = []
+      const skippedArchived = []
+      const failed = []
+      for (const id of ids) {
+        const task = state.tasks.find((t) => t.id === id)
+        if (!task) {
+          failed.push({ id, code: 'TASK_NOT_FOUND' })
+          continue
+        }
+        if (task.status === 'running') {
+          skippedRunning.push(id)
+          continue
+        }
+        if (task.status === 'archived') {
+          skippedArchived.push(id)
+          continue
+        }
+        task.status = 'archived'
+        task.updatedAt = Date.now()
+        archived.push(id)
+      }
+      if (archived.length) publish('tasks')
+      return { ok: true, board: route.id, archived, skippedRunning, skippedArchived, failed, demo: true }
+    }
     // V6 §3.5: 履歴の詳細・差分（`🔍 タスク詳細・差分を見る`）
     case 'board.task': {
       const task = state.tasks.find((t) => t.id === route.taskId)
@@ -1793,6 +1900,22 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
     // V6 §3.4: 仕様書の本文（MD プレビュー）
     case 'specs.content':
       return demoSpecContent(route.params.get('path'), state.now)
+    // D92: SPEC をヘッダ追記でアーカイブ退避する（デモはメモリ上で同じ効果を出す）
+    case 'specs.archive': {
+      const wanted = String(payload?.path ?? route.params.get('path') ?? '').trim()
+      if (!wanted) return { ok: false, code: 'SPEC_PATH_REQUIRED', error: 'path is required', demo: true }
+      if (wanted.startsWith('/') || wanted.includes('..')) {
+        return { ok: false, code: 'SPEC_PATH_OUTSIDE', error: 'path must stay inside the repository', demo: true }
+      }
+      const spec = currentSpecs(state.now).find((s) => s.path === wanted)
+      if (!spec) return { ok: false, code: 'SPEC_READ_FAILED', error: 'spec not found', path: wanted, demo: true }
+      if (spec.archived || state.archivedSpecPaths.includes(wanted)) {
+        return { ok: true, path: wanted, noop: true, archived: true, status: 'archived', demo: true }
+      }
+      state.archivedSpecPaths.push(wanted)
+      publish('specs')
+      return { ok: true, path: wanted, noop: false, archived: true, status: 'archived', demo: true }
+    }
     // V6 §3.1/§3.2: Architect のランナー設定とジョブ（進行バーの材料）
     // V11 §3.3 / D51: ランナーは `Hermes Native` 固定。`PUT` で別の値を送られても
     // 本番ブリッジと同じく `hermes` のまま返す（UI から切り替える手段はもう無い）。

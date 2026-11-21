@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   TYPED_CHARS_PER_ACTION,
+  batchIdOf,
   buildReceipt,
   cacheHitRate,
   createTelemetry,
@@ -16,6 +17,7 @@ import {
   selectSpecTasks,
   summarizeAudit,
   summarizeTasks,
+  taskSpecOf,
   usageKpis,
   zeroTypingScore,
 } from '../src/telemetry.js'
@@ -166,6 +168,33 @@ test('mergeIntervals は重なり・接する区間をマージし、不正な�
     'ゼロ幅・負区間は無効',
   )
   assert.deepEqual(mergeIntervals(null), [])
+})
+
+test('taskSpecOf / batchIdOf は起票側と同じ規約で Spec とバッチ ID を読む（D91 ④）', () => {
+  // 命名ゆれ（specRelPath / specPath / spec_path）を吸収する
+  assert.equal(taskSpecOf({ specRelPath: './docs/SPEC-A.md' }), 'docs/SPEC-A.md')
+  assert.equal(taskSpecOf({ specPath: 'docs\\SPEC-B.md' }), 'docs/SPEC-B.md')
+  assert.equal(taskSpecOf({ spec_path: 'docs/SPEC-C.md' }), 'docs/SPEC-C.md')
+  // 本文の `Spec:` 行・先頭 5 行のレガシー表記も読む（extractTaskSpec と同じ規約）
+  assert.equal(taskSpecOf({ body: 'Spec: docs/SPEC-D.md\nBoard: mobile\n' }), 'docs/SPEC-D.md')
+  assert.equal(taskSpecOf({ body: '本文\n\ndocs/SPEC-OLD.md を参照\n' }), 'docs/SPEC-OLD.md')
+  assert.equal(taskSpecOf({}), null)
+
+  // バッチ ID はタイトル優先、無ければ本文の `Batch: <id> — ...` 固定ヘッダ
+  assert.equal(batchIdOf({ title: '[RG-1] batch' }), 'RG-1')
+  assert.equal(batchIdOf({ title: '  [COH-2] spaced' }), 'COH-2')
+  assert.equal(batchIdOf({ title: 'Renamed', body: 'Spec: docs/S.md\nBatch: RG-3 — third\n' }), 'RG-3')
+  assert.equal(batchIdOf({ title: 'Renamed', body: 'Batch: not-an-id at line start?\n' }), null)
+  assert.equal(batchIdOf({}), null)
+
+  // selectSpecTasks も同じ規約で拾う（本文に Spec: があるタスクが spec 一致で残る）
+  const tasks = [
+    { id: 'a', title: '[A-1] body spec', body: 'Spec: docs/SPEC-A.md\n' },
+    { id: 'b', title: '[B-1] renamed', body: 'Spec: docs/SPEC-B.md\nBatch: B-1 — one\n' },
+    { id: 'c', title: 'unrelated' },
+  ]
+  assert.deepEqual(selectSpecTasks(tasks, { spec: 'docs/SPEC-A.md' }).tasks.map((t) => t.id), ['a'])
+  assert.deepEqual(selectSpecTasks(tasks, { batchIds: ['B-1'] }).tasks.map((t) => t.id), ['b'])
 })
 
 test('selectSpecTasks は Spec / Run に無関係なタスクを落とし、0 件なら補完しない', () => {

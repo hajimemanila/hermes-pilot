@@ -38,6 +38,8 @@ import {
   TERMINAL_TASK_STATUSES,
   buildArchitectTaskBody,
   buildArchitectTaskTitle,
+  batchIdPrefixForSlug,
+  batchIdPrefixOf,
   buildKanbanCreateArgs,
   buildSeedPrompt,
   computePhase,
@@ -45,6 +47,7 @@ import {
   createCliRunner,
   executionModeLabel,
   filedBatchIds,
+  filedBatchIdsForSpec,
   findActiveJobReviewTask,
   findJobReviewTask,
   findJobSpec,
@@ -62,6 +65,7 @@ import {
   runnerLabel,
   sanitizeRunner,
   suggestSpecSlug,
+  usedBatchIdPrefixes,
 } from '../src/architect.js'
 import { createKanban } from '../src/kanban.js'
 import { parseCreatedTask } from '../src/specs.js'
@@ -339,7 +343,14 @@ test('autoStart は未起票バッチを 1 回だけ起票する（2 周目は�
       readTasks: () => filed,
       launchSpec: async (input) => {
         launches.push(input)
-        filed = input.batchIds.map((id) => ({ id: `t-${id}`, title: `[${id}] x`, status: 'ready' }))
+        // 本物の launchSpec は本文へ `Spec:` を書く（無印にしない）。同じ形で返す。
+        filed = input.batchIds.map((id) => ({
+          id: `t-${id}`,
+          title: `[${id}] x`,
+          status: 'ready',
+          spec: 'docs/SPEC-AUTO.md',
+          createdAt: clock,
+        }))
         return {
           ok: true,
           runId: 'run-1',
@@ -423,8 +434,8 @@ test('既に全バッチが起票済みなら autoStart は起票せず launched
         return { code: 0, stdout: 'done', stderr: '' }
       },
       readTasks: () => [
-        { id: 't1', title: '[D-1] one', status: 'running' },
-        { id: 't2', title: '[D-2] two', status: 'running' },
+        { id: 't1', title: '[D-1] one', status: 'running', spec: 'docs/SPEC-DONE.md' },
+        { id: 't2', title: '[D-2] two', status: 'running', spec: 'docs/SPEC-DONE.md' },
       ],
       launchSpec: async () => {
         throw new Error('起票してはいけない')
@@ -743,7 +754,10 @@ test('buildArchitectTaskBody は Round 1 を JSON ファーストにし、既定
   assert.match(body, /Execution Policy: /)
   assert.match(body, /Board: demo/)
   assert.match(body, /Repository: \/tmp\/x/)
-  assert.match(body, /### Batch <ID>: <Title>/)
+  assert.match(body, /### Batch [A-Z]+-<n>: <Title>/)
+  // D91: 大文字スラッグ前置 ID と、使用済み接頭辞の注意書きを必ず入れる
+  assert.match(body, /Batch ID rule: every batch heading MUST read/)
+  assert.match(body, /Batch ID prefixes already used by active SPECs:/)
   // 既定は en（SPEC-i18n-gen §3.1）。ja の見出しは lang='ja' のときだけ（下部の GEN-3 テスト）
   assert.match(body, /\*\*Objective\*\*.*\*\*Files\*\*.*\*\*Verify\*\*/)
 })
@@ -784,7 +798,7 @@ test('findJobSpec / pendingSpecs は猶予と既存タスクを見る', () => {
   // 秒ズレの猶予（5 秒）内なら拾う
   assert.equal(findJobSpec({ startedAt: 16_000 }, specs).path, 'docs/NEW.md')
 
-  const pending = pendingSpecs(specs, [{ id: 't1', title: '[B] two', status: 'running' }])
+  const pending = pendingSpecs(specs, [{ id: 't1', title: '[B] two', status: 'running', createdAt: 13_000 }])
   assert.equal(pending.length, 1)
   assert.equal(pending[0].path, 'docs/OLD.md')
   assert.deepEqual(pending[0].pending, ['A'])
@@ -811,6 +825,73 @@ test('findJobSpec / pendingSpecs は猶予と既存タスクを見る', () => {
     [{ id: 't_cat', title: '[C1] Catalog', status: 'done', spec: 'docs/SPEC-CATALOG-ADMISSION.md' }],
   )
   assert.deepEqual(colliding[0].pending, ['C1', 'C2'])
+})
+
+test('batchIdPrefixForSlug / batchIdPrefixOf / usedBatchIdPrefixes は大文字スラッグ接頭辞を揃える（D91）', () => {
+  assert.equal(batchIdPrefixForSlug('reliability-guard'), 'RG')
+  assert.equal(batchIdPrefixForSlug('coherence'), 'COH')
+  assert.equal(batchIdPrefixForSlug('v5'), 'V5')
+  assert.equal(batchIdPrefixForSlug(''), 'B')
+  assert.equal(batchIdPrefixOf('RG-1'), 'RG')
+  assert.equal(batchIdPrefixOf('C1'), 'C')
+  assert.equal(batchIdPrefixOf(''), '')
+
+  const specs = [
+    { path: 'docs/SPEC-RELIABILITY-GUARD.md', archived: false, batches: [{ id: 'RG-1' }, { id: 'RG-2' }] },
+    { path: 'docs/SPEC-COHERENCE.md', archived: false, batches: [{ id: 'COH-1' }] },
+    { path: 'docs/SPEC-OLD.md', archived: true, batches: [{ id: 'ZZ-1' }] },
+  ]
+  // 退避済み SPEC の接頭辞は数えない（再び使える）
+  assert.deepEqual(usedBatchIdPrefixes(specs), ['COH', 'RG'])
+})
+
+test('buildSeedPrompt / buildArchitectTaskBody は使用済み接頭辞を渡して ID 衝突を防ぐ（D91）', () => {
+  const seed = buildSeedPrompt({
+    jobId: 'arch-1',
+    seedText: 's',
+    board: 'demo',
+    repoPath: '/tmp/x',
+    suggestedSlug: 'reliability-guard',
+    usedBatchPrefixes: ['COH'],
+  })
+  assert.match(seed, /### Batch RG-<n>: <Title>/)
+  assert.match(seed, /Batch ID rule: every batch heading MUST read/)
+  assert.match(seed, /Batch ID prefixes already used by active SPECs: COH/)
+
+  const body = buildArchitectTaskBody({
+    prompt: 'P',
+    board: 'demo',
+    repoPath: '/tmp/x',
+    jobId: 'arch-1',
+    suggestedSlug: 'coherence',
+    usedBatchPrefixes: [],
+  })
+  assert.match(body, /### Batch COH-<n>: <Title>/)
+  assert.match(body, /none \(the COH prefix above is free\)/)
+  // `specs.BATCH_ID_RE` の 16 文字制限に収まる長さに保つ
+  assert.ok(batchIdPrefixForSlug('reliability-guard').length <= 4)
+})
+
+test('filedBatchIdsForSpec は archived を未起票に戻し、無印タスクに時刻ガードを掛ける（D91/D92）', () => {
+  const specMtime = 1_700_000_000_000
+  const tasks = [
+    { id: 't1', title: '[RG-1] done', status: 'done', spec: 'docs/SPEC-RG.md' },
+    { id: 't2', title: '[RG-2] archived', status: 'archived', spec: 'docs/SPEC-RG.md' },
+    { id: 't3', title: '[RG-3] legacy old', status: 'running', createdAt: specMtime - 600_000 },
+    { id: 't4', title: '[RG-4] legacy fresh', status: 'running', createdAt: specMtime - 1000 },
+    { id: 't5', title: '[RG-5] other spec', status: 'running', spec: 'docs/SPEC-OTHER.md' },
+  ]
+  assert.deepEqual([...filedBatchIdsForSpec(tasks, 'docs/SPEC-RG.md', { specMtime })].sort(), ['RG-1', 'RG-4'])
+  // specMtime を渡さなければ無印は従来どおり（後方互換）
+  assert.deepEqual([...filedBatchIdsForSpec(tasks, 'docs/SPEC-RG.md')].sort(), ['RG-1', 'RG-3', 'RG-4'])
+  // 未スコープは archived だけを除外する
+  assert.deepEqual([...filedBatchIds(tasks)].sort(), ['RG-1', 'RG-3', 'RG-4', 'RG-5'])
+  // archived バッチは未起票に戻る＝再起票できる
+  const pending = pendingSpecs(
+    [{ path: 'docs/SPEC-RG.md', mtime: specMtime, batches: [{ id: 'RG-1' }, { id: 'RG-2' }] }],
+    tasks,
+  )
+  assert.deepEqual(pending[0].pending, ['RG-2'])
 })
 
 test('publicJob は機密を落とし、種を 400 字で切る', () => {

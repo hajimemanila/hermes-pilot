@@ -23,6 +23,7 @@ import {
   demoFetch,
   demoImageFor,
   demoJobPhase,
+  demoArchitectJobs,
   demoRoute,
   demoSocket,
   demoSpecContent,
@@ -131,10 +132,16 @@ test('Step 2: 仕様書は 3 件（本編 3 バッチ + V5/V4 のダイジェス
   assert.ok(specs.specs[2].batches.length >= 2)
   for (const spec of specs.specs) {
     assert.ok(spec.title, `${spec.path} にタイトル`)
+    // D91: `GET /api/specs` の各要素は `runTaskIds`（pipeline-runs.json の照合キー）を持つ
+    assert.ok(Array.isArray(spec.runTaskIds), `${spec.path} に runTaskIds 配列`)
     for (const b of spec.batches) {
       assert.ok(b.id && b.title, `${spec.path} のバッチに id と title`)
       assert.ok(b.mode, `${b.id} に Mode（ModePill 用）`)
     }
+  }
+  // アーカイブ側も同じ契約（Launchpad の照合が経路で揺れない）
+  for (const spec of specs.archivedSpecs) {
+    assert.ok(Array.isArray(spec.runTaskIds), `${spec.path} に runTaskIds 配列`)
   }
 
   await demoFetch('/api/review/t_demo_review/answer', { method: 'POST', body: { answers: [] } })
@@ -147,6 +154,29 @@ test('Step 2: 仕様書は 3 件（本編 3 バッチ + V5/V4 のダイジェス
   const filed = board.tasks.filter((t) => /^\[DEMO-[123]\]/.test(t.title))
   assert.equal(filed.length, 3)
   assert.equal(snapshot().step, 3)
+})
+
+test('未起票の判定は SPEC スコープ: 別 SPEC の同名 ID と archived を「起票済み」にしない（D91/D92）', () => {
+  resetDemoState()
+  const st = demoState()
+  st.tasks.push({
+    id: 't_other_spec',
+    title: '[DEMO-1] other spec batch',
+    status: 'done',
+    spec: 'docs/SPEC-OTHER.md',
+    createdAt: st.now,
+  })
+  st.tasks.push({
+    id: 't_archived',
+    title: '[DEMO-2] dropped batch',
+    status: 'archived',
+    spec: DEMO_SPEC_PATH,
+    createdAt: st.now,
+  })
+  const pending = demoArchitectJobs('mobile').pending.find((p) => p.path === DEMO_SPEC_PATH)
+  assert.ok(pending, 'デモ本編は未起票のまま残る')
+  assert.ok(pending.pending.includes('DEMO-1'), '別 SPEC の [DEMO-1] は起票済みにしない')
+  assert.ok(pending.pending.includes('DEMO-2'), 'archived は再起票できる')
 })
 
 test('Step 2 -> 4: バッチが done まで進むとサマリと完了レシートが出る', async () => {
@@ -1082,4 +1112,81 @@ test('デモの定型スニペットは英語版が用意され、en 側に日�
   assert.equal(DEMO_SNIPPETS.en.length, DEMO_SNIPPETS.ja.length, 'en / ja の件数が揃っていない')
   const bad = DEMO_SNIPPETS.en.filter((s) => CJK.test(`${s.label} ${s.text}`))
   assert.deepEqual(bad.map((s) => s.id), [], 'en のスニペットに日本語が混ざっている')
+})
+
+/* ------------------------------------------------------------------ *
+ * D92 / RG-3: ゴミ整理（一括アーカイブ・SPEC 退避）のデモ同等動作
+ * ------------------------------------------------------------------ */
+
+test('D92: demoRoute は一括アーカイブと SPEC 退避を本番と同じ名前で拾う', () => {
+  const bulk = demoRoute('/api/boards/mobile/tasks/bulk-archive')
+  assert.equal(bulk.name, 'board.bulkArchive')
+  assert.equal(bulk.id, 'mobile')
+  assert.equal(demoRoute('/api/specs/archive').name, 'specs.archive')
+  // 一覧（`/tasks`）は従来通り（bulk-archive を taskId と誤読しない）
+  assert.equal(demoRoute('/api/boards/mobile/tasks').name, 'board.tasks')
+})
+
+test('D92: 一括アーカイブは running をスキップし、archivedCount が増える', async () => {
+  resetDemoState()
+  setDemoTick(50)
+  const seeded = await demoFetch('/api/architect/seed', {
+    method: 'POST',
+    body: { board: 'mobile', seedText: 'Bulk archive parity', autoStart: false, lang: 'en' },
+  })
+  const jobs = await demoFetch('/api/architect/jobs?board=mobile')
+  const runningTaskId = jobs.jobs.find((j) => j.id === seeded.jobId)?.taskId
+  assert.ok(runningTaskId, 'Seed の実行中タスクが要る')
+
+  const before = await demoFetch('/api/boards/mobile/tasks')
+  assert.equal(typeof before.archivedCount, 'number')
+
+  const res = await demoFetch('/api/boards/mobile/tasks/bulk-archive', {
+    method: 'POST',
+    body: { taskIds: [runningTaskId, 't_demo_done', 't_missing'], reason: 'Cleanup' },
+  })
+  assert.equal(res.ok, true)
+  assert.deepEqual(res.skippedRunning, [runningTaskId], '実行中は止めずにスキップ')
+  assert.deepEqual(res.archived, ['t_demo_done'])
+  assert.deepEqual(res.failed.map((f) => f.id), ['t_missing'])
+
+  const after = await demoFetch('/api/boards/mobile/tasks')
+  assert.equal(after.tasks.find((t) => t.id === 't_demo_done').status, 'archived')
+  assert.equal(after.tasks.find((t) => t.id === runningTaskId).status, 'running')
+  assert.equal(after.archivedCount, before.archivedCount + 1)
+
+  // 既にアーカイブ済みは noop 側（skippedArchived）へ
+  const again = await demoFetch('/api/boards/mobile/tasks/bulk-archive', {
+    method: 'POST',
+    body: { taskIds: ['t_demo_done'] },
+  })
+  assert.deepEqual(again.archived, [])
+  assert.deepEqual(again.skippedArchived, ['t_demo_done'])
+  await new Promise((resolve) => setTimeout(resolve, 80))
+})
+
+test('D92: SPEC 退避は冪等で、アクティブ一覧からアーカイブ側へ移る', async () => {
+  resetDemoState()
+  const target = DEMO_SPEC_V4_PATH
+  const before = await demoFetch('/api/specs?board=mobile')
+  assert.ok(before.specs.some((s) => s.path === target), '前提: アクティブに居る')
+
+  const first = await demoFetch('/api/specs/archive', { method: 'POST', body: { path: target } })
+  assert.equal(first.ok, true)
+  assert.equal(first.noop, false)
+  assert.equal(first.status, 'archived')
+
+  const after = await demoFetch('/api/specs?board=mobile')
+  assert.equal(after.specs.some((s) => s.path === target), false, 'アクティブから消える')
+  assert.ok(after.archivedSpecs.some((s) => s.path === target), 'アーカイブ側へ移る')
+
+  const content = await demoFetch(`/api/specs/content?path=${encodeURIComponent(target)}`)
+  assert.equal(content.archived, true, 'MD プレビューが退避済みと分かる')
+
+  const second = await demoFetch('/api/specs/archive', { method: 'POST', body: { path: target } })
+  assert.equal(second.noop, true, '2 回目は冪等')
+
+  const outside = await demoFetch('/api/specs/archive', { method: 'POST', body: { path: '../SPEC-NOPE.md' } })
+  assert.equal(outside.ok, false)
+  assert.equal(outside.code, 'SPEC_PATH_OUTSIDE', 'リポジトリの外は拒否')
 })

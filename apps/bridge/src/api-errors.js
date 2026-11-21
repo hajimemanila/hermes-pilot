@@ -70,6 +70,8 @@ export const ERROR_MESSAGES = {
   SPEC_BATCH_HEADING_MISSING: 'No batch heading (### Batch <ID>: <Title>) was found',
   SPEC_BATCH_NOT_FOUND: 'The selected batch is not in the spec',
   SPEC_NOT_MARKDOWN: 'Only Markdown (.md) specs can be previewed: {path}',
+  SPEC_FILE_INVALID: 'Only SPEC*.md files can be archived: {path}',
+  SPEC_ARCHIVE_FAILED: 'Could not write the archive header: {path}',
 
   // --- review / sheet / approval（review.js） ---
   NO_SHEET: 'This task has no sheet',

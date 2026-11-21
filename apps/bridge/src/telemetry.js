@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { readTailText } from './tail.js'
-import { readRuns, runsPathFor } from './specs.js'
+import { extractTaskSpec, readRuns, runsPathFor } from './specs.js'
 
 /**
  * Zero-Typing 実行サマリ（完了レシート）の集計（SPEC-PILOT-V5 §3.3 ③ / D26③）。
@@ -231,15 +231,37 @@ function taskEndMs(task) {
   return toMs(task?.completedAt ?? task?.completed_at)
 }
 
-/** タスクが持つ Spec パス（命名ゆれを吸収）。 */
-function taskSpecOf(task) {
-  return task?.specRelPath ?? task?.spec ?? task?.specPath ?? task?.spec_path ?? null
+/**
+ * タスクが持つ Spec パス（命名ゆれを吸収）。
+ *
+ * `specs.extractTaskSpec` と**同じ規約**（`spec` → 本文の `Spec:` 行 → 先頭 5 行の
+ * `docs/SPEC-*.md`）に寄せ、集計・照合・起票判定で別々の解釈をしない（D91 ④）。
+ *
+ * @param {object} task タスク
+ * @returns {string|null} SPEC 相対パス
+ */
+export function taskSpecOf(task) {
+  const direct = String(task?.specRelPath ?? task?.specPath ?? task?.spec_path ?? '')
+    .replace(/\\/g, '/')
+    .replace(/^\.\//, '')
+    .trim()
+  return direct || extractTaskSpec(task)
 }
 
-/** タイトル先頭の `[BatchID]`（無ければ null）。 */
-function batchIdOf(task) {
+/**
+ * バッチ ID（タイトル先頭の `[ID]`、無ければ本文の `Batch: <id> — ...` 固定ヘッダ）。
+ *
+ * `specs.buildTaskBody` が書く `Batch:` 行を読むので、タイトルを変えたタスクでも
+ * ID を見失わない（D91 ③）。
+ *
+ * @param {object} task タスク
+ * @returns {string|null} バッチ ID
+ */
+export function batchIdOf(task) {
   const m = /^\s*\[([^\]]{1,32})\]/.exec(String(task?.title ?? ''))
-  return m ? m[1].trim() : null
+  if (m && m[1].trim()) return m[1].trim()
+  const header = /^Batch:\s*([A-Za-z][A-Za-z0-9._-]{0,15})\s*(?:—|–|-{1,2}|:)(?:\s|$)/m.exec(String(task?.body ?? ''))
+  return header ? header[1] : null
 }
 
 /**
