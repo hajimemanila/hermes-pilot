@@ -86,20 +86,74 @@ export function repoIdFromPath(dir) {
   return id || 'repo'
 }
 
+/** 実ディレクトリの本来の大文字小文字名（無ければパス末尾そのまま）。 */
+function realBasename(abs) {
+  try {
+    return path.basename(fs.realpathSync.native(abs))
+  } catch {
+    return path.basename(abs)
+  }
+}
+
 /**
- * 空の設定（初回起動時の既定）。`scanDirs` は実在する既定候補だけ。
+ * 同一 inode を指す scanDirs 重複（macOS での `~/Projects` と `~/projects` 等）を 1 件に畳む。
+ * `~/` 表記とディスク上の実際の大文字小文字表記を優先して残す。
+ * @param {string[]} dirs 候補リスト
+ * @param {string} [home] ホーム
+ * @returns {string[]} 重複除去後のリスト
+ */
+export function dedupeScanDirs(dirs, home = os.homedir()) {
+  const out = []
+  const seen = new Map()
+  for (const raw of Array.isArray(dirs) ? dirs : []) {
+    const s = typeof raw === 'string' ? raw.trim() : ''
+    if (!s) continue
+    const abs = expandHome(s, home)
+    let key = `raw:${s}`
+    try {
+      const st = fs.statSync(abs)
+      key = `ino:${st.dev}:${st.ino}`
+    } catch {
+      /* 不在ディレクトリは文字列のまま別扱いにして勝手に潰さない */
+    }
+    if (!seen.has(key)) {
+      seen.set(key, out.length)
+      out.push(s)
+      continue
+    }
+    const idx = seen.get(key)
+    const prev = out[idx]
+    const sTilde = s.startsWith('~/')
+    const prevTilde = prev.startsWith('~/')
+    if (sTilde && !prevTilde) {
+      out[idx] = s
+    } else if (sTilde === prevTilde) {
+      const real = realBasename(abs)
+      if (path.basename(abs) === real && path.basename(expandHome(prev, home)) !== real) {
+        out[idx] = s
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * 空の設定（初回起動時の既定）。`scanDirs` は実在する既定候補だけ（大文字小文字重複を畳む）。
  * @param {string} [home] ホーム
  * @returns {{scanDirs: string[], pinned: string[], hidden: string[], custom: Array<object>}} 設定
  */
 export function defaultReposConfig(home = os.homedir()) {
   return {
-    scanDirs: DEFAULT_SCAN_DIRS.filter((d) => {
-      try {
-        return fs.statSync(expandHome(d, home)).isDirectory()
-      } catch {
-        return false
-      }
-    }),
+    scanDirs: dedupeScanDirs(
+      DEFAULT_SCAN_DIRS.filter((d) => {
+        try {
+          return fs.statSync(expandHome(d, home)).isDirectory()
+        } catch {
+          return false
+        }
+      }),
+      home,
+    ),
     pinned: [],
     hidden: [],
     custom: [],
@@ -130,7 +184,7 @@ export function normalizeReposConfig(raw, home = os.homedir()) {
     }
   }
   return {
-    scanDirs: Array.isArray(raw.scanDirs) ? strList(raw.scanDirs) : base.scanDirs,
+    scanDirs: Array.isArray(raw.scanDirs) ? dedupeScanDirs(strList(raw.scanDirs), home) : base.scanDirs,
     pinned: strList(raw.pinned),
     hidden: strList(raw.hidden, (x) => normalizePath(x, home)),
     custom,
@@ -507,9 +561,10 @@ export function createRepos(cfg = {}, deps = {}) {
       }
       if (!clean.includes(s)) clean.push(s)
     }
+    const deduped = dedupeScanDirs(clean)
     const config = readConfig()
-    writeConfig({ ...config, scanDirs: clean })
-    return { ok: true, scanDirs: clean }
+    writeConfig({ ...config, scanDirs: deduped })
+    return { ok: true, scanDirs: deduped }
   }
 
   /** 即時再スキャン（キャッシュを捨てて返す）。 */

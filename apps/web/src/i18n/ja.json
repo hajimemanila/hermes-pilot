@@ -278,6 +278,8 @@
   "settings.disk": "ディスク",
   "settings.diskValue": "{free} 空き（{percent}% 使用）",
   "settings.bridge": "稼働状態",
+  "settings.pilotVersion": "Hermes Pilot バージョン",
+  "settings.bridgePort": "ブリッジのポート",
   "settings.bridgeOk": "正常（{uptime}s）",
   "settings.disconnected": "切断",
   "settings.reviewWaiting": "判断待ち",

@@ -7,6 +7,7 @@ import {
   SCAN_TTL_MS,
   boardsForRepo,
   createRepos,
+  dedupeScanDirs,
   defaultReposConfig,
   isGitRepo,
   isSafeBoardSlug,
@@ -359,4 +360,16 @@ test('createBoard: 未登録 id と CLI 失敗は ok:false で返す（黙って
   assert.equal(failed.ok, false)
   assert.equal(failed.code, 'CREATE_FAILED')
   assert.match(failed.error, /board already exists/, 'CLI の出力は理由として残す（英語のまま）')
+})
+
+test('dedupeScanDirs / defaultReposConfig: 同一 inode（macOS 大小文字違い等）は実表記 1 件に畳む', () => {
+  const fakeHome = tempDir('hm-dedupe-')
+  fs.mkdirSync(path.join(fakeHome, 'projects'))
+  fs.mkdirSync(path.join(fakeHome, 'work'))
+
+  assert.deepEqual(defaultReposConfig(fakeHome).scanDirs, ['~/projects'])
+  assert.deepEqual(dedupeScanDirs(['~/Projects', '~/projects'], fakeHome), ['~/projects'])
+  assert.deepEqual(dedupeScanDirs([path.join(fakeHome, 'projects'), '~/Projects'], fakeHome), ['~/Projects'])
+  assert.deepEqual(dedupeScanDirs([path.join(fakeHome, 'projects'), '~/projects'], fakeHome), ['~/projects'])
+  assert.deepEqual(dedupeScanDirs(['~/projects', '~/work'], fakeHome), ['~/projects', '~/work'])
 })

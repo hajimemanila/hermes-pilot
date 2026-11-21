@@ -161,13 +161,7 @@ def read_dashboard_meta(paths: Mapping[str, Path]) -> Optional[dict[str, Any]]:
 
 def default_config(port: int = DEFAULT_PORT) -> dict[str, Any]:
     """Config shape written by ``hermes-pilot init`` (SPEC §3.2)."""
-    return {
-        "lang": "en",
-        "scanDirs": list(DEFAULT_SCAN_DIRS),
-        "tlsPort": None,
-        "tailscaleDns": None,
-        "servicePort": port,
-    }
+    return {"lang": "en", "scanDirs": list(DEFAULT_SCAN_DIRS), "tlsPort": None, "tailscaleDns": None, "servicePort": port}
 
 
 def read_config(config_path: Path | str) -> dict[str, Any]:
@@ -311,11 +305,13 @@ def validate_config(
         elif not cleaned:
             errors["scanDirs"] = "empty"
             messages["scanDirs"] = "Register at least one directory to scan"
-        elif len(cleaned) > 20:
-            errors["scanDirs"] = "too_many"
-            messages["scanDirs"] = "At most 20 scan directories"
         else:
-            value["scanDirs"] = cleaned
+            cleaned = _dedupe_scan_dirs(cleaned, home_path)
+            if len(cleaned) > 20:
+                errors["scanDirs"] = "too_many"
+                messages["scanDirs"] = "At most 20 scan directories"
+            else:
+                value["scanDirs"] = cleaned
 
     tls_port = _coerce_port(raw.get("tlsPort"), "tlsPort", errors, messages, allow_null=True)
     if "tlsPort" not in errors:
@@ -670,15 +666,59 @@ def repo_id_from_path(value: str) -> str:
     return slug or "repo"
 
 
+def _real_basename(abs_path: str) -> str:
+    """Actual directory name casing on disk (falls back to basename when absent)."""
+    p = Path(abs_path)
+    try:
+        entries = os.listdir(str(p.parent))
+    except OSError:
+        return p.name
+    if p.name in entries:
+        return p.name
+    lower = p.name.lower()
+    for name in entries:
+        if name.lower() == lower:
+            return name
+    return p.name
+
+
+def _dedupe_scan_dirs(dirs: Any, home: Optional[Path] = None) -> list[str]:
+    """Collapse case-insensitive same-inode duplicates (e.g. ``~/Projects`` & ``~/projects``)."""
+    home = Path(home) if home is not None else Path.home()
+    out: list[str] = []
+    seen: dict[tuple[Any, ...], int] = {}
+    for raw in dirs or []:
+        text = str(raw).strip() if isinstance(raw, str) else ""
+        if not text:
+            continue
+        expanded = expand_path(text, home)
+        try:
+            st = os.stat(expanded)
+            key: tuple[Any, ...] = ("ino", st.st_dev, st.st_ino)
+        except OSError:
+            key = ("raw", text)
+        if key not in seen:
+            seen[key] = len(out)
+            out.append(text)
+            continue
+        idx = seen[key]
+        prev = out[idx]
+        text_tilde = text.startswith("~/")
+        prev_tilde = prev.startswith("~/")
+        if text_tilde and not prev_tilde:
+            out[idx] = text
+        elif text_tilde == prev_tilde:
+            real_base = _real_basename(expanded)
+            if Path(expanded).name == real_base and Path(expand_path(prev, home)).name != real_base:
+                out[idx] = text
+    return out
+
+
 def default_repos_config(home: Optional[Path] = None) -> dict[str, Any]:
     """Empty repository config whose ``scanDirs`` are the ones that exist here."""
     home = Path(home) if home is not None else Path.home()
-    return {
-        "scanDirs": [d for d in DEFAULT_SCAN_DIRS if Path(expand_path(d, home)).is_dir()],
-        "pinned": [],
-        "hidden": [],
-        "custom": [],
-    }
+    dirs = _dedupe_scan_dirs([d for d in DEFAULT_SCAN_DIRS if Path(expand_path(d, home)).is_dir()], home)
+    return {"scanDirs": dirs, "pinned": [], "hidden": [], "custom": []}
 
 
 def normalize_repos_config(raw: Any, home: Optional[Path] = None) -> dict[str, Any]:
@@ -706,20 +746,9 @@ def normalize_repos_config(raw: Any, home: Optional[Path] = None) -> dict[str, A
             absolute = expand_path(str(entry.get("path") or ""), home)
             if not absolute.startswith("/"):
                 continue
-            custom.append(
-                {
-                    "id": str(entry.get("id") or "").strip() or repo_id_from_path(absolute),
-                    "label": str(entry.get("label") or "").strip() or Path(absolute).name,
-                    "path": absolute,
-                }
-            )
-    scan_dirs = strings(raw.get("scanDirs"))
-    return {
-        "scanDirs": scan_dirs or base["scanDirs"],
-        "pinned": strings(raw.get("pinned")),
-        "hidden": strings(raw.get("hidden")),
-        "custom": custom,
-    }
+            custom.append({"id": str(entry.get("id") or "").strip() or repo_id_from_path(absolute), "label": str(entry.get("label") or "").strip() or Path(absolute).name, "path": absolute})
+    scan_dirs = _dedupe_scan_dirs(strings(raw.get("scanDirs")), home)
+    return {"scanDirs": scan_dirs or base["scanDirs"], "pinned": strings(raw.get("pinned")), "hidden": strings(raw.get("hidden")), "custom": custom}
 
 
 def read_repos_config(paths: Mapping[str, Path]) -> Optional[dict[str, Any]]:
@@ -828,19 +857,15 @@ def build_config(paths: Optional[Mapping[str, Path]] = None) -> dict[str, Any]:
     tab must not show a stale value from the older ``config.json`` field.
     """
     paths = paths or resolve_paths()
+    home = Path(paths["home"])
     cfg = read_config(paths["configPath"])
     repos = read_repos_config(paths)
     source = "config.json"
     if repos and repos.get("scanDirs"):
         cfg["scanDirs"] = list(repos["scanDirs"])
         source = "repos.json"
-    return {
-        "ok": True,
-        "config": cfg,
-        "dataDir": str(paths["dataDir"]),
-        "scanDirsSource": source,
-        "reposPath": shorten_path(str(paths["reposPath"]), Path(paths["home"])),
-    }
+    cfg["scanDirs"] = _dedupe_scan_dirs(cfg.get("scanDirs"), home)
+    return {"ok": True, "config": cfg, "dataDir": str(paths["dataDir"]), "scanDirsSource": source, "reposPath": shorten_path(str(paths["reposPath"]), home)}
 
 
 def sync_scan_dirs(
@@ -857,8 +882,9 @@ def sync_scan_dirs(
     and the next bridge start picks it up.
     """
     paths = paths or resolve_paths()
+    home = Path(paths["home"])
     request = request or bridge_request
-    dirs = [str(d).strip() for d in (scan_dirs or []) if str(d).strip()]
+    dirs = _dedupe_scan_dirs(scan_dirs, home)
     token = read_token(paths)
     base = bridge_base(paths)
     bridge: dict[str, Any] = {"attempted": True, "ok": False, "error": None}
@@ -869,10 +895,10 @@ def sync_scan_dirs(
             if not bridge["ok"]:
                 bridge["error"] = str(answer.get("error") or "the bridge rejected scanDirs")
             if isinstance(answer.get("scanDirs"), list) and answer["scanDirs"]:
-                dirs = [str(d) for d in answer["scanDirs"]]
+                dirs = _dedupe_scan_dirs(answer["scanDirs"], home)
     except BridgeUnavailable as exc:
         bridge["error"] = str(exc)
-    config = read_repos_config(paths) or default_repos_config(Path(paths["home"]))
+    config = read_repos_config(paths) or default_repos_config(home)
     config["scanDirs"] = dirs or config["scanDirs"]
     write_repos_config_atomic(paths, config)
     return {"scanDirs": list(config["scanDirs"]), "source": "bridge" if bridge["ok"] else "file", "bridge": bridge}
@@ -1175,11 +1201,7 @@ def pipeline_action(
         out["action"] = "setRunner"
         return redact(out, token)
 
-    return {
-        "ok": False,
-        "code": "invalid_action",
-        "error": "action must be one of optimize, setRunner",
-    }
+    return {"ok": False, "code": "invalid_action", "error": "action must be one of optimize, setRunner"}
 
 
 # ----------------------------------------------------------------- snippets
@@ -1251,18 +1273,7 @@ def normalize_snippet_store(
 
 def _snippet_payload(raw: Mapping[str, Any], *, kind: str, lang: str, source: str) -> dict[str, Any]:
     """Whitelist the bridge's snippet payload so no field can smuggle a secret."""
-    return {
-        "ok": True,
-        "source": source,
-        "kind": kind,
-        "lang": lang,
-        "snippets": raw.get("snippets") if isinstance(raw.get("snippets"), list) else [],
-        "allSnippets": raw.get("allSnippets") if isinstance(raw.get("allSnippets"), list) else [],
-        "overrides": raw.get("overrides") if isinstance(raw.get("overrides"), Mapping) else {},
-        "custom": raw.get("custom") if isinstance(raw.get("custom"), list) else [],
-        "customMax": raw.get("customMax") or CUSTOM_MAX,
-        "hotLimit": raw.get("hotLimit") or HOT_LIMIT,
-    }
+    return {"ok": True, "source": source, "kind": kind, "lang": lang, "snippets": raw.get("snippets") if isinstance(raw.get("snippets"), list) else [], "allSnippets": raw.get("allSnippets") if isinstance(raw.get("allSnippets"), list) else [], "overrides": raw.get("overrides") if isinstance(raw.get("overrides"), Mapping) else {}, "custom": raw.get("custom") if isinstance(raw.get("custom"), list) else [], "customMax": raw.get("customMax") or CUSTOM_MAX, "hotLimit": raw.get("hotLimit") or HOT_LIMIT}
 
 
 def _snippet_route(kind: str, lang: str, *, method: str = "GET") -> str:
@@ -1278,18 +1289,7 @@ def _local_snippet_payload(paths: Mapping[str, Path], kind: str, lang: str, note
     except (OSError, ValueError):
         raw = {}
     store = normalize_snippet_store(raw, kind=kind)
-    payload: dict[str, Any] = {
-        "ok": True,
-        "source": "file",
-        "kind": kind,
-        "lang": lang,
-        "snippets": [],
-        "allSnippets": [],
-        "overrides": store["overrides"],
-        "custom": store["custom"],
-        "customMax": CUSTOM_MAX,
-        "hotLimit": HOT_LIMIT,
-    }
+    payload: dict[str, Any] = {"ok": True, "source": "file", "kind": kind, "lang": lang, "snippets": [], "allSnippets": [], "overrides": store["overrides"], "custom": store["custom"], "customMax": CUSTOM_MAX, "hotLimit": HOT_LIMIT}
     if note:
         payload["notice"] = note
     return payload
@@ -1344,9 +1344,7 @@ def save_snippets(
         current = json.loads(file.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         current = {}
-    store = normalize_snippet_store(
-        body, kind=kind, previous=current, reset=body.get("reset") is True
-    )
+    store = normalize_snippet_store(body, kind=kind, previous=current, reset=body.get("reset") is True)
     _write_json_atomic(file, store)
     return redact(_local_snippet_payload(paths, kind, lang), token)
 
@@ -1407,17 +1405,8 @@ def audit_entries(lines: Iterable[str]) -> list[dict[str, Any]]:
             if isinstance(value, (dict, list)):
                 value = json.dumps(value, ensure_ascii=False)
             detail.append(f"{key}={value}")
-        at = parsed.get("at")
-        kind = parsed.get("kind")
-        ok = parsed.get("ok")
-        out.append(
-            {
-                "at": at if isinstance(at, str) else "",
-                "kind": kind if isinstance(kind, str) else "",
-                "ok": ok if isinstance(ok, bool) else None,
-                "detail": " · ".join(detail),
-            }
-        )
+        at, kind, ok = parsed.get("at"), parsed.get("kind"), parsed.get("ok")
+        out.append({"at": at if isinstance(at, str) else "", "kind": kind if isinstance(kind, str) else "", "ok": ok if isinstance(ok, bool) else None, "detail": " · ".join(detail)})
     return out
 
 
@@ -1451,14 +1440,7 @@ def build_logs(
         missing = True
     tail = [line for line in text.split("\n") if line] if text else []
     tail = tail[-limit:]
-    payload = {
-        "ok": True,
-        "file": name,
-        "lines": [LOG_QUERY_SECRET.sub(r"\1<redacted>", line) for line in tail],
-        "shown": len(tail),
-        "missing": missing,
-        "path": shorten_path(str(path), Path(paths["home"])),
-    }
+    payload = {"ok": True, "file": name, "lines": [LOG_QUERY_SECRET.sub(r"\1<redacted>", line) for line in tail], "shown": len(tail), "missing": missing, "path": shorten_path(str(path), Path(paths["home"]))}
     if name == "audit":
         # Structured rows for the dashboard's accordion list: parsed here so the
         # browser never has to guess, and redacted by the same pass below.

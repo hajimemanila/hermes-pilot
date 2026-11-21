@@ -278,6 +278,8 @@
   "settings.disk": "Disk",
   "settings.diskValue": "{free} free ({percent}% used)",
   "settings.bridge": "Bridge",
+  "settings.pilotVersion": "Hermes Pilot version",
+  "settings.bridgePort": "Bridge port",
   "settings.bridgeOk": "OK ({uptime}s)",
   "settings.disconnected": "Disconnected",
   "settings.reviewWaiting": "Review waiting",

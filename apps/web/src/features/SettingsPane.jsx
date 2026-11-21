@@ -933,14 +933,10 @@ export function SettingsPane({ overview, notify, refresh }) {
       {/* 6. システム状態・診断 */}
       <section id="sec-status" className="card settings-card">
         <CardHead icon="🩺" title={t('settings.secStatus')} />
-        <div className="kv">
-          <span>Hermes</span>
-          <b>{overview?.hermes?.version ?? '—'}</b>
-        </div>
-        <div className="kv">
-          <span>{t('settings.model')}</span>
-          <b>{overview?.hermes?.model ?? '—'}</b>
-        </div>
+        <div className="kv"><span>Hermes</span><b>{overview?.hermes?.version ?? '—'}</b></div>
+        <div className="kv"><span>{t('settings.pilotVersion')}</span><b className="mono">{bridge?.version ? String(bridge.version) : '—'}</b></div>
+        <div className="kv"><span>{t('settings.bridgePort')}</span><b className="mono">{bridge?.port ? String(bridge.port) : '—'}</b></div>
+        <div className="kv"><span>{t('settings.model')}</span><b>{overview?.hermes?.model ?? '—'}</b></div>
         <div className="kv">
           <span>{t('settings.memory')}</span>
           <b>
@@ -949,10 +945,7 @@ export function SettingsPane({ overview, notify, refresh }) {
               : '—'}
           </b>
         </div>
-        <div className="kv">
-          <span>{t('settings.disk')}</span>
-          <b>{disk ? t('settings.diskValue', { free: fmtBytes(disk.free), percent: disk.percent }) : '—'}</b>
-        </div>
+        <div className="kv"><span>{t('settings.disk')}</span><b>{disk ? t('settings.diskValue', { free: fmtBytes(disk.free), percent: disk.percent }) : '—'}</b></div>
         <div className="kv">
           <span>{t('settings.bridge')}</span>
           <b className={bridge?.ok === false ? 'bad-text' : ''}>
@@ -967,14 +960,8 @@ export function SettingsPane({ overview, notify, refresh }) {
               : '—'}
           </b>
         </div>
-        <div className="kv">
-          <span>{t('settings.lastChecked')}</span>
-          <b>{relTime(overview?.checkedAt)}</b>
-        </div>
-        <div className="kv">
-          <span>{t('settings.launchSource')}</span>
-          <b>{sourceLabel}</b>
-        </div>
+        <div className="kv"><span>{t('settings.lastChecked')}</span><b>{relTime(overview?.checkedAt)}</b></div>
+        <div className="kv"><span>{t('settings.launchSource')}</span><b>{sourceLabel}</b></div>
         <div className="kv">
           <span>{t('settings.installability')}</span>
           <b>
@@ -985,10 +972,7 @@ export function SettingsPane({ overview, notify, refresh }) {
                 : t('settings.installNo')}
           </b>
         </div>
-        <div className="kv">
-          <span>Service Worker</span>
-          <b>{swState()}</b>
-        </div>
+        <div className="kv"><span>Service Worker</span><b>{swState()}</b></div>
         <button
           className="btn hm-btn-inner"
           style={{ marginTop: 8 }}

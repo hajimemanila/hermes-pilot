@@ -366,6 +366,7 @@ m = importlib.util.module_from_spec(spec); sys.modules["pd_probe4"] = m; spec.lo
 tmp = Path(tempfile.mkdtemp())
 (tmp / "Projects" / "alpha" / ".git").mkdir(parents=True)
 (tmp / "Projects" / "beta" / ".git").mkdir(parents=True)
+(tmp / "work").mkdir()
 (tmp / "logs").mkdir()
 token = "0123456789abcdef" * 4
 (tmp / "token").write_text(token)
@@ -400,7 +401,9 @@ def bridge(base, path, tok, **kw):
     raise AssertionError(path)
 
 cfg_before = m.build_config(paths)
-sync_file = m.sync_scan_dirs(paths, ["~/Projects", "~/projects"], request=down)
+dedupe_check = m._dedupe_scan_dirs(["~/Projects", "~/projects"], tmp)
+default_repos_scan = m.default_repos_config(tmp)["scanDirs"]
+sync_file = m.sync_scan_dirs(paths, ["~/Projects", "~/work"], request=down)
 repos_path_body = json.loads((tmp / "repos.json").read_text())
 repos_file = m.build_repos(paths, request=down)
 pin = m.repos_action(paths, {"action": "pin", "id": "alpha"}, request=down)
@@ -432,6 +435,8 @@ blob = json.dumps([sync_file, repos_file, pin, hidden, unhide, snippets, term_sa
 print(json.dumps({
   "configSourceBefore": cfg_before["scanDirsSource"],
   "configSourceAfter": m.build_config(paths)["scanDirsSource"],
+  "dedupeCheck": dedupe_check,
+  "defaultReposScan": default_repos_scan,
   "syncFile": sync_file,
   "reposPathBody": repos_path_body,
   "reposFileSource": repos_file["source"],
@@ -462,9 +467,11 @@ print(json.dumps({
   // G3: repos.json が scanDirs の正になる
   assert.equal(out.configSourceBefore, 'config.json', 'repos.json が無いうちは config.json')
   assert.equal(out.configSourceAfter, 'repos.json')
+  assert.deepEqual(out.dedupeCheck, ['~/Projects'])
+  assert.deepEqual(out.defaultReposScan, ['~/Projects'])
   assert.equal(out.syncFile.source, 'file', 'ブリッジ停止時はファイルへ直接書く')
-  assert.deepEqual(out.syncFile.scanDirs, ['~/Projects', '~/projects'])
-  assert.deepEqual(out.reposPathBody.scanDirs, ['~/Projects', '~/projects'])
+  assert.deepEqual(out.syncFile.scanDirs, ['~/Projects', '~/work'])
+  assert.deepEqual(out.reposPathBody.scanDirs, ['~/Projects', '~/work'])
   assert.equal(out.mode, '0o600')
   assert.deepEqual(out.leftovers, [])
 
