@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useChatSocket } from '../lib/useChatSocket.js'
 import { useChatSessions } from './chat/useChatSessions.js'
+import { useChatReports } from './chat/useChatReports.js'
 import { DEFAULT_PROFILE, STORED_PROFILE_KEY, applyDefaultProfile } from '../lib/profile.js'
 import { boardSummary, defaultBoard, matchRepoByCwd, pinnedRepos, readLastRepo, readPendingRepo, readRecent, rememberRepo, repoLabel, writePendingRepo } from '../lib/repoPicker.js'
 import { pickResumeTarget, recentSessions } from '../lib/chatResume.js'
@@ -19,8 +20,7 @@ import { SpecMarkdownSheet } from '../components/SpecMarkdownSheet.jsx'
 import { ArchitectJobBar } from '../components/ArchitectJobBar.jsx'
 import { jobPollMs, pickActiveArchitectJob, pickSpecBanner } from '../lib/specSeed.js'
 import { celebrate } from '../lib/vibe.js'
-import { LATEST_REPORT_ID, LAST_CHAT_KEY, SEEN_MAP_KEY, followUpPromptFor, isPipelineReport, markAllReportsSeenMap, maxReportAtFor, mergeTimeline, orphanPipelineReports, otherUnreadReports, recentPipelineReports, unseenPipelineReports, readSeenMap, reportIdsFor, reportLines, reportSummaryLine, setSeen, toEpochMs, unreadSessions } from '../lib/chatReports.js'
-import { drawerUnreadCount as countDrawerUnread, sessionRowBadges } from '../lib/sessionUnread.js'
+import { LATEST_REPORT_ID, LAST_CHAT_KEY, followUpPromptFor, isPipelineReport, reportSummaryLine, toEpochMs } from '../lib/chatReports.js'
 import { Icon, Loader, RefreshButton, Sheet, fmtBytes, fmtDateTime, relTime } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
 import { useI18n } from '../i18n/index.js'
@@ -68,9 +68,8 @@ export function ChatPane({
   const [drawerRefreshing, setDrawerRefreshing] = useState(false)
   const [thinking, setThinking] = useState('')
   const [dcLink, setDcLink] = useState(null)
-  // レビューの完了報告（起票した会話にだけ流れる 1 行。行の取得は App が 1 回だけ行う）
-  // と、会話一覧の行に出す「新着の点」の既読（端末に残す）。
-  const [seenMap, setSeenMap] = useState({})
+  // レビューの完了報告（起票した会話にだけ流れる 1 行。行の取得は App が 1 回だけ行う）。
+  // その既読・突き合わせは境界② `useChatReports` が持つ。
   /*
    * 統合レポートカードの開閉（キー＝報告の key）。未指定は「最新 1 件だけ展開」を既定にする
    * （古いレポートが積まれると会話が押し流されるため・§3.3 ②）。
@@ -125,13 +124,6 @@ export function ChatPane({
   const storedProfileRef = useRef(DEFAULT_PROFILE)
   const repoRef = useRef(null)
   const reposRef = useRef([])
-  /*
-   * 最新の完了報告（`chatReports` の props）を ref でも持つ（SPEC-PILOT-V4 §3.1 / D22①）。
-   * `markReportsSeen` を `useCallback([])` のままにするため、依存配列に props を足さずに
-   * 最新値を読む。時刻スキューの吸収に「その会話の最新 at」が要る。
-   */
-  const chatReportsRef = useRef([])
-  chatReportsRef.current = Array.isArray(chatReports) ? chatReports : []
   const listRef = useRef(null)
   // ドロワー自動リフレッシュのスロットル（最後に走った時刻・D22②）
   const drawerRefreshAtRef = useRef(0)
@@ -684,17 +676,34 @@ export function ChatPane({
     return undefined
   }, [isWorking])
   /*
-   * 統合レポート（`kind: 'pipeline'`）は「宛先の会話」に加えて、リポジトリが一致する
+   * 完了報告の突き合わせ・既読・会話一覧バッジ（境界② `features/chat/useChatReports.js`）。
+   * 統合レポート（`kind: 'pipeline'`）は宛先の会話に加えて、リポジトリが一致する
    * `'__latest__'` 宛の報告も合流させる（§3.2 ② / §3.3 ①）。読み取り専用の閲覧中は
-   * 親チャットの報告を混ぜない（既存の `currentIds` と同じ境界）。
+   * 親チャットの報告を混ぜない（`currentIds` と同じ境界）。
    */
-  const reportIds = useMemo(
-    () => reportIdsFor(currentIds, chatReports, readonly ? '' : repo?.path ?? ''),
-    [currentIds, chatReports, readonly, repo?.path],
-  )
-  const reports = useMemo(() => reportLines(chatReports, reportIds), [chatReports, reportIds])
-  const timeline = useMemo(() => mergeTimeline(blocks, reports), [blocks, reports])
-  const lastReportKey = reports.length ? reports[reports.length - 1].key : ''
+  const {
+    reports,
+    timeline,
+    lastReportKey,
+    unreadIds,
+    otherUnreads,
+    pipelineSessionIds,
+    drawerOrphanReports,
+    sessionBadges,
+    drawerUnread,
+    markReportsSeen,
+    markAllReportsRead,
+  } = useChatReports({
+    chatReports,
+    blocks,
+    currentIds,
+    readonly,
+    repoPath: repo?.path ?? '',
+    sessions,
+    sessionSeen,
+    liveTurns,
+    activeDrawerSid,
+  })
 
   useEffect(() => {
     if (!isWorking) return undefined
@@ -775,36 +784,6 @@ export function ChatPane({
     }
   }, [storedSid, sid])
 
-  // 完了報告の既読（会話一覧の行の点。レビュー chat-badge-01 q2=A の「行の点」）。
-  // 返信新着（`sessionSeen`）側の読み込みは境界① `useChatSessions` が持つ。
-  useEffect(() => {
-    try {
-      setSeenMap(readSeenMap(localStorage.getItem(SEEN_MAP_KEY)))
-    } catch {
-      setSeenMap({})
-    }
-  }, [])
-
-  /** その会話の新着を既読にする（行の点を消す）。 **時刻スキュー対策込み**（D22①）。 */
-  const markReportsSeen = useCallback((id) => {
-    if (!id) return
-    /*
-     * サーバ側 `at` が端末時計より先（数秒〜数分）だと `Date.now()` だけを書いても
-     * `at <= seen` が偽のままになり緑の件数バッジが消えない（実機 I9③）。
-     * その会話に届いている最新 `at` との大きい方を既読時刻にする。
-     */
-    const latestAt = maxReportAtFor(chatReportsRef.current, id)
-    setSeenMap((prev) => {
-      const next = setSeen(prev, id, Math.max(Date.now(), latestAt))
-      try {
-        localStorage.setItem(SEEN_MAP_KEY, JSON.stringify(next))
-      } catch {
-        /* 保存できなくても表示は続ける */
-      }
-      return next
-    })
-  }, [])
-
   // 復帰（スリープ・タブ切替）の合図や Review 送信直後に会話一覧と Architect 進行バーを取り直す。
   useEffect(() => {
     const onWake = () => {
@@ -869,79 +848,10 @@ export function ChatPane({
    * 返信新着（`hm.session.seen.v1`）と完了報告（`hm.chatReportSeen`）の**両方**を一括で既読にする。
    */
   const markAllDrawerRead = useCallback(() => {
-    const stamp = Date.now()
-    // 返信新着（`hm.session.seen.v1`）は境界①が持つ
+    // 返信新着（`hm.session.seen.v1`）は境界①、完了報告（`hm.chatReportSeen`）は境界②が持つ
     markAllSessionsRead()
-    setSeenMap((prev) => {
-      const next = markAllReportsSeenMap(prev, chatReportsRef.current, stamp)
-      try {
-        localStorage.setItem(SEEN_MAP_KEY, JSON.stringify(next))
-      } catch {
-        /* noop */
-      }
-      return next
-    })
-  }, [markAllSessionsRead])
-
-  const unreadIds = useMemo(() => unreadSessions(chatReports, seenMap), [chatReports, seenMap])
-  const otherUnreads = useMemo(
-    () => otherUnreadReports(chatReports, seenMap, currentIds),
-    [chatReports, seenMap, currentIds],
-  )
-
-  /**
-   * 会話一覧に宛先が無いパイプライン完了レポート（ドロワーに専用行として出す）。
-   *
-   * worker / UI セッション宛ての報告は `/api/sessions` に現れないため、これが無いと
-   * 「どの会話に報告が入ったのか」を UI から辿れない（実機フィードバック）。
-   */
-  /** 直近 24 時間のパイプライン報告（会話一覧に居る場合の📋印用・既読でも残す）。 */
-  const recentPipelines = useMemo(() => recentPipelineReports(chatReports), [chatReports])
-  /** 未読のパイプライン報告（会話一覧に宛先が無いものだけを「専用行」として出す）。 */
-  const unseenPipelines = useMemo(() => unseenPipelineReports(chatReports, seenMap), [chatReports, seenMap])
-  const drawerOrphanReports = useMemo(
-    () => orphanPipelineReports(unseenPipelines, (sessions ?? []).map((x) => x.id)),
-    [unseenPipelines, sessions],
-  )
-  /** パイプライン報告が届いている会話 ID（一覧に居る場合の📋印用）。 */
-  const pipelineSessionIds = useMemo(
-    () => new Set(recentPipelines.map((r) => String(r.sessionId))),
-    [recentPipelines],
-  )
-
-  /** 会話ごとの未読完了報告の**件数**（ドロワーの行に数字のピルを出す・D16②）。 */
-  const unreadReportMap = useMemo(() => {
-    const map = {}
-    for (const r of Array.isArray(chatReports) ? chatReports : []) {
-      const sid = String(r?.sessionId ?? '')
-      const at = Number(r?.at)
-      if (!sid || !Number.isFinite(at)) continue
-      if (at <= (Number(seenMap[sid]) || 0)) continue
-      map[sid] = (map[sid] || 0) + 1
-    }
-    return map
-  }, [chatReports, seenMap])
-
-  /** ドロワーの行に出すバッジ（未読完了・返信新着・実行中・表示中）を 1 回で組む。 */
-  const sessionBadges = useMemo(() => {
-    const live = new Set(
-      (Array.isArray(liveTurns) ? liveTurns : []).map((t) => String(t?.sessionId ?? '')).filter(Boolean),
-    )
-    const out = {}
-    for (const s of Array.isArray(sessions) ? sessions : []) {
-      out[`${s.profile ?? 'default'}:${s.id}`] = sessionRowBadges({
-        session: s,
-        unreadReportMap,
-        seenMap: sessionSeen,
-        activeDrawerSid,
-        liveSessionIds: live,
-      })
-    }
-    return out
-  }, [sessions, unreadReportMap, sessionSeen, activeDrawerSid, liveTurns])
-
-  /** `≡` に出す未読会話数（完了報告の未読＋別会話の返信新着のユニーク数）。 */
-  const drawerUnread = useMemo(() => countDrawerUnread(Object.values(sessionBadges)), [sessionBadges])
+    markAllReportsRead()
+  }, [markAllSessionsRead, markAllReportsRead])
 
   useEffect(() => {
     try {
