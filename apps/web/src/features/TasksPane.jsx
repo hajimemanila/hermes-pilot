@@ -1066,7 +1066,10 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
    * 起票・完了の判定は lib/specProgress.js に集約（単体テストで固定）。
    * allDone のときだけカードを「✅ 全バッチ完了」にし、タップ先を履歴へ切り替える（Q3=A）。
    */
-  const specProg = specProgress(currentSpec?.batches ?? [], tasks, currentSpec?.path)
+  // `pipeline-runs.json` の taskIds と SPEC の mtime を照合の補助に渡す（D91/D92。
+  // 無印レガシータスク・別 SPEC の同名 ID を誤って拾わない）。
+  const specOpts = { specMtime: currentSpec?.mtime ?? null, runTaskIds: currentSpec?.runTaskIds ?? null }
+  const specProg = specProgress(currentSpec?.batches ?? [], tasks, currentSpec?.path, specOpts)
   const filedBatchIds = new Set(specProg.byId.keys())
   const openBatchIds = new Set(
     [...specProg.byId.entries()]
@@ -1074,6 +1077,18 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
       .map(([id]) => id),
   )
   const specAllDone = specProg.allDone
+  /**
+   * 起票シートで既定選択する（＝まだ起票していない）バッチ ID。
+   *
+   * `archived`（破棄済み）は完了ではないので**未起票として選び直せる**（D92 の再起票導線）。
+   */
+  const unfiledBatchIds = (prog, batches) =>
+    (Array.isArray(batches) ? batches : [])
+      .filter((b) => {
+        const t = prog?.byId?.get(b?.id)
+        return !t || t.status === 'archived'
+      })
+      .map((b) => b.id)
   /** ボード 1 行の補足（実行中・停止・保管・最終更新）。 */
   const boardMeta = (b) =>
     [
@@ -1085,8 +1100,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
       .filter(Boolean)
       .join(' · ')
   const currentBoard = boards.find((b) => b.slug === board) ?? null
-  const defaultSelection = () =>
-    (currentSpec?.batches ?? []).filter((b) => !filedBatchIds.has(b.id)).map((b) => b.id)
+  const defaultSelection = () => unfiledBatchIds(specProg, currentSpec?.batches ?? [])
 
   /** バッチ選択シートを開く（未起票のバッチを既定で選択）。 */
   const openSpecSheet = () => {
@@ -1120,8 +1134,11 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     setSpecPickerOpen(false)
     setSpecBatchOpen([])
     if (forLaunch) {
-      const prog = specProgress(next.batches ?? [], tasks, next?.path)
-      setSpecSel((next.batches ?? []).filter((b) => !prog.byId.has(b.id)).map((b) => b.id))
+      const prog = specProgress(next.batches ?? [], tasks, next?.path, {
+        specMtime: next?.mtime ?? null,
+        runTaskIds: next?.runTaskIds ?? null,
+      })
+      setSpecSel(unfiledBatchIds(prog, next.batches ?? []))
     }
   }
 

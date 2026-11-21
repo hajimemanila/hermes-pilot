@@ -31,7 +31,7 @@ import { createTelemetry } from './telemetry.js'
 import { createLive } from './live.js'
 import { createInbox } from './inbox.js'
 import { createRepos, normalizePath } from './repos.js'
-import { createSpecs, listSpecs, partitionSpecs, readSpecContent } from './specs.js'
+import { attachRunTaskIds, createSpecs, listSpecs, partitionSpecs, readRuns, readSpecContent, runsPathFor } from './specs.js'
 import { analyzeCoherence } from './coherence.js'
 import { createArchitect } from './architect.js'
 import {
@@ -483,7 +483,7 @@ async function handleApi(req, res, url) {
       if (!target) return sendError(res, 404, 'NOT_FOUND', { resource: 'repo' })
       // 既定はアクティブ SPEC だけ（完了済みで Launchpad が埋まらないようにする。D84）。
       // `?includeArchived=1` で全件（`specs` にアーカイブも含める）。
-      const all = specs.listSpecs(target.path)
+      const all = attachRunTaskIds(specs.listSpecs(target.path), readRuns(runsPathFor(cfg)))
       const parts = partitionSpecs(all)
       const includeArchived = url.searchParams.get('includeArchived') === '1'
       return sendJson(res, 200, {
