@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useChatSocket } from '../lib/useChatSocket.js'
+import { useChatSessions } from './chat/useChatSessions.js'
 import { DEFAULT_PROFILE, STORED_PROFILE_KEY, applyDefaultProfile } from '../lib/profile.js'
 import { boardSummary, defaultBoard, matchRepoByCwd, pinnedRepos, readLastRepo, readPendingRepo, readRecent, rememberRepo, repoLabel, writePendingRepo } from '../lib/repoPicker.js'
 import { pickResumeTarget, recentSessions } from '../lib/chatResume.js'
@@ -19,7 +20,7 @@ import { ArchitectJobBar } from '../components/ArchitectJobBar.jsx'
 import { jobPollMs, pickActiveArchitectJob, pickSpecBanner } from '../lib/specSeed.js'
 import { celebrate } from '../lib/vibe.js'
 import { LATEST_REPORT_ID, LAST_CHAT_KEY, SEEN_MAP_KEY, followUpPromptFor, isPipelineReport, markAllReportsSeenMap, maxReportAtFor, mergeTimeline, orphanPipelineReports, otherUnreadReports, recentPipelineReports, unseenPipelineReports, readSeenMap, reportIdsFor, reportLines, reportSummaryLine, setSeen, toEpochMs, unreadSessions } from '../lib/chatReports.js'
-import { SESSION_SEEN_KEY, bootstrapSessionSeen, drawerUnreadCount as countDrawerUnread, markAllSessionsSeen, markSessionSeen, readSessionSeen, serializeSessionSeen, sessionRowBadges, syncActiveSessionSeen } from '../lib/sessionUnread.js'
+import { drawerUnreadCount as countDrawerUnread, sessionRowBadges } from '../lib/sessionUnread.js'
 import { Icon, Loader, RefreshButton, Sheet, fmtBytes, fmtDateTime, relTime } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
 import { useI18n } from '../i18n/index.js'
@@ -47,13 +48,9 @@ export function ChatPane({
   const { lang } = useI18n()
   // 820px 以上（`wide`）のときだけ 2 カラムにする（SPEC-ver-0-2-1 §2.3）
   const { wide } = useSplitLayout()
-  const [sessions, setSessions] = useState([])
   const [sid, setSid] = useState(null)
   const [storedSid, setStoredSid] = useState(null)
   const [title, setTitle] = useState('')
-  const [blocks, setBlocks] = useState([])
-  // 履歴ページネーション（`before=<oldestId>` で遡る）の状態
-  const [transcriptMeta, setTranscriptMeta] = useState(null)
   const [text, setText] = useState('')
   const [streaming, setStreaming] = useState(false)
   // ターンの経過時間（長いターンで「動いている」ことが分かるように）
@@ -98,7 +95,6 @@ export function ChatPane({
   const [profile, setProfile] = useState(DEFAULT_PROFILE)
   // 直近の会話のプロファイル（起動時の復元に使う）
   const [storedProfile, setStoredProfile] = useState(DEFAULT_PROFILE)
-  const [profiles, setProfiles] = useState([])
   const [profileSheet, setProfileSheet] = useState(false)
   // 新しい会話のリポジトリ（＝作業ディレクトリ）。決定は sheets/repo-picker-01-1 の 4 問すべて A
   const [repos, setRepos] = useState([])
@@ -112,11 +108,6 @@ export function ChatPane({
   const [attached, setAttached] = useState([])
   const [attachSheet, setAttachSheet] = useState(false)
   const [attachBusy, setAttachBusy] = useState(false)
-  /*
-   * 会話ごとの「見た」記録（`{ [sessionId]: { count, at } }`・SPEC-PILOT-V3 §3.1 / D16②）。
-   * 完了報告の既読（`seenMap`）とは別物で、こちらは**返信の新着**（message_count の増分）を見る。
-   */
-  const [sessionSeen, setSessionSeen] = useState({})
   const imgInputRef = useRef(null)
   const camInputRef = useRef(null)
   const fileInputRef = useRef(null)
@@ -134,7 +125,6 @@ export function ChatPane({
   const storedProfileRef = useRef(DEFAULT_PROFILE)
   const repoRef = useRef(null)
   const reposRef = useRef([])
-  const sessionsRef = useRef([])
   /*
    * 最新の完了報告（`chatReports` の props）を ref でも持つ（SPEC-PILOT-V4 §3.1 / D22①）。
    * `markReportsSeen` を `useCallback([])` のままにするため、依存配列に props を足さずに
@@ -143,8 +133,6 @@ export function ChatPane({
   const chatReportsRef = useRef([])
   chatReportsRef.current = Array.isArray(chatReports) ? chatReports : []
   const listRef = useRef(null)
-  // 過去履歴を先頭に足したときのスクロール基準（layout effect で使い捨てる）
-  const prependAnchorRef = useRef(null)
   // ドロワー自動リフレッシュのスロットル（最後に走った時刻・D22②）
   const drawerRefreshAtRef = useRef(0)
   // 稼働中ターン数の前回値（減少＝ワーカー完了で一覧を取り直す・D22②）
@@ -157,8 +145,6 @@ export function ChatPane({
   const taRef = useRef(null)
   const stickRef = useRef(true)
   const progressRef = useRef([])
-  /** `markSessionRead` を `onEvent` から使うための参照（定義順の都合）。 */
-  const markReadRef = useRef(null)
   progressRef.current = progress
   const notifiedOffline = useRef(false)
   const objectUrlsRef = useRef(new Set())
@@ -176,6 +162,44 @@ export function ChatPane({
   storedProfileRef.current = storedProfile
   repoRef.current = repo
   reposRef.current = repos
+
+  /**
+   * 画面に出している会話か（transcript の復元が別会話の結果で上書きしないための判定）。
+   * ref を読むだけなので同一性は変わらない。
+   */
+  const isCurrentSession = useCallback((id) => storedRef.current === id || sidRef.current === id, [])
+
+  /*
+   * 実際に画面へ出している会話の ID（SPEC-PILOT-V3 §3.1 / D16①）。
+   *
+   * `readonly`（カンバン作業ログ等の閲覧専用）を開いている間は、**親チャットではなく
+   * 閲覧中の会話**が「いま見ている会話」になる。以前はドロワーのハイライトが
+   * `storedSid`（＝起票元の親チャット）だけを見ていたため、親が選択中に見えていた。
+   *
+   * 既読の baseline/sync（`useChatSessions`）と一覧のバッジが同じ値を見るよう、
+   * フック呼び出しの前で 1 回だけ導出する。
+   */
+  const activeDrawerSid = readonly?.sessionId || sid || storedSid || null
+
+  /*
+   * セッション一覧・transcript・既読（境界① `features/chat/useChatSessions.js`）。
+   * `resumeInto` / `onEvent` より前に置くことで、`markSessionRead` を ref 無しで直接呼べる。
+   */
+  const {
+    sessions,
+    profiles,
+    blocks,
+    setBlocks,
+    transcriptMeta,
+    setTranscriptMeta,
+    sessionSeen,
+    sessionsRef,
+    loadSessions,
+    hydrateTranscriptTools,
+    loadOlderTranscript,
+    markSessionRead,
+    markAllSessionsRead,
+  } = useChatSessions({ notify, isCurrentSession, listRef, stickRef, active, activeDrawerSid })
 
   /** リポジトリ一覧（未取得なら /api/repos から取ってキャッシュ）。 */
   const ensureRepos = useCallback(async () => {
@@ -215,41 +239,6 @@ export function ChatPane({
     },
     [ensureRepos],
   )
-
-  /**
-   * セッション一覧を取り直す。
-   *
-   * `session.list`（WS/JSON-RPC）は既定プロファイルのゲートウェイにしか届かないため、
-   * タスクタブ同様に**全プロファイル横断**へ。ブリッジの `/api/sessions` が profile 付きで
-   * 合成済みなので、そちらを優先し、失敗時だけ従来の RPC にフォールバックする。
-   */
-  const loadSessions = useCallback(async (rpc) => {
-    try {
-      const d = await api('/api/sessions?limit=40')
-      const list = (d.sessions ?? []).map((x) => ({
-        id: x.id,
-        title: x.title,
-        source: x.source,
-        profile: x.profile ?? 'default',
-        message_count: x.messages ?? 0,
-        is_active: x.active,
-        started_at: x.lastActive ? Math.floor(x.lastActive / 1000) : null,
-      }))
-      if (Array.isArray(d.profiles) && d.profiles.length) setProfiles(d.profiles)
-      if (list.length) {
-        sessionsRef.current = list
-        setSessions(list)
-        return list
-      }
-    } catch {
-      /* ブリッジが落ちている時は RPC に任せる */
-    }
-    const r = await rpc('session.list', {})
-    const list = r?.result?.sessions ?? []
-    sessionsRef.current = list
-    setSessions(list)
-    return list
-  }, [])
 
   /** 定型スニペットを読み込む（言語を URL に明示する・SPEC §3.1）。 */
   const langRef = useRef(lang)
@@ -398,104 +387,6 @@ export function ChatPane({
     [seedBoard, repo?.id, notify, t, loadSpecJobs],
   )
 
-  /** state.db のツール実行履歴を会話ブロックへ復元する（再接続・切替後も足跡を残す）。 */
-  const hydrateTranscriptTools = useCallback(async (sessionId, prof = 'default') => {
-    if (!sessionId) return
-    const profileParam = prof && prof !== 'default' ? prof : null
-    try {
-      const q = new URLSearchParams({ limit: '300', tools: '1' })
-      if (profileParam) q.set('profile', profileParam)
-      const d = await api(`/api/sessions/${encodeURIComponent(sessionId)}/transcript?${q}`)
-      if (!d?.ok || !Array.isArray(d.messages)) return
-      if (storedRef.current !== sessionId && sidRef.current !== sessionId) return
-      // 遡れる余地（古い側にまだメッセージがあるか）を覚えておく
-      setTranscriptMeta({
-        sessionId,
-        profile: profileParam,
-        hasMore: Boolean(d.hasMore),
-        oldestId: d.oldestId ?? null,
-        loadingMore: false,
-      })
-      const { blocks: folded } = foldTranscriptMessages(d.messages, toEpochMs)
-      if (!folded.length) return
-      setBlocks((prev) => {
-        // ストリーミング中で最後の開いた気泡がある場合は壊さない
-        const lastPrev = prev[prev.length - 1]
-        if (lastPrev?.open) return prev
-        return folded
-      })
-    } catch {
-      /* ツール履歴復元は補助情報 */
-    }
-  }, [])
-
-  /**
-   * 上端の「↑ 過去の履歴を読み込む」から、`before=<oldestId>` で古い側を1ページ足す。
-   *
-   * 先頭に挿入するとブラウザは同じ scrollTop を保つため、見ていた位置が下へずれる。
-   * 追加後の scrollHeight 差分だけ scrollTop を足して「読んでいた行」を動かさない。
-   */
-  const loadOlderTranscript = useCallback(async () => {
-    const meta = transcriptMeta
-    if (!meta?.sessionId || !meta.hasMore || !meta.oldestId || meta.loadingMore) return
-    // 「いま画面の先頭に見えている発言」を基準に、先頭追加後も同じ位置に置く
-    const sc = listRef.current
-    const anchorEl = sc?.querySelector('[data-mid]')
-    prependAnchorRef.current = anchorEl
-      ? { mid: anchorEl.getAttribute('data-mid'), top: anchorEl.getBoundingClientRect().top }
-      : null
-    // 追加分で末尾へ飛ばされないように先に追従を止める
-    stickRef.current = false
-    setTranscriptMeta((m) => (m ? { ...m, loadingMore: true } : m))
-    try {
-      const q = new URLSearchParams({ limit: '250', before: String(meta.oldestId), tools: '1' })
-      if (meta.profile && meta.profile !== 'default') q.set('profile', meta.profile)
-      const d = await api(`/api/sessions/${encodeURIComponent(meta.sessionId)}/transcript?${q}`)
-      if (!d?.ok) {
-        notify(localizeError(d) || t('chat.cannotOpen'))
-        prependAnchorRef.current = null
-        setTranscriptMeta((m) => (m ? { ...m, loadingMore: false } : m))
-        return
-      }
-      const { blocks: older } = foldTranscriptMessages(d.messages ?? [], toEpochMs)
-      setBlocks((prev) => {
-        const seen = new Set(prev.filter((b) => b.mid != null).map((b) => `m${b.mid}`))
-        const add = older.filter((b) => b.mid == null || !seen.has(`m${b.mid}`))
-        return add.length ? [...add, ...prev] : prev
-      })
-      setTranscriptMeta({
-        sessionId: meta.sessionId,
-        profile: meta.profile ?? null,
-        hasMore: Boolean(d.hasMore),
-        oldestId: d.oldestId ?? null,
-        loadingMore: false,
-      })
-    } catch (e) {
-      notify(e?.message || t('chat.cannotOpen'))
-      prependAnchorRef.current = null
-      setTranscriptMeta((m) => (m ? { ...m, loadingMore: false } : m))
-    }
-  }, [transcriptMeta, notify])
-
-  /**
-   * 先頭に履歴を足した直後、基準にした発言が同じ画面位置に来るよう scrollTop を補正する。
-   *
-   * `requestAnimationFrame` では React のコミット前に走ることがあり補正が空振りした（実測）。
-   * コミット後＝layout effect で測り直す。ブラウザの scroll anchoring が既に補正していれば
-   * 差分は 0 なので二重にずらさない。
-   */
-  useLayoutEffect(() => {
-    const anchor = prependAnchorRef.current
-    if (!anchor) return
-    prependAnchorRef.current = null
-    const sc = listRef.current
-    if (!sc) return
-    const el = sc.querySelector(`[data-mid="${anchor.mid}"]`)
-    if (!el) return
-    const delta = el.getBoundingClientRect().top - anchor.top
-    if (delta) sc.scrollTop = Math.max(0, sc.scrollTop + delta)
-  }, [blocks])
-
   /** サーバのセッションに繋ぎ直す（履歴も置き換える）。`prof` は他プロファイルの時だけ渡す。 */
   const resumeInto = useCallback(
     async (rpc, target, prof = 'default') => {
@@ -527,7 +418,7 @@ export function ChatPane({
          * **実際に読んだメッセージ数**との大きい方を記録する。小さい方を書くと直後の
          * ポーリングで差分が新着として再点灯する。
          */
-        markReadRef.current?.(
+        markSessionRead(
           resolvedSid,
           Math.max(
             Number(sessionsRef.current.find((s) => String(s.id) === String(resolvedSid))?.message_count) || 0,
@@ -639,7 +530,7 @@ export function ChatPane({
           loadSessions(sockRef.current?.rpc)
             .then((list) => {
               const hit = (Array.isArray(list) ? list : []).find((x) => String(x.id) === String(target))
-              if (hit) markReadRef.current?.(hit.id, hit.message_count)
+              if (hit) markSessionRead(hit.id, hit.message_count)
             })
             .catch(() => {})
         }
@@ -748,13 +639,9 @@ export function ChatPane({
   }, [storedSid, storedProfile])
 
   /*
-   * 実際に画面へ出している会話の ID（SPEC-PILOT-V3 §3.1 / D16①）。
-   *
-   * `readonly`（カンバン作業ログ等の閲覧専用）を開いている間は、**親チャットではなく
-   * 閲覧中の会話**が「いま見ている会話」になる。以前はドロワーのハイライトが
-   * `storedSid`（＝起票元の親チャット）だけを見ていたため、親が選択中に見えていた。
+   * 実際に画面へ出している会話の ID は上（フック呼び出しの直前）で導出済み。
+   * ここから下はその `activeDrawerSid` をそのまま読む。
    */
-  const activeDrawerSid = readonly?.sessionId || sid || storedSid || null
   /*
    * 完了報告（`reports`）とレビュー誘導バナー（`linkedReview`）の紐づけ先。
    * `readonly` 閲覧中は親チャット `storedSid` を混ぜない — 混ぜると親の完了報告や
@@ -888,14 +775,13 @@ export function ChatPane({
     }
   }, [storedSid, sid])
 
-  // 会話ごとの既読（会話一覧の行の点。レビュー chat-badge-01 q2=A の「行の点」）。
+  // 完了報告の既読（会話一覧の行の点。レビュー chat-badge-01 q2=A の「行の点」）。
+  // 返信新着（`sessionSeen`）側の読み込みは境界① `useChatSessions` が持つ。
   useEffect(() => {
     try {
       setSeenMap(readSeenMap(localStorage.getItem(SEEN_MAP_KEY)))
-      setSessionSeen(readSessionSeen(localStorage.getItem(SESSION_SEEN_KEY)))
     } catch {
       setSeenMap({})
-      setSessionSeen({})
     }
   }, [])
 
@@ -918,44 +804,6 @@ export function ChatPane({
       return next
     })
   }, [])
-
-  /**
-   * その会話を「見た」にする（返信新着のピルを消す・SPEC-PILOT-V3 §3.1 / D16②）。
-   * `messageCount` が読めないときは前の記録を保つ（数を捏造すると新着が消えなくなる）。
-   */
-  const markSessionRead = useCallback((sessionId, messageCount) => {
-    if (!sessionId) return
-    setSessionSeen((prev) => {
-      const next = markSessionSeen(prev, sessionId, messageCount, Date.now())
-      try {
-        localStorage.setItem(SESSION_SEEN_KEY, serializeSessionSeen(next))
-      } catch {
-        /* 保存できなくても表示は続ける */
-      }
-      return next
-    })
-  }, [])
-  markReadRef.current = markSessionRead
-
-  // 初回の一覧読み込みで、初見の会話をベースライン登録する
-  // （しないと起動直後に全会話が返信新着として一斉に点く）。
-  // さらに**表示中の会話**は一覧の `message_count` 増加に追従させて既読を進める（D22①）。
-  // ここが無いと、開いている会話の増分が記録されず、別会話へ移った瞬間に NEW / +N が戻る。
-  useEffect(() => {
-    if (!sessions.length) return
-    setSessionSeen((prev) => {
-      const stamp = Date.now()
-      const boot = bootstrapSessionSeen(prev, sessions, stamp)
-      const next =
-        active && activeDrawerSid ? syncActiveSessionSeen(boot, sessions, activeDrawerSid, stamp) : boot
-      try {
-        localStorage.setItem(SESSION_SEEN_KEY, serializeSessionSeen(next))
-      } catch {
-        /* noop */
-      }
-      return next
-    })
-  }, [sessions, active, activeDrawerSid])
 
   // 復帰（スリープ・タブ切替）の合図や Review 送信直後に会話一覧と Architect 進行バーを取り直す。
   useEffect(() => {
@@ -1022,15 +870,8 @@ export function ChatPane({
    */
   const markAllDrawerRead = useCallback(() => {
     const stamp = Date.now()
-    setSessionSeen((prev) => {
-      const next = markAllSessionsSeen(prev, sessions, stamp)
-      try {
-        localStorage.setItem(SESSION_SEEN_KEY, serializeSessionSeen(next))
-      } catch {
-        /* noop */
-      }
-      return next
-    })
+    // 返信新着（`hm.session.seen.v1`）は境界①が持つ
+    markAllSessionsRead()
     setSeenMap((prev) => {
       const next = markAllReportsSeenMap(prev, chatReportsRef.current, stamp)
       try {
@@ -1040,7 +881,7 @@ export function ChatPane({
       }
       return next
     })
-  }, [sessions])
+  }, [markAllSessionsRead])
 
   const unreadIds = useMemo(() => unreadSessions(chatReports, seenMap), [chatReports, seenMap])
   const otherUnreads = useMemo(
@@ -1526,7 +1367,7 @@ export function ChatPane({
         // （リロード時は最後の通常会話へ戻る既存挙動を保つための境界）。
         // 一覧の `message_count` が古い場合に備え、実際に読んだ数との大きい方を記録する（D22①）。
         const { blocks: folded } = foldTranscriptMessages(d.messages ?? [], toEpochMs)
-        markReadRef.current?.(
+        markSessionRead(
           sessionId,
           Math.max(
             Number(sessionsRef.current.find((s) => String(s.id) === String(sessionId))?.message_count) || 0,
