@@ -15,6 +15,7 @@ import {
   jobTitleKey,
   shouldOfferHermesRetry,
 } from '../lib/specSeed.js'
+import { HM_EVENTS } from '../contracts/events.js'
 
 /**
  * Architect の進行バー（SPEC-PILOT-V6 §3.3 ② / D28・V7 §3.3 ③ / D33・
@@ -112,7 +113,7 @@ export function ArchitectJobBar({
     haptic('tap')
     try {
       window.dispatchEvent(
-        new CustomEvent('hm:open-review', {
+        new CustomEvent(HM_EVENTS.OPEN_REVIEW, {
           detail: { taskId: job?.reviewTaskId ?? null, jobId: job?.id ?? null },
         }),
       )
@@ -136,7 +137,7 @@ export function ArchitectJobBar({
       return
     }
     try {
-      const event = job.taskId ? 'hm:open-task' : 'hm:open-live'
+      const event = job.taskId ? HM_EVENTS.OPEN_TASK : HM_EVENTS.OPEN_LIVE
       window.dispatchEvent(
         new CustomEvent(event, {
           detail: { taskId: job.taskId ?? null, board: job.board ?? board ?? null, jobId: job.id ?? null },

@@ -14,6 +14,7 @@ import {
   receiptKpis,
 } from '../lib/receiptCanvas.js'
 import { useI18n } from '../i18n/index.js'
+import { HM_EVENTS } from '../contracts/events.js'
 
 /**
  * 現在の Vibe（`html[data-vibe]`）。Vibe Mode 未実装の環境では既定 `dopamine`。
@@ -90,8 +91,8 @@ export function MissionReceiptSheet({ board = null, spec = null, hours = 24, onC
   // Vibe の切替（V5-2 の設定トグル）にその場で追随する
   useEffect(() => {
     const onVibe = () => setVibe(currentVibe())
-    window.addEventListener('hm:vibe', onVibe)
-    return () => window.removeEventListener('hm:vibe', onVibe)
+    window.addEventListener(HM_EVENTS.VIBE, onVibe)
+    return () => window.removeEventListener(HM_EVENTS.VIBE, onVibe)
   }, [])
 
   // 集計（シートを開いたときだけ 1 回）

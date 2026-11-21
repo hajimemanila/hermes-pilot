@@ -5,7 +5,9 @@
  * - 設定画面から ON/OFF 可能（localStorage `hm.haptic`、既定は ON）。
  */
 
-export const HAPTIC_KEY = 'hm.haptic'
+import { HM_STORAGE } from '../contracts/storage.js'
+
+export const HAPTIC_KEY = HM_STORAGE.HAPTIC
 
 export const HAPTIC_PATTERNS = {
   tap: 16,

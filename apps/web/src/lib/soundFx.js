@@ -12,8 +12,10 @@
  * 保存キー: `hm.sound`（既定 `'1'` = ON、`'0'` でミュート）。設定タブの効果音スイッチが書く。
  */
 
+import { HM_STORAGE } from '../contracts/storage.js'
+
 /** `localStorage` のキー。 */
-export const SOUND_KEY = 'hm.sound'
+export const SOUND_KEY = HM_STORAGE.SOUND
 
 /** 1 音あたりの上限ゲイン。合計が大きくならないよう控えめにする。 */
 export const MAX_GAIN = 0.14

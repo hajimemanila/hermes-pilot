@@ -13,13 +13,14 @@ import { useI18n } from '../i18n/index.js'
 import { haptic } from '../lib/haptic.js'
 import './demo.css'
 import { STEPS, resetDemoState, snapshot, subscribeDemo } from './mockApi.js'
+import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
 
 /** ステップごとの誘導先（既存のイベント名を使う）。 */
 const JUMPS = {
-  1: { event: 'hm:open-review', detail: { taskId: 't_demo_review' } },
-  2: { event: 'hm:open-board', detail: { board: 'mobile' } },
-  3: { event: 'hm:open-review', detail: { taskId: 't_demo_visual' } },
-  4: { event: 'hm:open-board', detail: { board: 'mobile' } },
+  1: { event: HM_EVENTS.OPEN_REVIEW, detail: { taskId: 't_demo_review' } },
+  2: { event: HM_EVENTS.OPEN_BOARD, detail: { board: 'mobile' } },
+  3: { event: HM_EVENTS.OPEN_REVIEW, detail: { taskId: 't_demo_visual' } },
+  4: { event: HM_EVENTS.OPEN_BOARD, detail: { board: 'mobile' } },
 }
 
 export function DemoBanner() {
@@ -37,7 +38,7 @@ export function DemoBanner() {
     // 遷移先のペインはタブ切替後にマウントされ、一覧の取得も待つ。
     // 1 回だけだと「まだマウント前」で取りこぼすので、数回まで送り直す（受信側は nonce で冪等）。
     for (const delay of [0, 160, 600, 1200]) {
-      setTimeout(() => window.dispatchEvent(new CustomEvent(jump.event, { detail: jump.detail })), delay)
+      setTimeout(() => emitHmEvent(jump.event, jump.detail), delay)
     }
   }
 

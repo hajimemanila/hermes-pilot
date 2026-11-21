@@ -2,7 +2,7 @@
  * i18n の React 層（SPEC §6）。`main.jsx` で `<App>` を包む。
  *
  * - `I18nProvider`: 言語状態（`Auto / English / 日本語`）を持ち、`<html lang>` と
- *   `localStorage['hm.lang']` を同期する
+ *   `HM_STORAGE.LANG`（`contracts/storage.js`）を同期する
  * - `useI18n()`: `{ lang, pref, setPref, t, locale }` を返す
  * - `t()` を直接 import しても現在の言語で訳せる（フックの外・イベントハンドラ用）
  *
@@ -22,6 +22,7 @@ import {
   t as translateCurrent,
   translate,
 } from './lang.js'
+import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
 
 const I18nContext = createContext(null)
 
@@ -66,8 +67,8 @@ export function I18nProvider({ children, initial }) {
     // スニペットは言語を URL に載せて取り直す（リロードなしで切り替える・SPEC §3.1）
     try {
       if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
-        window.dispatchEvent(new Event('hm:snippets'))
-        window.dispatchEvent(new Event('hm:term-snippets'))
+        emitHmEvent(HM_EVENTS.SNIPPETS)
+        emitHmEvent(HM_EVENTS.TERM_SNIPPETS)
       }
     } catch {
       /* noop */

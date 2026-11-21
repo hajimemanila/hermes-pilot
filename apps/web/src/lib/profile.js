@@ -6,14 +6,16 @@
  * `hm.storedProfile` を復元するので、既定値だけ変えても効かない。
  */
 
+import { HM_STORAGE } from '../contracts/storage.js'
+
 /** 既定プロファイル（"mobile" を主プロファイルにした）。 */
 export const DEFAULT_PROFILE = 'mobile'
 
 /** 端末に保存した「直近の会話のプロファイル」。 */
-export const STORED_PROFILE_KEY = 'hm.storedProfile'
+export const STORED_PROFILE_KEY = HM_STORAGE.STORED_PROFILE
 
 /** 既定を切り替えた目印。値が現在の既定と違えば移行を1回だけ行う。 */
-export const DEFAULT_PROFILE_MARK = 'hm.defaultProfile'
+export const DEFAULT_PROFILE_MARK = HM_STORAGE.DEFAULT_PROFILE
 
 /**
  * 端末に残った「前の既定の選択」を1回だけ捨てる。

@@ -5,6 +5,9 @@ import { I18nProvider } from './i18n/index.js'
 import { initTheme } from './lib/theme.js'
 import { installViewportVars } from './lib/viewport.js'
 import './styles.css'
+// コヒーレンス・スイープのシート（SPEC-COHERENCE §3.6）は肥大化した styles.css に足さず別ファイルへ
+import './styles/coherence.css'
+import { HM_STORAGE } from './contracts/storage.js'
 
 // 最初の描画より前にテーマを当てる（React の effect を待つと Dark が一瞬見える）
 initTheme()
@@ -125,7 +128,7 @@ if (!DEMO && 'serviceWorker' in navigator) {
    * 「直したはずの UI が反映されない」状態になる（実測: 端末で旧レイアウトが残った）。
    * ループ防止に sessionStorage のフラグを使い、読み込み後に消す。
    */
-  const RELOAD_KEY = 'hm.swReload'
+  const RELOAD_KEY = HM_STORAGE.SW_RELOAD
   try {
     if (sessionStorage.getItem(RELOAD_KEY) === '1') sessionStorage.removeItem(RELOAD_KEY)
   } catch {

@@ -1,7 +1,7 @@
 /**
  * Vibe Mode（`dopamine` ⇄ `serotonin`）の核（React 非依存）。SPEC-PILOT-V5 §3.1 / D24
  *
- * - 保存キーは `localStorage['hm.vibe']`。既定は **`dopamine`**、ただし端末が
+ * - 保存キーは `HM_STORAGE.VIBE`（`contracts/storage.js`）。既定は **`dopamine`**、ただし端末が
  *   `prefers-reduced-motion: reduce` のときは **`serotonin`** を自動選択する
  * - 適用は `<html data-vibe="dopamine|serotonin">` 1 箇所だけ。CSS 側はこの属性で
  *   装飾を出し分ける（Serotonin は現行 V4 の外観そのまま）
@@ -14,9 +14,11 @@
 
 import { haptic, hapticPattern } from './haptic.js'
 import { isSoundEnabled, playSound } from './soundFx.js'
+import { HM_EVENTS } from '../contracts/events.js'
+import { HM_STORAGE } from '../contracts/storage.js'
 
 /** `localStorage` のキー。 */
-export const VIBE_KEY = 'hm.vibe'
+export const VIBE_KEY = HM_STORAGE.VIBE
 /** 選べるモード。 */
 export const VIBES = ['dopamine', 'serotonin']
 /** 既定（`prefers-reduced-motion: reduce` の端末だけ serotonin になる）。 */
@@ -28,9 +30,9 @@ export const COMBO_WINDOW_MS = 20_000
 /** コンボの上限（表示崩れ防止）。 */
 export const COMBO_MAX = 99
 /** モード変更の通知イベント名。 */
-export const VIBE_EVENT = 'hm:vibe'
+export const VIBE_EVENT = HM_EVENTS.VIBE
 /** パーティクル発火イベント名（`FxLayer.jsx` が購読する）。 */
-export const FX_EVENT = 'hm:fx-burst'
+export const FX_EVENT = HM_EVENTS.FX_BURST
 
 /** コンボを進める操作（承認・赤入れ・一括起票）。 */
 export const COMBO_KINDS = ['approve', 'stamp', 'fastTrack', 'launch']

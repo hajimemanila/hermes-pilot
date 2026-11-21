@@ -4,6 +4,7 @@ import { HoldButton, Sheet, relTime } from '../components/Ui.jsx'
 import { localizeError } from '../i18n/lang.js'
 import { useI18n } from '../i18n/index.js'
 import { sep } from '../lib/format.js'
+import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
 
 /** 秒を「12m34s」形式に。 */
 function fmtElapsed(sec) {
@@ -79,11 +80,17 @@ export function LiveSheet({ onClose, notify, onAbortTask }) {
   const abort = async (task) => {
     setBusy(true)
     try {
-      await api(`/api/boards/${encodeURIComponent(task.board)}/tasks/${encodeURIComponent(task.id)}/abort`, {
+      const r = await api(`/api/boards/${encodeURIComponent(task.board)}/tasks/${encodeURIComponent(task.id)}/abort`, {
         method: 'POST',
         body: { reason: t('live.abortReason') },
       })
+      if (r?.ok === false) {
+        notify?.(r?.error || r?.output || t('live.abortFailed', { id: task.id }))
+        await load()
+        return
+      }
       notify?.(t('live.aborted', { id: task.id }))
+      emitHmEvent(HM_EVENTS.WAKE_SYNC)
       await load()
       onAbortTask?.()
     } catch (e) {
@@ -103,7 +110,7 @@ export function LiveSheet({ onClose, notify, onAbortTask }) {
    */
   const openReview = (job) => {
     window.dispatchEvent(
-      new CustomEvent('hm:open-review', {
+      new CustomEvent(HM_EVENTS.OPEN_REVIEW, {
         detail: { taskId: job.reviewTaskId ?? null, board: job.reviewBoard ?? job.board ?? null },
       }),
     )
@@ -112,9 +119,7 @@ export function LiveSheet({ onClose, notify, onAbortTask }) {
 
   /** 「📋 タスク」。ボード切替とタスク詳細はアプリ側（`hm:open-task`）が受ける。 */
   const openTask = (job) => {
-    window.dispatchEvent(
-      new CustomEvent('hm:open-task', { detail: { board: job.board ?? null, taskId: job.taskId } }),
-    )
+    emitHmEvent(HM_EVENTS.OPEN_TASK, { board: job.board ?? null, taskId: job.taskId })
     onClose?.()
   }
 

@@ -7,6 +7,7 @@ import { draftSnapshot, hasDraftContent, isDraftDirty } from '../lib/memoDraft.j
 import { memoMenuRows, showsCardButtons, showsListMenu } from '../lib/memoListMenu.js'
 import { checklistPreview, readMemosView, rememberMemosView } from '../lib/memoView.js'
 import { celebrate } from '../lib/vibe.js'
+import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
 
 const COLORS = ['default', 'teal', 'amber', 'violet']
 
@@ -47,12 +48,23 @@ export function MemosPane({ notify, onOpenChat }) {
 
   const loadAll = useCallback(async () => {
     try {
-      const [mRes, rRes] = await Promise.allSettled([api('/api/memos'), api('/api/chat-reports?limit=20')])
+      // COH-2: 完了報告の実エンドポイントは `/api/review/chat-reports`（`{ items: [...] }`）。
+      // 以前は存在しない `/api/chat-reports` を叩いていて、未読報告が常に 0 件だった。
+      const [mRes, rRes] = await Promise.allSettled([api('/api/memos'), api('/api/review/chat-reports?limit=20')])
       if (mRes.status === 'fulfilled' && Array.isArray(mRes.value?.memos)) {
         setMemos(mRes.value.memos)
       }
-      if (rRes.status === 'fulfilled' && Array.isArray(rRes.value?.reports)) {
-        setReports(rRes.value.reports)
+      if (rRes.status === 'fulfilled' && Array.isArray(rRes.value?.items)) {
+        // カルテ側の形（`{ at, sessionId, taskId, label, text }`）をメモ化 UI の形へ寄せる
+        setReports(
+          rRes.value.items.map((r) => ({
+            key: `${r.taskId || r.sessionId || ''}|${r.at || ''}`,
+            title: r.label || r.taskId || 'Report',
+            summary: r.text || '',
+            at: r.at,
+            report: r,
+          })),
+        )
       }
     } finally {
       setLoading(false)
@@ -62,8 +74,8 @@ export function MemosPane({ notify, onOpenChat }) {
   useEffect(() => {
     loadAll()
     const onChanged = () => loadAll()
-    window.addEventListener('hm:memos-changed', onChanged)
-    return () => window.removeEventListener('hm:memos-changed', onChanged)
+    window.addEventListener(HM_EVENTS.MEMOS_CHANGED, onChanged)
+    return () => window.removeEventListener(HM_EVENTS.MEMOS_CHANGED, onChanged)
   }, [loadAll])
 
   const allTags = useMemo(() => {
@@ -328,7 +340,7 @@ export function MemosPane({ notify, onOpenChat }) {
     e?.stopPropagation?.()
     haptic('tap')
     const seed = [memo.title, memo.body].filter(Boolean).join('\n').trim()
-    window.dispatchEvent(new CustomEvent('hm:open-brainstorm', { detail: { seed, memoId: memo.id } }))
+    emitHmEvent(HM_EVENTS.OPEN_BRAINSTORM, { seed, memoId: memo.id })
   }
 
   const sendToSeed = (memo, e) => {
@@ -342,7 +354,7 @@ export function MemosPane({ notify, onOpenChat }) {
       .filter(Boolean)
       .join('\n')
       .trim()
-    window.dispatchEvent(new CustomEvent('hm:open-seed', { detail: { seed, repo: memo.source?.repo, board: memo.source?.board } }))
+    emitHmEvent(HM_EVENTS.OPEN_SEED, { seed, repo: memo.source?.repo, board: memo.source?.board })
   }
 
   /**

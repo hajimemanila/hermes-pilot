@@ -15,6 +15,7 @@ import { useTheme } from '../lib/useTheme.js'
 import { PipelinePanel } from './PipelinePanel.jsx'
 import { BOARD_KEY } from '../lib/repoPicker.js'
 import { sep } from '../lib/format.js'
+import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
 
 /**
  * 設定タブ。状態の参照・ログ末尾・監査ログ（キルスイッチの履歴）を置く。
@@ -118,7 +119,7 @@ function SnippetsSection({ notify, lang }) {
   const [busy, setBusy] = useState(false)
 
   const path = kind === 'term' ? '/api/snippets/term' : '/api/snippets'
-  const eventName = kind === 'term' ? 'hm:term-snippets' : 'hm:snippets'
+  const eventName = kind === 'term' ? HM_EVENTS.TERM_SNIPPETS : HM_EVENTS.SNIPPETS
   const cur = data[kind]
   const overrides = cur?.overrides ?? {}
   const custom = cur?.custom ?? []
@@ -145,7 +146,7 @@ function SnippetsSection({ notify, lang }) {
       try {
         const d = await api(path, { method: 'PUT', body })
         setData((prev) => ({ ...prev, [kind]: d }))
-        window.dispatchEvent(new Event(eventName))
+        emitHmEvent(eventName)
         if (done) notify(done)
         return true
       } catch (e) {
@@ -206,8 +207,8 @@ function SnippetsSection({ notify, lang }) {
       setData({ chat, term })
       setEdit(null)
       setDraft({ label: '', text: '', hot: false, run: true })
-      window.dispatchEvent(new Event('hm:snippets'))
-      window.dispatchEvent(new Event('hm:term-snippets'))
+      emitHmEvent(HM_EVENTS.SNIPPETS)
+      emitHmEvent(HM_EVENTS.TERM_SNIPPETS)
       notify(t('settings.snippetResetDone'))
     } catch (e) {
       notify(e.message)

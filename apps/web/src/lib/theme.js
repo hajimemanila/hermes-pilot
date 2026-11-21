@@ -1,15 +1,17 @@
 /**
  * テーマ（`dark` / `light` / `system`）の核（React 非依存）。
  *
- * - 保存は `localStorage['hm.theme']`、既定は `dark`（SPEC §7.1）
+ * - 保存は `HM_STORAGE.THEME`（`contracts/storage.js`）、既定は `dark`（SPEC §7.1）
  * - `system` のときだけ `matchMedia('(prefers-color-scheme: dark)')` を実際の色に解決する
  * - 解決結果は `<html data-theme="dark|light">` と `<meta name="theme-color">` に反映する
  * - React 側（`useTheme`）はこのモジュールの状態を購読するだけなので、
  *   `api.js` のようにフックを使えない場所からも `getThemePref()` を読める
  */
 
+import { HM_STORAGE } from '../contracts/storage.js'
+
 /** `localStorage` のキー。 */
-export const THEME_KEY = 'hm.theme'
+export const THEME_KEY = HM_STORAGE.THEME
 /** 選べる値（`system` は端末設定に従う）。 */
 export const THEMES = ['dark', 'light', 'system']
 /** 既定。SPEC §7.1 は Dark 既定。 */

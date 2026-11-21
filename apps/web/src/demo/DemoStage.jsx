@@ -25,12 +25,13 @@ import {
   isEmbeddedSession,
 } from './frame.js'
 import { STAGE_MIN_WIDTH as MIN_WIDTH, VIEWS as STAGE_VIEWS, fitScale } from './stage.js'
+import { HM_STORAGE } from '../contracts/storage.js'
 
 /** 筐体の実寸（CSS px）。 */
 export const VIEWS = STAGE_VIEWS
 
-const VIBE_KEY = 'hm.vibe'
-const SOUND_KEY = 'hm.sound'
+const VIBE_KEY = HM_STORAGE.VIBE
+const SOUND_KEY = HM_STORAGE.SOUND
 
 function readStored(key) {
   try {

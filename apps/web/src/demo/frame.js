@@ -11,9 +11,11 @@
 
 import { setLang } from '../i18n/lang.js'
 import { setThemePref } from '../lib/theme.js'
+import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
+import { HM_STORAGE } from '../contracts/storage.js'
 
-export const VIBE_KEY = 'hm.vibe'
-export const SOUND_KEY = 'hm.sound'
+export const VIBE_KEY = HM_STORAGE.VIBE
+export const SOUND_KEY = HM_STORAGE.SOUND
 
 /** 親 → 子のメッセージ種別。 */
 export const MSG_SET = 'hm-demo:set'
@@ -269,7 +271,7 @@ export function applyDemoSettings(detail = {}, doc = globalThis.document) {
     write(VIBE_KEY, detail.vibe)
     doc.documentElement.dataset.vibe = detail.vibe
     try {
-      globalThis.window?.dispatchEvent(new CustomEvent('hm:vibe', { detail: { vibe: detail.vibe } }))
+      emitHmEvent(HM_EVENTS.VIBE, { vibe: detail.vibe })
     } catch {
       /* イベントが張れなくても属性は当たっている */
     }
@@ -277,7 +279,7 @@ export function applyDemoSettings(detail = {}, doc = globalThis.document) {
   if (typeof detail.sound === 'boolean') {
     write(SOUND_KEY, detail.sound ? '1' : '0')
     try {
-      globalThis.window?.dispatchEvent(new CustomEvent('hm:sound', { detail: { enabled: detail.sound } }))
+      emitHmEvent(HM_EVENTS.SOUND, { enabled: detail.sound })
     } catch {
       /* noop */
     }

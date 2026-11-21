@@ -72,6 +72,8 @@ import { haptic } from '../lib/haptic.js'
 import { useI18n } from '../i18n/index.js'
 import { localizeError, t } from '../i18n/lang.js'
 import { sep } from '../lib/format.js'
+import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
+import { HM_STORAGE } from '../contracts/storage.js'
 
 /** 入力欄を内容に合わせて伸ばす（枠の分を足さないと 2px 溢れて縦棒が出る）。 */
 function fitComposer(el, cap = 120) {
@@ -606,11 +608,11 @@ export function ChatPane({
   useEffect(() => {
     loadSnippets()
     const onUpdate = () => loadSnippets()
-    window.addEventListener('hm:snippets', onUpdate)
-    window.addEventListener('hm:lang', onUpdate)
+    window.addEventListener(HM_EVENTS.SNIPPETS, onUpdate)
+    window.addEventListener(HM_EVENTS.LANG, onUpdate)
     return () => {
-      window.removeEventListener('hm:snippets', onUpdate)
-      window.removeEventListener('hm:lang', onUpdate)
+      window.removeEventListener(HM_EVENTS.SNIPPETS, onUpdate)
+      window.removeEventListener(HM_EVENTS.LANG, onUpdate)
     }
   }, [loadSnippets])
 
@@ -652,7 +654,7 @@ export function ChatPane({
     if (!job) return
     haptic('tap')
     try {
-      const event = job.taskId ? 'hm:open-task' : 'hm:open-live'
+      const event = job.taskId ? HM_EVENTS.OPEN_TASK : HM_EVENTS.OPEN_LIVE
       window.dispatchEvent(
         new CustomEvent(event, {
           detail: {
@@ -1029,7 +1031,7 @@ export function ChatPane({
     try {
       // 既定を mobile に上げた移行（1回だけ）: 端末に残った前の選択を捨てる
       applyDefaultProfile()
-      const saved = localStorage.getItem('hm.storedSid')
+      const saved = localStorage.getItem(HM_STORAGE.STORED_SID)
       if (saved && !storedRef.current) setStoredSid(saved)
       const savedProfile = localStorage.getItem(STORED_PROFILE_KEY)
       if (savedProfile) setStoredProfile(savedProfile)
@@ -1053,10 +1055,10 @@ export function ChatPane({
   useEffect(() => {
     try {
       if (storedSid) {
-        localStorage.setItem('hm.storedSid', storedSid)
+        localStorage.setItem(HM_STORAGE.STORED_SID, storedSid)
         localStorage.setItem(LAST_CHAT_KEY, storedSid)
       } else {
-        localStorage.removeItem('hm.storedSid')
+        localStorage.removeItem(HM_STORAGE.STORED_SID)
       }
       localStorage.setItem(STORED_PROFILE_KEY, storedProfile || DEFAULT_PROFILE)
     } catch {
@@ -1274,15 +1276,16 @@ export function ChatPane({
     })
   }, [sessions, active, activeDrawerSid])
 
-  // 復帰（スリープ・タブ切替）の合図で会話一覧を取り直す（App のバッジ同期と同時）。
+  // 復帰（スリープ・タブ切替）の合図や Review 送信直後に会話一覧と Architect 進行バーを取り直す。
   useEffect(() => {
     const onWake = () => {
       const rpcNow = sockRef.current?.rpc
       if (rpcNow) loadSessions(rpcNow)
+      loadSpecJobs()
     }
-    window.addEventListener('hm:wake-sync', onWake)
-    return () => window.removeEventListener('hm:wake-sync', onWake)
-  }, [loadSessions])
+    window.addEventListener(HM_EVENTS.WAKE_SYNC, onWake)
+    return () => window.removeEventListener(HM_EVENTS.WAKE_SYNC, onWake)
+  }, [loadSessions, loadSpecJobs])
 
   /**
    * ドロワーの一覧と完了報告を取り直す（D22②）。
@@ -1297,7 +1300,7 @@ export function ChatPane({
       if (!force && at - drawerRefreshAtRef.current < DRAWER_REFRESH_THROTTLE_MS) return true
       drawerRefreshAtRef.current = at
       try {
-        window.dispatchEvent(new CustomEvent('hm:refresh-reports'))
+        emitHmEvent(HM_EVENTS.REFRESH_REPORTS)
         const rpcNow = sockRef.current?.rpc
         if (connRef.current === 'ready' && rpcNow) {
           setDrawerRefreshing(true)
@@ -1420,7 +1423,7 @@ export function ChatPane({
 
   useEffect(() => {
     try {
-      window.dispatchEvent(new CustomEvent('hm:chat-unread', { detail: { count: otherUnreads.length } }))
+      emitHmEvent(HM_EVENTS.CHAT_UNREAD, { count: otherUnreads.length })
     } catch {
       /* noop */
     }
@@ -1428,7 +1431,7 @@ export function ChatPane({
 
   useEffect(() => {
     try {
-      window.dispatchEvent(new CustomEvent('hm:chat-streaming', { detail: { streaming: isWorking } }))
+      emitHmEvent(HM_EVENTS.CHAT_STREAMING, { streaming: isWorking })
     } catch {
       /* noop */
     }
@@ -1504,7 +1507,7 @@ export function ChatPane({
       markReportsSeen(report.sessionId)
       try {
         window.dispatchEvent(
-          new CustomEvent('hm:discuss-pipeline', {
+          new CustomEvent(HM_EVENTS.DISCUSS_PIPELINE, {
             detail: {
               sessionId: report.sessionId ?? null,
               repoPath: report.repoPath ?? null,
@@ -1526,7 +1529,7 @@ export function ChatPane({
   const openReportBoard = useCallback((report) => {
     haptic('tap')
     try {
-      window.dispatchEvent(new CustomEvent('hm:open-board', { detail: { board: report?.board ?? null } }))
+      emitHmEvent(HM_EVENTS.OPEN_BOARD, { board: report?.board ?? null })
     } catch {
       /* noop */
     }
@@ -1917,8 +1920,8 @@ export function ChatPane({
   // 検索結果など外側から「このセッションを開く」と指示された場合
   useEffect(() => {
     const onOpen = (e) => openSessionSafe(e?.detail?.id, e?.detail?.messageId ?? null, e?.detail?.profile || 'default')
-    window.addEventListener('hm:open-session', onOpen)
-    return () => window.removeEventListener('hm:open-session', onOpen)
+    window.addEventListener(HM_EVENTS.OPEN_SESSION, onOpen)
+    return () => window.removeEventListener(HM_EVENTS.OPEN_SESSION, onOpen)
   }, [openSessionSafe])
 
   useEffect(() => {
@@ -2013,7 +2016,7 @@ export function ChatPane({
 
   /** チャットタブの「更新」: 会話一覧・完了報告・現在開いている会話を最新化する。 */
   const refreshChat = useCallback(async () => {
-    window.dispatchEvent(new CustomEvent('hm:refresh-reports'))
+    emitHmEvent(HM_EVENTS.REFRESH_REPORTS)
     if (connRef.current !== 'ready') {
       sockRef.current?.reconnectNow?.()
       return true
@@ -2362,7 +2365,7 @@ export function ChatPane({
                     onClick={() => {
                       haptic('tap')
                       window.dispatchEvent(
-                        new CustomEvent('hm:open-review', {
+                        new CustomEvent(HM_EVENTS.OPEN_REVIEW, {
                           detail: { taskId: r.taskId, label: r.label },
                         }),
                       )
@@ -2532,7 +2535,7 @@ export function ChatPane({
                     onClick={() => {
                       haptic('tap')
                       window.dispatchEvent(
-                        new CustomEvent('hm:open-review', {
+                        new CustomEvent(HM_EVENTS.OPEN_REVIEW, {
                           detail: { taskId: linkedReview.id, label: linkedReview.review?.label },
                         }),
                       )
@@ -2558,7 +2561,7 @@ export function ChatPane({
                     onClick={() => {
                       haptic('tap')
                       window.dispatchEvent(
-                        new CustomEvent('hm:open-review', {
+                        new CustomEvent(HM_EVENTS.OPEN_REVIEW, {
                           detail: { taskId: linkedReview.id, label: linkedReview.review?.label },
                         }),
                       )
@@ -3251,7 +3254,7 @@ export function ChatPane({
                     },
                   },
                 })
-                window.dispatchEvent(new CustomEvent('hm:memos-changed'))
+                emitHmEvent(HM_EVENTS.MEMOS_CHANGED)
                 celebrate('approve')
                 notify?.(t('chat.bubbleSavedMemo'))
                 setBubbleMenu(null)
@@ -3268,7 +3271,7 @@ export function ChatPane({
                 const seed = bubbleMenu.text.slice(0, 600)
                 setBubbleMenu(null)
                 window.dispatchEvent(
-                  new CustomEvent('hm:open-seed', {
+                  new CustomEvent(HM_EVENTS.OPEN_SEED, {
                     detail: { seed, repo: repo?.path, board: repo?.board },
                   }),
                 )

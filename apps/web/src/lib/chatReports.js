@@ -1,4 +1,5 @@
 import { getLocale } from './format.js'
+import { HM_STORAGE } from '../contracts/storage.js'
 
 /**
  * レビューの完了報告（起票した会話に戻る 1 行）の未読判定。
@@ -9,17 +10,17 @@ import { getLocale } from './format.js'
  */
 
 /** ナビの点の既読時刻（チャットタブを最後に開いた時刻）。 */
-export const SEEN_NAV_KEY = 'hm.chatReportSeenAt'
+export const SEEN_NAV_KEY = HM_STORAGE.CHAT_REPORT_SEEN_AT
 /** 会話一覧の行の点の既読時刻（会話ごと。JSON の object）。 */
-export const SEEN_MAP_KEY = 'hm.chatReportSeen'
+export const SEEN_MAP_KEY = HM_STORAGE.CHAT_REPORT_SEEN
 /** 会話ごとの既読を残す上限（会話は増え続けるので古いものから捨てる）。 */
 export const SEEN_MAP_LIMIT = 50
 /** 会話の末尾に出す行数（履歴を偽らないため直近だけ）。 */
 export const REPORT_LINES = 3
 /** 現在開いている会話 ID の保存キー。 */
-export const ACTIVE_CHAT_KEY = 'hm.storedSid'
+export const ACTIVE_CHAT_KEY = HM_STORAGE.STORED_SID
 /** 新規会話未送信中でも引き継ぐ、直前の会話 ID の保存キー。 */
-export const LAST_CHAT_KEY = 'hm.lastStoredSid'
+export const LAST_CHAT_KEY = HM_STORAGE.LAST_STORED_SID
 /**
  * 「宛先の会話が決まらなかった」パイプライン統合レポートの仮想セッション ID
  * （SPEC-PILOT-V4 §3.2 ② / §3.3: 対象 repo の最新通常会話も無いとき）。

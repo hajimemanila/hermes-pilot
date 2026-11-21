@@ -6,15 +6,18 @@
  *  - `annotation` … Annotation 赤入れのスタンプ帯
  *  - `term`       … ターミナルの定型コマンド帯
  *
- * 保存は `localStorage['hm.snippetBars.v1']` の 1 キーに `{ chat, annotation, term }`。
+ * 保存は `HM_STORAGE.SNIPPET_BARS`（`contracts/storage.js`）の 1 キーに `{ chat, annotation, term }`。
  * 帯を消しても**機能そのものは消さない**（チャットは入力欄の ＋ のシート、赤入れは
  * ツール列のスタンプボタン、ターミナルはヘッダの定型ボタンから開ける）。設定タブで
  * 切り替えた瞬間に他画面の帯も消したいので、`hm:snippet-bars` を飛ばして購読側が追従する
  * （リロード不要）。React に依存しない純関数だけを置き、`node --test` で検証する。
  */
 
+import { HM_EVENTS } from '../contracts/events.js'
+import { HM_STORAGE } from '../contracts/storage.js'
+
 /** localStorage のキー（SPEC で固定）。 */
-export const SNIPPET_BARS_KEY = 'hm.snippetBars.v1'
+export const SNIPPET_BARS_KEY = HM_STORAGE.SNIPPET_BARS
 
 /** 帯の識別子（この順で設定タブに並べる）。 */
 export const SNIPPET_BAR_IDS = Object.freeze(['chat', 'annotation', 'term'])
@@ -23,7 +26,7 @@ export const SNIPPET_BAR_IDS = Object.freeze(['chat', 'annotation', 'term'])
 export const SNIPPET_BAR_DEFAULTS = Object.freeze({ chat: true, annotation: true, term: true })
 
 /** 変更通知のイベント名（設定タブ → 各画面）。 */
-export const SNIPPET_BARS_EVENT = 'hm:snippet-bars'
+export const SNIPPET_BARS_EVENT = HM_EVENTS.SNIPPET_BARS
 
 /** 保存領域を返す（引数優先、無ければ localStorage。SSR／プライベートモードでは null）。 */
 function resolveStore(storage) {

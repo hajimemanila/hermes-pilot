@@ -30,6 +30,8 @@ import { t as tGlobal } from './i18n/lang.js'
 import { initTheme } from './lib/theme.js'
 import { consumePairToken } from './lib/pairing.js'
 import { isChunkLoadError, reloadForChunkError, retryImport } from './lib/lazyRetry.js'
+import { HM_EVENTS, emitHmEvent } from './contracts/events.js'
+import { HM_STORAGE } from './contracts/storage.js'
 
 /*
  * ターミナルは初回にしか読み込まない（起動を速くするため）。ただしスリープ復帰や
@@ -238,6 +240,13 @@ export function App() {
   const [reviewFocus, setReviewFocus] = useState(null)
   const [pendingChatOpen, setPendingChatOpen] = useState(null)
   const [pendingTaskTool, setPendingTaskTool] = useState(null)
+  // インボックスを開く要求。以前は `setTimeout` で `hm:open-inbox` を投げていたが、
+  // タスクタブが未マウントだと 200ms では届かず、マウント済みなら不要という不安定な橋だった。
+  // いまは prop で TasksPane に渡し、消費されたら null に戻す（`reviewFocus` と同じ形）。
+  const [pendingInboxOpen, setPendingInboxOpen] = useState(null)
+  const requestInboxOpen = useCallback((task = null) => {
+    setPendingInboxOpen({ task: task ?? null, nonce: Date.now() })
+  }, [])
 
   useEffect(() => {
     const onOpenBrainstorm = (e) => {
@@ -248,11 +257,11 @@ export function App() {
       setPendingTaskTool({ kind: 'seed', ...(e?.detail || {}) })
       setTab('tasks')
     }
-    window.addEventListener('hm:open-brainstorm', onOpenBrainstorm)
-    window.addEventListener('hm:open-seed', onOpenSeed)
+    window.addEventListener(HM_EVENTS.OPEN_BRAINSTORM, onOpenBrainstorm)
+    window.addEventListener(HM_EVENTS.OPEN_SEED, onOpenSeed)
     return () => {
-      window.removeEventListener('hm:open-brainstorm', onOpenBrainstorm)
-      window.removeEventListener('hm:open-seed', onOpenSeed)
+      window.removeEventListener(HM_EVENTS.OPEN_BRAINSTORM, onOpenBrainstorm)
+      window.removeEventListener(HM_EVENTS.OPEN_SEED, onOpenSeed)
     }
   }, [])
   /*
@@ -348,7 +357,7 @@ export function App() {
       }
       // 画面側（チャットの会話一覧・タスクの板）も同じ合図で最新化する
       try {
-        window.dispatchEvent(new CustomEvent('hm:wake-sync'))
+        emitHmEvent(HM_EVENTS.WAKE_SYNC)
       } catch {
         /* noop */
       }
@@ -417,23 +426,23 @@ export function App() {
         nonce: Date.now(),
       })
     }
-    window.addEventListener('hm:chat-unread', onOtherUnread)
-    window.addEventListener('hm:chat-streaming', onChatStreaming)
-    window.addEventListener('hm:open-review', onOpenReview)
-    window.addEventListener('hm:open-session', onOpenSession)
-    window.addEventListener('hm:discuss-pipeline', onDiscussPipeline)
-    window.addEventListener('hm:open-board', onOpenBoard)
-    window.addEventListener('hm:open-live', onOpenLive)
-    window.addEventListener('hm:open-task', onOpenTask)
+    window.addEventListener(HM_EVENTS.CHAT_UNREAD, onOtherUnread)
+    window.addEventListener(HM_EVENTS.CHAT_STREAMING, onChatStreaming)
+    window.addEventListener(HM_EVENTS.OPEN_REVIEW, onOpenReview)
+    window.addEventListener(HM_EVENTS.OPEN_SESSION, onOpenSession)
+    window.addEventListener(HM_EVENTS.DISCUSS_PIPELINE, onDiscussPipeline)
+    window.addEventListener(HM_EVENTS.OPEN_BOARD, onOpenBoard)
+    window.addEventListener(HM_EVENTS.OPEN_LIVE, onOpenLive)
+    window.addEventListener(HM_EVENTS.OPEN_TASK, onOpenTask)
     return () => {
-      window.removeEventListener('hm:chat-unread', onOtherUnread)
-      window.removeEventListener('hm:chat-streaming', onChatStreaming)
-      window.removeEventListener('hm:open-review', onOpenReview)
-      window.removeEventListener('hm:open-session', onOpenSession)
-      window.removeEventListener('hm:discuss-pipeline', onDiscussPipeline)
-      window.removeEventListener('hm:open-board', onOpenBoard)
-      window.removeEventListener('hm:open-live', onOpenLive)
-      window.removeEventListener('hm:open-task', onOpenTask)
+      window.removeEventListener(HM_EVENTS.CHAT_UNREAD, onOtherUnread)
+      window.removeEventListener(HM_EVENTS.CHAT_STREAMING, onChatStreaming)
+      window.removeEventListener(HM_EVENTS.OPEN_REVIEW, onOpenReview)
+      window.removeEventListener(HM_EVENTS.OPEN_SESSION, onOpenSession)
+      window.removeEventListener(HM_EVENTS.DISCUSS_PIPELINE, onDiscussPipeline)
+      window.removeEventListener(HM_EVENTS.OPEN_BOARD, onOpenBoard)
+      window.removeEventListener(HM_EVENTS.OPEN_LIVE, onOpenLive)
+      window.removeEventListener(HM_EVENTS.OPEN_TASK, onOpenTask)
     }
   }, [])
 
@@ -486,12 +495,12 @@ export function App() {
       if (document.visibilityState === 'visible') sync()
     }, 15000)
     const onManual = () => sync()
-    window.addEventListener('hm:refresh-reports', onManual)
+    window.addEventListener(HM_EVENTS.REFRESH_REPORTS, onManual)
     return () => {
       alive = false
       clearInterval(id)
       offSync()
-      window.removeEventListener('hm:refresh-reports', onManual)
+      window.removeEventListener(HM_EVENTS.REFRESH_REPORTS, onManual)
     }
     // notify はこの useEffect より後で定義される（同一レンダー内で TDZ になるため deps に入れない）。
     // 値は useCallback([]) で固定なので、依存に入れなくても stale にはならない。
@@ -499,21 +508,18 @@ export function App() {
 
   useEffect(() => {
     try {
-      lastSeenRef.current = Number(localStorage.getItem('hm.reviewSeenAt')) || 0
+      lastSeenRef.current = Number(localStorage.getItem(HM_STORAGE.REVIEW_SEEN_AT)) || 0
     } catch {
       lastSeenRef.current = 0
     }
   }, [])
 
-  // ディープリンクのシートは「マウント済みの pane に届くイベント」で開く。
-  // 既存の hm:open-session（検索→チャット）と同じ経路で、WebAPK の復元挙動に左右されない。
+  // ディープリンクのシートは、タスクタブへ **prop で渡して** 開く（`setTimeout` の橋は廃止）。
+  // タスクタブが未マウントでも、マウント直後の最初のレンダーで消費される。
   useEffect(() => {
-    if (booting || deepLink?.open !== 'inbox') return undefined
-    const id = setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('hm:open-inbox', { detail: { task: deepLink.task } }))
-    }, 200)
-    return () => clearTimeout(id)
-  }, [booting, deepLink])
+    if (booting || deepLink?.open !== 'inbox') return
+    requestInboxOpen(deepLink.task ?? null)
+  }, [booting, deepLink, requestInboxOpen])
 
   // ハッシュでの要求（#inbox[:task]）は同一ドキュメント遷移なので取りこぼさない
   useEffect(() => {
@@ -521,11 +527,11 @@ export function App() {
       const hash = window.location.hash.replace(/^#/, '')
       if (!hash.startsWith('inbox')) return
       const task = hash.includes(':') ? hash.split(':')[1] : null
-      window.dispatchEvent(new CustomEvent('hm:open-inbox', { detail: { task } }))
+      requestInboxOpen(task)
     }
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
-  }, [])
+  }, [requestInboxOpen])
 
   const toastTimer = useRef(null)
   // 各タブは初回表示時にマウントし、以降は切替で破棄せず保持する
@@ -634,13 +640,13 @@ export function App() {
     const id = setInterval(() => {
       if (document.visibilityState === 'visible' && tabRef.current !== 'review') sync()
     }, 15000)
-    window.addEventListener('hm:review-items', onItems)
+    window.addEventListener(HM_EVENTS.REVIEW_ITEMS, onItems)
     const offSync = registerSyncer(sync)
     return () => {
       alive = false
       clearInterval(id)
       offSync()
-      window.removeEventListener('hm:review-items', onItems)
+      window.removeEventListener(HM_EVENTS.REVIEW_ITEMS, onItems)
     }
   }, [registerSyncer])
 
@@ -664,7 +670,7 @@ export function App() {
       lastSeenRef.current = at
       setReviewUnseen(0)
       try {
-        localStorage.setItem('hm.reviewSeenAt', String(at))
+        localStorage.setItem(HM_STORAGE.REVIEW_SEEN_AT, String(at))
       } catch {
         /* 保存できなくても表示は続ける */
       }
@@ -673,15 +679,15 @@ export function App() {
     const id = setInterval(() => {
       if (document.visibilityState === 'visible' && tabRef.current !== 'review') sync()
     }, 15000)
-    window.addEventListener('hm:review-items', onItems)
-    window.addEventListener('hm:review-seen', onSeen)
+    window.addEventListener(HM_EVENTS.REVIEW_ITEMS, onItems)
+    window.addEventListener(HM_EVENTS.REVIEW_SEEN, onSeen)
     const offSync = registerSyncer(sync)
     return () => {
       alive = false
       clearInterval(id)
       offSync()
-      window.removeEventListener('hm:review-items', onItems)
-      window.removeEventListener('hm:review-seen', onSeen)
+      window.removeEventListener(HM_EVENTS.REVIEW_ITEMS, onItems)
+      window.removeEventListener(HM_EVENTS.REVIEW_SEEN, onSeen)
     }
   }, [registerSyncer])
 
@@ -702,13 +708,13 @@ export function App() {
     const id = setInterval(() => {
       if (document.visibilityState === 'visible' && tabRef.current !== 'tasks') sync()
     }, 15000)
-    window.addEventListener('hm:inbox-items', onItems)
+    window.addEventListener(HM_EVENTS.INBOX_ITEMS, onItems)
     const offSync = registerSyncer(sync)
     return () => {
       alive = false
       clearInterval(id)
       offSync()
-      window.removeEventListener('hm:inbox-items', onItems)
+      window.removeEventListener(HM_EVENTS.INBOX_ITEMS, onItems)
     }
   }, [registerSyncer])
 
@@ -739,13 +745,13 @@ export function App() {
     const id = setInterval(() => {
       if (document.visibilityState === 'visible') sync()
     }, 15000)
-    window.addEventListener('hm:live-turns', onTurns)
+    window.addEventListener(HM_EVENTS.LIVE_TURNS, onTurns)
     const offSync = registerSyncer(sync)
     return () => {
       alive = false
       clearInterval(id)
       offSync()
-      window.removeEventListener('hm:live-turns', onTurns)
+      window.removeEventListener(HM_EVENTS.LIVE_TURNS, onTurns)
     }
   }, [registerSyncer])
 
@@ -792,8 +798,8 @@ export function App() {
       return
     }
     setTab('tasks')
-    setTimeout(() => window.dispatchEvent(new CustomEvent('hm:open-inbox', { detail: { task: null } })), 120)
-  }, [reviewItems, inboxPending])
+    requestInboxOpen(null)
+  }, [reviewItems, inboxPending, requestInboxOpen])
 
   // 殻は公開・データは認証の内側なので、未ログインならここでトークンを入れる
   if (authNeeded) {
@@ -949,6 +955,8 @@ export function App() {
                     onConsumedFocusBoard={() => setFocusBoard(null)}
                     taskToolRequest={pendingTaskTool}
                     onConsumedTaskTool={() => setPendingTaskTool(null)}
+                    pendingInboxOpen={pendingInboxOpen}
+                    onConsumedPendingInboxOpen={() => setPendingInboxOpen(null)}
                     active={tab === 'tasks'}
                   />
                 </ErrorBoundary>
@@ -1083,21 +1091,20 @@ export function App() {
           notify={notify}
           onClose={() => setSearchOpen(false)}
           onOpenSession={(hit) => {
-            // チャットタブに切り替えてから、そのセッションを開くよう伝える
+            // チャットタブへ切り替え、開く会話は prop で渡す（`setTimeout` + イベントの橋は廃止）。
+            // ChatPane は未マウントでも `openRequest` を最初のレンダーで消費する。
             setTab('chat')
-            setTimeout(() => {
-              window.dispatchEvent(
-                new CustomEvent('hm:open-session', {
-                  detail: { id: hit.sessionId, messageId: hit.messageId, profile: hit.profile },
-                }),
-              )
-            }, 120)
+            setPendingChatOpen({
+              id: hit.sessionId,
+              messageId: hit.messageId,
+              profile: hit.profile,
+            })
           }}
         />
       ) : null}
 
       {/* 計器盤の ⚡ / 💎 から開くシート（どのタブにいても同じものが出る） */}
-      {liveOpen ? <LiveSheet notify={notify} onClose={() => setLiveOpen(false)} /> : null}
+      {liveOpen ? <LiveSheet notify={notify} onClose={() => setLiveOpen(false)} onAbortTask={refresh} /> : null}
       {usageOpen ? <UsageSheet data={usageData} hours={24} onClose={() => setUsageOpen(false)} /> : null}
 
       {/* Dopamine のパーティクル・コンボ・オールクリア演出（Serotonin では何も出さない） */}

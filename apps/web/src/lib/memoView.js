@@ -5,7 +5,9 @@
  * 素のオブジェクトを渡せるようにするため。既定は二列（Q2=A）。
  */
 
-export const MEMOS_VIEW_KEY = 'hm.memosView'
+import { HM_STORAGE } from '../contracts/storage.js'
+
+export const MEMOS_VIEW_KEY = HM_STORAGE.MEMOS_VIEW
 
 /** 表示モードの正本。未知の値・欠損は `DEFAULT_MEMOS_VIEW` に落とす。 */
 export const VIEWS = ['one', 'two', 'list']

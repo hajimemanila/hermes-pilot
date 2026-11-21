@@ -1,20 +1,24 @@
-import React, { useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
 import { Sheet } from '../components/Ui.jsx'
 import { useI18n } from '../i18n/index.js'
 import { celebrate } from '../lib/vibe.js'
+import {
+  DEFAULT_SWEEP,
+  SWEEP_PRESETS,
+  buildSweepPayload,
+  normalizePreset,
+  normalizeReport,
+  recommendSweep,
+  sweepCounts,
+} from '../lib/coherenceSweep.js'
+import { buildSeedPayload } from '../lib/specSeed.js'
+import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
 
 const ANGLES = [
   { id: 'feature', key: 'brainstorm.angleFeature' },
   { id: 'ux', key: 'brainstorm.angleUx' },
   { id: 'edge', key: 'brainstorm.angleEdge' },
-]
-
-const REFACTOR_SCOPES = [
-  { id: 'css', key: 'refactor.scopeCss' },
-  { id: 'code', key: 'refactor.scopeCode' },
-  { id: 'rules', key: 'refactor.scopeRules' },
-  { id: 'perf', key: 'refactor.scopePerf' },
 ]
 
 function buildBrainstormItems(seed, angles, t) {
@@ -68,7 +72,7 @@ export function BrainstormSheet({ initialSeed = '', board = '', repo = null, onC
           source: { board: board || undefined, repo: repo || undefined },
         },
       })
-      window.dispatchEvent(new CustomEvent('hm:memos-changed'))
+      emitHmEvent(HM_EVENTS.MEMOS_CHANGED)
       celebrate('launch')
       notify?.(t('brainstorm.saved'))
       onClose?.()
@@ -83,7 +87,7 @@ export function BrainstormSheet({ initialSeed = '', board = '', repo = null, onC
     const lines = items.map((c) => `- [ ] ${c.text}`).join('\n')
     const prompt = [seed.trim(), lines].filter(Boolean).join('\n\n')
     window.dispatchEvent(
-      new CustomEvent('hm:discuss-pipeline', {
+      new CustomEvent(HM_EVENTS.DISCUSS_PIPELINE, {
         detail: { prompt, board: board || undefined, repoPath: repo || undefined },
       }),
     )
@@ -145,73 +149,204 @@ export function BrainstormSheet({ initialSeed = '', board = '', repo = null, onC
   )
 }
 
-export function RefactorSheet({ board = '', onClose, notify }) {
-  const { t } = useI18n()
-  const [scopes, setScopes] = useState(['css', 'code', 'rules'])
+/**
+ * `🛠 Refactor & audit` — generic coherence sweeps (SPEC-COHERENCE §3.6 / D82).
+ *
+ * The old sheet filed three lines of this repository's own vocabulary (`SOUL.md`, `OAuth boundary`,
+ * `i18n`, `390px responsive`). Any other repository got nonsense. Now:
+ *
+ * - five language-agnostic presets (`state-flow` / `contracts` / `hotspots` / `docs-specs` / `custom`)
+ * - the live `GET /api/coherence/report` result on open: counts per preset, recommended preset
+ *   pre-selected (never overriding a preset the person picked, or the `initialPreset` C7 passes in)
+ * - two ways to start it: one kanban task, or a multi-batch SPEC through the Spec Architect
+ *   (`runner: 'hermes'`, `executionPolicy: 'zero-stop'`)
+ *
+ * Verification instructions stay abstract — they are delegated to the target repository's own
+ * memory / rule docs / SPEC `Verify` section (D85). The endpoint may be missing (older bridge) or
+ * offline: the sheet then shows the unavailable state and still files the sweep.
+ *
+ * @param {{board?: string, repo?: string|null, initialPreset?: string,
+ *          onClose?: Function, notify?: Function}} props sheet props
+ * @returns {any} sheet
+ */
+export function RefactorSheet({ board = '', repo = null, initialPreset = '', onClose, notify }) {
+  const { t, lang } = useI18n()
+  const [preset, setPreset] = useState(() => normalizePreset(initialPreset || DEFAULT_SWEEP))
   const [target, setTarget] = useState('')
-  const [busy, setBusy] = useState(false)
+  const [report, setReport] = useState(null)
+  const [reportState, setReportState] = useState('loading') // loading | ready | error
+  const [busy, setBusy] = useState(null) // 'single' | 'spec' | null
   const [error, setError] = useState(null)
+  // 人が選び直したら診断結果の推奨で上書きしない（`initialPreset` での起動も同じ扱い）
+  const touched = useRef(Boolean(String(initialPreset ?? '').trim()))
+  const repoId = typeof repo === 'string' ? repo : ''
 
-  const toggleScope = (id) => {
-    setScopes((prev) => (prev.includes(id) ? (prev.length > 1 ? prev.filter((x) => x !== id) : prev) : [...prev, id]))
+  const loadReport = useCallback(
+    async (fresh = false) => {
+      const params = new URLSearchParams()
+      if (board) params.set('board', board)
+      if (repoId) params.set('repo', repoId)
+      if (fresh) params.set('fresh', '1')
+      const qs = params.toString()
+      setReportState('loading')
+      try {
+        const data = await api(`/api/coherence/report${qs ? `?${qs}` : ''}`)
+        const next = normalizeReport(data)
+        setReport(next)
+        setReportState('ready')
+        if (!touched.current) setPreset(recommendSweep(next))
+      } catch {
+        // ルート未実装・オフラインでもスイープは起動できる（診断は飾りにしない）
+        setReport(null)
+        setReportState('error')
+      }
+    },
+    [board, repoId],
+  )
+
+  useEffect(() => {
+    loadReport(false)
+  }, [loadReport])
+
+  const counts = sweepCounts(report)
+  const recommended = report ? recommendSweep(report) : ''
+
+  const pick = (id) => {
+    touched.current = true
+    setPreset(id)
   }
 
-  const submit = async () => {
-    if (busy || !board) return
-    setBusy(true)
+  const submit = async (mode) => {
+    if (busy) return
+    if (!board) {
+      setError(t('coherence.noBoard'))
+      return
+    }
+    setBusy(mode)
     setError(null)
+    const payload = buildSweepPayload({ preset, report, target, mode, board, lang })
     try {
-      const labels = scopes.map((id) => t(`refactor.scope${id.charAt(0).toUpperCase()}${id.slice(1)}`))
-      const body = [
-        `Scopes: ${labels.join(', ')}`,
-        target.trim() ? `Target: ${target.trim()}` : 'Target: full repository',
-        'Check alignment with project rules (SOUL.md, OAuth boundary, i18n, 390px responsive) and remove local duplication/bloat.',
-      ].join('\n')
-      await api(`/api/boards/${encodeURIComponent(board)}/tasks`, {
-        method: 'POST',
-        body: {
-          title: `[REFACTOR] ${labels[0]}${target.trim() ? ` (${target.trim()})` : ''}`,
-          body,
-          priority: 1,
-        },
-      })
+      if (mode === 'spec') {
+        await api('/api/architect/seed', {
+          method: 'POST',
+          body: buildSeedPayload({
+            seedText: payload.seedText,
+            // 複数バッチ化は仕様書を人が確認してから起動する（既定の承認フローを飛ばさない）
+            autoStart: false,
+            executionPolicy: 'zero-stop',
+            board,
+            repo: repoId || null,
+            lang,
+          }),
+        })
+        notify?.(t('coherence.launchedSpec'))
+      } else {
+        await api(`/api/boards/${encodeURIComponent(board)}/tasks`, {
+          method: 'POST',
+          body: { title: payload.title, body: payload.body, priority: 1 },
+        })
+        notify?.(t('coherence.launched'))
+      }
       celebrate('launch')
-      notify?.(t('refactor.launched'))
       onClose?.()
     } catch (e) {
-      setError(e?.message || t('refactor.failed'))
-      setBusy(false)
+      setError(e?.message || t('coherence.failed'))
+      setBusy(null)
     }
   }
 
+  const repoName = report?.repoRoot ? String(report.repoRoot).split('/').filter(Boolean).pop() : ''
+
   return (
     <Sheet title={`🛠 ${t('refactor.title')}`} onClose={() => !busy && onClose?.()}>
-      <p className="seed-lead">{t('refactor.lead')}</p>
-      <div className="list-head">{t('refactor.scope')}</div>
-      <div className="chips" style={{ padding: 0, flexWrap: 'wrap' }}>
-        {REFACTOR_SCOPES.map((s) => (
-          <button
-            key={s.id}
-            type="button"
-            className={`chip${scopes.includes(s.id) ? ' on' : ''}`}
-            onClick={() => toggleScope(s.id)}
-          >
-            {t(s.key)}
-          </button>
-        ))}
+      <p className="seed-lead">{t('coherence.lead')}</p>
+
+      <div className={`coh-report${reportState === 'error' ? ' is-muted' : ''}`} role="status" aria-live="polite">
+        <span className="coh-report-text">
+          {reportState === 'loading'
+            ? t('coherence.reportLoading')
+            : reportState === 'error'
+              ? t('coherence.reportUnavailable')
+              : t('coherence.reportSummary', {
+                  hard: report.counts.hardFailCount,
+                  soft: report.counts.softSignalCount,
+                  hotspots: report.counts.hotspotCount,
+                })}
+        </span>
+        {reportState === 'ready' && repoName ? (
+          <span className="coh-report-meta">{t('coherence.reportRepo', { repo: repoName })}</span>
+        ) : null}
+        <button
+          type="button"
+          className="coh-refresh"
+          onClick={() => loadReport(true)}
+          disabled={reportState === 'loading'}
+          aria-label={t('coherence.refreshAria')}
+        >
+          ↻ {t('coherence.refresh')}
+        </button>
       </div>
+
+      <div className="list-head">{t('coherence.preset')}</div>
+      <div className="coh-presets" role="radiogroup" aria-label={t('coherence.preset')}>
+        {SWEEP_PRESETS.map((id) => {
+          const on = preset === id
+          return (
+            <button
+              key={id}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              className={`coh-preset${on ? ' on' : ''}`}
+              onClick={() => pick(id)}
+            >
+              <span className="coh-preset-head">
+                <span className="coh-preset-name">{t(`coherence.preset.${id}`)}</span>
+                {counts[id] ? <span className="coh-count">{counts[id]}</span> : null}
+              </span>
+              <span className="coh-preset-desc">{t(`coherence.preset.${id}.desc`)}</span>
+              {recommended === id ? <span className="coh-rec">{t('coherence.recommended')}</span> : null}
+            </button>
+          )
+        })}
+      </div>
+
       <input
         type="text"
-        className="memo-input"
-        style={{ marginTop: 10 }}
+        className="memo-input coh-target"
         value={target}
-        placeholder={t('refactor.targetPh')}
+        placeholder={t('coherence.targetPh')}
+        aria-label={t('coherence.targetLabel')}
+        enterKeyHint="done"
         onChange={(e) => setTarget(e.target.value)}
       />
+
       {error ? <div className="seed-error" style={{ marginTop: 8 }}>{error}</div> : null}
-      <button type="button" className="btn primary" style={{ width: '100%', marginTop: 12 }} disabled={busy || !board} onClick={submit}>
-        {t('refactor.launch')}
-      </button>
+
+      <div className="coh-actions">
+        <button
+          type="button"
+          className="coh-action primary"
+          disabled={Boolean(busy) || !board}
+          onClick={() => submit('single')}
+        >
+          <span className="coh-action-name">
+            {busy === 'single' ? t('coherence.working') : t('coherence.launchSingle')}
+          </span>
+          <span className="coh-action-desc">{t('coherence.launchSingleHint')}</span>
+        </button>
+        <button
+          type="button"
+          className="coh-action"
+          disabled={Boolean(busy) || !board}
+          onClick={() => submit('spec')}
+        >
+          <span className="coh-action-name">
+            {busy === 'spec' ? t('coherence.working') : t('coherence.launchSpec')}
+          </span>
+          <span className="coh-action-desc">{t('coherence.launchSpecHint')}</span>
+        </button>
+      </div>
     </Sheet>
   )
 }

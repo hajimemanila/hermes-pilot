@@ -11,8 +11,10 @@
  *  - 実行中         → 青いドット（`.row-dot.running`）
  */
 
+import { HM_STORAGE } from '../contracts/storage.js'
+
 /** 会話ごとの既読（メッセージ数ベース）を残す localStorage キー。 */
-export const SESSION_SEEN_KEY = 'hm.session.seen.v1'
+export const SESSION_SEEN_KEY = HM_STORAGE.SESSION_SEEN
 /** 保持する会話数（会話は増え続けるので古いものから捨てる）。 */
 export const SESSION_SEEN_LIMIT = 100
 

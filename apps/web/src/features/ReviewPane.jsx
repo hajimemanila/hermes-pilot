@@ -14,6 +14,8 @@ import { t } from '../i18n/lang.js'
 import { useI18n } from '../i18n/index.js'
 import { useSplitLayout } from '../lib/useSplitLayout.js'
 import { sep } from '../lib/format.js'
+import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
+import { HM_STORAGE } from '../contracts/storage.js'
 
 export { parsePastedReply }
 
@@ -152,7 +154,15 @@ export function WorkerFeed({ taskId, open = false, endpoint = null }) {
         setFeed(r)
         setError(null)
       } catch (e) {
-        if (alive) setError(e?.message || t('review.loadFailed'))
+        if (!alive) return
+        // 直前に unblock した直後はワーカーの session_id がまだ書かれていない（NO_SESSION）ため、
+        // 赤エラーにせず「起動待ち」の柔和な表示で次の 5 秒ポーリングを待つ。
+        if (open && e?.code === 'NO_SESSION') {
+          setFeed((prev) => prev ?? { status: 'ready', feed: { messages: [] } })
+          setError(null)
+          return
+        }
+        setError(e?.message || t('review.loadFailed'))
       }
     }
     load()
@@ -166,7 +176,7 @@ export function WorkerFeed({ taskId, open = false, endpoint = null }) {
       alive = false
       if (id) clearInterval(id)
     }
-  }, [open, taskId, url])
+  }, [open, taskId, url, t])
 
   useEffect(() => {
     const el = boxRef.current
@@ -174,15 +184,19 @@ export function WorkerFeed({ taskId, open = false, endpoint = null }) {
   }, [feed])
 
   const msgs = (feed?.feed?.messages || []).filter((m) => m.role !== 'user')
+  const statusLabel = feed?.status ? (STATUS_KEY[feed.status] ? t(STATUS_KEY[feed.status]) : feed.status) : null
+  const waitingStart = open || feed?.status === 'ready'
   return (
     <details className="ak-worker" open={open}>
       <summary>
         {t('review.workerProgress')}
-        {feed?.status ? t('review.workerStatus', { status: feed.status === 'running' ? t('review.status.running') : feed.status }) : ''}
+        {statusLabel ? t('review.workerStatus', { status: statusLabel }) : ''}
         {msgs.length ? t('review.workerSteps', { n: msgs.length }) : ''}
       </summary>
       {error ? <div className="ak-error">{error}</div> : null}
-      {!error && !msgs.length ? <div className="ak-worker-empty">{t('review.workerEmpty')}</div> : null}
+      {!error && !msgs.length ? (
+        <div className="ak-worker-empty">{waitingStart ? t('review.workerWaitingStart') : t('review.workerEmpty')}</div>
+      ) : null}
       <div className="ak-worker-log" ref={boxRef}>
         {msgs.map((m) => {
           const time = fmtTime(m.at)
@@ -943,6 +957,9 @@ function NewAnnotationSheet({ onCreated, onClose, notify, initialTarget = '' }) 
 
 export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, active = true }) {
   const { t } = useI18n()
+  // >=680px は 2 ペイン（詳細をシートではなく右ペインに出す。SPEC-i18n-resp §2 B3）
+  // 境界は lib/layout.js の 1 箇所だけ（CSS の @media と一致させる）
+  const { split } = useSplitLayout()
   const [state, setState] = useState({ loading: true, items: [], error: null })
   const [tab, setTab] = useState('waiting')
   const [open, setOpen] = useState(null)
@@ -972,7 +989,7 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
       setState({ loading: false, items, error: null })
       // 下部ナビの丸バッジ（注釈 1377.jpg の赤）を、この一覧と同じデータで同期する
       try {
-        window.dispatchEvent(new CustomEvent('hm:review-items', { detail: { items } }))
+        emitHmEvent(HM_EVENTS.REVIEW_ITEMS, { items })
       } catch {
         /* noop */
       }
@@ -1077,12 +1094,12 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
       setFeed(items)
       const at = Date.now()
       try {
-        localStorage.setItem('hm.reviewSeenAt', String(at))
+        localStorage.setItem(HM_STORAGE.REVIEW_SEEN_AT, String(at))
       } catch {
         /* noop */
       }
       try {
-        window.dispatchEvent(new CustomEvent('hm:review-seen', { detail: { at } }))
+        emitHmEvent(HM_EVENTS.REVIEW_SEEN, { at })
       } catch {
         /* noop */
       }
@@ -1120,6 +1137,13 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
     if (celebrateKind) celebrate(celebrateKind)
 
     const items = await load()
+    // 回答直後に他タブ（Chat / Tasks の Architect 進行バー・完了報告・バッジ）が古い状態で残らないよう即時同期を促す
+    try {
+      emitHmEvent(HM_EVENTS.WAKE_SYNC)
+      emitHmEvent(HM_EVENTS.REFRESH_REPORTS)
+    } catch {
+      /* noop */
+    }
     // 検収（approve）は「送信」ではなく「合格」なので、トーストの頭を差し替える
     const head = result?.duplicate
       ? t('review.duplicate')
@@ -1133,8 +1157,20 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
       notify?.(t('review.nextOpened', { head }))
       return
     }
-    setTab('waiting')
-    closeSheet()
+    const answered = items.find((x) => x && x.id === answeredId) || null
+    const inProgress = Boolean(answered && ['ready', 'running'].includes(answered.status))
+    if (inProgress) {
+      // 回答後にワーカーが動くタスクは「進行中」へ移し、回答後の沈黙時間も見失わないようにする
+      setTab('active')
+      if (split) {
+        await openItem(answered)
+      } else {
+        closeSheet()
+      }
+    } else {
+      setTab('waiting')
+      closeSheet()
+    }
     // 最後の 1 件を送り終えたら「全件完了」をバナーで知らせる（SPEC §5.1）
     setAllClear(true)
     // 全件消化の祝祭（Dopamine は 🎉 + ファンファーレ、Serotonin は success の触覚だけ）
@@ -1166,9 +1202,6 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
   }
 
   const hasItems = state.items.length > 0
-  // >=680px は 2 ペイン（詳細をシートではなく右ペインに出す。SPEC-i18n-resp §2 B3）
-  // 境界は lib/layout.js の 1 箇所だけ（CSS の @media と一致させる）
-  const { split } = useSplitLayout()
   const isAnnoOpen = Boolean(open && open.review?.mode === 'annotation' && isWaiting(open))
   const openTitle = open ? (open.review?.title || open.title) + '' : ''
 
@@ -1225,7 +1258,7 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
             }}
             onOpenChat={(chatId) => {
               closeSheet()
-              window.dispatchEvent(new CustomEvent('hm:open-session', { detail: { id: chatId } }))
+              emitHmEvent(HM_EVENTS.OPEN_SESSION, { id: chatId })
             }}
           />
         )}

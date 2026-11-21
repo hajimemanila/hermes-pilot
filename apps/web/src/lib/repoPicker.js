@@ -11,24 +11,25 @@
  */
 
 import { t } from '../i18n/lang.js'
+import { HM_STORAGE } from '../contracts/storage.js'
 
 /** 直近に選んだリポジトリ（次回の初期値）。 */
-export const REPO_KEY = 'hm.repo'
+export const REPO_KEY = HM_STORAGE.REPO
 
 /** 直近に選んだリポジトリの履歴（シートに出す 4 件を新しい順に）。 */
-export const RECENT_REPOS_KEY = 'hm.repoRecent'
+export const RECENT_REPOS_KEY = HM_STORAGE.REPO_RECENT
 
 /** タスクタブ / クイック起票が読む「既定のボード」。選んだ repo の板に合わせる。 */
-export const BOARD_KEY = 'hm.board'
+export const BOARD_KEY = HM_STORAGE.BOARD
 
 /** 送信前の「新しい会話で選んだリポジトリ」（1通目送信・既存会話resumeまでのリロード復元用）。 */
-export const PENDING_REPO_KEY = 'hm.pendingRepo'
+export const PENDING_REPO_KEY = HM_STORAGE.PENDING_REPO
 
 /**
  * 直近に注釈を付けた対象リポジトリ（SPEC-ver-0-2-1 §2.1）。
  * 注釈シートを開くたびに対象が空へ戻る不具合を、この 1 キーで止める。
  */
-export const REVIEW_REPO_KEY = 'hm.reviewRepo'
+export const REVIEW_REPO_KEY = HM_STORAGE.REVIEW_REPO
 
 /** 履歴に残す件数。 */
 export const RECENT_MAX = 6

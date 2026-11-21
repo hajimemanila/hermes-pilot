@@ -9,6 +9,7 @@ import { readSnippetBars, subscribeSnippetBars } from '../lib/snippetBars.js'
 import { termKeyBytes } from '../lib/termKey.js'
 import { reconnectDelay } from '../lib/termReconnect.js'
 import { useI18n } from '../i18n/index.js'
+import { HM_EVENTS } from '../contracts/events.js'
 
 /**
  * ターミナルタブ。ブリッジが持つ実 PTY（node-pty）に WebSocket で繋ぐ。
@@ -199,12 +200,12 @@ export function TermPane({ notify, active = true }) {
         .catch(() => {})
     }
     load()
-    window.addEventListener('hm:term-snippets', load)
-    window.addEventListener('hm:lang', load)
+    window.addEventListener(HM_EVENTS.TERM_SNIPPETS, load)
+    window.addEventListener(HM_EVENTS.LANG, load)
     return () => {
       cancelled = true
-      window.removeEventListener('hm:term-snippets', load)
-      window.removeEventListener('hm:lang', load)
+      window.removeEventListener(HM_EVENTS.TERM_SNIPPETS, load)
+      window.removeEventListener(HM_EVENTS.LANG, load)
     }
   }, [lang])
 

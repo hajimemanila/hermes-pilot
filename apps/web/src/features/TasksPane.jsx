@@ -22,8 +22,16 @@ import { batchIdOf, specProgress } from '../lib/specProgress.js'
 import { localizeError } from '../i18n/lang.js'
 import { useI18n } from '../i18n/index.js'
 import { useSplitLayout } from '../lib/useSplitLayout.js'
-import { collapseTaskEvents } from '../lib/tasksView.js'
+import {
+  coherenceBannerView,
+  coherenceDismissRecord,
+  collapseTaskEvents,
+  specPickerList,
+  splitSpecsByArchive,
+} from '../lib/tasksView.js'
+import { HM_STORAGE } from '../contracts/storage.js'
 import { WorkerFeed } from './ReviewPane.jsx'
+import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
 
 /** 実行中タスクの詳細を追いかける間隔（heartbeat と worker の進捗が増えるため）。 */
 const DETAIL_POLL_MS = 5000
@@ -74,9 +82,22 @@ function ModePill({ batch, t }) {
  *          onToggle: Function, onPick: Function, t: Function}} props
  * @returns {any} セレクタ（1 行 ＋ 任意でアコーディオン）
  */
-function SpecPicker({ specList, currentSpec, open, onToggle, onPick, t }) {
+function SpecPicker({
+  specList,
+  currentSpec,
+  open,
+  onToggle,
+  onPick,
+  t,
+  archivedCount = 0,
+  showArchived = false,
+  onToggleArchived = null,
+}) {
   if (!currentSpec) return null
   const others = (specList ?? []).filter((s) => s.path !== currentSpec.path)
+  // 展開する中身があるか（他の SPEC、または「Show archived」トグル）。
+  // アクティブが 1 件でもアーカイブがあれば開ける（完了済みを見に行く導線を残す）。
+  const canExpand = others.length > 0 || Boolean(archivedCount > 0 && onToggleArchived)
   const sub = (s) =>
     [
       t('tasks.specBatchCount', { n: (s.batches ?? []).length }),
@@ -89,7 +110,7 @@ function SpecPicker({ specList, currentSpec, open, onToggle, onPick, t }) {
       <button
         type="button"
         className="pick-item spec-now"
-        aria-expanded={others.length ? open : undefined}
+        aria-expanded={canExpand ? open : undefined}
         aria-label={t('tasks.specNowAria', { name: currentSpec.title })}
         onClick={() => {
           haptic('tap')
@@ -103,24 +124,27 @@ function SpecPicker({ specList, currentSpec, open, onToggle, onPick, t }) {
           <span className="pick-sub">{`${sub(currentSpec)} · ${currentSpec.path}`}</span>
         </span>
         <span className="pick-meta">
-          {others.length ? t('tasks.specCountOf', { n: specList.length }) : null}
-          {others.length ? <span aria-hidden="true">{open ? '▴' : '▾'}</span> : null}
+          {canExpand ? t('tasks.specCountOf', { n: specList.length }) : null}
+          {canExpand ? <span aria-hidden="true">{open ? '▴' : '▾'}</span> : null}
         </span>
       </button>
-      {open && others.length ? (
+      {open && canExpand ? (
         <div className="pick-list spec-accordion">
           {others.map((s) => (
             <button
               key={s.path}
               type="button"
-              className="pick-item"
+              className={`pick-item${s.archived ? ' is-archived' : ''}`}
               onClick={() => {
                 haptic('tap')
                 onPick(s)
               }}
             >
               <span className="pick-main">
-                <span className="pick-title">{s.title}</span>
+                <span className="pick-title">
+                  {s.archived ? <span className="spec-archived-pill">{t('tasks.specArchivedPill')}</span> : null}
+                  {s.title}
+                </span>
                 <span className="pick-sub">{sub(s)}</span>
               </span>
               <span className="pick-meta" aria-hidden="true">
@@ -128,6 +152,30 @@ function SpecPicker({ specList, currentSpec, open, onToggle, onPick, t }) {
               </span>
             </button>
           ))}
+          {/* 完了済み SPEC は既定で隠す（Launchpad が過去で埋まらないようにする。D84）。
+              アーカイブが 1 件でもあるときだけ「Show archived (N)」を出す。 */}
+          {archivedCount > 0 && onToggleArchived ? (
+            <button
+              type="button"
+              className={`pick-item spec-archived-toggle${showArchived ? ' on' : ''}`}
+              aria-pressed={showArchived}
+              onClick={() => {
+                haptic('tap')
+                onToggleArchived(!showArchived)
+              }}
+            >
+              <span className="pick-main">
+                <span className="pick-title">
+                  {showArchived
+                    ? t('tasks.specHideArchived')
+                    : t('tasks.specShowArchived', { n: archivedCount })}
+                </span>
+              </span>
+              <span className="pick-meta" aria-hidden="true">
+                {showArchived ? '−' : '+'}
+              </span>
+            </button>
+          ) : null}
         </div>
       ) : null}
     </>
@@ -137,7 +185,7 @@ function SpecPicker({ specList, currentSpec, open, onToggle, onPick, t }) {
 /**
  * タスクタブ（ホーム）。SystemOps の状態 + カンバン + キルスイッチ。
  */
-const BOARD_KEY = 'hm.board'
+const BOARD_KEY = HM_STORAGE.BOARD
 
 /** 直前に選んでいたボードの slug。 */
 function readStoredBoard() {
@@ -148,7 +196,7 @@ function readStoredBoard() {
   }
 }
 
-export function TasksPane({ overview, refresh, notify, initialInbox = null, focusBoard = null, onConsumedFocusBoard, taskToolRequest = null, onConsumedTaskTool, active = true }) {
+export function TasksPane({ overview, refresh, notify, initialInbox = null, pendingInboxOpen = null, onConsumedPendingInboxOpen, focusBoard = null, onConsumedFocusBoard, taskToolRequest = null, onConsumedTaskTool, active = true }) {
   const { t, lang } = useI18n()
   const [boards, setBoards] = useState([])
   const [board, setBoard] = useState(null)
@@ -194,6 +242,21 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
   const [brainstormOpen, setBrainstormOpen] = useState(false)
   const [brainstormInitial, setBrainstormInitial] = useState('')
   const [refactorOpen, setRefactorOpen] = useState(false)
+  // バナーから開くときのスイープ（`RefactorSheet` の `initialPreset`・SPEC-COHERENCE §3.6）
+  const [refactorPreset, setRefactorPreset] = useState('')
+  // Coherence 提案バナー（SPEC-COHERENCE §3.6 / D83）。`null` の間は何も出さない。
+  const [coherenceReport, setCoherenceReport] = useState(null)
+  const [coherenceOpen, setCoherenceOpen] = useState(false)
+  // 閉じた記録は localStorage（`HM_STORAGE.COHERENCE_DISMISSED`）に置く。初期値は 1 回だけ読む。
+  const [coherenceDismissedRaw, setCoherenceDismissedRaw] = useState(() => {
+    try {
+      return globalThis.localStorage?.getItem(HM_STORAGE.COHERENCE_DISMISSED) ?? null
+    } catch {
+      return null
+    }
+  })
+  // Launchpad の「Show archived (N)」トグル（既定 OFF＝アクティブ SPEC だけ。D84）
+  const [specShowArchived, setSpecShowArchived] = useState(false)
 
   useEffect(() => {
     if (!taskToolRequest) return
@@ -251,13 +314,20 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
   }, [])
   const initialInboxApplied = useRef(false)
 
-  // App からのディープリンク要求（マウント後に届くので確実）
+  // App からのインボックス要求（ディープリンク・🔔 タップ・ハッシュ）は prop で受ける。
+  // 以前は `setTimeout` で `hm:open-inbox` を投げていたが、マウント前だと取りこぼしていた。
+  useEffect(() => {
+    if (!pendingInboxOpen) return
+    openInbox(pendingInboxOpen.task ?? null)
+    onConsumedPendingInboxOpen?.()
+  }, [pendingInboxOpen, openInbox, onConsumedPendingInboxOpen])
+
+  // 旧経路の後方互換: 外部（デモ・将来の画面）が直接 dispatch した場合だけ受ける。
   useEffect(() => {
     const onOpen = (e) => openInbox(e?.detail?.task ?? null)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    window.addEventListener('hm:open-inbox', onOpen)
-    return () => window.removeEventListener('hm:open-inbox', onOpen)
-  }, [])
+    window.addEventListener(HM_EVENTS.OPEN_INBOX, onOpen)
+    return () => window.removeEventListener(HM_EVENTS.OPEN_INBOX, onOpen)
+  }, [openInbox])
 
   // ウィジェットの行タップ（?open=inbox&task=…）でシートを開く。1回だけ。
   useEffect(() => {
@@ -294,12 +364,46 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
     }
   }, [board])
 
+  /*
+   * A2B クイック起票カードの材料（GET /api/architect/jobs・SPEC V5 §3.2 D23）。
+   * Seed していなくても「未起票の新しい SPEC」があればカードを出す（pending）。
+   * 20 秒ごと。旧ブリッジ（404）ではカードを出さないだけ。
+   */
+  const loadArchitectJobs = useCallback(async () => {
+    if (!board) {
+      setArchitectJobs(null)
+      return
+    }
+    try {
+      const d = await api(`/api/architect/jobs?board=${encodeURIComponent(board)}`)
+      if (d?.ok) setArchitectJobs(d)
+    } catch {
+      setArchitectJobs(null)
+    }
+  }, [board])
+
+  const openTaskCountRef = useRef({ board: null, count: null })
   const loadTasks = useCallback(
     async (slug) => {
       if (!slug) return false
       try {
         const d = await api(`/api/boards/${encodeURIComponent(slug)}/tasks?limit=60`)
-        setTasks(d.tasks ?? [])
+        const list = d.tasks ?? []
+        setTasks(list)
+        // 未完了タスクが減った（完了へ抜けた）瞬間に完了報告と Architect 進行バーを即時更新する
+        const openCount = list.filter((x) =>
+          ['running', 'ready', 'todo', 'blocked'].includes(String(x?.status ?? '')),
+        ).length
+        const prev = openTaskCountRef.current
+        openTaskCountRef.current = { board: slug, count: openCount }
+        if (prev.board === slug && prev.count !== null && openCount < prev.count) {
+          try {
+            emitHmEvent(HM_EVENTS.REFRESH_REPORTS)
+          } catch {
+            /* noop */
+          }
+          loadArchitectJobs()
+        }
         return true
       } catch (e) {
         setTasks([])
@@ -307,7 +411,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
         return false
       }
     },
-    [notify],
+    [notify, loadArchitectJobs],
   )
 
   useEffect(() => {
@@ -342,7 +446,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
           setLiveTurns(turns)
           try {
             window.dispatchEvent(
-              new CustomEvent('hm:live-turns', {
+              new CustomEvent(HM_EVENTS.LIVE_TURNS, {
                 detail: { turns, items: Array.isArray(d?.turns) ? d.turns : [] },
               }),
             )
@@ -367,7 +471,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
       setInboxCount(pendingCount(items))
       // 下部ナビのタスクタブの丸バッジ（注釈 1377.jpg の赤）を、この一覧と同じデータで同期する
       try {
-        window.dispatchEvent(new CustomEvent('hm:inbox-items', { detail: { items } }))
+        emitHmEvent(HM_EVENTS.INBOX_ITEMS, { items })
       } catch {
         /* noop */
       }
@@ -400,9 +504,24 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
     }
     try {
       const d = await api(`/api/specs?board=${encodeURIComponent(slug)}`)
-      const list = (Array.isArray(d?.specs) ? d.specs : []).filter((s) => (s.batches ?? []).length > 0)
-      setSpecsInfo(list.length ? { repo: d.repo ?? null, path: d.path ?? null, specs: list } : null)
-      setSpecPath((cur) => (cur && list.some((s) => s.path === cur) ? cur : list[0]?.path ?? null))
+      // 既定はアクティブ SPEC だけ（サーバが `archivedSpecs` を返す）。
+      // 旧ブリッジ（`archivedSpecs` 無し）でも `archived` フラグで分けられるようにしておく。
+      const keep = (s) => (s.batches ?? []).length > 0
+      const raw = (Array.isArray(d?.specs) ? d.specs : []).filter(keep)
+      const split = Array.isArray(d?.archivedSpecs)
+        ? { active: raw, archived: d.archivedSpecs.filter(keep) }
+        : splitSpecsByArchive(raw)
+      setSpecsInfo(
+        split.active.length + split.archived.length
+          ? { repo: d.repo ?? null, path: d.path ?? null, active: split.active, archived: split.archived }
+          : null,
+      )
+      setSpecPath((cur) => {
+        const all = [...split.active, ...split.archived]
+        if (cur && all.some((s) => s.path === cur)) return cur
+        // アクティブが無いリポジトリでは、アーカイブを 1 件だけ出してトグルへ辿れるようにする
+        return split.active[0]?.path ?? split.archived[0]?.path ?? null
+      })
     } catch {
       setSpecsInfo(null)
     }
@@ -412,15 +531,46 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
     loadSpecs(board)
   }, [board, loadSpecs])
 
+  /*
+   * 完走予兆の提案バナー（SPEC-COHERENCE §3.6 / D83）。
+   *
+   * 情報源は 2 系統ある。「生の診断（`GET /api/coherence/report`）」があればそれを優先し、
+   * 無い（＝ 旧ブリッジで 404）ときは直近の完走レポートの `coherence_alert` を見る。
+   * どちらも無ければ**何も出さない**（診断は飾りにしない・画面を壊さない）。
+   * 読み取り専用で、ここから勝手にカンバンへ起票しない（D55）。
+   */
+  const loadCoherence = useCallback(async (slug) => {
+    if (!slug) {
+      setCoherenceReport(null)
+      return
+    }
+    try {
+      const d = await api(`/api/coherence/report?board=${encodeURIComponent(slug)}`)
+      setCoherenceReport(d && typeof d === 'object' ? d : null)
+    } catch {
+      // ルート未実装・オフラインでは黙って諦める（完走レポート側の材料で代替する）
+      setCoherenceReport(null)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!board || !active) return undefined
+    loadCoherence(board)
+    // リポジトリ全体の走査なので、タスク一覧（5 秒）ほど頻繁に叩かない。
+    const id = setInterval(() => document.visibilityState === 'visible' && loadCoherence(board), 120_000)
+    return () => clearInterval(id)
+  }, [board, active, loadCoherence])
+
   const refreshAll = useCallback(async () => {
     const results = await Promise.all([
       board ? loadTasks(board) : Promise.resolve(true),
       loadInbox(),
       loadSpecs(board),
+      board ? loadCoherence(board) : Promise.resolve(),
       refresh ? refresh() : Promise.resolve(true),
     ])
     return results[0] !== false
-  }, [board, loadTasks, loadInbox, loadSpecs, refresh])
+  }, [board, loadTasks, loadInbox, loadSpecs, loadCoherence, refresh])
 
   useEffect(() => {
     if (!board || !active) return undefined
@@ -428,24 +578,6 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
     const id = setInterval(() => document.visibilityState === 'visible' && loadTasks(board), 5000)
     return () => clearInterval(id)
   }, [board, loadTasks, active])
-
-  /*
-   * A2B クイック起票カードの材料（GET /api/architect/jobs・SPEC V5 §3.2 D23）。
-   * Seed していなくても「未起票の新しい SPEC」があればカードを出す（pending）。
-   * 20 秒ごと。旧ブリッジ（404）ではカードを出さないだけ。
-   */
-  const loadArchitectJobs = useCallback(async () => {
-    if (!board) {
-      setArchitectJobs(null)
-      return
-    }
-    try {
-      const d = await api(`/api/architect/jobs?board=${encodeURIComponent(board)}`)
-      if (d?.ok) setArchitectJobs(d)
-    } catch {
-      setArchitectJobs(null)
-    }
-  }, [board])
 
   /**
    * 進行バーに出すジョブ（`running` / `awaiting_review` / `awaiting_spec` / `failed` の 1 件）。
@@ -481,6 +613,16 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
     )
     return () => clearInterval(id)
   }, [loadArchitectJobs, pollMs, active])
+
+  // スリープ復帰や Review 回答送信直後にタスク一覧と Architect 進行バーを即同期する
+  useEffect(() => {
+    const onWake = () => {
+      loadArchitectJobs()
+      if (board) loadTasks(board)
+    }
+    window.addEventListener(HM_EVENTS.WAKE_SYNC, onWake)
+    return () => window.removeEventListener(HM_EVENTS.WAKE_SYNC, onWake)
+  }, [board, loadArchitectJobs, loadTasks])
 
   /*
    * 新 SPEC の即時同期（SPEC V6 §3.3 ③ / D31）。
@@ -582,6 +724,36 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
     return Boolean(at) && Date.now() - at < 24 * 60 * 60 * 1000
   }, [latestReport])
 
+  /*
+   * バナーの表示判定は純関数（`lib/tasksView.js`）に集約。ここは材料を渡すだけ。
+   * 生の診断が無いときは直近の完走レポートの `coherence_alert` を使う（2 系統）。
+   */
+  const coherenceView = useMemo(
+    () => coherenceBannerView(coherenceReport ?? latestReport ?? null, coherenceDismissedRaw),
+    [coherenceReport, latestReport, coherenceDismissedRaw],
+  )
+
+  /** バナーの 1 タップ起動: 推奨スイープを選択済みにして `RefactorSheet` を開く。 */
+  const openCoherenceSweep = useCallback(() => {
+    haptic('tap')
+    setRefactorPreset(coherenceView.recommendedSweep || '')
+    setRefactorOpen(true)
+  }, [coherenceView.recommendedSweep])
+
+  /** バナーを閉じる（署名を保存。件数が変われば再表示される）。 */
+  const dismissCoherence = useCallback(() => {
+    haptic('tap')
+    const record = coherenceDismissRecord(coherenceView.signature)
+    let raw = null
+    try {
+      raw = JSON.stringify(record)
+      globalThis.localStorage?.setItem(HM_STORAGE.COHERENCE_DISMISSED, raw)
+    } catch {
+      // 保存できない環境でも、この画面では閉じる（押したのに消えない方が困る）
+    }
+    setCoherenceDismissedRaw(raw)
+  }, [coherenceView.signature])
+
   /* バナーの本文（統合 Markdown サマリ）は Markdown として読ませる。 */
   const latestReportBody = useMemo(
     () => (latestReport?.markdown ? renderMarkdown(reportBodyFor(latestReport)) : null),
@@ -595,7 +767,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
     haptic('tap')
     try {
       window.dispatchEvent(
-        new CustomEvent('hm:discuss-pipeline', {
+        new CustomEvent(HM_EVENTS.DISCUSS_PIPELINE, {
           detail: {
             sessionId: latestReport.sessionId ?? null,
             repoPath: latestReport.repoPath ?? null,
@@ -741,7 +913,12 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
           body: { reason: t('tasks.abortReason') },
         },
       )
+      if (r?.ok === false) {
+        notify(r?.error || r?.output || t('live.abortFailed', { id: task.id }))
+        return
+      }
       notify(t('tasks.aborted', { reclaim: r.reclaimed, block: r.blocked }))
+      emitHmEvent(HM_EVENTS.WAKE_SYNC)
       setDetail(null)
       loadTasks(targetBoard)
     } catch (e) {
@@ -810,16 +987,21 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
    * 既定で選ぶのは**まだ一度も起票していない**バッチだけ — 完了済みのバッチを
    * うっかり再起票しないため（選び直せば起票できる）。
    */
-  const specList = specsInfo?.specs ?? []
+  const specParts = { active: specsInfo?.active ?? [], archived: specsInfo?.archived ?? [] }
+  const specArchivedCount = specParts.archived.length
+  // `Show archived` の状態で並びを切り替える（既定はアクティブのみ・純関数でテスト済み）
+  const specList = specPickerList(specParts, specShowArchived)
   const currentSpec = specList.find((s) => s.path === specPath) ?? specList[0] ?? null
   /*
    * 起票・完了の判定は lib/specProgress.js に集約（単体テストで固定）。
    * allDone のときだけカードを「✅ 全バッチ完了」にし、タップ先を履歴へ切り替える（Q3=A）。
    */
-  const specProg = specProgress(currentSpec?.batches ?? [], tasks)
+  const specProg = specProgress(currentSpec?.batches ?? [], tasks, currentSpec?.path)
   const filedBatchIds = new Set(specProg.byId.keys())
   const openBatchIds = new Set(
-    tasks.filter((x) => x.status !== 'done' && x.status !== 'archived').map((x) => batchIdOf(x.title)).filter(Boolean),
+    [...specProg.byId.entries()]
+      .filter(([, task]) => task.status !== 'done' && task.status !== 'archived')
+      .map(([id]) => id),
   )
   const specAllDone = specProg.allDone
   /** ボード 1 行の補足（実行中・停止・保管・最終更新）。 */
@@ -868,7 +1050,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
     setSpecPickerOpen(false)
     setSpecBatchOpen([])
     if (forLaunch) {
-      const prog = specProgress(next.batches ?? [], tasks)
+      const prog = specProgress(next.batches ?? [], tasks, next?.path)
       setSpecSel((next.batches ?? []).filter((b) => !prog.byId.has(b.id)).map((b) => b.id))
     }
   }
@@ -1144,6 +1326,77 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
         onPreview={(b) => openSpecMd({ path: b.path, title: b.title })}
       />
 
+      {/*
+        完走予兆の提案バナー（SPEC-COHERENCE §3.6 / D83）。
+        読み取り専用の診断結果から、閾値超過のときだけ出す。1 タップで推奨スイープを選んだ
+        `RefactorSheet` を開き、✕ は署名つきで保存する（件数が変われば出し直す）。
+      */}
+      {coherenceView.show ? (
+        <section className={`coh-banner${coherenceOpen ? ' is-open' : ''}`} aria-label={t('coherence.bannerAria')}>
+          <div className="coh-banner-row">
+            <button
+              type="button"
+              className="coh-banner-head"
+              aria-expanded={coherenceOpen}
+              onClick={() => {
+                haptic('tap')
+                setCoherenceOpen((v) => !v)
+              }}
+            >
+              <span className="coh-banner-icon" aria-hidden="true">
+                🩺
+              </span>
+              <span className="coh-banner-main">
+                <span className="coh-banner-title">{t('coherence.bannerTitle')}</span>
+                <span className="coh-banner-sub">
+                  {t('coherence.bannerSummary', {
+                    hard: coherenceView.summary.hardFailCount,
+                    soft: coherenceView.summary.softSignalCount,
+                    hotspots: coherenceView.summary.hotspotCount,
+                  })}
+                </span>
+              </span>
+              <span className="coh-banner-chev" aria-hidden="true">
+                {coherenceOpen ? '▴' : '▾'}
+              </span>
+            </button>
+            <button
+              type="button"
+              className="coh-banner-close"
+              aria-label={t('coherence.bannerDismiss')}
+              onClick={dismissCoherence}
+            >
+              ✕
+            </button>
+          </div>
+          {coherenceOpen ? (
+            <div className="coh-banner-body">
+              {coherenceView.highlights.length ? (
+                <ul className="coh-banner-list">
+                  {coherenceView.highlights.map((h, i) => (
+                    <li key={`${i}-${h}`}>{h}</li>
+                  ))}
+                </ul>
+              ) : null}
+              <div className="coh-banner-actions">
+                <button type="button" className="btn primary" onClick={openCoherenceSweep}>
+                  {t('coherence.bannerOpen')}
+                </button>
+                <button type="button" className="btn" onClick={dismissCoherence}>
+                  {t('coherence.bannerHide')}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="coh-banner-actions is-inline">
+              <button type="button" className="btn primary" onClick={openCoherenceSweep}>
+                {t('coherence.bannerOpen')}
+              </button>
+            </div>
+          )}
+        </section>
+      ) : null}
+
       {/* 📝 Spec Seed ＋ 🧠 ブレスト ＋ 🛠 リファクタリング（同列エントリ） */}
       <div className="seed-entry">
         <button
@@ -1174,6 +1427,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
           className="snippet-chip trigger"
           onClick={() => {
             haptic('tap')
+            setRefactorPreset('')
             setRefactorOpen(true)
           }}
         >
@@ -1356,8 +1610,13 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
       {refactorOpen ? (
         <RefactorSheet
           board={board ?? ''}
+          repo={specsInfo?.repo ?? null}
+          initialPreset={refactorPreset}
           notify={notify}
-          onClose={() => setRefactorOpen(false)}
+          onClose={() => {
+            setRefactorOpen(false)
+            setRefactorPreset('')
+          }}
         />
       ) : null}
 
@@ -1371,6 +1630,9 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
               open={specPickerOpen}
               onToggle={() => setSpecPickerOpen((v) => !v)}
               onPick={(s) => pickSpec(s, true)}
+              archivedCount={specArchivedCount}
+              showArchived={specShowArchived}
+              onToggleArchived={setSpecShowArchived}
               t={t}
             />
             <div className="spec-md-row">
@@ -1472,6 +1734,9 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, focu
               open={specPickerOpen}
               onToggle={() => setSpecPickerOpen((v) => !v)}
               onPick={(s) => pickSpec(s, false)}
+              archivedCount={specArchivedCount}
+              showArchived={specShowArchived}
+              onToggleArchived={setSpecShowArchived}
               t={t}
             />
             <div className="spec-md-row">

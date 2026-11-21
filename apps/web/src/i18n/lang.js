@@ -10,11 +10,13 @@
 import en from './en.json' with { type: 'json' }
 import ja from './ja.json' with { type: 'json' }
 import { setLocale } from '../lib/format.js'
+import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
+import { HM_STORAGE } from '../contracts/storage.js'
 
 export const LANGS = ['en', 'ja']
 export const DEFAULT_LANG = 'en'
 /** `localStorage` のキー。値は `en` / `ja` / `auto`。 */
-export const STORAGE_KEY = 'hm.lang'
+export const STORAGE_KEY = HM_STORAGE.LANG
 
 /** @type {Record<string, Record<string, string>>} */
 export const DICTS = { en, ja }
@@ -59,7 +61,7 @@ export function resolveLang({ stored, languages, language } = {}) {
 
 /**
  * 保存値と `navigator` から言語を決める（ブラウザ用の入口）。
- * @param {unknown} [stored] `localStorage['hm.lang']`
+ * @param {unknown} [stored] `HM_STORAGE.LANG` の保存値
  * @returns {'en'|'ja'} 言語
  */
 export function detectLang(stored) {
@@ -111,7 +113,7 @@ let active = detectLang(readStoredPref())
 const listeners = new Set()
 
 /**
- * `localStorage['hm.lang']` を読む（読めない環境では null）。
+ * `HM_STORAGE.LANG` を読む（読めない環境では null）。
  * @returns {'en'|'ja'|'auto'|null} 保存値
  */
 export function readStoredPref() {
@@ -151,7 +153,7 @@ export function setLang(next) {
   }
   try {
     if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
-      window.dispatchEvent(new CustomEvent('hm:lang', { detail: { lang } }))
+      emitHmEvent(HM_EVENTS.LANG, { lang })
     }
   } catch {
     /* SSR / テスト環境で CustomEvent が無いときは無視する */
