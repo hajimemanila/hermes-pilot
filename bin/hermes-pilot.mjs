@@ -27,6 +27,7 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { collectPairing, qrPng, qrSvg, qrTerminal, tailscaleCommandCandidates } from '../apps/bridge/src/qr.js'
 import { createPairCodes } from '../apps/bridge/src/pair-codes.js'
+import { DEFAULT_PILOT_PROFILE, ensurePilotProfile, sanitizePilotProfile } from '../apps/bridge/src/pipeline-optimizer.js'
 
 /** リポジトリのルート（このファイルは `bin/` の下）。 */
 export const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
@@ -230,13 +231,17 @@ export function readTailscaleStatus() {
 /**
  * 設定ファイル（`config.json`）を読む。無ければ既定。
  * @param {string} configPath パス
- * @returns {{lang: string, scanDirs: string[], servicePort: number, tlsPort: number|null, tailscaleDns: string|null}} 設定
+ * @returns {{lang: string, pilotProfile: string, scanDirs: string[], servicePort: number, tlsPort: number|null, tailscaleDns: string|null}} 設定
  */
 export function readConfig(configPath) {
   try {
     const raw = JSON.parse(fs.readFileSync(configPath, 'utf8'))
     return {
       lang: typeof raw?.lang === 'string' ? raw.lang : 'en',
+      pilotProfile:
+        typeof raw?.pilotProfile === 'string' && raw.pilotProfile.trim()
+          ? sanitizePilotProfile(raw.pilotProfile)
+          : DEFAULT_PILOT_PROFILE,
       scanDirs: Array.isArray(raw?.scanDirs) ? raw.scanDirs : ['~/Projects', '~/projects'],
       servicePort: Number(raw?.servicePort) || DEFAULT_PORT,
       // Tailscale serve が 443 以外に出す構成（`tailscale serve --https=8444` 等）向け
@@ -245,7 +250,14 @@ export function readConfig(configPath) {
       tailscaleDns: typeof raw?.tailscaleDns === 'string' && raw.tailscaleDns.trim() ? raw.tailscaleDns.trim() : null,
     }
   } catch {
-    return { lang: 'en', scanDirs: ['~/Projects', '~/projects'], servicePort: DEFAULT_PORT, tlsPort: null, tailscaleDns: null }
+    return {
+      lang: 'en',
+      pilotProfile: DEFAULT_PILOT_PROFILE,
+      scanDirs: ['~/Projects', '~/projects'],
+      servicePort: DEFAULT_PORT,
+      tlsPort: null,
+      tailscaleDns: null,
+    }
   }
 }
 
@@ -607,7 +619,10 @@ export async function runInit(
   }
   fs.mkdirSync(p.logDir, { recursive: true })
   if (!fs.existsSync(p.configPath)) {
-    fs.writeFileSync(p.configPath, `${JSON.stringify({ lang: 'en', scanDirs: ['~/Projects', '~/projects'], servicePort: port }, null, 2)}\n`)
+    fs.writeFileSync(
+      p.configPath,
+      `${JSON.stringify({ lang: 'en', pilotProfile: DEFAULT_PILOT_PROFILE, scanDirs: ['~/Projects', '~/projects'], servicePort: port }, null, 2)}\n`,
+    )
   }
   const { created } = ensureToken(p.tokenPath)
 
@@ -649,6 +664,8 @@ export async function runInit(
       out(`  ! skill ${name}: ${err?.message ?? err}`)
     }
   }
+  const profileCfg = readConfig(p.configPath)
+  const profileResult = ensurePilotProfile({ hermesHome: p.hermesHome, profile: profileCfg.pilotProfile })
   // 標準ダッシュボードのタブ（冪等）。`--force` で既存ファイルも上書きする。
   const dashboard = installDashboardPlugin(p, { force, targetDir })
   out(
@@ -656,6 +673,7 @@ export async function runInit(
     'hermes-pilot init done',
     `  data   : ${p.dataDir}`,
     `  token  : ${p.tokenPath}${created ? ' (created, 0600)' : ' (existing)'}`,
+    `  profile: ${profileCfg.pilotProfile} (${profileResult?.soul?.mode ?? 'ready'})`,
     `  skills : ${installed.length ? installed.join(', ') : '(already installed)'}`,
     `  migrate: ${migrated ? 'done' : migration === 'manual' ? 'not run (use the migrate subcommand)' : 'not needed'}`,
   )

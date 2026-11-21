@@ -107,7 +107,17 @@ test('init: データ先・0600 の 256-bit hex トークン・同梱スキル�
     }
     const cfg = JSON.parse(fs.readFileSync(path.join(data, 'config.json'), 'utf8'))
     assert.equal(cfg.servicePort, 4097)
+    assert.equal(cfg.pilotProfile, 'mobile')
     assert.deepEqual(cfg.scanDirs, ['~/Projects', '~/projects'])
+    assert.ok(
+      fs.existsSync(path.join(home, '.hermes', 'profiles', 'mobile', 'SOUL.md')),
+      '専用プロファイル mobile の SOUL.md が作られていない',
+    )
+    assert.equal(
+      fs.existsSync(path.join(home, '.hermes', 'SOUL.md')),
+      false,
+      '普段使いのルート ~/.hermes/SOUL.md を init で勝手に作っていない',
+    )
     for (const skill of BUNDLED_SKILLS) {
       assert.ok(fs.existsSync(path.join(home, '.hermes', 'skills', skill, 'SKILL.md')), `${skill} が配置されていない`)
     }

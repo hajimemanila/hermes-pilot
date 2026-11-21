@@ -177,6 +177,45 @@ test('カンバン: 実行中でないタスクの中断は 409', async () => {
   await assert.rejects(() => kb.abort('alpha', 't_done', 'test'), (err) => err.statusCode === 409)
 })
 
+test('カンバン: abort は reclaim → block を順に実行し、reclaim 失敗時は block せず ok:false を返す', async () => {
+  const dir = tmp('hm-kb-abort-')
+  makeBoard(dir, 'alpha')
+
+  const calls = []
+  const okKb = createKanban(cfgFor(dir), {
+    runKanban: async (slug, args) => {
+      calls.push([slug, ...args])
+      return { code: 0, out: 'ok' }
+    },
+  })
+  const res = await okKb.abort('alpha', 't_run', 'stop now', 'en')
+  assert.equal(res.ok, true)
+  assert.equal(res.reclaimed, true)
+  assert.equal(res.blocked, true)
+  assert.deepEqual(calls, [
+    ['alpha', 'reclaim', 't_run', '--reason', 'stop now'],
+    ['alpha', 'block', 't_run', 'Interrupted from mobile: stop now', '--kind', 'needs_input'],
+  ])
+
+  const failCalls = []
+  const failKb = createKanban(cfgFor(dir), {
+    runKanban: async (slug, args) => {
+      failCalls.push([slug, ...args])
+      return { code: 2, out: 'reclaim failed' }
+    },
+  })
+  const failRes = await failKb.abort('alpha', 't_run', 'stop now', 'en')
+  assert.equal(failRes.ok, false)
+  assert.equal(failRes.reclaimed, false)
+  assert.equal(failRes.blocked, false)
+  assert.equal(failCalls.length, 1, 'reclaim 失敗時は block に進まない')
+
+  // 実 CLI 呼び出しが `kanban --board <slug>` の正しい語順であることをソースレベルでも固定
+  const src = fs.readFileSync(new URL('../src/kanban.js', import.meta.url), 'utf8')
+  assert.match(src, /\['kanban',\s*'--board',\s*slug,\s*\.\.\.args\]/)
+  assert.match(src, /resolveHermesBin\(\)/)
+})
+
 test('カンバン: 存在しないボード/タスクは 404', async () => {
   const dir = tmp('hm-kb4-')
   makeBoard(dir, 'alpha')

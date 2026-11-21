@@ -3,6 +3,26 @@ import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
 import { ApiError } from './api-errors.js'
+import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'
+
+/**
+ * タスク本文から紐づく SPEC パス（`Spec: <rel>` または先頭 5 行内の `SPEC*.md`）を読む。
+ * @param {unknown} body タスク本文
+ * @returns {string|null} 正規化した SPEC 相対パス
+ */
+export function extractSpecFromBody(body) {
+  const text = String(body ?? '')
+  if (!text) return null
+  const m = /^Spec:\s*(.+?)\s*$/m.exec(text)
+  let raw = m ? m[1].trim() : ''
+  if (!raw) {
+    const head = text.split(/\r?\n/).slice(0, 5).join('\n')
+    const legacy = /(?:docs\/)?SPEC[A-Za-z0-9._-]*\.md/i.exec(head)
+    if (legacy) raw = legacy[0]
+  }
+  if (!raw) return null
+  return raw.replace(/\\/g, '/').replace(/^\.\//, '').trim()
+}
 
 /**
  * カンバン（SQLite）の読み取りと、実行中タスクの中断。
@@ -11,11 +31,13 @@ import { ApiError } from './api-errors.js'
  * 中断は正規コマンド `hermes kanban reclaim` → `block` を使う（生の kill はしない）。
  *
  * @param {object} cfg 設定
+ * @param {{runKanban?: Function}} [deps] 差し替え（テスト用）
  * @returns {object} カンバン操作
  */
-export function createKanban(cfg) {
+export function createKanban(cfg, deps = {}) {
   const boardsRoot = path.join(cfg.kanbanRoot, 'boards')
   const defaultDb = cfg.kanbanDb
+  const runKanbanImpl = deps.runKanban ?? cfg.runKanban ?? runKanban
 
   /**
    * ボード一覧（board.json + 件数）。
@@ -160,6 +182,7 @@ export function createKanban(cfg) {
           result: r.result ? String(r.result).slice(0, 400) : null,
           failures: Number(r.consecutive_failures ?? 0),
           sessionId: r.session_id ?? null,
+          spec: extractSpecFromBody(r.body),
         }
         if (withBody) row.body = r.body == null ? '' : String(r.body)
         return row
@@ -298,25 +321,38 @@ export function createKanban(cfg) {
     if (detail.status !== 'running' && !detail.workerPid) {
       throw new ApiError('TASK_STATE_LOCKED', { status: detail.status }, 409)
     }
-    const reclaim = await runKanban(slug, ['reclaim', id, '--reason', reason])
+    const reclaim = await runKanbanImpl(slug, ['reclaim', id, '--reason', reason])
+    if (reclaim.code !== 0) {
+      return {
+        ok: false,
+        reclaimed: false,
+        blocked: false,
+        workerPid: detail.workerPid,
+        output: reclaim.out.trim().slice(0, 800),
+      }
+    }
     const note = lang === 'ja' ? `モバイルから中断: ${reason}` : `Interrupted from mobile: ${reason}`
-    const block = await runKanban(slug, ['block', id, note, '--kind', 'needs_input'])
+    const block = await runKanbanImpl(slug, ['block', id, note, '--kind', 'needs_input'])
     return {
-      ok: reclaim.code === 0,
-      reclaimed: reclaim.code === 0,
+      ok: block.code === 0,
+      reclaimed: true,
       blocked: block.code === 0,
       workerPid: detail.workerPid,
       output: `${reclaim.out}\n${block.out}`.trim().slice(0, 800),
     }
   }
 
-  /** `hermes kanban` を実行する（シェルを介さない）。 */
+  /** `hermes kanban --board <slug> ...` を実行する（シェルを介さない）。 */
   function runKanban(slug, args) {
     return new Promise((resolve) => {
       execFile(
-        'hermes',
-        ['--board', slug, 'kanban', ...args],
-        { timeout: 30000, maxBuffer: 1_000_000, env: { ...process.env } },
+        cfg.hermesBin ?? resolveHermesBin(),
+        ['kanban', '--board', slug, ...args],
+        {
+          timeout: 30000,
+          maxBuffer: 1_000_000,
+          env: { ...process.env, PATH: buildAugmentedPath() },
+        },
         (err, stdout, stderr) => {
           resolve({ code: err ? (err.code ?? 1) : 0, out: `${stdout ?? ''}${stderr ?? ''}`.trim() })
         },

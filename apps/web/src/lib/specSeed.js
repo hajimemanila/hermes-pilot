@@ -156,12 +156,16 @@ export function isQueuedJob(job) {
 }
 
 /**
- * 進行バーのタイトル i18n キー（待機中は「キュー待ち」を明示する）。
+ * 進行バーのタイトル i18n キー（待機中は「キュー待ち」、Round 2 は「回答受領後の待機」を明示する）。
  * @param {object|null} job ジョブ
  * @returns {string} キー
  */
 export function jobTitleKey(job) {
-  if (isQueuedJob(job)) return 'seed.statusQueued'
+  if (isQueuedJob(job)) {
+    return job?.phase === 'round2_spec' || job?.reviewSeenOnce
+      ? 'seed.statusQueuedRound2'
+      : 'seed.statusQueued'
+  }
   return jobStatusKey(job?.status)
 }
 

@@ -404,13 +404,39 @@ review/        sheets/, shots/, library/, feed.jsonl, chat-reports.jsonl, task-c
 | Review data | `~/.hermes/plugin-data/hermes-pilot/review/` (sheets, shots, library, feed) |
 | Completion feed | in-bridge `review-watcher.js` writes `feed.jsonl` / `chat-reports.jsonl` (no cron) |
 
+## Coherence diagnostics
+
+Large repos drift in ways unit tests never catch: one file absorbs every change, a contract is fixed in the web
+layer but not in the mock, finished specs bury the Launchpad. Hermes Pilot runs a **read-only** coherence pass and
+turns the drift into a one-tap proposal — it never files work on its own.
+
+- **Layer 1 (zero config).** Works in any Git repo, any language: `git-hotspot` (files touched 5+ times in 14 days),
+  `file-bloat` with a shrink-only ratchet, `spec-sprawl` (too many unarchived specs), `debt-spike` (`TODO`/`FIXME`
+  concentration in recently changed files).
+- **Layer 2 (opt-in).** Drop a `.hermes-coherence.json` (max 64 KB) at the root of the target repo to set
+  `maxLines`, `ignoreGlobs`, `hotspotDays`, `hotspotTouches`, `baselineFile`, `forbiddenPatterns` and an optional
+  `checker` (a repo-local `.mjs`/`.js`, 10 s timeout, `--json` contract). The keys and a full example are in
+  [docs/OPERATIONS.md](docs/OPERATIONS.md).
+- **Where it shows up.** When the pipeline finishes, the completion report gains a `coherence_alert` and one extra
+  recommended next step. The Tasks tab grows a collapsible banner (thresholds: any hard fail, ≥1 hotspot, ≥3 soft
+  signals); one tap opens the sweep sheet with the recommended preset already selected, and dismissals are keyed to
+  the counts so a new level of drift comes back.
+- **Ratchet.** Existing oversized files are pinned in `scripts/coherence-baseline.json`; the baseline may only be
+  lowered (`--update-baseline`), never raised silently — new UI lands in its own file instead.
+- **Spec archive.** Mark a finished spec with `- **Status**: archived` in its first 40 lines (or move it under
+  `docs/archive/`) and the Launchpad hides it by default; `Show archived (N)` brings it back.
+
+When the banner misbehaves (never shows, never goes away, an archived spec seems lost), see
+[docs/PITFALLS.md](docs/PITFALLS.md) P8.
+
 ## Development
 
 ```bash
 npm install                 # postinstall fixes node-pty permissions
 npm run dev                 # Vite on :4098, proxies /api and /ws to :4097
 npm test                    # unit tests (933)
-npm run verify              # test + check:pwa (34 checks) + check:oauth + production build + audit:responsive
+npm run verify              # test + check:pwa (34 checks) + check:oauth + production build + audit:responsive + check:coherence
+npm run check:coherence     # Layer 2 contract parity: api / events / storage / docs / legacy symbols
 npm run build:demo          # static interactive demo -> apps/web/dist-demo (+ google-sites-embed.html)
 npm run deploy              # atomic, verified swap of apps/web/dist
 npm run migrate:pilot       # the same migration as `init`, on demand
@@ -426,6 +452,7 @@ node bin/hermes-pilot.mjs --help
 | `check:oauth` | **0** violations: no device credential or OAuth token is readable from the browser bundle. |
 | `build` | Vite production build succeeds and contains no `demo/` code. |
 | `audit:responsive` | layout audit at `390×844`, `844×390`, `820×1180` … — tap targets ≥ 44 px, no clipping regressions. |
+| `check:coherence` | **5** Layer 2 rules (`api-parity`, `event-contract`, `storage-contract`, `docs-scripts-parity`, `legacy-reentry`), 0 hard fail. |
 
 Layout:
 

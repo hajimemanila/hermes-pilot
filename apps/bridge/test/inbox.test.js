@@ -281,3 +281,30 @@ test('unblock は不正な入力・存在しないタスク・done タスク・C
   await assert.rejects(() => inbox.unblock('b1', 't_a1', ''), (e) => e.statusCode === 502)
 })
 
+test('close(cancel) は ready（Queued）タスクでも archive CLI を呼び、inbox.js は resolveHermesBin と buildAugmentedPath を使う', async () => {
+  const { root } = fixture()
+  const db = new DatabaseSync(path.join(root, 'kanban', 'boards', 'b1', 'kanban.db'))
+  db.prepare('UPDATE tasks SET status = ? WHERE id = ?').run('ready', 't_a1')
+  db.close()
+
+  const calls = []
+  const inbox = createInbox(
+    {
+      kanbanRoot: path.join(root, 'kanban'),
+      runner: async (args) => {
+        calls.push(args)
+        return { code: 0, out: 'Archived t_a1' }
+      },
+    },
+    fakeKanban,
+  )
+  const res = await inbox.close('b1', 't_a1', 'cancel', 'no longer needed', 'mobile', 'en')
+  assert.equal(res.ok, true)
+  assert.deepEqual(calls[0], ['kanban', '--board', 'b1', 'comment', 't_a1', 'Archived from PWA: no longer needed', '--author', 'mobile'])
+  assert.deepEqual(calls[1], ['kanban', '--board', 'b1', 'archive', 't_a1'])
+
+  const src = fs.readFileSync(new URL('../src/inbox.js', import.meta.url), 'utf8')
+  assert.match(src, /resolveHermesBin\(\)/)
+  assert.match(src, /buildAugmentedPath\(\)/)
+})
+

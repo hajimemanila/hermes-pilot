@@ -3,6 +3,7 @@ import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { execFile } from 'node:child_process'
 import { ApiError } from './api-errors.js'
+import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'
 
 /**
  * 承認待ちインボックス。
@@ -212,9 +213,13 @@ export function createInbox(cfg, kanban) {
     if (c.runner) return c.runner(args)
     return new Promise((resolve) => {
       execFile(
-        c.hermesBin ?? 'hermes',
+        c.hermesBin ?? resolveHermesBin(),
         args,
-        { timeout: 20_000, maxBuffer: 500_000, env: { ...process.env } },
+        {
+          timeout: 20_000,
+          maxBuffer: 500_000,
+          env: { ...process.env, PATH: buildAugmentedPath() },
+        },
         (err, stdout, stderr) => {
           resolve({ code: err ? (err.code ?? 1) : 0, out: `${stdout ?? ''}${stderr ?? ''}`.trim() })
         },

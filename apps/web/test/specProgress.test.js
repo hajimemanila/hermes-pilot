@@ -59,3 +59,24 @@ test('同じバッチ ID のタスクが複数あっても最初の 1 件だけ�
   assert.equal(p.byId.size, 1)
   assert.equal(p.allDone, true)
 })
+
+test('specRelPath 指定時は別 SPEC の同名バッチ ID と衝突しない', () => {
+  const cohBatches = [{ id: 'C1' }, { id: 'C2' }]
+  const tasks = [
+    { title: '[C1] Catalog admission', status: 'done', spec: 'docs/SPEC-CATALOG-ADMISSION.md' },
+    { title: '[C2] Catalog check', status: 'done', body: 'Spec: docs/SPEC-CATALOG-ADMISSION.md\n' },
+  ]
+  const p = specProgress(cohBatches, tasks, 'docs/SPEC-COHERENCE.md')
+  assert.equal(p.byId.size, 0)
+  assert.equal(p.allFiled, false)
+  assert.equal(p.allDone, false)
+
+  const matching = [
+    ...tasks,
+    { title: '[C1] Coherence step 1', status: 'done', spec: 'docs/SPEC-COHERENCE.md' },
+  ]
+  const p2 = specProgress(cohBatches, matching, 'docs/SPEC-COHERENCE.md')
+  assert.equal(p2.byId.size, 1)
+  assert.equal(p2.byId.get('C1')?.title, '[C1] Coherence step 1')
+  assert.equal(p2.allFiled, false)
+})

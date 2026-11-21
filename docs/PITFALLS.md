@@ -148,6 +148,31 @@ Light の漏れと誤判定した）。機械走査の前に `*{transition:none!
 
 ---
 
+## P8. コヒーレンス診断の「出ない・消えない・戻らない」
+
+**症状**（いずれも Tasks タブ / Launchpad / `verify` の見え方の話で、アプリは壊れていない）:
+
+- 完走したのに **提案バナーが出ない**（または毎回出て鬱陶しい）
+- ✕ で閉じたのに翌セッションでまた出る／逆に、直したのに閉じたまま二度と出ない
+- アーカイブした SPEC が Launchpad から**消えたまま戻せない**
+- 何も変えていないのに `verify` が `file-bloat` / ラチェットで落ちる
+
+**原因と対策**（`apps/web/src/lib/tasksView.js` とブリッジ側の判定に集約）:
+
+| 症状 | 原因 | 対策 / 見方 |
+| --- | --- | --- |
+| バナーが出ない | 閾値未満（`hardFailCount > 0 ｜ hotspotCount >= 1 ｜ softSignalCount >= 3` の全部が偽） | 出ないのが正しい。件数は `RefactorSheet` のライブ診断帯で確認する |
+| バナーが出ない（旧ブリッジ） | `GET /api/coherence/report` が 404 | Tasks タブは直近 24 時間の完走レポートの `coherence_alert` に自動で切り替わる。両方無ければ**何も出さない**（飾りにしない） |
+| 閉じても出続ける／出なくなる | 閉じた記録は `HM_STORAGE.COHERENCE_DISMISSED`（`hm.coherenceDismissed`）に **署名**（ハード失敗・ソフト兆候・ホットスポット件数＋推奨スイープ）付きで保存される | **件数か推奨スイープが変わると別アラートとして出し直す**のが仕様。完全に消したいときは DevTools で `localStorage.removeItem('hm.coherenceDismissed')` |
+| アーカイブ SPEC が見えない | Launchpad の既定はアクティブのみ（`specs` が既定でアクティブ） | SPEC ピッカーの **`Show archived (N)`** を ON にする。サーバが `archivedSpecs` を返さない旧ブリッジでも `archived` フラグで振り分ける |
+| `verify` が肥大で落ちる | 基準ファイル（`scripts/coherence-baseline.json` など `baselineFile`）を超えた | 行を減らすのが先。**縮小時だけ** チェッカーの `--update-baseline` で基準を切り下げる（増やす更新はしない） |
+| 診断が固まる | Layer 2 の `checker` は 10 秒タイムアウト | タイムアウト・JSON 不正は `softSignals` に落ちて本体は止まらない。チェッカー単体を `--json` で直接叩いて切り分ける |
+
+**原則**: 診断は**読み取り専用**（D55）。バナーやレポートから勝手にカンバンへ起票しない。
+起票は人が 1 タップしたときだけ（`RefactorSheet` の 2 択起動）。
+
+---
+
 ## 再発防止の運用
 
 ```bash

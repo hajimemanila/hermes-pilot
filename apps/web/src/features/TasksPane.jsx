@@ -14,6 +14,7 @@ import { ArchitectJobBar } from '../components/ArchitectJobBar.jsx'
 import { countRunningArchitect, jobPollMs, pickActiveArchitectJob, pickSpecBanner } from '../lib/specSeed.js'
 import { LiveSheet } from './LiveSheet.jsx'
 import { InboxSheet } from './InboxSheet.jsx'
+import { CloseActions } from '../components/CloseActions.jsx'
 import { pendingCount } from '../lib/reviewView.js'
 import { fmtCost, sep } from '../lib/format.js'
 import { followUpPromptFor, readActiveChatId, reportBodyFor, reportSummaryLine, toEpochMs } from '../lib/chatReports.js'
@@ -539,13 +540,13 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
    * どちらも無ければ**何も出さない**（診断は飾りにしない・画面を壊さない）。
    * 読み取り専用で、ここから勝手にカンバンへ起票しない（D55）。
    */
-  const loadCoherence = useCallback(async (slug) => {
+  const loadCoherence = useCallback(async (slug, { fresh = false } = {}) => {
     if (!slug) {
       setCoherenceReport(null)
       return
     }
     try {
-      const d = await api(`/api/coherence/report?board=${encodeURIComponent(slug)}`)
+      const d = await api(`/api/coherence/report?board=${encodeURIComponent(slug)}${fresh ? '&fresh=1' : ''}`)
       setCoherenceReport(d && typeof d === 'object' ? d : null)
     } catch {
       // ルート未実装・オフラインでは黙って諦める（完走レポート側の材料で代替する）
@@ -566,7 +567,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
       board ? loadTasks(board) : Promise.resolve(true),
       loadInbox(),
       loadSpecs(board),
-      board ? loadCoherence(board) : Promise.resolve(),
+      board ? loadCoherence(board, { fresh: true }) : Promise.resolve(),
       refresh ? refresh() : Promise.resolve(true),
     ])
     return results[0] !== false
@@ -614,15 +615,25 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     return () => clearInterval(id)
   }, [loadArchitectJobs, pollMs, active])
 
-  // スリープ復帰や Review 回答送信直後にタスク一覧と Architect 進行バーを即同期する
+  // スリープ復帰・Review 回答・パイプライン完走通知の直後にタスク一覧・進行バー・Coherence 診断を即時再同期する
   useEffect(() => {
     const onWake = () => {
       loadArchitectJobs()
-      if (board) loadTasks(board)
+      if (board) {
+        loadTasks(board)
+        loadCoherence(board, { fresh: true })
+      }
+    }
+    const onRefreshReports = () => {
+      if (board) loadCoherence(board, { fresh: true })
     }
     window.addEventListener(HM_EVENTS.WAKE_SYNC, onWake)
-    return () => window.removeEventListener(HM_EVENTS.WAKE_SYNC, onWake)
-  }, [board, loadArchitectJobs, loadTasks])
+    window.addEventListener(HM_EVENTS.REFRESH_REPORTS, onRefreshReports)
+    return () => {
+      window.removeEventListener(HM_EVENTS.WAKE_SYNC, onWake)
+      window.removeEventListener(HM_EVENTS.REFRESH_REPORTS, onRefreshReports)
+    }
+  }, [board, loadArchitectJobs, loadTasks, loadCoherence])
 
   /*
    * 新 SPEC の即時同期（SPEC V6 §3.3 ③ / D31）。
@@ -717,6 +728,16 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
       clearInterval(id)
     }
   }, [board, idle, active])
+
+  // 新しいパイプライン完走レポートを観測したら、生の Coherence 診断も即時 fresh 取得する
+  const lastCoherenceReportAtRef = useRef(null)
+  useEffect(() => {
+    const at = latestReport?.at ?? null
+    if (!board || !active || !at) return
+    if (lastCoherenceReportAtRef.current === at) return
+    lastCoherenceReportAtRef.current = at
+    loadCoherence(board, { fresh: true })
+  }, [board, active, latestReport?.at, loadCoherence])
 
   /* 直近 24 時間のレポートだけをバナーに出す（古い完走を常設しない）。 */
   const reportRecent = useMemo(() => {
@@ -1237,6 +1258,20 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
                     tone="danger"
                     disabled={busy}
                     onFire={() => abortTask(detail)}
+                  />
+                </div>
+              ) : detail.status && detail.status !== 'done' && detail.status !== 'archived' ? (
+                <div style={{ marginTop: 12 }}>
+                  <CloseActions
+                    board={detailBoard}
+                    taskId={detail.id}
+                    notify={notify}
+                    onClosed={() => {
+                      emitHmEvent(HM_EVENTS.WAKE_SYNC)
+                      setDetail(null)
+                      if (detailBoard) loadTasks(detailBoard)
+                      refresh?.()
+                    }}
                   />
                 </div>
               ) : null}

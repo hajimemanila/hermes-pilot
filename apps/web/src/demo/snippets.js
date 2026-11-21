@@ -225,14 +225,14 @@ export const DEMO_SNIPPETS = {
  * @type {{id: string, hot?: boolean, run?: boolean, en: [string, string], ja: [string, string], text: string}[]}
  */
 export const DEMO_TERM_BUILTIN = [
-  // --- Hot 6（バーに出す）----------------------------------------------------
+  // --- Hot 6（バーに出す: 安全・読み取り専用・どの cwd でも完結） -----------
   {
-    id: 't-pilot-restart',
+    id: 't-hermes-status',
     hot: true,
     run: true,
-    en: ['Restart Pilot', 'Restart Hermes Pilot bridge (4097)'],
-    ja: ['Pilot再起動', 'Hermes Pilot ブリッジ(4097)を再起動'],
-    text: 'launchctl kickstart -k gui/$(id -u)/ai.hermes.pilot',
+    en: ['Hermes Status', 'Hermes agent model, gateway & jobs overview'],
+    ja: ['Hermes状態', 'モデル・Gateway・ジョブ全体の稼働概要'],
+    text: 'hermes status',
   },
   {
     id: 't-gw-status',
@@ -243,26 +243,10 @@ export const DEMO_TERM_BUILTIN = [
     text: 'hermes gateway status',
   },
   {
-    id: 't-gw-restart',
-    hot: true,
-    run: true,
-    en: ['Restart GW', 'Restart Hermes gateway'],
-    ja: ['GW再起動', 'gateway を再起動'],
-    text: 'hermes gateway restart',
-  },
-  {
-    id: 't-drain-restart',
-    hot: true,
-    run: true,
-    en: ['Clear Drain + GW', 'Remove drain marker & restart GW'],
-    ja: ['解除+GW再起動', 'ドレイン解除＋gateway再起動'],
-    text: 'rm -f ~/.hermes/.drain_request.json && hermes gateway restart',
-  },
-  {
     id: 't-kanban',
     hot: true,
     run: true,
-    en: ['Kanban Active', 'List kanban tasks'],
+    en: ['Kanban', 'List active kanban tasks'],
     ja: ['カンバン一覧', 'カンバンのタスク一覧'],
     text: 'hermes kanban list',
   },
@@ -274,41 +258,31 @@ export const DEMO_TERM_BUILTIN = [
     ja: ['GWログ', 'gateway.log の末尾80行'],
     text: 'tail -n 80 ~/.hermes/logs/gateway.log',
   },
-  // --- シート（10個）----------------------------------------------------------
+  {
+    id: 't-errors',
+    hot: true,
+    run: true,
+    en: ['Error Log', 'Last 80 lines of errors.log'],
+    ja: ['エラーログ', 'errors.log の末尾80行'],
+    text: 'tail -n 80 ~/.hermes/logs/errors.log',
+  },
+  {
+    id: 't-health',
+    hot: true,
+    run: true,
+    en: ['Reachability', 'Check HTTP 200 on 9119 & 4097'],
+    ja: ['疎通確認', '9119 と 4097 の HTTP 応答確認'],
+    text:
+      'curl -s -o /dev/null -w "dashboard %{http_code}\\n" http://127.0.0.1:9119/; ' +
+      'curl -s -o /dev/null -w "pilot %{http_code}\\n" http://127.0.0.1:4097/healthz',
+  },
+  // --- シート（9個）----------------------------------------------------------
   {
     id: 't-pilot-status',
     run: true,
     en: ['Pilot Status', 'Service status of Hermes Pilot'],
     ja: ['Pilot状態', 'Hermes Pilot のサービス状態'],
     text: 'launchctl print gui/$(id -u)/ai.hermes.pilot | head -20',
-  },
-  {
-    id: 't-pair-qr',
-    run: true,
-    en: ['Pairing QR', 'Show pairing URL & QR in terminal'],
-    ja: ['ペアリングQR', 'ペアリングURLとQRを表示'],
-    text: 'npx hermes-pilot qr',
-  },
-  {
-    id: 't-verify',
-    run: true,
-    en: ['Run Verify', 'Run tests, PWA check, and build'],
-    ja: ['Verify実行', 'テスト・PWA検査・ビルドを一括実行'],
-    text: 'npm run verify',
-  },
-  {
-    id: 't-deploy',
-    run: true,
-    en: ['Deploy Web', 'Zero-downtime build & swap dist'],
-    ja: ['Webデプロイ', '無停止ビルド＆dist入れ替え'],
-    text: 'npm run deploy',
-  },
-  {
-    id: 't-drain-clear',
-    run: true,
-    en: ['Clear Drain', 'Remove drain marker only'],
-    ja: ['ドレイン解除', 'ドレインマーカーのみ削除'],
-    text: 'rm -f ~/.hermes/.drain_request.json && echo "drain marker removed"',
   },
   {
     id: 't-list',
@@ -318,22 +292,6 @@ export const DEMO_TERM_BUILTIN = [
     text: 'launchctl list | grep -i hermes',
   },
   {
-    id: 't-errors',
-    run: true,
-    en: ['Error Log', 'Last 80 lines of errors.log'],
-    ja: ['エラーログ', 'errors.log の末尾80行'],
-    text: 'tail -n 80 ~/.hermes/logs/errors.log',
-  },
-  {
-    id: 't-health',
-    run: true,
-    en: ['Reachability', 'Check HTTP 200 on 9119 & 4097'],
-    ja: ['疎通確認', '9119 と 4097 の HTTP 応答確認'],
-    text:
-      'curl -s -o /dev/null -w "dashboard %{http_code}\\n" http://127.0.0.1:9119/; ' +
-      'curl -s -o /dev/null -w "pilot %{http_code}\\n" http://127.0.0.1:4097/healthz',
-  },
-  {
     id: 't-port',
     run: true,
     en: ['Ports', 'Check listening processes on 9119 & 4097'],
@@ -341,10 +299,45 @@ export const DEMO_TERM_BUILTIN = [
     text: 'lsof -nP -iTCP:9119 -sTCP:LISTEN; lsof -nP -iTCP:4097 -sTCP:LISTEN',
   },
   {
+    id: 't-gw-restart',
+    run: true,
+    en: ['Restart GW', 'Restart Hermes gateway'],
+    ja: ['GW再起動', 'gateway を再起動'],
+    text: 'hermes gateway restart',
+  },
+  {
+    id: 't-pilot-restart',
+    run: true,
+    en: ['Restart Pilot', 'Restart Hermes Pilot bridge (briefly disconnects terminal)'],
+    ja: ['Pilot再起動', 'Hermes Pilot ブリッジを再起動（端末が一時切断されます）'],
+    text: 'launchctl kickstart -k gui/$(id -u)/ai.hermes.pilot',
+  },
+  {
+    id: 't-drain-clear',
+    run: true,
+    en: ['Clear Drain', 'Remove drain marker only'],
+    ja: ['ドレイン解除', 'ドレインマーカーのみ削除'],
+    text: 'rm -f ~/.hermes/.drain_request.json && echo "drain marker removed"',
+  },
+  {
+    id: 't-drain-restart',
+    run: true,
+    en: ['Clear Drain + GW', 'Remove drain marker & restart GW'],
+    ja: ['解除+GW再起動', 'ドレイン解除＋gateway再起動'],
+    text: 'rm -f ~/.hermes/.drain_request.json && hermes gateway restart',
+  },
+  {
+    id: 't-pair-qr',
+    run: true,
+    en: ['Pairing QR', 'Show pairing URL & QR in terminal'],
+    ja: ['ペアリングQR', 'ペアリングURLとQRを表示'],
+    text: 'hermes-pilot qr',
+  },
+  {
     id: 't-git',
     run: true,
-    en: ['Git State', 'Short status & last 3 commits'],
-    ja: ['git状態', '差分と直近3コミット'],
+    en: ['Git State', 'Short status & last 3 commits (run inside a repo)'],
+    ja: ['git状態', '差分と直近3コミット（リポジトリ内で実行）'],
     text: 'git status --short && git log --oneline -3',
   },
 ]

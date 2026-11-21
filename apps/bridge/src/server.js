@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { WebSocketServer, WebSocket } from 'ws'
 import { createRequire } from 'node:module'
-import { loadConfig, VERSION } from './config.js'
+import { loadConfig, readPilotProfile, writePilotProfile, VERSION } from './config.js'
 import { createAuth, isAllowedWsOrigin } from './auth.js'
 import { createHermesClient } from './hermes.js'
 import { createKanban } from './kanban.js'
@@ -31,20 +31,22 @@ import { createTelemetry } from './telemetry.js'
 import { createLive } from './live.js'
 import { createInbox } from './inbox.js'
 import { createRepos, normalizePath } from './repos.js'
-import { createSpecs, listSpecs, readSpecContent } from './specs.js'
+import { createSpecs, listSpecs, partitionSpecs, readSpecContent } from './specs.js'
+import { analyzeCoherence } from './coherence.js'
 import { createArchitect } from './architect.js'
 import {
   DEFAULT_SKILLS_SRC,
+  ensurePilotProfile,
   getOptimizeStatus,
   optimizeAgentSkills,
-  optimizeHermesSoul,
-  optimizeProfileSouls,
 } from './pipeline-optimizer.js'
 import { createPairCodes } from './pair-codes.js'
 import { createMemosStore } from './memos.js'
 import { getCapabilities } from './capabilities.js'
-import { errorBody } from './api-errors.js'
-import { resolveLang } from './lang.js'
+import { langOf, readJson, sendError, sendFailure, sendJson } from './http/respond.js'
+import { loginAllowed, readAllowed, writeAllowed } from './http/rate-limit.js'
+import { loginPage } from './http/login-page.js'
+import { createStaticFiles } from './http/static-files.js'
 import { checkFrame, rejectionFrame } from './chat-profile.js'
 import { readTailText } from './tail.js'
 import { collectPairing, qrPng, qrRows, qrSvg, tailscaleCommandCandidates } from './qr.js'
@@ -95,6 +97,9 @@ function safeRequire(name) {
 }
 
 const cfg = loadConfig()
+// 静的配信（dist → dist.prev フォールバック）は http/ へ切り出し済み
+const distFiles = createStaticFiles({ distDir: cfg.distDir })
+const getPilotProfile = () => readPilotProfile(cfg.configPath)
 const capabilities = getCapabilities()
 // ワンタイム・ペアリングコード（QR を短くするため。SPEC §8.2 の one-time token）
 const pairCodes = createPairCodes(cfg)
@@ -108,11 +113,14 @@ const repos = createRepos(cfg, { boards: () => kanban.boards() })
 // Spec Launchpad（`docs/SPEC-*.md` → バッチ → カンバン一括起票）。SPEC §5.4 / D15④
 const specs = createSpecs(cfg, { tasks: (board) => kanban.tasks(board, { limit: 200 }), listSpecs })
 // Architect（仕様の種 → SPEC / A2B）。ランナーは Hermes Native（`hermes kanban create`）だけ。
-const architect = createArchitect(cfg, {
-  listSpecs,
-  readTasks: (board) => kanban.tasks(board, { limit: 200 }),
-})
-const review = createReview(cfg, { targets: () => repos.targets() })
+const architect = createArchitect(
+  { ...cfg, pilotProfile: getPilotProfile },
+  {
+    listSpecs,
+    readTasks: (board) => kanban.tasks(board, { limit: 200 }),
+  },
+)
+const review = createReview(cfg, { targets: () => repos.targets(), assignee: getPilotProfile })
 // 完了・ブロックの記録はブリッジ内蔵（D7）。外部 cron は要らない。
 const reviewWatcher = createReviewWatcher(cfg, { review })
 const ops = createOps(cfg, hermes, auth, { kanban })
@@ -122,6 +130,45 @@ const usage = createUsage(cfg)
 // パイプライン完走レポート（D20 / D21）。Spec ラン／ボードウェーブの収束を監視する。
 // `usage` を渡すと報告に Spec スコープの API コール数・トークン数が入る。
 const pipelineWatcher = createPipelineWatcher(cfg, { gitinfo, usage })
+
+let watcherRefreshAt = 0
+let watcherInFlight = null
+
+/**
+ * レビュー／パイプラインの両ウォッチャーを即時走査する（連打と並行実行を束ねる）。
+ * 状態変更直後の「最大 10〜25 秒の通知ラグ」を消すための補助同期。
+ * @param {number} [minIntervalMs] 前回走査からの最小経過時間
+ * @returns {Promise<void>}
+ */
+function ensureWatchersFresh(minIntervalMs = 2000) {
+  if (watcherInFlight) return watcherInFlight
+  const nowMs = Date.now()
+  if (minIntervalMs > 0 && nowMs - watcherRefreshAt < minIntervalMs) return Promise.resolve()
+  watcherInFlight = (async () => {
+    try {
+      watcherRefreshAt = Date.now()
+      try {
+        reviewWatcher.tick()
+      } catch {
+        /* 補助同期の失敗で本線を止めない */
+      }
+      try {
+        await pipelineWatcher.tick()
+      } catch {
+        /* 補助同期の失敗で本線を止めない */
+      }
+      watcherRefreshAt = Date.now()
+    } finally {
+      watcherInFlight = null
+    }
+  })()
+  return watcherInFlight
+}
+
+/** 状態変更 API の成功後に背後でウォッチャーを即時回転させる。 */
+function nudgeWatchers() {
+  void ensureWatchersFresh(0)
+}
 const discord = createDiscord(cfg)
 const search = createSearch(cfg)
 const transcript = createTranscript(cfg)
@@ -250,246 +297,6 @@ function snippetPayload(kind, lang) {
   }
 }
 
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.webmanifest': 'application/manifest+json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.webp': 'image/webp',
-  '.ico': 'image/x-icon',
-  '.map': 'application/json; charset=utf-8',
-}
-
-/** @param {import('node:http').ServerResponse} res 応答 */
-function sendJson(res, status, data) {
-  const body = JSON.stringify(data, null, 2)
-  res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'content-length': Buffer.byteLength(body),
-    'cache-control': 'no-store',
-  })
-  res.end(body)
-}
-
-/**
- * エラー応答（SPEC §6.3）。`{ok:false, code, error, params}` の形に統一する。
- * @param {import('node:http').ServerResponse} res 応答
- * @param {number} status HTTP ステータス
- * @param {string} code エラーコード
- * @param {Record<string, unknown>} [params] プレースホルダ値
- * @returns {void}
- */
-function sendError(res, status, code, params) {
-  sendJson(res, status, errorBody(code, params))
-}
-
-/**
- * 内部モジュールの `{ok:false, code?, error|message}` を §6.3 の形へ正規化して返す。
- * 元の説明文は `detail` に残す（英語既定だけでは原因が分からない時用）。
- * @param {import('node:http').ServerResponse} res 応答
- * @param {number} status HTTP ステータス
- * @param {{code?: string, error?: unknown, message?: unknown, params?: object, status?: unknown, reason?: unknown}} r 失敗結果
- * @returns {void}
- */
-function sendFailure(res, status, r) {
-  const fallback = status === 404 ? 'NOT_FOUND' : status === 409 ? 'CONFLICT' : 'BAD_REQUEST'
-  const code = r?.code ?? fallback
-  const params = r?.params ?? (r?.status ? { status: r.status } : {})
-  const body = errorBody(code, params)
-  const detail = [r?.message, r?.error, r?.reason].find((v) => typeof v === 'string' && v.trim())
-  if (detail && detail !== body.error) body.detail = String(detail)
-  sendJson(res, status, body)
-}
-
-/**
- * リクエストの表示言語（`?lang=` → `Accept-Language` → en・SPEC §6.1）。
- * @param {import('node:http').IncomingMessage} req リクエスト
- * @param {URL} url URL
- * @returns {'en'|'ja'} 言語
- */
-function langOf(req, url) {
-  return resolveLang({ queryLang: url.searchParams.get('lang'), acceptLanguage: req.headers['accept-language'] })
-}
-
-/** 本文を JSON として読む（上限 1MB）。 */
-function readJson(req, limit = 1_000_000) {
-  return new Promise((resolve, reject) => {
-    const chunks = []
-    let size = 0
-    req.on('data', (c) => {
-      size += c.length
-      if (size > limit) {
-        reject(Object.assign(new Error('payload too large'), { statusCode: 413 }))
-        req.destroy()
-        return
-      }
-      chunks.push(c)
-    })
-    req.on('end', () => {
-      if (!chunks.length) return resolve({})
-      try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')))
-      } catch {
-        reject(Object.assign(new Error('invalid JSON'), { statusCode: 400 }))
-      }
-    })
-    req.on('error', reject)
-  })
-}
-
-/** 書き込み系の簡易レート制限。 */
-const writes = []
-function writeAllowed(max = 60, windowMs = 60_000) {
-  const now = Date.now()
-  while (writes.length && now - writes[0] > windowMs) writes.shift()
-  if (writes.length >= max) return false
-  writes.push(now)
-  return true
-}
-
-/**
- * ペアリング（`POST /api/auth/login`）専用の簡易レート制限。
- * アプリの書き込み枠と混ぜない（混ぜると通常操作が 10 回で詰まる）。
- */
-const loginAttempts = []
-function loginAllowed(max = 12, windowMs = 60_000) {
-  const now = Date.now()
-  while (loginAttempts.length && now - loginAttempts[0] > windowMs) loginAttempts.shift()
-  if (loginAttempts.length >= max) return false
-  loginAttempts.push(now)
-  return true
-}
-
-/** 読み取り系の簡易レート制限（機能別バケットで分離）。書き込みとは枠を分ける。 */
-const readBuckets = new Map()
-function readAllowed(bucket = 'default', max = 240, windowMs = 60_000) {
-  const now = Date.now()
-  let arr = readBuckets.get(bucket)
-  if (!arr) {
-    arr = []
-    readBuckets.set(bucket, arr)
-  }
-  while (arr.length && now - arr[0] > windowMs) arr.shift()
-  if (arr.length >= max) return false
-  arr.push(now)
-  return true
-}
-
-/**
- * ログイン画面の文言（`Accept-Language` / `?lang=` で切り替える）。
- * 既定は英語 — PWA 本体の既定言語（`en`）と揃える。
- */
-const LOGIN_TEXT = {
-  en: {
-    title: 'Hermes Pilot — Sign in',
-    placeholder: 'App token',
-    submit: 'Enter',
-    hint: 'Find the token in <code>~/.hermes/plugin-data/hermes-pilot/token</code>.',
-  },
-  ja: {
-    title: 'Hermes Pilot — ログイン',
-    placeholder: 'アプリトークン',
-    submit: '入る',
-    hint: 'トークンは <code>~/.hermes/plugin-data/hermes-pilot/token</code>（トークンファイル）を確認してください。',
-  },
-}
-
-/**
- * ログイン画面の HTML を要求言語で組み立てる。
- * @param {import('node:http').IncomingMessage} req 要求
- * @returns {string} HTML
- */
-function loginPage(req) {
-  // 言語判定は `langOf()`（`?lang=` → `Accept-Language` → en）に一本化する
-  let url
-  try {
-    url = new URL(String(req?.url ?? '/'), 'http://x')
-  } catch {
-    url = new URL('/', 'http://x')
-  }
-  const L = LOGIN_TEXT[langOf(req, url)] ?? LOGIN_TEXT.en
-  return LOGIN_HTML
-    .replace('__TITLE__', L.title)
-    .replace('__PLACEHOLDER__', L.placeholder)
-    .replace('__SUBMIT__', L.submit)
-    .replace('__HINT__', L.hint)
-}
-
-const LOGIN_HTML = `<!doctype html><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>__TITLE__</title>
-<style>body{background:#07171b;color:#e6f4f1;font:15px/1.6 system-ui;margin:0;display:grid;place-items:center;height:100vh}
-form{background:#0d242a;padding:24px;border-radius:16px;border:1px solid #1d3a41;width:min(88vw,360px)}
-h1{font-size:16px;margin:0 0 12px}input{width:100%;padding:12px;border-radius:10px;border:1px solid #24515a;background:#081e23;color:#e6f4f1;font-size:15px;box-sizing:border-box}
-button{margin-top:12px;width:100%;padding:12px;border-radius:10px;border:0;background:#13807f;color:#fff;font-size:15px}
-p{color:#7fa6a3;font-size:12px;margin:10px 0 0}</style>
-<form method="get" action="/auth"><h1>Hermes Pilot</h1>
-<input name="t" placeholder="__PLACEHOLDER__" autocomplete="off" autocapitalize="off" spellcheck="false">
-<button>__SUBMIT__</button>
-<p>__HINT__</p></form>`
-
-/**
- * 静的配信。`dist` が無い／ビルド途中なら直前の正常ビルド（`dist.prev`）で配る。
- *
- * 実測: 改修中にビルドが走っている間 `dist` が欠け、PWA が
- * 「ブリッジに接続できません」で使えなくなった。落とさないための保険。
- */
-function distCandidates() {
-  return [cfg.distDir, `${cfg.distDir}.prev`]
-}
-
-/** キャッシュ方針（html/manifest/json は no-cache、/assets/ のハッシュ付きは長期）。 */
-function cacheControlFor(file) {
-  const ext = path.extname(file)
-  if (ext === '.html' || ext === '.webmanifest' || ext === '.json') return 'no-cache'
-  if (file.includes(`${path.sep}assets${path.sep}`)) return 'public, max-age=31536000, immutable'
-  return 'public, max-age=3600, must-revalidate'
-}
-
-const readOrNull = (file) =>
-  new Promise((resolve) => fs.readFile(file, (err, buf) => resolve(err ? null : { buf, file })))
-
-/** 候補ディレクトリを順に試し、最初に見つかった {buf,file} を返す。 */
-async function readFirst(files) {
-  for (const file of files) {
-    const hit = await readOrNull(file)
-    if (hit) return hit
-  }
-  return null
-}
-
-async function serveStatic(req, res, pathname) {
-  const rel = pathname === '/' ? '/index.html' : pathname
-  const file = path.join(cfg.distDir, rel)
-  if (!file.startsWith(cfg.distDir)) {
-    res.writeHead(403).end('forbidden')
-    return
-  }
-  const dirs = distCandidates()
-  const hit = await readFirst(dirs.map((d) => path.join(d, rel)))
-  if (hit) {
-    res.writeHead(200, { 'content-type': MIME[path.extname(hit.file)] ?? 'application/octet-stream',
-                         'cache-control': cacheControlFor(hit.file) })
-    res.end(hit.buf)
-    return
-  }
-  if (path.extname(rel)) {
-    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }).end('not found')
-    return
-  }
-  // SPA フォールバック
-  const index = await readFirst(dirs.map((d) => path.join(d, 'index.html')))
-  if (!index) {
-    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }).end('UI not built (run npm run build)')
-    return
-  }
-  res.writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-cache' }).end(index.buf)
-}
-
 /** ログの末尾を返す。 */
 function tailLog(name, lines = 200) {
   const safe = String(name ?? 'gateway').replace(/[^a-z0-9._-]/gi, '')
@@ -498,6 +305,12 @@ function tailLog(name, lines = 200) {
   const text = readTailText(file, 256 * 1024)
   return text.split('\n').slice(-Math.min(lines, 1000)).join('\n')
 }
+
+/** コヒーレンス診断のキャッシュ（リポジトリごと・15 秒）。 */
+const coherenceCache = new Map()
+
+/** コヒーレンス診断のキャッシュ寿命（ms）。 */
+const COHERENCE_TTL_MS = 15_000
 
 /**
  * Spec Launchpad の対象リポジトリを決める（SPEC §5.4）。
@@ -648,13 +461,20 @@ async function handleApi(req, res, url) {
         boardSlug: url.searchParams.get('board'),
       })
       if (!target) return sendError(res, 404, 'NOT_FOUND', { resource: 'repo' })
+      // 既定はアクティブ SPEC だけ（完了済みで Launchpad が埋まらないようにする。D84）。
+      // `?includeArchived=1` で全件（`specs` にアーカイブも含める）。
+      const all = specs.listSpecs(target.path)
+      const parts = partitionSpecs(all)
+      const includeArchived = url.searchParams.get('includeArchived') === '1'
       return sendJson(res, 200, {
         ok: true,
         repo: target.repo,
         label: target.label,
         path: target.path,
         board: target.board,
-        specs: specs.listSpecs(target.path),
+        specs: includeArchived ? all : parts.active,
+        archivedSpecs: parts.archived,
+        archivedCount: parts.archived.length,
       })
     }
     // GET /api/specs/content?board=<slug>&repo=<id>&path=<rel>
@@ -672,6 +492,7 @@ async function handleApi(req, res, url) {
     }
     // GET /api/specs/reports?board=<slug>&limit=<n>  … 直近のパイプライン完走レポート（D20 / D21）
     if (b === 'reports' && req.method === 'GET') {
+      await ensureWatchersFresh()
       const board = String(url.searchParams.get('board') ?? '').trim()
       const limit = Number(url.searchParams.get('limit')) || 20
       return sendJson(res, 200, {
@@ -693,7 +514,7 @@ async function handleApi(req, res, url) {
         board,
         specRelPath: body?.specRelPath,
         batchIds: body?.batchIds,
-        assignee: String(body?.assignee ?? 'mobile').trim() || 'mobile',
+        assignee: String(body?.assignee ?? getPilotProfile()).trim() || 'mobile',
         // 起票元チャット（`Chat:` 行 ＋ ラン記録の originSessionId）。書式外は specs 側で捨てる。
         chat: body?.chat,
         // 本文の見出し言語（`?lang=` → `Accept-Language` → en）。散文だけが従う。
@@ -709,9 +530,49 @@ async function handleApi(req, res, url) {
         failed: r.failed?.length ?? 0,
         ok: Boolean(r.ok),
       })
+      if (r.ok && !body?.dryRun) nudgeWatchers()
       return r.ok ? sendJson(res, 201, r) : sendFailure(res, 400, r)
     }
     return sendError(res, 404, 'UNKNOWN_ENDPOINT', { path: url.pathname })
+  }
+
+  // --- コヒーレンス診断（SPEC-COHERENCE §3.3.1 / D80・D83） --------------------
+  // GET /api/coherence/report?board=<slug>&repo=<id>&fresh=1
+  //   … 対象リポジトリの Layer 1（＋任意 Layer 2）診断を返す。15 秒キャッシュ（`fresh=1` で再計算）。
+  //     `TasksPane` の提案バナーと `RefactorSheet` のバッジが読む。**読み取り専用**（起票しない）。
+  if (a === 'coherence' && b === 'report' && req.method === 'GET') {
+    const target = resolveSpecRepo({
+      repoId: url.searchParams.get('repo'),
+      boardSlug: url.searchParams.get('board'),
+    })
+    if (!target) return sendError(res, 404, 'NOT_FOUND', { resource: 'repo' })
+    const fresh = url.searchParams.get('fresh') === '1'
+    const key = `${target.repo}:${target.path}`
+    const hit = coherenceCache.get(key)
+    if (!fresh && hit && Date.now() - hit.at < COHERENCE_TTL_MS) {
+      return sendJson(res, 200, { ...hit.report, cached: true })
+    }
+    let report
+    try {
+      report = await analyzeCoherence(target.path)
+    } catch (e) {
+      // 診断の失敗で UI を壊さない（バナーが出ないだけ）。
+      return sendJson(res, 200, {
+        ok: false,
+        error: String(e?.message ?? e).slice(0, 200),
+        repo: target.repo,
+        board: target.board,
+        generatedAt: new Date().toISOString(),
+        layers: { universal: false, repoConfig: false, repoChecker: false },
+        hardFails: [],
+        softSignals: [],
+        hotspots: [],
+        summary: { hardFailCount: 0, softSignalCount: 0, hotspotCount: 0, activeSpecCount: 0, archivedSpecCount: 0, deprecatedRoutes: 0 },
+        recommendedSweep: null,
+      })
+    }
+    coherenceCache.set(key, { at: Date.now(), report })
+    return sendJson(res, 200, { ...report, repo: target.repo, label: target.label, board: target.board, cached: false })
   }
 
   // --- A2B パイプライン最適化（第3段 / SPEC §3.2・D25③） ----------------------
@@ -727,25 +588,63 @@ async function handleApi(req, res, url) {
           hermesHome: cfg.hermesHome,
           home: cfg.home,
           skillsSrcDir: DEFAULT_SKILLS_SRC,
+          pilotProfile: getPilotProfile(),
         }),
       )
+    }
+    if (b === 'profile' && (req.method === 'POST' || req.method === 'PUT')) {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendError(res, 429, 'RATE_LIMITED')
+      }
+      const body = await readJson(req)
+      const pilotProfile = writePilotProfile(cfg.configPath, body?.profile)
+      let ensured = null
+      if (body?.optimize !== false) {
+        ensured = ensurePilotProfile({ hermesHome: cfg.hermesHome, profile: pilotProfile })
+      }
+      const ok = ensured ? ensured.ok : true
+      auth.audit({
+        kind: 'pipeline.profile',
+        profile: pilotProfile,
+        copiedConfig: Boolean(ensured?.copiedConfig),
+        soulMode: ensured?.soul?.mode ?? null,
+        ok,
+      })
+      return sendJson(res, ok ? 200 : 500, {
+        ok,
+        pilotProfile,
+        ...(ensured ? { soul: ensured.soul, copiedConfig: ensured.copiedConfig } : {}),
+        status: getOptimizeStatus({
+          hermesHome: cfg.hermesHome,
+          home: cfg.home,
+          skillsSrcDir: DEFAULT_SKILLS_SRC,
+          pilotProfile,
+        }),
+      })
     }
     if (b === 'optimize' && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
         return sendError(res, 429, 'RATE_LIMITED')
       }
       const body = await readJson(req)
+      if (typeof body?.profile === 'string' && body.profile.trim()) {
+        writePilotProfile(cfg.configPath, body.profile)
+      }
+      const pilotProfile = getPilotProfile()
       // 既定は SOUL とスキル配置の両方。片方だけ試したいときは明示的に false を渡す。
       const doSoul = body?.soul !== false
       const doSkills = body?.skills !== false
-      // プロファイル別 `SOUL.md`（`profiles/<name>/SOUL.md`）も同じ 1 タップで冪等同期する（D64）。
-      const doProfiles = doSoul && body?.profiles !== false
-      const soul = doSoul ? optimizeHermesSoul({ hermesHome: cfg.hermesHome }) : null
-      const profiles = doProfiles ? optimizeProfileSouls({ hermesHome: cfg.hermesHome }) : null
-      const skills = doSkills ? optimizeAgentSkills({ home: cfg.home, skillsSrcDir: DEFAULT_SKILLS_SRC }) : null
+      // 既定の専用プロファイル（`mobile`）のみに書き込み、普段使いの default SOUL は汚さない。
+      const ensured = doSoul ? ensurePilotProfile({ hermesHome: cfg.hermesHome, profile: pilotProfile }) : null
+      const soul = ensured ? ensured.soul : null
+      const profiles = ensured ? { ok: ensured.ok, profiles: ensured.profiles } : null
+      const skills = doSkills
+        ? optimizeAgentSkills({ home: cfg.home, hermesHome: cfg.hermesHome, skillsSrcDir: DEFAULT_SKILLS_SRC })
+        : null
       const ok = (soul?.ok ?? true) && (profiles?.ok ?? true) && (skills?.ok ?? true)
       auth.audit({
         kind: 'pipeline.optimize',
+        profile: pilotProfile,
         soul: soul?.mode ?? null,
         soulChanged: Boolean(soul?.changed),
         profileTargets: profiles?.profiles?.length ?? 0,
@@ -755,10 +654,16 @@ async function handleApi(req, res, url) {
       })
       return sendJson(res, ok ? 200 : 500, {
         ok,
+        pilotProfile,
         soul,
         profiles,
         skills,
-        status: getOptimizeStatus({ hermesHome: cfg.hermesHome, home: cfg.home, skillsSrcDir: DEFAULT_SKILLS_SRC }),
+        status: getOptimizeStatus({
+          hermesHome: cfg.hermesHome,
+          home: cfg.home,
+          skillsSrcDir: DEFAULT_SKILLS_SRC,
+          pilotProfile,
+        }),
       })
     }
     return sendError(res, 404, 'UNKNOWN_ENDPOINT', { path: url.pathname })
@@ -862,14 +767,17 @@ async function handleApi(req, res, url) {
         return sendError(res, 429, 'RATE_LIMITED')
       }
       const body = await readJson(req)
-      const r = await capture.create({ ...body, board: b })
+      const assignee = String(body?.assignee ?? getPilotProfile()).trim() || 'mobile'
+      const r = await capture.create({ ...body, board: b, assignee })
       auth.audit({
         kind: 'kanban.create',
         board: b,
         task: r.task?.id ?? null,
+        assignee,
         created: Boolean(r.created),
         ok: Boolean(r.ok),
       })
+      if (r.ok) nudgeWatchers()
       return r.ok ? sendJson(res, 201, r) : sendFailure(res, 400, r)
     }
     if (b && c === 'tasks' && !d) {
@@ -919,6 +827,7 @@ async function handleApi(req, res, url) {
         status: out.status,
         noop: Boolean(out.noop),
       })
+      if (!out?.noop) nudgeWatchers()
       return sendJson(res, 200, out)
     }
     if (b && c === 'tasks' && d && e === 'unblock' && req.method === 'POST') {
@@ -934,6 +843,7 @@ async function handleApi(req, res, url) {
         status: out.status,
         noop: Boolean(out.noop),
       })
+      if (!out?.noop) nudgeWatchers()
       return sendJson(res, 200, out)
     }
     if (b && c === 'tasks' && d && e === 'worker' && req.method === 'GET') {
@@ -958,6 +868,14 @@ async function handleApi(req, res, url) {
       const reason = String(body?.reason ?? 'mobile kill switch').slice(0, 200)
       const out = await kanban.abort(b, d, reason, langOf(req, url))
       auth.audit({ kind: 'kanban.abort', board: b, task: d, reason, result: out })
+      if (!out?.ok) {
+        return sendJson(res, 502, {
+          ...out,
+          code: 'CLI_FAILED',
+          error: out?.output || 'Failed to abort task',
+        })
+      }
+      nudgeWatchers()
       return sendJson(res, 200, out)
     }
     if (b && c === 'tasks' && d) {
@@ -991,6 +909,7 @@ async function handleApi(req, res, url) {
     }
     // /api/review/feed?limit=&since= … 作業フィード（監視 cron が書く 1 行ログ）
     if (b === 'feed' && req.method === 'GET') {
+      await ensureWatchersFresh()
       return sendJson(res, 200, {
         items: review.feed(
           Number(url.searchParams.get('limit') ?? 20),
@@ -1001,6 +920,7 @@ async function handleApi(req, res, url) {
     // /api/review/chat-reports?limit=&since= … 全会話ぶんの完了報告（未読の点を出すため）
     // 会話一覧の行と下部ナビのチャットタブは「どの会話に新着があるか」を 1 回で要る。
     if (b === 'chat-reports' && req.method === 'GET') {
+      await ensureWatchersFresh()
       return sendJson(res, 200, {
         items: review.chatReports({
           limit: Number(url.searchParams.get('limit') ?? 200),
@@ -1013,6 +933,7 @@ async function handleApi(req, res, url) {
     if (b === 'chat-report' && req.method === 'GET') {
       const sessionId = String(url.searchParams.get('session_id') || '')
       if (!sessionId) return sendError(res, 400, 'SESSION_REQUIRED')
+      await ensureWatchersFresh()
       return sendJson(res, 200, {
         sessionId,
         items: review.chatReport(sessionId, {
@@ -1058,6 +979,7 @@ async function handleApi(req, res, url) {
       const body = await readJson(req, 12_000_000)
       const r = await review.createFromImage(body || {}, langOf(req, url))
       auth.audit({ kind: 'review.from_image', task: r.taskId ?? null, source: body?.source ?? 'upload', ok: Boolean(r.ok) })
+      if (r.ok) nudgeWatchers()
       return r.ok ? sendJson(res, 201, r) : sendFailure(res, 400, r)
     }
     if (c === 'image' && req.method === 'GET') {
@@ -1088,6 +1010,7 @@ async function handleApi(req, res, url) {
         marks: r.marks ?? 0,
         ok: Boolean(r.ok),
       })
+      if (r.ok) nudgeWatchers()
       return r.ok ? sendJson(res, 200, r) : sendFailure(res, 400, r)
     }
     if (c === 'sheet' && req.method === 'GET') {
@@ -1134,6 +1057,7 @@ async function handleApi(req, res, url) {
         choiceCount: Array.isArray(body?.answers) ? body.answers.length : 0,
         ok: Boolean(r.ok),
       })
+      if (r.ok) nudgeWatchers()
       // レビュー待ち以外への送信は 409（状態の衝突）として返す。他の失敗は 400。
       return r.ok ? sendJson(res, 200, r) : sendFailure(res, r.code === 'NOT_WAITING' ? 409 : 400, r)
     }
@@ -1144,6 +1068,7 @@ async function handleApi(req, res, url) {
       const body = await readJson(req)
       const r = await review.reopen(b, body?.reason, langOf(req, url))
       auth.audit({ kind: 'review.reopen', task: b, ok: Boolean(r.ok) })
+      if (r.ok) nudgeWatchers()
       return r.ok ? sendJson(res, 200, r) : sendFailure(res, 400, r)
     }
     // POST /api/review/:id/approve … 赤入れせずに 1 タップ検収（SPEC §5.2.3）
@@ -1161,6 +1086,7 @@ async function handleApi(req, res, url) {
         moved: r.moved ?? null,
         ok: Boolean(r.ok),
       })
+      if (r.ok) nudgeWatchers()
       return r.ok ? sendJson(res, 200, r) : sendFailure(res, r.code === 'NOT_WAITING' ? 409 : 400, r)
     }
     return sendError(res, 404, 'UNKNOWN_ENDPOINT', { path: url.pathname })
@@ -1537,7 +1463,7 @@ const server = http.createServer(async (req, res) => {
 
   try {
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url)
-    return serveStatic(req, res, url.pathname)
+    return distFiles.serveStatic(req, res, url.pathname)
   } catch (err) {
     const status = err?.statusCode ?? 500
     if (status >= 500) console.error('[api] failed:', err)

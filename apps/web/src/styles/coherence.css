@@ -1,0 +1,360 @@
+/*
+ * Coherence sweep sheet (`🛠 Refactor & audit`) — SPEC-COHERENCE §3.6 / D82.
+ *
+ * Split out of the 7,000-line `styles.css` on purpose (D84 ratchet: new UI lands in its own file).
+ * Rules:
+ *  - theme tokens only (`var(--…)`) — no literal colours, so Dark / Light and both vibes work
+ *  - one column on a phone (390), two columns from 720 up (tablet / landscape)
+ *  - the C7 banner rules are appended to this same file
+ */
+
+/* ---------- ライブ診断の帯 ---------- */
+.coh-report {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.coh-report-text {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+  flex: 1 1 150px;
+  min-width: 0;
+}
+
+.coh-report.is-muted .coh-report-text {
+  color: var(--muted);
+}
+
+.coh-report-meta {
+  flex: 1 1 100%;
+  font-size: 11px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.coh-refresh {
+  flex: none;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.coh-refresh:disabled {
+  opacity: 0.55;
+}
+
+/* ---------- 5 つのプリセット ---------- */
+.coh-presets {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.coh-preset {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 11px;
+  text-align: start;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.coh-preset.on {
+  border-color: var(--accent);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.coh-preset:active {
+  opacity: 0.75;
+}
+
+.coh-preset-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.coh-preset-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.coh-preset-desc {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+/* 検出件数のバッジ（0 件なら描かない） */
+.coh-count {
+  flex: none;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--good-bg);
+  border: 1px solid var(--good-line);
+  color: var(--good-fg);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.coh-rec {
+  flex: none;
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--rec-bg);
+  color: var(--rec-fg);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+}
+
+/* ---------- 対象入力と 2 択起動 ---------- */
+.coh-target {
+  margin-top: 10px;
+  width: 100%;
+}
+
+.coh-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.coh-action {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  text-align: start;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.coh-action.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.coh-action:disabled {
+  opacity: 0.55;
+}
+
+.coh-action:active:not(:disabled) {
+  opacity: 0.8;
+}
+
+.coh-action-name {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.coh-action-desc {
+  font-size: 11.5px;
+  line-height: 1.4;
+  opacity: 0.85;
+}
+
+/* ---------- タブレット / 横向き: 2 列 ---------- */
+@media (min-width: 720px) {
+  .coh-presets {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* 5 枚目（任意ターゲット）は行を跨がず 1 列ぶんに収める */
+  .coh-presets > .coh-preset:last-child {
+    grid-column: span 1;
+  }
+
+  .coh-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ------------------------------------------------------------------------ */
+/* Tasks タブの提案バナー（SPEC-COHERENCE §3.6 / D83）                       */
+/* ------------------------------------------------------------------------ */
+
+/*
+ * 折りたたみ式（既定は閉じた 1 行＋主ボタン）。390px でも 1 行目が溢れないよう、
+ * 見出しは flex で縮め、数字は折り返せる位置で切る。
+ */
+.coh-banner {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.coh-banner-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.coh-banner-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 2px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.coh-banner-icon {
+  flex: 0 0 auto;
+  font-size: 15px;
+  line-height: 1.3;
+}
+
+.coh-banner-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.coh-banner-title {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.coh-banner-sub {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.coh-banner-chev {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.coh-banner-close {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.coh-banner-close:hover,
+.coh-banner-close:focus-visible {
+  color: var(--text);
+}
+
+.coh-banner-body {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+
+.coh-banner-list {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.coh-banner-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* 閉じているときは主ボタンだけ（1 タップ起動を常に見せる） */
+.coh-banner-actions.is-inline {
+  margin-top: 8px;
+}
+
+.coh-banner-actions .btn {
+  flex: 1 1 auto;
+  min-height: 34px;
+  font-size: 12.5px;
+}
+
+/* ------------------------------------------------------------------------ */
+/* SPEC ピッカーのアーカイブトグル（D84）                                     */
+/* ------------------------------------------------------------------------ */
+
+.spec-archived-toggle {
+  border-top: 1px dashed var(--line);
+}
+
+.spec-archived-toggle .pick-title {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.spec-archived-toggle.on .pick-title {
+  color: var(--text);
+}
+
+.pick-item.is-archived .pick-title {
+  color: var(--muted);
+}
+
+.spec-archived-pill {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--muted);
+  vertical-align: 1px;
+}

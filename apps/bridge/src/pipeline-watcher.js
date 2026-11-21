@@ -208,7 +208,7 @@ export function coherenceNextStep(coherence, { en = false, board = '' } = {}) {
   const place = board ? `board: ${board}` : 'board'
   return en
     ? `Coherence signals: run ${sweep ? `the ${sweep} sweep` : 'the relevant sweep'} from Refactor & audit (${place} · ${hardFailCount} hard fail(s) / ${softSignalCount} soft signal(s) / ${hotspotCount} hotspot(s))`
-    : `コヒーレンス予兆: ${sweep ? `${sweep} スイープ` : '対象スイープ'}を「Refactor & audit」から実行する（${place} · Hard Fail ${hardFailCount} / 予兆 ${softSignalCount} / ホットスポット ${hotspotCount}）`
+    : `整合性の検証・改善: ${sweep ? `${sweep}` : '対象メニュー'}を「リファクタリング」から実行する（${place} · Hard Fail ${hardFailCount} / 予兆 ${softSignalCount} / ホットスポット ${hotspotCount}）`
 }
 
 /**

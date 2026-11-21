@@ -389,13 +389,39 @@ review/        sheets/, shots/, library/, feed.jsonl, chat-reports.jsonl, task-c
 | レビュー | `~/.hermes/plugin-data/hermes-pilot/review/`（シート・画像・ライブラリ・フィード） |
 | 完了通知 | ブリッジ内蔵 `review-watcher.js` が `feed.jsonl` / `chat-reports.jsonl` を追記（cron 不要） |
 
+## コヒーレンス診断
+
+大きなリポジトリは、単体テストでは捕まらない形でズレていく。1 つのファイルに変更が集中する、契約が Web 側だけ
+直ってモックに届かない、完了した SPEC が Launchpad を埋めてしまう。Hermes Pilot は**読み取り専用**の
+コヒーレンス診断を回し、そのズレを 1 タップの提案に変える。**勝手に起票はしない。**
+
+- **Layer 1（設定ゼロ）.** どの Git リポジトリ・どの言語でも動く。`git-hotspot`（14 日で 5 回以上変更された
+  ファイル）・縮小のみのラチェット付き `file-bloat`・`spec-sprawl`（未アーカイブ SPEC の過多）・
+  直近変更ファイルの `debt-spike`（`TODO` / `FIXME` の集中）
+- **Layer 2（任意）.** 対象リポジトリの直下に `.hermes-coherence.json`（最大 64KB）を置くと、`maxLines` /
+  `ignoreGlobs` / `hotspotDays` / `hotspotTouches` / `baselineFile` / `forbiddenPatterns` と任意の `checker`
+  （リポジトリ内の `.mjs` / `.js`・10 秒タイムアウト・`--json` 契約）を効かせられる。キーの一覧と実例は
+  [docs/OPERATIONS.md](docs/OPERATIONS.md)
+- **どこに出るか.** パイプライン完走時のレポートに `coherence_alert` と推奨アクションが 1 行増える。Tasks タブ
+  上部には折りたたみ可能な提案バナーが出る（閾値: ハード失敗が 1 件以上 / ホットスポット 1 件以上 /
+  ソフト兆候 3 件以上）。1 タップで推奨スイープを選択済みのシートが開き、閉じた記録は件数に紐づくので、
+  さらにズレが進めば出し直される
+- **ラチェット.** 既存の巨大ファイルは `scripts/coherence-baseline.json` に固定する。基準は**下げるだけ**
+  （`--update-baseline`）で、黙って上げない。新しい UI は新しいファイルに置く
+- **SPEC アーカイブ.** 完了した SPEC の先頭 40 行以内に `- **Status**: archived` を足す（`docs/archive/` へ
+  移動しても同じ）。Launchpad は既定で隠し、`Show archived (N)` で戻せる
+
+バナーが出ない・消えない・アーカイブした SPEC が見えない、といった挙動は
+[docs/PITFALLS.md](docs/PITFALLS.md) の P8 を見る。
+
 ## 開発
 
 ```bash
 npm install                 # postinstall が node-pty の権限を直す
 npm run dev                 # Vite :4098（/api・/ws は 4097 へプロキシ）
 npm test                    # 単体テスト（933 件）
-npm run verify              # test + check:pwa（34 項目）+ check:oauth + 本番ビルド + audit:responsive
+npm run verify              # test + check:pwa（34 項目）+ check:oauth + 本番ビルド + audit:responsive + check:coherence
+npm run check:coherence     # Layer 2 契約パリティ: api / events / storage / docs / 旧シンボル
 npm run build:demo          # バックエンド不要の静的デモ → apps/web/dist-demo（+ google-sites-embed.html）
 npm run deploy              # 検証付きで dist を原子的に切替（無停止）
 npm run migrate:pilot       # init と同じ移行を単体で実行
@@ -411,6 +437,7 @@ node bin/hermes-pilot.mjs --help
 | `check:oauth` | **0 違反**: 端末の資格情報や OAuth トークンがブラウザ側バンドルから読めないこと |
 | `build` | Vite 本番ビルドが通り、`demo/` のコードが混入していないこと |
 | `audit:responsive` | `390×844` / `844×390` / `820×1180` などのレイアウト監査（タップ 44px 以上・新規の見切れなし） |
+| `check:coherence` | Layer 2 の **5 ルール**（`api-parity` / `event-contract` / `storage-contract` / `docs-scripts-parity` / `legacy-reentry`）で hard fail 0 |
 
 構成:
 

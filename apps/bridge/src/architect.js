@@ -397,31 +397,65 @@ export function isReviewTask(task) {
   return /\[review\]/i.test(text) || labels.some((l) => /^\[?review\]?$/i.test(l.trim()))
 }
 
+const ACTIVE_REVIEW_STATUSES = new Set(['ready', 'running', 'claimed', 'in_progress'])
+const BLOCKED_REVIEW_STATUSES = new Set(['blocked'])
+
+/**
+ * ジョブに紐づく Quick Review タスクを指定ステータス集合で探す（純関数）。
+ *
+ * 条件: ① `job.taskId`（または `job.reviewTaskId`）と一致する、または `startedAt - 猶予` 以降に作成。
+ * ② `[review]` の印を持ち、状態が `statuses` に含まれる。
+ *
+ * @param {{taskId?: string|null, reviewTaskId?: string|null, startedAt: number}} job ジョブ
+ * @param {Array<object>} tasks ボードのタスク
+ * @param {Set<string>} statuses 対象ステータス集合
+ * @param {{slackMs?: number}} [opts] 制約
+ * @returns {{taskId: string, title: string, status: string}|null} 一致タスク（無ければ null）
+ */
+function matchJobReviewTask(job, tasks, statuses, { slackMs = SPEC_MTIME_SLACK_MS } = {}) {
+  const since = Number(job?.startedAt ?? 0) - slackMs
+  const ownId = job?.taskId ? String(job.taskId) : ''
+  const revId = job?.reviewTaskId ? String(job.reviewTaskId) : ''
+  const list = Array.isArray(tasks) ? tasks : []
+  for (const task of list) {
+    if (!task || !task.id) continue
+    const id = String(task.id)
+    const same = (ownId && id === ownId) || (revId && id === revId)
+    const fresh = Number(task.createdAt ?? 0) >= since
+    if (!same && !fresh) continue
+    if (!isReviewTask(task)) continue
+    const status = String(task.status ?? '').trim().toLowerCase()
+    if (!statuses.has(status)) continue
+    return { taskId: id, title: String(task.title ?? ''), status }
+  }
+  return null
+}
+
 /**
  * ジョブが待っている Quick Review タスクを見つける（純関数）。
  *
  * 条件: ① `job.taskId` と一致するタスク、または `startedAt - 猶予` 以降に作られた `[review]` タスク。
  * ② そのタスクが `blocked` で、`[review]` の印を持つ（＝人の回答待ち）。
  *
- * @param {{taskId?: string|null, startedAt: number}} job ジョブ
+ * @param {{taskId?: string|null, reviewTaskId?: string|null, startedAt: number}} job ジョブ
  * @param {Array<object>} tasks ボードのタスク
  * @param {{slackMs?: number}} [opts] 制約
  * @returns {{taskId: string, title: string, status: string}|null} 待機中タスク（無ければ null）
  */
-export function findJobReviewTask(job, tasks, { slackMs = SPEC_MTIME_SLACK_MS } = {}) {
-  const since = Number(job?.startedAt ?? 0) - slackMs
-  const ownId = job?.taskId ? String(job.taskId) : ''
-  const list = Array.isArray(tasks) ? tasks : []
-  for (const task of list) {
-    if (!task || !task.id) continue
-    const same = ownId && String(task.id) === ownId
-    const fresh = Number(task.createdAt ?? 0) >= since
-    if (!same && !fresh) continue
-    if (!isReviewTask(task)) continue
-    if (String(task.status ?? '') !== 'blocked') continue
-    return { taskId: String(task.id), title: String(task.title ?? ''), status: 'blocked' }
-  }
-  return null
+export function findJobReviewTask(job, tasks, opts) {
+  return matchJobReviewTask(job, tasks, BLOCKED_REVIEW_STATUSES, opts)
+}
+
+/**
+ * Round 1 回答後に動き出した別タスクの `[review]`（ready / running 等）を見つける（純関数）。
+ *
+ * @param {{taskId?: string|null, reviewTaskId?: string|null, startedAt: number}} job ジョブ
+ * @param {Array<object>} tasks ボードのタスク
+ * @param {{slackMs?: number}} [opts] 制約
+ * @returns {{taskId: string, title: string, status: string}|null} 進行中タスク（無ければ null）
+ */
+export function findActiveJobReviewTask(job, tasks, opts) {
+  return matchJobReviewTask(job, tasks, ACTIVE_REVIEW_STATUSES, opts)
 }
 
 /**
@@ -558,7 +592,9 @@ export function createCliRunner(cfg = {}) {
         existingSpecs,
         lang,
       })
-      const args = buildKanbanCreateArgs({ board, title, body })
+      const rawAssignee = typeof cfg?.pilotProfile === 'function' ? cfg.pilotProfile() : cfg?.pilotProfile
+      const assignee = String(rawAssignee ?? '').trim() || 'mobile'
+      const args = buildKanbanCreateArgs({ board, title, body, assignee })
       execFile(
         bin,
         args,
@@ -590,6 +626,40 @@ export function findJobSpec(job, specs, { taken = new Set(), slackMs = SPEC_MTIM
   return [...candidates].sort((a, b) => Number(b.mtime) - Number(a.mtime) || String(a.path).localeCompare(String(b.path)))[0]
 }
 
+/** タスク本文/フィールドから SPEC パスを読む（別 SPEC の同名バッチ ID 衝突を防ぐ）。 */
+function taskSpecPath(task) {
+  const direct = String(task?.spec ?? '').replace(/\\/g, '/').replace(/^\.\//, '').trim()
+  if (direct) return direct
+  const body = String(task?.body ?? '')
+  if (!body) return null
+  const m = /^Spec:\s*(.+?)\s*$/m.exec(body)
+  if (m) return m[1].replace(/\\/g, '/').replace(/^\.\//, '').trim() || null
+  const head = body.split(/\r?\n/).slice(0, 5).join('\n')
+  const leg = /(?:docs\/)?SPEC[A-Za-z0-9._-]*\.md/i.exec(head)
+  return leg ? leg[0].replace(/\\/g, '/').replace(/^\.\//, '').trim() : null
+}
+
+/**
+ * 指定 SPEC に結びついた「起票済みバッチ ID」を集める（別 SPEC に属する `[ID]` は除外）。
+ * @param {Array<{title?: string, spec?: string|null, body?: string}>} tasks ボードのタスク
+ * @param {string|null} specRelPath SPEC 相対パス
+ * @returns {Set<string>} バッチ ID
+ */
+export function filedBatchIdsForSpec(tasks, specRelPath = null) {
+  const wantSpec = String(specRelPath ?? '').replace(/\\/g, '/').replace(/^\.\//, '').trim() || null
+  const out = new Set()
+  for (const task of Array.isArray(tasks) ? tasks : []) {
+    const m = /^\[([^\]]+)\]/.exec(String(task?.title ?? '').trim())
+    if (!m || !m[1].trim()) continue
+    if (wantSpec) {
+      const ts = taskSpecPath(task)
+      if (ts && ts !== wantSpec) continue
+    }
+    out.add(m[1].trim())
+  }
+  return out
+}
+
 /**
  * タスク一覧から「起票済みのバッチ ID」を集める（**状態を問わない**）。
  *
@@ -601,26 +671,21 @@ export function findJobSpec(job, specs, { taken = new Set(), slackMs = SPEC_MTIM
  * @returns {Set<string>} バッチ ID
  */
 export function filedBatchIds(tasks) {
-  const out = new Set()
-  for (const task of Array.isArray(tasks) ? tasks : []) {
-    const m = /^\[([^\]]+)\]/.exec(String(task?.title ?? '').trim())
-    if (m && m[1].trim()) out.add(m[1].trim())
-  }
-  return out
+  return filedBatchIdsForSpec(tasks, null)
 }
 
 /**
  * 未起票の SPEC を数える（A2B の 1 タップ一括起票カード用）。
  * @param {Array<object>} specs `specs.listSpecs` の結果
- * @param {Array<{id: string, title: string, status?: string}>} tasks ボードのタスク
+ * @param {Array<{id: string, title: string, status?: string, spec?: string|null, body?: string}>} tasks ボードのタスク
  * @returns {Array<{path: string, title: string, batchCount: number, pendingCount: number, pending: string[], mtime: number}>} 未起票ありの SPEC
  */
 export function pendingSpecs(specs, tasks) {
-  const filed = filedBatchIds(tasks)
   const out = []
   for (const spec of Array.isArray(specs) ? specs : []) {
     const batches = (spec?.batches ?? []).filter((b) => b?.id)
     if (!batches.length) continue
+    const filed = filedBatchIdsForSpec(tasks, spec.path)
     const pending = batches.filter((b) => !filed.has(String(b.id))).map((b) => b.id)
     if (!pending.length) continue
     out.push({
@@ -1147,24 +1212,9 @@ export function createArchitect(cfg = {}, deps = {}) {
       const self = job.taskId ? tasks.find((t) => t && String(t.id) === String(job.taskId)) ?? null : null
       job.taskStatus = self?.status ? String(self.status) : null
       job.queueState = queueStateOf(job.taskStatus)
-      // 親 [ARCH] が終端（done / archived）なら、SPEC 未検知でもジョブを終端にする。
-      // ここを落とすと「仕様書を書いています…」が進行バーに残り続ける（SPEC V7 §3.1②）。
-      if (self && TERMINAL_TASK_STATUSES.includes(String(self.status))) {
-        job.status = String(self.status)
-        job.queueState = null
-        job.reviewTaskId = null
-        job.reviewTitle = null
-        job.reviewBoard = null
-        job.finishedAt = job.finishedAt ?? now()
-        continue
-      }
-      if (self && self.status === 'failed') {
-        job.status = 'failed'
-        job.error = String(self.result || job.error || 'Architect task failed').slice(0, 600)
-        continue
-      }
       if (job.spec) continue // 完成 SPEC を検知済み（spec_ready / launched）
       // D42: `[review]` は job.board に加えて `mobile` ボードも探す（他ボード起点の種まき対策）
+      // 親 `[ARCH]` が先に done になっても、別タスクの `[review]` が blocked の間は終端に落とさず待つ。
       let review = null
       for (const slug of reviewBoardsFor(job.board)) {
         const found = findJobReviewTask(job, tasksOf(slug))
@@ -1180,6 +1230,42 @@ export function createArchitect(cfg = {}, deps = {}) {
         job.reviewBoard = review.board
         // 一度でも回答待ちを観測した = 以降は Round 2（SPEC 執筆中）として扱う
         job.reviewSeenOnce = true
+        continue
+      }
+      // 親 [ARCH] が終端（done / archived）なら、SPEC 未検知でもジョブを終端にする。
+      // ただし Round 1 を通過した `[review]` タスクが別タスクとして ready / running で進行中なら、
+      // 親が閉じていても Round 2（`awaiting_spec`）として追い続ける。
+      if (self && TERMINAL_TASK_STATUSES.includes(String(self.status))) {
+        let activeReview = null
+        if (job.reviewSeenOnce) {
+          for (const slug of reviewBoardsFor(job.board)) {
+            const found = findActiveJobReviewTask(job, tasksOf(slug))
+            if (found) {
+              activeReview = { ...found, board: slug }
+              break
+            }
+          }
+        }
+        if (activeReview) {
+          job.status = 'awaiting_spec'
+          job.taskStatus = activeReview.status
+          job.queueState = queueStateOf(activeReview.status)
+          job.reviewTaskId = null
+          job.reviewTitle = null
+          job.reviewBoard = null
+          continue
+        }
+        job.status = String(self.status)
+        job.queueState = null
+        job.reviewTaskId = null
+        job.reviewTitle = null
+        job.reviewBoard = null
+        job.finishedAt = job.finishedAt ?? now()
+        continue
+      }
+      if (self && self.status === 'failed') {
+        job.status = 'failed'
+        job.error = String(self.result || job.error || 'Architect task failed').slice(0, 600)
         continue
       }
       // 回答が返ってレビューが blocked でなくなったら「仕様書執筆中」へ戻す

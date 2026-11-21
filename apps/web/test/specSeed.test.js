@@ -121,8 +121,16 @@ test('キュー待ち（ready）と実行中（running）は別の表示にな�
   assert.equal(isQueuedJob({ queueState: 'running' }), false)
   assert.equal(isQueuedJob(null), false)
 
-  // タイトルは待機中だけ「キュー待ち」へ差し替える（それ以外は従来の状態文）
+  // タイトルは待機中だけ「キュー待ち」へ差し替える（Round 2 待機中は専用文言・それ以外は従来の状態文）
   assert.equal(jobTitleKey({ status: 'running', queueState: 'queued' }), 'seed.statusQueued')
+  assert.equal(
+    jobTitleKey({ status: 'awaiting_spec', queueState: 'queued', phase: 'round2_spec' }),
+    'seed.statusQueuedRound2',
+  )
+  assert.equal(
+    jobTitleKey({ status: 'awaiting_spec', queueState: 'queued', reviewSeenOnce: true }),
+    'seed.statusQueuedRound2',
+  )
   assert.equal(jobTitleKey({ status: 'awaiting_spec', queueState: 'running' }), 'seed.statusAwaiting')
   assert.equal(jobTitleKey({ status: 'awaiting_spec' }), 'seed.statusAwaiting')
 })

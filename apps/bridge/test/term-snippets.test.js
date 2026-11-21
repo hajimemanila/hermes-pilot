@@ -77,31 +77,46 @@ test('listTermSnippets は run を真偽値で返し note を持つ', () => {
   }
 })
 
-test('既定セットは SPEC §3.3 の16個（Hot 6）で順序も仕様どおり', () => {
+test('既定セットは汎用15個（Hot 6: 安全な読取専用のみ）で順序どおり', () => {
   assert.deepEqual(
     TERM_SNIPPETS.map((s) => s.id),
     [
-      't-pilot-restart',
+      't-hermes-status',
       't-gw-status',
-      't-gw-restart',
-      't-drain-restart',
       't-kanban',
       't-gw-log',
-      't-pilot-status',
-      't-pair-qr',
-      't-verify',
-      't-deploy',
-      't-drain-clear',
-      't-list',
       't-errors',
       't-health',
+      't-pilot-status',
+      't-list',
       't-port',
+      't-gw-restart',
+      't-pilot-restart',
+      't-drain-clear',
+      't-drain-restart',
+      't-pair-qr',
       't-git',
     ],
   )
-  assert.equal(TERM_SNIPPETS.length, 16)
-  assert.equal(TERM_SNIPPETS.filter((s) => s.hot).length, 6)
+  assert.equal(TERM_SNIPPETS.length, 15)
+  const hot = TERM_SNIPPETS.filter((s) => s.hot)
+  assert.equal(hot.length, 6)
+  for (const s of hot) {
+    assert.doesNotMatch(s.text, /\b(restart|kickstart|rm|npm run)\b/, `Hot 6 に破壊/再起動系を含めない: ${s.id}`)
+  }
+  assert.equal(TERM_SNIPPETS.some((s) => s.id === 't-verify' || s.id === 't-deploy'), false)
   assert.equal(TERM_SNIPPETS.every((s) => s.run === true), true)
+
+  const restartEn = buildTermSnippets({ serviceManager: 'launchd' }, 'en').find((s) => s.id === 't-pilot-restart')
+  const restartJa = buildTermSnippets({ serviceManager: 'launchd' }, 'ja').find((s) => s.id === 't-pilot-restart')
+  assert.equal(restartEn.hot, false)
+  assert.match(restartEn.note, /disconnects/i)
+  assert.match(restartJa.note, /切断/)
+
+  const qrCli = buildTermSnippets({ serviceManager: 'launchd', hasPilotCli: true }, 'en').find((s) => s.id === 't-pair-qr')
+  const qrAbs = buildTermSnippets({ serviceManager: 'launchd', hasPilotCli: false }, 'en').find((s) => s.id === 't-pair-qr')
+  assert.equal(qrCli.text, 'hermes-pilot qr')
+  assert.match(qrAbs.text, /^node "?\/.*bin\/hermes-pilot\.mjs"? qr$/)
 })
 
 test('コマンド文字列は英語 ASCII のみ（日本語 echo を残さない・G2①）', () => {
@@ -114,7 +129,7 @@ test('コマンド文字列は英語 ASCII のみ（日本語 echo を残さな�
 })
 
 test('端末: overrides の hidden は一覧から外れ、allTermSnippets には残る', () => {
-  const overrides = { 't-gw-log': { hidden: true }, 't-errors': { hot: true } }
+  const overrides = { 't-gw-log': { hidden: true }, 't-pilot-status': { hot: true } }
   const caps = { serviceManager: 'launchd', pilotServiceUnit: 'ai.hermes.pilot' }
   const visible = listTermSnippets(caps, 'en', overrides)
   assert.equal(visible.some((s) => s.id === 't-gw-log'), false)
@@ -122,7 +137,7 @@ test('端末: overrides の hidden は一覧から外れ、allTermSnippets に�
   const all = allTermSnippets(caps, 'en', overrides)
   assert.equal(all.length, TERM_SNIPPETS.length)
   assert.equal(all.find((s) => s.id === 't-gw-log').hidden, true)
-  assert.equal(all.find((s) => s.id === 't-errors').hot, true)
+  assert.equal(all.find((s) => s.id === 't-pilot-status').hot, true)
 })
 
 test('端末: カスタムは run（長押し実行）と note を保つ', () => {

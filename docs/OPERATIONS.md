@@ -53,6 +53,76 @@ git clone から入れる場合も 2) 以降は同じ（`git clone https://githu
 | `npm run audit:responsive` | `390×844` / `844×390` / `820×1180` のレイアウト監査 | 0 違反 |
 | `npm run verify` | 上記 5 つを直列実行（変更時の関門） | exit 0 |
 
+## コヒーレンス診断（汎用 Layer 1＋任意 Layer 2）
+
+「同じ種類のズレを人が毎回指摘する」状態を減らすための**読み取り専用**の診断。完走時と画面表示時にだけ走り、
+**自動でカンバンへ起票しない**（起票は人が 1 タップしたときだけ・D55）。
+
+### 2 層の分け方
+
+| 層 | いつ動くか | 何を見るか |
+| --- | --- | --- |
+| **Layer 1（universal）** | 設定ゼロで常に | `git-hotspot`（14 日で 5 回以上変更されたソース）/ `file-bloat`＋ラチェット（既定 800 行超）/ `spec-sprawl`（未アーカイブ SPEC が 6 件超）/ `debt-spike`（直近変更の `TODO`・`FIXME`・`HACK` 集中） |
+| **Layer 2（repo config）** | 対象リポジトリ直下に **`.hermes-coherence.json` があるときだけ** | 宣言型ルール（`maxLines` / `ignoreGlobs` / `baselineFile` / `forbiddenPatterns`）と、境界検証付きのローカル Node チェッカー（`checker`） |
+
+Layer 1 は Node / npm / このリポジトリの語彙を一切仮定しない。Python・Go・Rust・任意の Git リポジトリで
+そのまま意味のあるシグナルを返す。**自分のリポジトリに合わせたいときだけ** Layer 2 を置く。
+
+### 自分のリポジトリで有効にする（Layer 2）
+
+対象リポジトリの直下に `.hermes-coherence.json` を置く（最大 64KB・無ければ Layer 1 のみ）。
+
+```json
+{
+  "maxLines": 800,
+  "hotspotDays": 14,
+  "hotspotTouches": 5,
+  "baselineFile": "scripts/coherence-baseline.json",
+  "ignoreGlobs": ["dist/**", "vendor/**", "*.min.js"],
+  "forbiddenPatterns": [
+    { "pattern": "spawn\\(['\"`](gemini|claude|codex)['\"`]", "message": "外部 AI CLI の起動は禁止（Hermes Native のみ）" }
+  ],
+  "checker": "scripts/check-coherence.mjs"
+}
+```
+
+- `checker` は**登録済みリポジトリ配下の相対 `.mjs` / `.js` のみ**（`..` と絶対パスは拒否）。`node <checker> --json` を
+  `shell: false`・10 秒タイムアウトで実行し、返った `{ hardFails, softSignals }` を Layer 1 の結果へマージする。
+  タイムアウト・JSON 不正は `softSignals` に落として本体を止めない
+- このリポジトリの参照実装は `scripts/check-coherence.mjs`（`--json` / `--strict` / `--update-baseline` / `--allow-grow`、
+  英語出力）。API 契約・イベント／ストレージ契約・禁止パターン・Docs の `npm run` 整合を見る
+- 自リポジトリの検証コマンド（ここでは `npm run verify`）の末尾に自分のチェッカーを連結しておくと、
+  人が見落とすズレが関門で止まる
+
+### ラチェット（巨大ファイルの歯止め）
+
+- 基準ファイル（`baselineFile`。このリポジトリは `scripts/coherence-baseline.json`）に**ファイルごとの上限行数**を持つ。
+  既存の巨大ファイルは「今の行数」で固定し、**増えたら落ちる／減ったら下げられる**ようにする
+- 行を減らしたときだけ、チェッカーの `--update-baseline` で基準を**切り下げる**（増やす更新は `--allow-grow` を
+  明示したときだけ）。切り下げを忘れると、次に誰かが膨らませても気づけない
+- 新しい UI・スタイルは巨大ファイルへ足さず、**別ファイルに分けてから**基準に登録する（例: `apps/web/src/styles/coherence.css`）
+
+### SPEC アーカイブ運用
+
+- 完了した SPEC は**パスを変えず**、先頭 40 行以内に `- **Status**: archived`（または `- **状態**: アーカイブ`）を 1 行足す。
+  `docs/archive/` 配下へ移す運用も同じ扱いになる
+- `GET /api/specs` は既定で `specs`（アクティブ）と `archivedSpecs`・`archivedCount` を分けて返す。
+  `?includeArchived=1` で全件
+- Launchpad（Tasks タブの SPEC ピッカー）は**既定でアクティブのみ**。アーカイブが 1 件以上あるときだけ
+  `Show archived (N)` が出て、ON にすると新しい順で混ざる。アーカイブ行には `archived` ピルが付く
+
+### 画面と通知（Tasks タブの提案バナー）
+
+- 完走レポートの `coherence_alert`、または `GET /api/coherence/report` の件数が閾値
+  （`hardFailCount > 0` / `hotspotCount >= 1` / `softSignalCount >= 3` のいずれか）を超えたときだけ、
+  Tasks タブ上部に折りたたみ可能なバナーが出る
+- **1 タップ**で推奨スイープ（`state-flow` / `contracts` / `hotspots` / `docs-specs` / `custom`）を選択済みの
+  `RefactorSheet` が開く。単発タスクか複数バッチ SPEC かはそこで選ぶ
+- ✕ は署名付きで `hm.coherenceDismissed` に保存する。**件数か推奨スイープが変われば出し直す**
+  （直したのに出続ける／悪化したのに隠れたままを防ぐ）
+- 完走レポート側の `Recommended Next Steps`（EN / JA）にも同じ提案が 1 行入る。診断が失敗しても
+  レポート配信は止めない（`log.warn` のみ）
+
 ## 出力言語（生成物）
 
 - 出力言語の決定点は 1 か所: `apps/bridge/src/lang.js` の `resolveLang()`（`server.js` は `langOf(req, url)` 経由で 1 リクエスト 1 回だけ解決する）。

@@ -76,6 +76,36 @@ export function PipelinePanel({ notify, board = '' }) {
     }
   }, [busy, load, notify, status, t])
 
+  /** A2B 専用プロファイルを切り替え、必要に応じて初期化する。 */
+  const selectProfile = useCallback(
+    async (profile) => {
+      if (busy || !profile || profile === (status?.pilotProfile || 'mobile')) return
+      setBusy(true)
+      setError(null)
+      haptic('tap')
+      try {
+        const r = await api('/api/pipeline/profile', { method: 'POST', body: { profile } })
+        if (r?.ok) {
+          setStatus(r.status ?? status)
+          notify?.(t('settings.pipelineProfileSaved', { profile: r.pilotProfile || profile }))
+        } else {
+          setError(r?.error ?? t('settings.pipelineUnavailable'))
+        }
+      } catch (e) {
+        setError(e?.code === 'UNKNOWN_ENDPOINT' ? t('settings.pipelineUnavailable') : e?.message ?? '')
+      } finally {
+        setBusy(false)
+        load()
+      }
+    },
+    [busy, load, notify, status, t],
+  )
+
+  const pilotProfile = status?.pilotProfile || 'mobile'
+  const profileChoices =
+    Array.isArray(status?.availableProfiles) && status.availableProfiles.length
+      ? status.availableProfiles
+      : ['mobile', 'default']
   const soulApplied = Boolean(status?.soul?.applied)
   const skillNames = Array.isArray(status?.hermes?.present) ? status.hermes.present.length : 0
   const skillTotal = Array.isArray(status?.bundled?.names) ? status.bundled.names.length : 0
@@ -92,6 +122,30 @@ export function PipelinePanel({ notify, board = '' }) {
       </div>
       <p className="row-sub" style={{ margin: '6px 0 10px', lineHeight: 1.6 }}>
         {t('settings.pipelineRunnerHint')}
+      </p>
+
+      <div className="list-head">
+        <span>{t('settings.pipelineProfile')}</span>
+      </div>
+      <div className="chips" style={{ marginBottom: 6 }} role="group" aria-label={t('settings.pipelineProfile')}>
+        {profileChoices.map((name) => {
+          const on = name === pilotProfile
+          return (
+            <button
+              key={name}
+              type="button"
+              className={`chip${on ? ' on' : ''}`}
+              aria-pressed={on}
+              disabled={busy || statusMissing}
+              onClick={() => selectProfile(name)}
+            >
+              {name}
+            </button>
+          )
+        })}
+      </div>
+      <p className="row-sub" style={{ margin: '2px 0 10px', lineHeight: 1.6 }}>
+        {t('settings.pipelineProfileHint')}
       </p>
 
       {statusMissing ? (

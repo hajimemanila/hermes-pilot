@@ -1,8 +1,54 @@
 import path from 'node:path'
 import os from 'node:os'
 import fs from 'node:fs'
+import { DEFAULT_PILOT_PROFILE, sanitizePilotProfile } from './pipeline-optimizer.js'
 
 export const VERSION = '0.1.0'
+
+/**
+ * `config.json` から Pilot / A2B パイプライン専用のプロファイル名を読む。
+ * 未設定時は `HP_PILOT_PROFILE` → `HP_REVIEW_ASSIGNEE` → `'mobile'`。
+ * @param {string} configPath config.json のパス
+ * @returns {string} プロファイル名
+ */
+export function readPilotProfile(configPath) {
+  let rawProfile = null
+  try {
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+    if (typeof raw?.pilotProfile === 'string' && raw.pilotProfile.trim()) {
+      rawProfile = raw.pilotProfile
+    }
+  } catch {
+    /* 不在・壊れた JSON は環境変数／既定へ */
+  }
+  if (rawProfile) return sanitizePilotProfile(rawProfile)
+  const fromEnv = process.env.HP_PILOT_PROFILE ?? process.env.HP_REVIEW_ASSIGNEE
+  if (typeof fromEnv === 'string' && fromEnv.trim()) return sanitizePilotProfile(fromEnv)
+  return DEFAULT_PILOT_PROFILE
+}
+
+/**
+ * `config.json` の `pilotProfile` を非破壊で保存する（他キーは維持）。
+ * @param {string} configPath config.json のパス
+ * @param {unknown} profile 保存したいプロファイル名
+ * @returns {string} 保存されたプロファイル名
+ */
+export function writePilotProfile(configPath, profile) {
+  const next = sanitizePilotProfile(profile)
+  let current = {}
+  try {
+    const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) current = parsed
+  } catch {
+    current = {}
+  }
+  const merged = { ...current, pilotProfile: next }
+  fs.mkdirSync(path.dirname(configPath), { recursive: true, mode: 0o700 })
+  const tmp = `${configPath}.tmp-${process.pid}`
+  fs.writeFileSync(tmp, `${JSON.stringify(merged, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
+  fs.renameSync(tmp, configPath)
+  return next
+}
 
 /**
  * `config.json`（CLI が書く設定）からペアリング用の値だけ拾う。

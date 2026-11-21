@@ -45,6 +45,7 @@ import {
   createCliRunner,
   executionModeLabel,
   filedBatchIds,
+  findActiveJobReviewTask,
   findJobReviewTask,
   findJobSpec,
   findRecentSheet,
@@ -803,6 +804,13 @@ test('findJobSpec / pendingSpecs は猶予と既存タスクを見る', () => {
     'mtime の新しい順に並ぶ',
   )
   assert.equal(free[0].pendingCount, 1)
+
+  // 別 SPEC に属する同名バッチ ID（C1 等）があっても別 SPEC 側は未起票のまま残る
+  const colliding = pendingSpecs(
+    [{ path: 'docs/SPEC-COHERENCE.md', mtime: 20_000, batches: [{ id: 'C1' }, { id: 'C2' }] }],
+    [{ id: 't_cat', title: '[C1] Catalog', status: 'done', spec: 'docs/SPEC-CATALOG-ADMISSION.md' }],
+  )
+  assert.deepEqual(colliding[0].pending, ['C1', 'C2'])
 })
 
 test('publicJob は機密を落とし、種を 400 字で切る', () => {
@@ -1253,4 +1261,62 @@ test('[ARCH] タスク本文も lang で Round 2 の見出しを切り替える'
     buildArchitectTaskBody({ ...base, lang: 'ja' }),
     /\*\*目的\*\* \/ \*\*変更・新規ファイル\*\* \/ \*\*受入条件（Verify）\*\*/,
   )
+})
+
+test('親 [ARCH] が done でも別タスクの [review] が blocked / ready / running なら追い続ける', async () => {
+  const repo = makeRepo()
+  const clock = 1_700_000_000_000
+  /** @type {Record<string, Array<object>>} */
+  let byBoard = {
+    demo: [{ id: 't_arch', title: '[ARCH] Relay fix', status: 'done', createdAt: clock }],
+    mobile: [
+      {
+        id: 't_rev',
+        title: '[review] Round 1 questions',
+        body: '[review] label=spec-relay-01 round=1 mode=standard sheet=sheets/spec-relay-01-1.json',
+        status: 'blocked',
+        createdAt: clock + 1000,
+      },
+    ],
+  }
+  const arch = createArchitect(
+    {},
+    {
+      now: () => clock,
+      readTasks: (slug) => byBoard[slug] ?? [],
+      runner: async () => ({ code: 0, stdout: '{"id":"t_arch"}', stderr: '' }),
+    },
+  )
+
+  await arch.seed(seedInput(repo))
+  await settle()
+
+  // 1) 親 [ARCH] が既に done でも、mobile 側の [review] が blocked の間は awaiting_review
+  let snap = await arch.jobs({ board: 'demo' })
+  assert.equal(snap.jobs.length, 1)
+  assert.equal(snap.jobs[0].status, 'awaiting_review')
+  assert.equal(snap.jobs[0].reviewTaskId, 't_rev')
+  assert.equal(snap.jobs[0].reviewBoard, 'mobile')
+
+  // 2) 回答送信で [review] が ready（キュー待ち）になったら phase=round2_spec / queueState=queued
+  byBoard.mobile[0].status = 'ready'
+  assert.equal(findActiveJobReviewTask(snap.jobs[0], byBoard.mobile)?.taskId, 't_rev')
+  snap = await arch.jobs({ board: 'demo' })
+  assert.equal(snap.jobs.length, 1)
+  assert.equal(snap.jobs[0].status, 'awaiting_spec')
+  assert.equal(snap.jobs[0].phase, 'round2_spec')
+  assert.equal(snap.jobs[0].queueState, 'queued')
+
+  // 3) ワーカーが動き出したら running（stage='running'）
+  byBoard.mobile[0].status = 'running'
+  snap = await arch.jobs({ board: 'demo' })
+  assert.equal(snap.jobs.length, 1)
+  assert.equal(snap.jobs[0].status, 'awaiting_spec')
+  assert.equal(snap.jobs[0].stage, 'running')
+  assert.equal(snap.jobs[0].queueState, 'running')
+
+  // 4) [review] タスクも完了（done）になれば、SPEC 未検知でも終端に落ちる
+  byBoard.mobile[0].status = 'done'
+  snap = await arch.jobs({ board: 'demo' })
+  assert.equal(snap.jobs.length, 0)
 })

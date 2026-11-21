@@ -181,18 +181,47 @@ export function listSourceFiles(repoRoot, opts = {}) {
 }
 
 /**
- * 直近 N 日の変更回数（`git-hotspot` の材料）。`.git` が無ければ空配列（安全スキップ）。
+ * 直近の `COHERENCE/` スイープコミットの UNIX 秒を返す（見つからなければ null）。
+ *
+ * リファクタ・分割を完了したスイープコミット以前の履歴が `git-hotspot` を 14 日間
+ * 汚染し続けないためのチェックポイント（D80 / post-sweep clear）。
  *
  * @param {string} repoRoot リポジトリの絶対パス
- * @param {{days?: number}} [opts] 観測期間
- * @returns {Promise<Array<{file: string, touches: number}>>} 変更回数の多い順
+ * @param {number} days 観測期間（日）
+ * @returns {Promise<number|null>} UNIX 秒または null
  */
-export function gitHotspots(repoRoot, opts = {}) {
-  const days = Number.isFinite(opts.days) ? opts.days : UNIVERSAL_DEFAULTS.hotspotDays
+function latestCoherenceSweepSec(repoRoot, days) {
   return new Promise((resolve) => {
     execFile(
       'git',
-      ['log', `--since=${days}.days`, '--name-only', '--pretty=format:'],
+      ['log', `--since=${days}.days`, '-n', '1', '--grep=COHERENCE/', '--format=%ct'],
+      { cwd: repoRoot, timeout: 5_000, maxBuffer: 64 * 1024 },
+      (err, stdout) => {
+        if (err) return resolve(null)
+        const sec = Number.parseInt(String(stdout ?? '').trim(), 10)
+        resolve(Number.isFinite(sec) && sec > 0 ? sec : null)
+      },
+    )
+  })
+}
+
+/**
+ * 直近 N 日の変更回数（`git-hotspot` の材料）。`.git` が無ければ空配列（安全スキップ）。
+ *
+ * 直近の `COHERENCE/` スイープ完了コミットがあれば、その 1 秒後から集計する。
+ *
+ * @param {string} repoRoot リポジトリの絶対パス
+ * @param {{days?: number, ignoreSweepCheckpoint?: boolean}} [opts] 観測期間
+ * @returns {Promise<Array<{file: string, touches: number}>>} 変更回数の多い順
+ */
+export async function gitHotspots(repoRoot, opts = {}) {
+  const days = Number.isFinite(opts.days) ? opts.days : UNIVERSAL_DEFAULTS.hotspotDays
+  const sweepSec = opts.ignoreSweepCheckpoint === true ? null : await latestCoherenceSweepSec(repoRoot, days)
+  const sinceArg = sweepSec ? `--since=${new Date((sweepSec + 1) * 1000).toISOString()}` : `--since=${days}.days`
+  return new Promise((resolve) => {
+    execFile(
+      'git',
+      ['log', sinceArg, '--name-only', '--pretty=format:'],
       { cwd: repoRoot, timeout: 10_000, maxBuffer: 16 * 1024 * 1024 },
       (err, stdout) => {
         if (err) return resolve([])

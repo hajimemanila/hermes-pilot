@@ -1,14 +1,17 @@
-import { getCapabilities, serviceCommands } from './capabilities.js'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { getCapabilities, hasBinary, serviceCommands } from './capabilities.js'
 import { normalizeCustom, normalizeOverrides, langOf } from './snippets.js'
 
 /**
  * 端末タブの定型コマンド（SPEC §3.3 / D12）。
  *
  * `run: true` のものだけ**長押しで実行**できる（タップは常に挿入のみ）。
- * 破壊的・不可逆なもの（削除系・kill 系）は載せない。
+ * 破壊的・不可逆なもの（削除系・kill 系）や、特定リポジトリ専用の開発スクリプト
+ * （`npm run verify` / `npm run deploy` 等）は既定セットに載せない。
  *
- * 個人環境のサービス名は**載せない**。再起動・状態確認は
- * `capabilities.serviceManager`（launchd / systemd）で分岐する（SPEC §5.3）。
+ * **Hot 6（画面上部の常駐バー）はすべて読み取り専用・無破壊・任意の cwd（`~`）で動くものだけ**にし、
+ * 再起動系（特に Bridge 自身を切って一時切断される `Restart Pilot`）や復旧コマンドはシート側へ分ける。
  *
  * ラベルと説明（note）は en / ja の両文面を持つが、**コマンド文字列（text）は英語 ASCII のみ**
  * （シェルの echo も英語。G2①）。
@@ -18,20 +21,35 @@ import { normalizeCustom, normalizeOverrides, langOf } from './snippets.js'
 
 const DRAIN = '~/.hermes/.drain_request.json'
 const L = '~/.hermes/logs'
+const DEFAULT_PILOT_CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'bin', 'hermes-pilot.mjs')
 
 /**
- * 既定の並び（SPEC §3.3 の表と同じ順）。`<svc.*>` は Capability 依存。
- * @type {Array<{id: string, hot?: boolean, run?: boolean, en: [string, string], ja: [string, string], text: string | ((svc: ReturnType<typeof serviceCommands>, manager: string) => string)}>}
+ * どの作業ディレクトリ（`~` 等）からでも失敗しない QR 表示コマンドを返す。
+ * @param {object} [caps] Capability / 上書き（テスト用）
+ * @returns {string} 実行可能な ASCII コマンド
+ */
+export function pairQrCommand(caps = {}) {
+  const override = typeof caps?.pilotQrCmd === 'string' ? caps.pilotQrCmd.trim() : ''
+  if (override) return override
+  const onPath = typeof caps?.hasPilotCli === 'boolean' ? caps.hasPilotCli : hasBinary('hermes-pilot')
+  if (onPath) return 'hermes-pilot qr'
+  return /\s/.test(DEFAULT_PILOT_CLI) ? `node "${DEFAULT_PILOT_CLI}" qr` : `node ${DEFAULT_PILOT_CLI} qr`
+}
+
+/**
+ * 既定の並び（15 個: 常駐バーは安全な読み取り専用 Hot 6、管理・復旧はシート 9 個）。
+ * `<svc.*>` は Capability 依存。
+ * @type {Array<{id: string, hot?: boolean, run?: boolean, en: [string, string], ja: [string, string], text: string | ((svc: ReturnType<typeof serviceCommands>, manager: string, caps: object) => string)}>}
  */
 const TABLE = [
-  // --- Hot 6（バーに出す）----------------------------------------------------
+  // --- Hot 6（バーに出す: 安全・読み取り専用・どの cwd でも完結） -----------
   {
-    id: 't-pilot-restart',
+    id: 't-hermes-status',
     hot: true,
     run: true,
-    en: ['Restart Pilot', 'Restart Hermes Pilot bridge (4097)'],
-    ja: ['Pilot再起動', 'Hermes Pilot ブリッジ(4097)を再起動'],
-    text: (svc) => svc.restart,
+    en: ['Hermes Status', 'Hermes agent model, gateway & jobs overview'],
+    ja: ['Hermes状態', 'モデル・Gateway・ジョブ全体の稼働概要'],
+    text: 'hermes status',
   },
   {
     id: 't-gw-status',
@@ -42,26 +60,10 @@ const TABLE = [
     text: 'hermes gateway status',
   },
   {
-    id: 't-gw-restart',
-    hot: true,
-    run: true,
-    en: ['Restart GW', 'Restart Hermes gateway'],
-    ja: ['GW再起動', 'gateway を再起動'],
-    text: 'hermes gateway restart',
-  },
-  {
-    id: 't-drain-restart',
-    hot: true,
-    run: true,
-    en: ['Clear Drain + GW', 'Remove drain marker & restart GW'],
-    ja: ['解除+GW再起動', 'ドレイン解除＋gateway再起動'],
-    text: `rm -f ${DRAIN} && hermes gateway restart`,
-  },
-  {
     id: 't-kanban',
     hot: true,
     run: true,
-    en: ['Kanban Active', 'List kanban tasks'],
+    en: ['Kanban', 'List active kanban tasks'],
     ja: ['カンバン一覧', 'カンバンのタスク一覧'],
     text: 'hermes kanban list',
   },
@@ -69,48 +71,36 @@ const TABLE = [
     id: 't-gw-log',
     hot: true,
     run: true,
-    en: ['GW Log', `Last 80 lines of gateway.log`],
+    en: ['GW Log', 'Last 80 lines of gateway.log'],
     ja: ['GWログ', 'gateway.log の末尾80行'],
     text: `tail -n 80 ${L}/gateway.log`,
   },
+  {
+    id: 't-errors',
+    hot: true,
+    run: true,
+    en: ['Error Log', 'Last 80 lines of errors.log'],
+    ja: ['エラーログ', 'errors.log の末尾80行'],
+    text: `tail -n 80 ${L}/errors.log`,
+  },
+  {
+    id: 't-health',
+    hot: true,
+    run: true,
+    en: ['Reachability', 'Check HTTP 200 on 9119 & 4097'],
+    ja: ['疎通確認', '9119 と 4097 の HTTP 応答確認'],
+    text:
+      'curl -s -o /dev/null -w "dashboard %{http_code}\\n" http://127.0.0.1:9119/; ' +
+      'curl -s -o /dev/null -w "pilot %{http_code}\\n" http://127.0.0.1:4097/healthz',
+  },
 
-  // --- シート（10個）----------------------------------------------------------
+  // --- シート（9個: サービス確認・再起動/復旧・ペアリング・リポジトリ補助） -
   {
     id: 't-pilot-status',
     run: true,
     en: ['Pilot Status', 'Service status of Hermes Pilot'],
     ja: ['Pilot状態', 'Hermes Pilot のサービス状態'],
     text: (svc) => svc.status,
-  },
-  {
-    id: 't-pair-qr',
-    run: true,
-    en: ['Pairing QR', 'Show pairing URL & QR in terminal'],
-    ja: ['ペアリングQR', 'ペアリングURLとQRを表示'],
-    // 未公開 npm パッケージを前提にしない（SPEC-CATALOG-ADMISSION D59）。リポジトリ／プラグイン
-    // ディレクトリを cwd にして実行する。`npm link` 済みなら `hermes-pilot qr` でもよい。
-    text: 'node bin/hermes-pilot.mjs qr',
-  },
-  {
-    id: 't-verify',
-    run: true,
-    en: ['Run Verify', 'Run tests, PWA check, and build'],
-    ja: ['Verify実行', 'テスト・PWA検査・ビルドを一括実行'],
-    text: 'npm run verify',
-  },
-  {
-    id: 't-deploy',
-    run: true,
-    en: ['Deploy Web', 'Zero-downtime build & swap dist'],
-    ja: ['Webデプロイ', '無停止ビルド＆dist入れ替え'],
-    text: 'npm run deploy',
-  },
-  {
-    id: 't-drain-clear',
-    run: true,
-    en: ['Clear Drain', 'Remove drain marker only'],
-    ja: ['ドレイン解除', 'ドレインマーカーのみ削除'],
-    text: `rm -f ${DRAIN} && echo "drain marker removed"`,
   },
   {
     id: 't-list',
@@ -120,22 +110,6 @@ const TABLE = [
     text: (svc) => svc.list,
   },
   {
-    id: 't-errors',
-    run: true,
-    en: ['Error Log', 'Last 80 lines of errors.log'],
-    ja: ['エラーログ', 'errors.log の末尾80行'],
-    text: `tail -n 80 ${L}/errors.log`,
-  },
-  {
-    id: 't-health',
-    run: true,
-    en: ['Reachability', 'Check HTTP 200 on 9119 & 4097'],
-    ja: ['疎通確認', '9119 と 4097 の HTTP 応答確認'],
-    text:
-      'curl -s -o /dev/null -w "dashboard %{http_code}\\n" http://127.0.0.1:9119/; ' +
-      'curl -s -o /dev/null -w "pilot %{http_code}\\n" http://127.0.0.1:4097/healthz',
-  },
-  {
     id: 't-port',
     run: true,
     en: ['Ports', 'Check listening processes on 9119 & 4097'],
@@ -143,10 +117,45 @@ const TABLE = [
     text: 'lsof -nP -iTCP:9119 -sTCP:LISTEN; lsof -nP -iTCP:4097 -sTCP:LISTEN',
   },
   {
+    id: 't-gw-restart',
+    run: true,
+    en: ['Restart GW', 'Restart Hermes gateway'],
+    ja: ['GW再起動', 'gateway を再起動'],
+    text: 'hermes gateway restart',
+  },
+  {
+    id: 't-pilot-restart',
+    run: true,
+    en: ['Restart Pilot', 'Restart Hermes Pilot bridge (briefly disconnects terminal)'],
+    ja: ['Pilot再起動', 'Hermes Pilot ブリッジを再起動（端末が一時切断されます）'],
+    text: (svc) => svc.restart,
+  },
+  {
+    id: 't-drain-clear',
+    run: true,
+    en: ['Clear Drain', 'Remove drain marker only'],
+    ja: ['ドレイン解除', 'ドレインマーカーのみ削除'],
+    text: `rm -f ${DRAIN} && echo "drain marker removed"`,
+  },
+  {
+    id: 't-drain-restart',
+    run: true,
+    en: ['Clear Drain + GW', 'Remove drain marker & restart GW'],
+    ja: ['解除+GW再起動', 'ドレイン解除＋gateway再起動'],
+    text: `rm -f ${DRAIN} && hermes gateway restart`,
+  },
+  {
+    id: 't-pair-qr',
+    run: true,
+    en: ['Pairing QR', 'Show pairing URL & QR in terminal'],
+    ja: ['ペアリングQR', 'ペアリングURLとQRを表示'],
+    text: (_svc, _mgr, caps) => pairQrCommand(caps),
+  },
+  {
     id: 't-git',
     run: true,
-    en: ['Git State', 'Short status & last 3 commits'],
-    ja: ['git状態', '差分と直近3コミット'],
+    en: ['Git State', 'Short status & last 3 commits (run inside a repo)'],
+    ja: ['git状態', '差分と直近3コミット（リポジトリ内で実行）'],
     text: 'git status --short && git log --oneline -3',
   },
 ]
@@ -169,7 +178,7 @@ export function buildTermSnippets(caps = getCapabilities(), lang = 'en') {
     return {
       id: s.id,
       label,
-      text: typeof s.text === 'function' ? s.text(svc, manager) : s.text,
+      text: typeof s.text === 'function' ? s.text(svc, manager, caps) : s.text,
       hot: Boolean(s.hot),
       run: s.run !== false,
       note,

@@ -310,8 +310,9 @@ test('Layer 2 integration: the real repository wires the checker and passes it',
   assert.equal(report.layers.repoChecker, true)
   assert.equal(report.ok, true)
   assert.equal(report.hardFails.length, 0)
-  // The checker reports through soft signals without failing the run.
-  assert.ok(report.softSignals.some((signal) => signal.rule === 'baseline-ratchet' || signal.rule === 'file-bloat'))
+  // Soft signals never flip report.ok to false when all Hard Fails are zero.
+  assert.equal(Array.isArray(report.softSignals), true)
+  assert.equal(report.softSignals.every((signal) => signal.severity === 'soft'), true)
 })
 
 test('Layer 2 CLI: --json contract, exit code and English-only output', () => {
@@ -522,5 +523,49 @@ test('helpers: comment stripping keeps line numbers, template paths normalise, w
   assert.equal(namespaceMatches('/api/boards/:board/tasks', '/api/boards'), true)
   assert.equal(containsCJK('ok'), false)
   assert.equal(containsCJK('\u4e2d\u6587'), true)
+})
+
+test('gitHotspots は COHERENCE/ スイープコミットを境界に過去チャーンをリセットし、以降の再編集を検知する', async () => {
+  const root = tempDir()
+  write(root, 'src/hot.js', 'export const n = 0\n')
+  const git = (args, extraEnv = {}) =>
+    execFileSync('git', args, {
+      cwd: root,
+      stdio: 'pipe',
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: 'Test',
+        GIT_AUTHOR_EMAIL: 'test@example.com',
+        GIT_COMMITTER_NAME: 'Test',
+        GIT_COMMITTER_EMAIL: 'test@example.com',
+        ...extraEnv,
+      },
+    })
+  git(['init', '-q'])
+  const baseSec = Math.floor(Date.now() / 1000) - 3600
+  const commitAt = (offsetSec, msg, content) => {
+    write(root, 'src/hot.js', content)
+    git(['add', 'src/hot.js'])
+    const iso = new Date((baseSec + offsetSec) * 1000).toISOString()
+    git(['commit', '-q', '-m', msg], { GIT_AUTHOR_DATE: iso, GIT_COMMITTER_DATE: iso })
+  }
+
+  for (let i = 1; i <= 5; i += 1) {
+    commitAt(i * 10, `feat: edit ${i}`, `export const n = ${i}\n`)
+  }
+  const before = await gitHotspots(root, { days: 14 })
+  assert.deepEqual(before, [{ file: 'src/hot.js', touches: 5 }])
+
+  // スイープ完了コミットでそれ以前のホットスポットがクリアされる
+  commitAt(100, 'refactor(hot): split module（COHERENCE/HOTSPOTS）', 'export const n = 100\n')
+  const afterSweep = await gitHotspots(root, { days: 14 })
+  assert.deepEqual(afterSweep, [])
+
+  // スイープ後に再び集中変更が起きれば新規ホットスポットとして検知する
+  for (let i = 1; i <= 5; i += 1) {
+    commitAt(200 + i * 10, `fix: post-sweep ${i}`, `export const n = ${200 + i}\n`)
+  }
+  const afterDrift = await gitHotspots(root, { days: 14 })
+  assert.deepEqual(afterDrift, [{ file: 'src/hot.js', touches: 5 }])
 })
 

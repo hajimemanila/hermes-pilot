@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { normalizeCapture, buildCreateArgs, dedupeKey, createCapture } from '../src/capture.js'
@@ -101,4 +102,12 @@ test('create: 入力エラーは ok:false で返し、例外にしない', async
   assert.equal(r.ok, false)
   assert.equal(r.code, 'TASK_TITLE_REQUIRED', 'コードで返し、PWA が自言語化する')
   assert.equal(r.error, 'A title is required', '文言は英語既定（応答 JSON に日本語を残さない）')
+})
+
+test('server.js の POST /api/boards/:slug/tasks は assignee 省略時に getPilotProfile() を補う', () => {
+  const src = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8')
+  const match = /if\s*\(b && c === 'tasks' && !d && req\.method === 'POST'\)[\s\S]*?return r\.ok \? sendJson/.exec(src)
+  assert.ok(match, 'POST /api/boards/:slug/tasks ハンドラが見つからない')
+  assert.match(match[0], /getPilotProfile\(\)/, 'assignee 未指定時の既定パイロットプロファイル補完が欠けている')
+  assert.match(match[0], /capture\.create\(\{ \.\.\.body, board: b, assignee \}\)/, 'assignee が capture.create に渡っていない')
 })

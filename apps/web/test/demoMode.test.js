@@ -806,7 +806,7 @@ test('V10-B3: /api/snippets/term は端末チップ帯の形（本番 snippetPay
     'snippets',
   ])
   assert.equal(ja.lang, 'ja')
-  assert.equal(ja.snippets.length, 16, '本番の端末スニペット 16 件と同じ数')
+  assert.equal(ja.snippets.length, 15, '本番の汎用端末スニペット 15 件と同じ数')
   assert.equal(ja.snippets.filter((s) => s.hot).length, 6, 'Hot は 6 件（チップ帯の幅に収まる数）')
   for (const s of ja.snippets) {
     for (const k of ['id', 'label', 'text', 'hot', 'run', 'note']) {
@@ -819,7 +819,7 @@ test('V10-B3: /api/snippets/term は端末チップ帯の形（本番 snippetPay
   assert.equal(ja.snippets.every((s) => s.run === true), true)
   assert.ok(ja.snippets.some((s) => s.label === 'Pilot状態'))
   const en = await demoFetch('/api/snippets/term?lang=en')
-  assert.ok(en.snippets.some((s) => s.label === 'Run Verify'))
+  assert.ok(en.snippets[0].id === 't-hermes-status' && en.snippets[0].label === 'Hermes Status' && !en.snippets.find((s) => s.id === 't-pilot-restart').hot)
   assert.notEqual(en.snippets[0].label, ja.snippets[0].label, 'JA/EN が切り替わる')
   // チャット側の帯は壊さない
   const chat = await demoFetch('/api/snippets?lang=ja')
@@ -830,9 +830,19 @@ test('V10-B3: pipeline.status → optimize で SOUL 適用＋3 スキルが揃�
   resetDemoState()
   const before = await demoFetch('/api/pipeline/status')
   assert.equal(before.ok, true)
+  assert.equal(before.pilotProfile, 'mobile')
+  assert.deepEqual(before.availableProfiles, ['mobile', 'default'])
   assert.equal(before.soul.applied, false)
   assert.deepEqual(before.hermes.present, ['quick-review', 'annotation'])
   assert.deepEqual(before.bundled.names, ['quick-review', 'annotation', 'spec-architect'])
+
+  const switched = await demoFetch('/api/pipeline/profile', { method: 'POST', body: { profile: 'default' } })
+  assert.equal(switched.ok, true)
+  assert.equal(switched.pilotProfile, 'default')
+  assert.equal(switched.status.pilotProfile, 'default')
+
+  const back = await demoFetch('/api/pipeline/profile', { method: 'POST', body: { profile: 'mobile' } })
+  assert.equal(back.pilotProfile, 'mobile')
 
   const applied = await demoFetch('/api/pipeline/optimize', { method: 'POST', body: {} })
   assert.equal(applied.ok, true)
@@ -849,6 +859,7 @@ test('V10-B3: pipeline.status → optimize で SOUL 適用＋3 スキルが揃�
   resetDemoState()
   const reset = await demoFetch('/api/pipeline/status')
   assert.equal(reset.soul.applied, false)
+  assert.equal(reset.pilotProfile, 'mobile')
 })
 
 test('V10-B3: /api/auth/pairing は 21×21 の qrRows と targets を返す', async () => {

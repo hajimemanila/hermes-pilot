@@ -378,16 +378,6 @@ export function htmlText(lang) {
 }
 
 /**
- * `{name}` プレースホルダを埋める（値はエスケープしない — 呼び出し側の方針に任せる）。
- * @param {string} template 雛形
- * @param {Record<string, unknown>} [vars] 値
- * @returns {string} 埋めた文字列
- */
-function fillTemplate(template, vars = {}) {
-  return String(template).replace(/\{(\w+)\}/g, (m, k) => (vars[k] == null ? m : String(vars[k])))
-}
-
-/**
  * 選択肢が推奨か（生成 HTML のバッジ用）。
  *
  * シートを作る側は `recommended: true` を付けるが、既存資産にはラベルに「推奨」と
@@ -1148,11 +1138,13 @@ export function createReview(cfg, opts = {}) {
 
   /**
    * 回答後にタスクへ付ける担当プロファイル。
-   * 未指定なら `HP_REVIEW_ASSIGNEE` → `opts.assignee` → `'mobile'`。
+   * 未指定なら `HP_REVIEW_ASSIGNEE` → `opts.assignee`（文字列または関数）→ `'mobile'`。
    * @returns {string} プロファイル名
    */
-  const reviewAssignee = () =>
-    String(process.env.HP_REVIEW_ASSIGNEE ?? opts.assignee ?? '').trim() || 'mobile'
+  const reviewAssignee = () => {
+    const rawOpt = typeof opts.assignee === 'function' ? opts.assignee() : opts.assignee
+    return String(process.env.HP_REVIEW_ASSIGNEE ?? rawOpt ?? '').trim() || 'mobile'
+  }
 
   /** テストから差し替えられるように注入可能にしておく。 */
   const runKanban = opts.runKanban || function runKanbanReal(args) {
@@ -1944,7 +1936,7 @@ export function createReview(cfg, opts = {}) {
     const body =
       `[review] label=${label} round=1 mode=annotation image=${relShot} target=${target}` + (chat ? ` chat=${chat}` : '')
     // assignee が無いと dispatcher が拾わない（実測: ready のまま止まる）
-    const created = await runKanban(['create', title, '--body', body, '--assignee', 'mobile'])
+    const created = await runKanban(['create', title, '--body', body, '--assignee', reviewAssignee()])
     const m = /t_[0-9a-f]{8}/.exec(created.out || '')
     if (created.code !== 0 || !m) {
       return { ok: false, code: 'CREATE_FAILED', message: created.out.slice(0, 300) }

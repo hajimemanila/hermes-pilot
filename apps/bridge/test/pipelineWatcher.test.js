@@ -675,18 +675,18 @@ test('⑨ 完走時に予兆検知を 1 回走らせ、coherence_alert と EN/JA
   // 日本語本文（既定）: 節 ＋ 次の一手の 1 行
   assert.match(row.markdown, /#### 🧭 予兆シグナル \/ Coherence Signals/)
   assert.match(row.markdown, /推奨スイープ: hotspots/)
-  assert.match(row.markdown, /コヒーレンス予兆: hotspots スイープを「Refactor & audit」から実行する/)
+  assert.match(row.markdown, /整合性の検証・改善: hotspotsを「リファクタリング」から実行する/)
   assert.match(row.markdown, /Hard Fail 0 \/ 予兆 3 \/ ホットスポット 1/)
   // 英語本文: 同じ情報を英語だけで（CJK を持ち込まない）
   assert.match(row.markdown_en, /#### 🧭 Coherence Signals/)
   assert.match(row.markdown_en, /Recommended sweep: hotspots/)
   assert.match(row.markdown_en, /Coherence signals: run the hotspots sweep from Refactor & audit/)
-  for (const jp of ['予兆シグナル', '推奨スイープ', 'コヒーレンス予兆', 'ホットスポット']) {
+  for (const jp of ['予兆シグナル', '推奨スイープ', '整合性の検証・改善', 'ホットスポット']) {
     assert.ok(!row.markdown_en.includes(jp), `英語版に「${jp}」が残っている`)
   }
 
   // D83: 予兆の 1 行にコマンド決め打ちを入れない（自動起票もしない）
-  const jaLine = row.markdown.split('\n').find((l) => l.includes('コヒーレンス予兆'))
+  const jaLine = row.markdown.split('\n').find((l) => l.includes('整合性の検証・改善'))
   assert.ok(jaLine, '日本語の予兆行がある')
   assert.equal(jaLine.includes('npm run'), false, '予兆行に npm run を決め打ちしない')
   assert.equal(jaLine.includes('kanban'), false, '予兆行に自動起票の指示を入れない')
@@ -709,7 +709,7 @@ test('⑩ 予兆が閾値未満なら何も足さない（レポートは従来�
   const row = readJsonl(path.join(env.reviewDir, 'chat-reports.jsonl'))[0]
   assert.equal('coherence_alert' in row, false, 'alert === false では付与しない')
   assert.equal(row.markdown.includes('🧭'), false, '予兆の節を足さない')
-  assert.equal(row.markdown.includes('コヒーレンス予兆'), false, '次の一手にも足さない')
+  assert.equal(row.markdown.includes('整合性の検証・改善'), false, '次の一手にも足さない')
   assert.match(row.markdown, /#### 🚀 次のステップ \/ Recommended Next Steps/, '従来の見出しはそのまま')
   assert.match(row.markdown_en, /#### 🚀 Recommended Next Steps/)
   assert.equal(readPipelineReports(env.reviewDir)[0].coherence_alert, null)
@@ -780,13 +780,13 @@ test('⑭ 純関数は予兆を汎用表現で受け、halted でも停止理由
   }
   assert.equal(
     coherenceNextStep(alert, { board: BOARD }),
-    'コヒーレンス予兆: contracts スイープを「Refactor & audit」から実行する（board: proj · Hard Fail 1 / 予兆 2 / ホットスポット 0）',
+    '整合性の検証・改善: contractsを「リファクタリング」から実行する（board: proj · Hard Fail 1 / 予兆 2 / ホットスポット 0）',
   )
   assert.match(coherenceNextStep(alert, { en: true, board: BOARD }), /^Coherence signals: run the contracts sweep/)
-  assert.match(coherenceNextStep({ ...alert, recommendedSweep: null }, { board: BOARD }), /対象スイープ/)
+  assert.match(coherenceNextStep({ ...alert, recommendedSweep: null }, { board: BOARD }), /対象メニュー/)
 
   const done = buildNextSteps({ status: 'done', board: BOARD, tasks: [{ status: 'done' }], issues: [], coherence: alert })
-  assert.match(done[0], /contracts スイープ/, 'done では先頭に置く（3 件枠で落とさない）')
+  assert.match(done[0], /contractsを「リファクタリング」から実行する/, 'done では先頭に置く（3 件枠で落とさない）')
   assert.equal(done.length <= 3, true)
 
   const halted = buildNextSteps({
@@ -800,7 +800,7 @@ test('⑭ 純関数は予兆を汎用表現で受け、halted でも停止理由
   assert.equal(halted[1], coherenceNextStep(alert, { board: BOARD }), 'その次に予兆の 1 行')
 
   const plain = buildNextSteps({ status: 'done', board: BOARD, tasks: [{ status: 'done' }], issues: [] })
-  assert.equal(plain.some((s) => s.includes('コヒーレンス予兆')), false, '予兆なしは従来どおり')
+  assert.equal(plain.some((s) => s.includes('整合性の検証・改善')), false, '予兆なしは従来どおり')
 
   // 生レポート（analyzeCoherence の出力）も受け、alert のときだけ節を足す
   const rep = buildPipelineReport({
