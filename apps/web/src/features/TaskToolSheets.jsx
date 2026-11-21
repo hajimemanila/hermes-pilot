@@ -155,7 +155,11 @@ export function BrainstormSheet({ initialSeed = '', board = '', repo = null, onC
  * The old sheet filed three lines of this repository's own vocabulary (`SOUL.md`, `OAuth boundary`,
  * `i18n`, `390px responsive`). Any other repository got nonsense. Now:
  *
- * - five language-agnostic presets (`state-flow` / `contracts` / `hotspots` / `docs-specs` / `custom`)
+ * - six language-agnostic presets (`state-flow` / `contracts` / `hotspots` / `docs-specs` /
+ *   `bug-hunt` / `custom`)
+ * - `bug-hunt` additionally offers one opt-in checkbox (default off): reproduce-first auto-fix.
+ *   Off means the filed task is a read-only report; on means "write the failing test first, then
+ *   fix only what it proves". The flag resets whenever the preset changes or the sheet reopens.
  * - the live `GET /api/coherence/report` result on open: counts per preset, recommended preset
  *   pre-selected (never overriding a preset the person picked, or the `initialPreset` C7 passes in)
  * - two ways to start it: one kanban task, or a multi-batch SPEC through the Spec Architect
@@ -177,6 +181,8 @@ export function RefactorSheet({ board = '', repo = null, initialPreset = '', onC
   const [reportState, setReportState] = useState('loading') // loading | ready | error
   const [busy, setBusy] = useState(null) // 'single' | 'spec' | null
   const [error, setError] = useState(null)
+  // bug-hunt の再現先行オプトイン（既定 OFF＝調査レポート専念・プリセット変更で戻す）
+  const [autoFix, setAutoFix] = useState(false)
   // 人が選び直したら診断結果の推奨で上書きしない（`initialPreset` での起動も同じ扱い）
   const touched = useRef(Boolean(String(initialPreset ?? '').trim()))
   const repoId = typeof repo === 'string' ? repo : ''
@@ -214,6 +220,8 @@ export function RefactorSheet({ board = '', repo = null, initialPreset = '', onC
   const pick = (id) => {
     touched.current = true
     setPreset(id)
+    // 別プリセットへ移ったら再現先行は必ず OFF に戻す（前回の選択を持ち越さない）
+    if (id !== 'bug-hunt') setAutoFix(false)
   }
 
   const submit = async (mode) => {
@@ -224,7 +232,7 @@ export function RefactorSheet({ board = '', repo = null, initialPreset = '', onC
     }
     setBusy(mode)
     setError(null)
-    const payload = buildSweepPayload({ preset, report, target, mode, board, lang })
+    const payload = buildSweepPayload({ preset, report, target, mode, board, lang, autoFix })
     try {
       if (mode === 'spec') {
         await api('/api/architect/seed', {
@@ -320,6 +328,17 @@ export function RefactorSheet({ board = '', repo = null, initialPreset = '', onC
         enterKeyHint="done"
         onChange={(e) => setTarget(e.target.value)}
       />
+
+      {preset === 'bug-hunt' ? (
+        <label className="seed-toggle coh-toggle">
+          <input
+            type="checkbox"
+            checked={autoFix}
+            onChange={(e) => setAutoFix(e.target.checked)}
+          />
+          <span>{t('coherence.preset.bug-hunt.autoFix')}</span>
+        </label>
+      ) : null}
 
       {error ? <div className="seed-error" style={{ marginTop: 8 }}>{error}</div> : null}
 

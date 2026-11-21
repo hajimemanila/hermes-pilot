@@ -4,8 +4,13 @@
  * `🛠 Refactor & audit` used to file three lines of self-repository vocabulary
  * (`SOUL.md`, `OAuth boundary`, `i18n`, `390px responsive`). Any other repository — Python, Go,
  * Rust, a docs tree — got nonsense injected into its task body. This module holds the generic
- * replacement: five presets that read the live `GET /api/coherence/report` result and turn it into
+ * replacement: six presets that read the live `GET /api/coherence/report` result and turn it into
  * a task body / spec seed that only ever names the *target* repository's own facts.
+ *
+ * The sixth preset `bug-hunt` (SPEC-RELIABILITY-GUARD D93) is the one for defects that unit tests
+ * miss. It carries the five blind spots every repository has — external boundaries, silent
+ * failures, sibling-path contract gaps, state x action dead ends, id/cache collisions — and picks
+ * one of three contracts: report only (default), reproduce-first (`autoFix`), or a spec seed.
  *
  * Rules kept here on purpose:
  * - No repository-specific literal (commands, paths, viewport sizes, check names). The verification
@@ -20,8 +25,18 @@ import { getLocale } from './format.js'
 import { translate } from '../i18n/lang.js'
 import { SEED_MAX } from './specSeed.js'
 
-/** Preset ids in display order. Any repo/language can use all five. */
-export const SWEEP_PRESETS = Object.freeze(['state-flow', 'contracts', 'hotspots', 'docs-specs', 'custom'])
+/** Preset ids in display order. Any repo/language can use all six. */
+export const SWEEP_PRESETS = Object.freeze([
+  'state-flow',
+  'contracts',
+  'hotspots',
+  'docs-specs',
+  'bug-hunt',
+  'custom',
+])
+
+/** Blind-spot checklist ids carried by the `bug-hunt` preset, in reporting order. */
+export const BUG_HUNT_CHECKS = Object.freeze(['check1', 'check2', 'check3', 'check4', 'check5'])
 
 /** Fallback when the report recommends nothing (or is unavailable). */
 export const DEFAULT_SWEEP = 'state-flow'
@@ -46,20 +61,26 @@ const RULE_PRESET = Object.freeze({
 
 /**
  * Keyword fallback for rules a repository declares itself (Layer 2 checkers). Ordered: the first
- * match wins. Contracts come first so a rule named `event-contract` lands in contracts, not
- * state-flow; a rule named `state-relay` still reaches state-flow because it matches no earlier
- * pattern.
+ * match wins.
+ *
+ * `bug-hunt` comes first because its tokens would otherwise be swallowed by a broader pattern
+ * below (`parity` belongs to contracts, `duplicat` to hotspots). A rule named `api-parity` or
+ * `docs-scripts-parity` therefore lands in bug-hunt — that is the *point* of D93: a parity gap
+ * between sibling paths is a real defect class, not a coverage/style one. A rule named
+ * `event-contract` still reaches contracts because it matches no bug-hunt token, and a rule named
+ * `state-relay` still reaches state-flow for the same reason.
  * @type {Array<[RegExp, string]>}
  */
 const RULE_KEYWORDS = [
-  [/contract|parity|schema|api|route|mock|locale|translation|i18n|test/, 'contracts'],
+  [/cli|silent|parity|guard|bug|deadend|collision|duplicate-batch/, 'bug-hunt'],
+  [/contract|schema|api|route|mock|locale|translation|i18n|test/, 'contracts'],
   [/doc|readme|spec|runbook|archive/, 'docs-specs'],
   [/state|flow|relay|async|race|event|sync/, 'state-flow'],
   [/bloat|hotspot|duplicat|dead|split|module/, 'hotspots'],
 ]
 
 /** Recommendation priority when the report does not name a preset (narrowest, most actionable first). */
-const RECOMMEND_ORDER = ['hotspots', 'contracts', 'state-flow', 'docs-specs']
+const RECOMMEND_ORDER = ['hotspots', 'contracts', 'state-flow', 'docs-specs', 'bug-hunt']
 
 /** Trim + collapse whitespace + clip. */
 function clip(value, max = DETAIL_MAX) {
@@ -192,7 +213,14 @@ export function presetForRule(rule) {
  */
 export function sweepCounts(report) {
   const r = normalizeReport(report)
-  const counts = { 'state-flow': 0, contracts: 0, hotspots: r.hotspots.length, 'docs-specs': 0, custom: 0 }
+  const counts = {
+    'state-flow': 0,
+    contracts: 0,
+    hotspots: r.hotspots.length,
+    'docs-specs': 0,
+    'bug-hunt': 0,
+    custom: 0,
+  }
   for (const issue of [...r.hardFails, ...r.softSignals]) {
     counts[presetForRule(issue.rule)] += 1
   }
@@ -249,10 +277,16 @@ export function sweepFiles(report, lang = getLocale()) {
  * ASCII so the same shape is machine-readable in any language) and, for the multi-batch route, the
  * seed text handed to the Spec Architect. Both are clipped to `SEED_MAX`.
  *
+ * `bug-hunt` (D93) adds the five blind spots plus exactly one contract:
+ * - `autoFix: false` (default) — report only, no code changes
+ * - `autoFix: true` — reproduce first, fix only what the reproduction proves
+ * - `mode: 'spec'` — the same checklist, contract and severity policy become the Spec Architect
+ *   seed instead of a single task body
+ *
  * @param {{preset?: string, report?: unknown, target?: string, mode?: 'single'|'spec',
- *   board?: string, lang?: string}} [input] sweep input
+ *   board?: string, lang?: string, autoFix?: boolean}} [input] sweep input
  * @returns {{preset: string, mode: 'single'|'spec', lang: 'en'|'ja', board: string,
- *   title: string, body: string, seedText: string}} payload
+ *   title: string, body: string, seedText: string, autoFix: boolean}} payload
  */
 export function buildSweepPayload({
   preset,
@@ -261,6 +295,7 @@ export function buildSweepPayload({
   mode = 'single',
   board = '',
   lang = getLocale(),
+  autoFix = false,
 } = {}) {
   const id = normalizePreset(preset)
   const l = lang === 'ja' ? 'ja' : 'en'
@@ -268,6 +303,9 @@ export function buildSweepPayload({
   const r = normalizeReport(report)
   const targetText = clip(target, 200)
   const scope = targetText || t('coherence.scopeWholeRepo')
+  const hunt = id === 'bug-hunt'
+  // 再現先行は spec ルートでも種に載せる（チェックを黙って無視しない）
+  const fix = hunt && Boolean(autoFix)
 
   const title = `[COHERENCE/${id.toUpperCase()}] ${t(`coherence.preset.${id}`)}${
     targetText ? ` - ${targetText}` : ''
@@ -287,6 +325,14 @@ export function buildSweepPayload({
     `Target: ${scope}`,
     `Detected: ${detected}`,
   ]
+
+  if (hunt) {
+    const contract = fix ? 'reproduceFirst' : 'reportOnly'
+    lines.push(`${t('coherence.preset.bug-hunt.contract')}: ${t(`coherence.preset.bug-hunt.${contract}`)}`)
+    lines.push(`${t('coherence.preset.bug-hunt.blindSpots')}:`)
+    for (const key of BUG_HUNT_CHECKS) lines.push(`- ${t(`coherence.preset.bug-hunt.${key}`)}`)
+    if (mode === 'spec') lines.push(t('coherence.preset.bug-hunt.orderPolicy'))
+  }
 
   const files = sweepFiles(r, l)
   if (files.length) {
@@ -312,5 +358,6 @@ export function buildSweepPayload({
     title,
     body,
     seedText,
+    autoFix: fix,
   }
 }

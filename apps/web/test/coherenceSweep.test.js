@@ -1,11 +1,13 @@
 /**
- * Generic coherence sweeps — pure logic (SPEC-COHERENCE §3.6 / D82).
+ * Generic coherence sweeps — pure logic (SPEC-COHERENCE §3.6 / D82, SPEC-RELIABILITY-GUARD D93).
  *
  * Fixed here without rendering anything:
- *  - the five presets are language/repo agnostic and stable
+ *  - the six presets are language/repo agnostic and stable
  *  - a report (or a missing one) maps to per-preset counts and a recommendation
  *  - the generated task body keeps the machine labels (`Execution Mode` / `Objective` / `Files` /
  *    `Verify`) while the prose follows the UI language
+ *  - `bug-hunt` defaults to a read-only report contract and only switches to reproduce-first when
+ *    `autoFix` is on; both carry the same five blind spots
  *  - **no self-repository vocabulary leaks into a payload**: no `npm run …`, no `SOUL.md`, no
  *    `OAuth`, no viewport size, no `mockApi`/`hm:`/`hermes-pilot` (the whole point of D82/D85)
  */
@@ -16,6 +18,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import {
+  BUG_HUNT_CHECKS,
   DEFAULT_SWEEP,
   MAX_LISTED_FILES,
   SWEEP_PRESETS,
@@ -75,11 +78,16 @@ const REPORT = {
   recommendedSweep: 'hotspots',
 }
 
-test('presets are the five generic sweeps and unknown ids fall back to the default', () => {
-  assert.deepEqual([...SWEEP_PRESETS], ['state-flow', 'contracts', 'hotspots', 'docs-specs', 'custom'])
+test('presets are the six generic sweeps and unknown ids fall back to the default', () => {
+  assert.deepEqual(
+    [...SWEEP_PRESETS],
+    ['state-flow', 'contracts', 'hotspots', 'docs-specs', 'bug-hunt', 'custom'],
+  )
   assert.ok(SWEEP_PRESETS.includes(DEFAULT_SWEEP))
+  assert.equal(SWEEP_PRESETS.at(-1), 'custom', '任意ターゲットは常に最後の 1 枚')
   for (const id of SWEEP_PRESETS) assert.equal(normalizePreset(id), id)
   assert.equal(normalizePreset(' State-Flow '), 'state-flow')
+  assert.equal(normalizePreset(' BUG-HUNT '), 'bug-hunt')
   assert.equal(normalizePreset(''), DEFAULT_SWEEP)
   assert.equal(normalizePreset('css'), DEFAULT_SWEEP)
   assert.equal(normalizePreset(null), DEFAULT_SWEEP)
@@ -94,6 +102,29 @@ test('every preset has a label, a description and an objective in both languages
   }
   const missing = Object.keys(en).filter((key) => key.startsWith('coherence.') && !(key in ja))
   assert.deepEqual(missing, [], `ja に無い coherence キー: ${missing.join(', ')}`)
+  const extra = Object.keys(ja).filter((key) => key.startsWith('coherence.') && !(key in en))
+  assert.deepEqual(extra, [], `en に無い coherence キー: ${extra.join(', ')}`)
+})
+
+test('bug-hunt carries the blind spots, both contracts and the checkbox label in both languages', () => {
+  const keys = [
+    'coherence.preset.bug-hunt.contract',
+    'coherence.preset.bug-hunt.reportOnly',
+    'coherence.preset.bug-hunt.reproduceFirst',
+    'coherence.preset.bug-hunt.blindSpots',
+    'coherence.preset.bug-hunt.orderPolicy',
+    'coherence.preset.bug-hunt.autoFix',
+    ...BUG_HUNT_CHECKS.map((check) => `coherence.preset.bug-hunt.${check}`),
+  ]
+  for (const key of keys) {
+    assert.ok(en[key], `en.json に ${key} が無い`)
+    assert.ok(ja[key], `ja.json に ${key} が無い`)
+    assert.notEqual(en[key], ja[key], `${key} が両言語で同じ`)
+  }
+  assert.equal(ja['coherence.preset.bug-hunt'], 'バグ・不具合ハント')
+  assert.equal(BUG_HUNT_CHECKS.length, 5, '5 大盲点')
+  assert.equal(en['coherence.preset.bug-hunt.autoFix'].includes('default off'), true, '既定 OFF を明記する')
+  assert.equal(ja['coherence.preset.bug-hunt.autoFix'].includes('既定 OFF'), true, '既定 OFF を明記する')
 })
 
 test('a missing or broken report degrades to zeros instead of throwing', () => {
@@ -140,18 +171,33 @@ test('rules map to the preset that would fix them', () => {
   assert.equal(presetForRule('file-bloat'), 'hotspots')
   assert.equal(presetForRule('debt-spike'), 'hotspots')
   assert.equal(presetForRule('spec-sprawl'), 'docs-specs')
-  assert.equal(presetForRule('api-parity'), 'contracts')
   assert.equal(presetForRule('event-contract'), 'contracts')
   assert.equal(presetForRule('state-relay-drift'), 'state-flow')
-  assert.equal(presetForRule('docs-scripts-parity'), 'contracts')
   assert.equal(presetForRule('whatever-custom-rule'), 'custom')
   assert.equal(presetForRule(''), 'custom')
+  // D93: 単体テストが見逃す実害バグの語彙は bug-hunt へ（parity は contracts より先に取る）
+  assert.equal(presetForRule('api-parity'), 'bug-hunt')
+  assert.equal(presetForRule('docs-scripts-parity'), 'bug-hunt')
+  assert.equal(presetForRule('cli-exit-code'), 'bug-hunt')
+  assert.equal(presetForRule('silent-http-200'), 'bug-hunt')
+  assert.equal(presetForRule('guard-drift'), 'bug-hunt')
+  assert.equal(presetForRule('bug-report'), 'bug-hunt')
+  assert.equal(presetForRule('deadend-state'), 'bug-hunt')
+  assert.equal(presetForRule('cache-collision'), 'bug-hunt')
+  assert.equal(presetForRule('duplicate-batch'), 'bug-hunt')
 })
 
 test('per-preset counts add up and the recommendation follows the report', () => {
   const counts = sweepCounts(REPORT)
   // 1 hotspot + debt-spike(soft) が hotspots、spec-sprawl が docs-specs、state-relay-drift が state-flow
-  assert.deepEqual(counts, { 'state-flow': 1, contracts: 0, hotspots: 2, 'docs-specs': 1, custom: 0 })
+  assert.deepEqual(counts, {
+    'state-flow': 1,
+    contracts: 0,
+    hotspots: 2,
+    'docs-specs': 1,
+    'bug-hunt': 0,
+    custom: 0,
+  })
   assert.equal(recommendSweep(REPORT), 'hotspots')
   // 推奨が無い/不正なら最多シグナルのプリセット、シグナルゼロなら既定
   assert.equal(recommendSweep({ ...REPORT, recommendedSweep: '' }), 'hotspots')
@@ -204,6 +250,64 @@ test('the multi-batch route adds a plan line and a seed within the seed limit', 
   assert.ok(payload.seedText.includes(payload.body), 'seed は本文を含む')
   assert.ok(payload.seedText.length <= SEED_MAX)
   assert.ok(payload.body.length <= SEED_MAX)
+})
+
+test('bug-hunt defaults to a read-only report contract with the five blind spots', () => {
+  const payload = buildSweepPayload({ preset: 'bug-hunt', report: REPORT, lang: 'en' })
+  assert.equal(payload.preset, 'bug-hunt')
+  assert.equal(payload.autoFix, false)
+  assert.ok(payload.title.startsWith('[COHERENCE/BUG-HUNT] '), payload.title)
+  assert.match(payload.body, /^Contract: Report only /m)
+  assert.doesNotMatch(payload.body, /Reproduce first/)
+  assert.ok(payload.body.includes(en['coherence.preset.bug-hunt.reportOnly']))
+  assert.ok(payload.body.includes(`${en['coherence.preset.bug-hunt.blindSpots']}:`))
+  // 5 大盲点は必ず 5 行（Files の箇条書きより前）
+  const head = payload.body.split('Files:')[0]
+  assert.equal(head.split('\n').filter((line) => line.startsWith('- ')).length, 5)
+  for (const key of BUG_HUNT_CHECKS) {
+    assert.ok(payload.body.includes(en[`coherence.preset.bug-hunt.${key}`]), `${key} が本文に無い`)
+  }
+  assert.equal(payload.body.split('\n').at(-1).startsWith('Verify: '), true, 'Verify が最後の行')
+  assert.ok(payload.body.length <= SEED_MAX)
+  assert.doesNotMatch(payload.body, /^Plan: /m, 'single ではバッチ分割計画を書かない')
+})
+
+test('the bug-hunt opt-in switches the contract to reproduce-first', () => {
+  const off = buildSweepPayload({ preset: 'bug-hunt', report: REPORT, lang: 'en' })
+  const on = buildSweepPayload({ preset: 'bug-hunt', report: REPORT, lang: 'en', autoFix: true })
+  assert.equal(on.autoFix, true)
+  assert.match(on.body, /^Contract: Reproduce first /m)
+  assert.doesNotMatch(on.body, /Report only/)
+  assert.ok(on.body.includes(en['coherence.preset.bug-hunt.reproduceFirst']))
+  // 盲点リストは OFF / ON で同一（変わるのは契約の 1 行だけ）
+  const bullets = (body) => body.split('\n').filter((line) => line.startsWith('- ')).join('\n')
+  assert.equal(bullets(on.body), bullets(off.body))
+  // 他のプリセットは autoFix を受け取っても契約行を出さない
+  const hotspots = buildSweepPayload({ preset: 'hotspots', report: REPORT, lang: 'en', autoFix: true })
+  assert.equal(hotspots.autoFix, false)
+  assert.doesNotMatch(hotspots.body, /^Contract: /m)
+})
+
+test('the bug-hunt spec route hands the checklist and severity policy to the architect', () => {
+  const payload = buildSweepPayload({ preset: 'bug-hunt', report: REPORT, mode: 'spec', lang: 'en' })
+  assert.equal(payload.mode, 'spec')
+  assert.match(payload.body, /^Plan: /m)
+  assert.ok(payload.body.includes(en['coherence.preset.bug-hunt.orderPolicy']), '重要度の方針を種に渡す')
+  assert.ok(payload.seedText.includes(en['coherence.preset.bug-hunt.blindSpots']))
+  assert.ok(payload.seedText.startsWith('Draft a multi-batch SPEC'))
+  assert.ok(payload.seedText.length <= SEED_MAX)
+  // チェックを黙って無視しない: spec ルートでも契約は切り替わる
+  const fixed = buildSweepPayload({ preset: 'bug-hunt', report: REPORT, mode: 'spec', lang: 'en', autoFix: true })
+  assert.match(fixed.body, /^Contract: Reproduce first /m)
+})
+
+test('the bug-hunt body is translated while the machine labels stay ASCII', () => {
+  const payload = buildSweepPayload({ preset: 'bug-hunt', report: REPORT, lang: 'ja' })
+  assert.match(payload.title, /^\[COHERENCE\/BUG-HUNT\] バグ・不具合ハント/)
+  assert.match(payload.body, /^Execution Mode: \[Mode: Zero-Stop\]$/m)
+  assert.ok(payload.body.includes(ja['coherence.preset.bug-hunt.blindSpots']))
+  assert.ok(payload.body.includes(ja['coherence.preset.bug-hunt.reportOnly']))
+  assert.match(payload.body, /^Verify: /m)
 })
 
 test('long file lists are capped and summarised', () => {

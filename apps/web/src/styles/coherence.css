@@ -144,6 +144,14 @@
   width: 100%;
 }
 
+/*
+ * bug-hunt の「再現先行」オプトイン（D93）。
+ * 行の体裁は Spec Seed のチェック行（`.seed-toggle`）を共有し、ここでは位置だけ足す。
+ */
+.coh-toggle {
+  margin: 10px 0 0;
+}
+
 .coh-actions {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -195,7 +203,7 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  /* 5 枚目（任意ターゲット）は行を跨がず 1 列ぶんに収める */
+  /* 最終行に残る 1 枚（任意ターゲット）は行を跨がず 1 列ぶんに収める（6 枚＝3 行 × 2 列） */
   .coh-presets > .coh-preset:last-child {
     grid-column: span 1;
   }
