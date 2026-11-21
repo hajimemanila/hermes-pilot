@@ -142,7 +142,11 @@ test('JSX: 右カラムは最小ヘッダ＋タイムラインだけで、バナ
 })
 
 test('JSX: 左カラムは 一覧＋下端スタック（4 グループを chatSplitChrome() の順で積む）', () => {
-  assert.match(jsx, /<div className="chat-split-list">\{sessionListNode\}<\/div>/)
+  assert.match(
+    jsx,
+    /<div className="chat-split-list">\s*<ChatSessionList \{\.\.\.sessionListProps\} \/>\s*<\/div>/,
+    '左カラムの一覧が ChatSessionList（材料は sessionListProps）になっていない',
+  )
   assert.match(jsx, /<div className="chat-split-stack">/)
   assert.match(jsx, /\{chatSplitChrome\(\)\.map\(\(group\) => \(/)
 
@@ -156,15 +160,24 @@ test('JSX: 左カラムは 一覧＋下端スタック（4 グループを chatS
 })
 
 test('JSX: セッション一覧は 1 つだけ定義し、ドロワーと左カラムで共用する', () => {
-  // 一覧の定義は `features/chat/ChatParts.jsx` へ切り出し済み（ChatPane の肥大化解消）。
-  // 「定義は 1 つだけ」は両ファイルを合わせて数える。
+  // 一覧の定義は `features/chat/ChatParts.jsx`、ドロワーの器は
+  // `features/chat/ChatDrawer.jsx` へ切り出し済み（ChatPane の肥大化解消）。
+  // 「定義は 1 つだけ」は 3 ファイルを合わせて数える。
   const parts = fs.readFileSync(path.join(ROOT, 'src/features/chat/ChatParts.jsx'), 'utf8')
-  const defs = `${jsx}\n${parts}`.match(/function ChatSessionList\(/g) ?? []
+  const drawer = fs.readFileSync(path.join(ROOT, 'src/features/chat/ChatDrawer.jsx'), 'utf8')
+  const defs = `${jsx}\n${parts}\n${drawer}`.match(/function ChatSessionList\(/g) ?? []
   assert.equal(defs.length, 1, 'ChatSessionList が 1 つではない（中身を書き分けている）')
-  // 一覧の実体は 1 ペインのドロワーと 2 カラムの左で同じものを使う
-  assert.match(jsx, /<Sheet title=\{t\('chat\.drawerTitle'\)\} onClose=\{\(\) => setDrawer\(false\)\}>\s*\{sessionListNode\}\s*<\/Sheet>/)
-  const listUses = jsx.match(/\{sessionListNode\}/g) ?? []
-  assert.equal(listUses.length, 2, `sessionListNode の使用が ${listUses.length} 箇所（ドロワーと左カラムで 2 箇所）`)
+  // ドロワーは Sheet のラッパーだけ（境界③ `({ open, onClose, title, listProps })`）
+  assert.match(drawer, /<Sheet title=\{title\} onClose=\{onClose\}>/, 'ドロワーが Sheet で包んでいない')
+  assert.match(drawer, /<ChatSessionList \{\.\.\.listProps\} \/>/, 'ドロワーが listProps を一覧へ渡していない')
+  // 一覧の実体は 1 ペインのドロワーと 2 カラムの左で同じものを使う（材料は親が 1 回だけ組む）
+  const listUses = jsx.match(/<ChatSessionList \{\.\.\.sessionListProps\} \/>/g) ?? []
+  assert.equal(listUses.length, 1, `左カラムの一覧が ${listUses.length} 箇所（1 箇所のはず）`)
+  assert.match(
+    jsx,
+    /<ChatDrawer\s+open=\{drawer\}\s+onClose=\{\(\) => setDrawer\(false\)\}\s+title=\{t\('chat\.drawerTitle'\)\}\s+listProps=\{sessionListProps\}\s+\/>/,
+    'ドロワー（ChatDrawer）へ一覧の材料が渡っていない',
+  )
 })
 
 test('JSX: 1 ペインの並びは現行のまま（DOM 順を変えない）', () => {

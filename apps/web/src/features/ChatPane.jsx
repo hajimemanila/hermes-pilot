@@ -29,6 +29,7 @@ import { sep } from '../lib/format.js'
 import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
 import { HM_STORAGE } from '../contracts/storage.js'
 import { ChatSessionList, DRAWER_REFRESH_THROTTLE_MS, MarkdownBody, PipelineReportCard, ToolRows, commitProgressToBlocks, fitComposer } from './chat/ChatParts.jsx'
+import { ChatDrawer } from './chat/ChatDrawer.jsx'
 
 // 820px 以上のチャットを 2 カラムにする判定（境界の正本は lib/layout.js）
 // 左カラム下端へ移す 4 グループの名前（JSX とテストで二重管理しない）
@@ -2248,23 +2249,25 @@ export function ChatPane({
     </div>
   )
 
-  /* セッション一覧（1 ペインはドロワー・2 カラムは左カラムの上） */
-  const sessionListNode = (
-    <ChatSessionList
-      sessions={sessions}
-      sessionBadges={sessionBadges}
-      pipelineSessionIds={pipelineSessionIds}
-      readonlySessionId={readonly?.sessionId}
-      orphanReports={drawerOrphanReports}
-      refreshing={drawerRefreshing}
-      markDisabled={!drawerUnread && !otherUnreads.length}
-      onRefresh={() => refreshDrawerData({ force: true })}
-      onMarkAllRead={markAllDrawerRead}
-      onOpenOrphan={openOrphanReport}
-      onNewChat={openProfileSheet}
-      onOpenSession={(s) => openSessionSafe(s.id, null, s.profile ?? 'default')}
-    />
-  )
+  /*
+   * セッション一覧の材料（1 ペインはドロワー・2 カラムは左カラムの上）。
+   * 一覧そのものは `ChatSessionList`（`chat/ChatParts.jsx`）1 つだけなので、
+   * ここでは props の束を 1 回だけ組み立てて両方へ渡す。
+   */
+  const sessionListProps = {
+    sessions,
+    sessionBadges,
+    pipelineSessionIds,
+    readonlySessionId: readonly?.sessionId,
+    orphanReports: drawerOrphanReports,
+    refreshing: drawerRefreshing,
+    markDisabled: !drawerUnread && !otherUnreads.length,
+    onRefresh: () => refreshDrawerData({ force: true }),
+    onMarkAllRead: markAllDrawerRead,
+    onOpenOrphan: openOrphanReport,
+    onNewChat: openProfileSheet,
+    onOpenSession: (s) => openSessionSafe(s.id, null, s.profile ?? 'default'),
+  }
 
   /*
    * 左カラム下端の固定スタック。グループ名と順番の正本は `lib/chatSplit.js` の
@@ -2293,7 +2296,9 @@ export function ChatPane({
       {splitChat ? (
         <>
           <div className="chat-split-master">
-            <div className="chat-split-list">{sessionListNode}</div>
+            <div className="chat-split-list">
+              <ChatSessionList {...sessionListProps} />
+            </div>
             <div className="chat-split-stack">
               {chatSplitChrome().map((group) => (
                 <div className="chat-split-group" data-chat-group={group} key={group}>
@@ -2641,11 +2646,12 @@ export function ChatPane({
         </Sheet>
       ) : null}
 
-      {drawer ? (
-        <Sheet title={t('chat.drawerTitle')} onClose={() => setDrawer(false)}>
-          {sessionListNode}
-        </Sheet>
-      ) : null}
+      <ChatDrawer
+        open={drawer}
+        onClose={() => setDrawer(false)}
+        title={t('chat.drawerTitle')}
+        listProps={sessionListProps}
+      />
 
       {receiptCtx ? (
         <MissionReceiptSheet
