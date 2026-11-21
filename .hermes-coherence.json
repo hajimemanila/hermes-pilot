@@ -1,0 +1,27 @@
+{
+  "note": "Layer 2 adapter for this repository (SPEC-COHERENCE 3.3 / D80). Layer 1 runs with zero config in any repository; this file only tunes it for hermes-pilot. `checker` points at the repository specific rules (api-parity, event-contract, storage-contract, docs-scripts-parity, legacy-reentry). Optional `checkerPending: { \"<rule>\": \"<batch>\" }` downgrades a rule to a fatal soft signal while its upstream contract module is still being written; remove the entry once the batch lands (no code change needed).",
+  "maxLines": 800,
+  "hotspotDays": 14,
+  "hotspotTouches": 5,
+  "baselineFile": "scripts/coherence-baseline.json",
+  "checker": "scripts/check-coherence.mjs",
+  "ignoreGlobs": [
+    "apps/web/dist/**",
+    "apps/web/dist-demo/**",
+    "apps/web/dist.next/**",
+    "apps/web/dist.prev/**",
+    "demo/**",
+    "apps/dashboard/bundle.js"
+  ],
+  "forbiddenPatterns": [
+    {
+      "pattern": "spawn(Sync)?\\(\\s*['\"`](agy|gemini|claude|codex)['\"`]",
+      "message": "An external AI CLI subprocess must not come back (Hermes native only).",
+      "ignore": ["scripts/check-oauth-boundary.mjs", "apps/bridge/test/**", "apps/bridge/test/**/*.js"]
+    },
+    {
+      "pattern": "~/\\.gemini/skills|\\.agents/skills",
+      "message": "Writing skills into ~/.gemini or ~/.agents is forbidden; skills live in the plugin."
+    }
+  ]
+}
