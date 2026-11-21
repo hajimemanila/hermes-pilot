@@ -165,6 +165,15 @@ test('Step 2 -> 4: バッチが done まで進むとサマリと完了レシー�
   const reports = await demoFetch('/api/specs/reports?board=mobile&limit=1')
   assert.equal(reports.reports.length, 1)
   assert.match(reports.reports[0].markdown, /verify: npm run verify/)
+  // COH-5: デモ完走レポートにも汎用予兆検知の形（`coherence_alert`）が載る（D83・自動起票なし）
+  const demoAlert = reports.reports[0].coherence_alert
+  assert.ok(demoAlert, 'coherence_alert が付く')
+  assert.deepEqual(demoAlert.summary, { hardFailCount: 0, softSignalCount: 3, hotspotCount: 1 })
+  assert.equal(demoAlert.recommendedSweep, 'hotspots')
+  assert.equal(demoAlert.highlights.length, 3)
+  assert.deepEqual(demoAlert.layers, { universal: true, repoConfig: true, repoChecker: true })
+  assert.match(reports.reports[0].markdown, /#### 🧭 Coherence Signals/)
+  assert.match(reports.reports[0].markdown, /Recommended sweep: hotspots/)
   const receipt = await demoFetch('/api/telemetry/receipt')
   assert.equal(receipt.ok, true)
   // 本物（bridge/telemetry.js の buildReceipt）と同じ形: 数字は kpi の下に入る
