@@ -1,6 +1,6 @@
 import React, { useRef, useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api.js'
-import { HoldButton, Icon, Loader, RefreshButton, Sheet, Spinner, relTime } from '../components/Ui.jsx'
+import { HoldButton, Icon, Loader, RefreshButton, Sheet, relTime } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
 import { celebrate } from '../lib/vibe.js'
 import { CaptureSheet } from './CaptureSheet.jsx'
@@ -26,7 +26,6 @@ import { useSplitLayout } from '../lib/useSplitLayout.js'
 import {
   coherenceBannerView,
   coherenceDismissRecord,
-  collapseTaskEvents,
   archivedTaskCount,
   archivableTasks,
   bulkArchivePayload,
@@ -38,23 +37,9 @@ import {
   visibleTasks,
 } from '../lib/tasksView.js'
 import { HM_STORAGE } from '../contracts/storage.js'
-import { WorkerFeed } from './ReviewPane.jsx'
 import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
 import { ModePill, SpecPicker } from './tasks/SpecPicker.jsx'
-
-/** 実行中タスクの詳細を追いかける間隔（heartbeat と worker の進捗が増えるため）。 */
-const DETAIL_POLL_MS = 5000
-
-/** タスク状態 → 辞書キー（未知は生の値）。 */
-const STATUS_KEY = {
-  running: 'tasks.status.running',
-  ready: 'tasks.status.ready',
-  done: 'tasks.status.done',
-  blocked: 'tasks.status.blocked',
-  failed: 'tasks.status.failed',
-  archived: 'tasks.status.archived',
-  todo: 'tasks.status.todo',
-}
+import { STATUS_KEY, TaskDetailSheet } from './tasks/TaskDetailSheet.jsx'
 
 
 /**
@@ -78,14 +63,12 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
   const [tasks, setTasks] = useState([])
   // 直近のパイプライン完走サマリ（SPEC-PILOT-V4 §3.3 ③ / D20③）。無ければバナーを出さない。
   const [latestReport, setLatestReport] = useState(null)
-  const [detail, setDetail] = useState(null)
+  // 開いているタスク詳細（{ id, board, title, seq } | null）。取得・ポーリングは TaskDetailSheet 側が持つ
+  const [detailTarget, setDetailTarget] = useState(null)
   const [killOpen, setKillOpen] = useState(false)
   const [confirmText, setConfirmText] = useState('')
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
-  // Diff プレビュー（開いたときだけ取得）
-  const [diff, setDiff] = useState(null)
-  const [patch, setPatch] = useState(null)
   const [captureOpen, setCaptureOpen] = useState(false)
   const [boardSheetOpen, setBoardSheetOpen] = useState(false)
   // 使用量（24h）
@@ -269,6 +252,8 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
   }, [board])
 
   const openTaskCountRef = useRef({ board: null, count: null })
+  // 同じタスクを開き直したことを TaskDetailSheet に伝える世代番号
+  const detailSeq = useRef(0)
   const loadTasks = useCallback(
     async (slug) => {
       if (!slug) return false
@@ -741,56 +726,22 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
   }, [focusBoard, boards, onConsumedFocusBoard])
 
   /**
-   * タスク詳細を開く。
+   * タスク詳細を開く（取得・表示は `TaskDetailSheet` が持つ。親は対象だけを覚える）。
    *
    * @param {{id: string, title?: string}} task タスク（最低限 id）
    * @param {string} [boardSlug] そのタスクのボード（別ボードのジョブから開くとき・D43）。
    *        省略時は表示中のボード。取得先 URL と、詳細の再同期先をこのボードに固定する。
    */
-  const openTask = async (task, boardSlug = board) => {
-    const targetBoard = String(boardSlug ?? board ?? '').trim()
-    setDetail({ loading: true, board: targetBoard, ...task })
-    setDiff(null)
-    setPatch(null)
-    try {
-      const d = await api(
-        `/api/boards/${encodeURIComponent(targetBoard)}/tasks/${encodeURIComponent(task.id)}`,
-      )
-      setDetail({ ...d, board: targetBoard })
-    } catch (e) {
-      notify(e.message)
-      setDetail(null)
-    }
+  const openTask = (task, boardSlug = board) => {
+    detailSeq.current += 1
+    setDetailTarget({
+      id: String(task.id),
+      board: String(boardSlug ?? board ?? '').trim(),
+      title: task.title ?? '',
+      // 同じ id をタップし直したときだけ取得し直すための世代番号
+      seq: detailSeq.current,
+    })
   }
-
-  /** 実行中／待機中のあいだ詳細を再同期する（heartbeat・イベント・worker の進捗が増えるため）。 */
-  useEffect(() => {
-    const id = detail?.id
-    const status = detail?.status
-    if (!id) return
-    if (!(status === 'running' || status === 'ready')) return
-    // 別ボードのタスクを開いている場合がある（D43 の導線）ので、詳細自身のボードを優先する
-    const detailBoard = String(detail?.board ?? board ?? '')
-    let alive = true
-    const timer = setInterval(async () => {
-      if (document.visibilityState !== 'visible') return
-      try {
-        const d = await api(`/api/boards/${encodeURIComponent(detailBoard)}/tasks/${encodeURIComponent(id)}`)
-        if (!alive) return
-        // 別のタスクを開いた／閉じたときに古い応答で上書きしない
-        setDetail((prev) => (prev && prev.id === id ? { ...prev, ...d, board: detailBoard, loading: false } : prev))
-      } catch {
-        /* 一時的な失敗は次の tick で取り直す */
-      }
-    }, DETAIL_POLL_MS)
-    return () => {
-      alive = false
-      clearInterval(timer)
-    }
-  }, [detail?.id, detail?.status, detail?.board, board])
-
-  /** 詳細が対象にしているボード（別ボードのタスクを開いたときの取り違えを防ぐ・D43）。 */
-  const detailBoard = String(detail?.board ?? board ?? '')
 
   /*
    * Architect ジョブの「🔍 進捗詳細」（SPEC-PILOT-V9 §3.3 ② / D43 後半）。
@@ -812,61 +763,6 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     if (targetBoard !== board && boards.some((b) => b.slug === targetBoard)) setBoard(targetBoard)
     const title = String(job?.seed ?? '').trim()
     openTask({ id: taskId, title: title ? title.slice(0, 40) : taskId }, targetBoard)
-  }
-
-  /** 差分サマリ（アコーディオンを開いたときだけ取りに行く）。 */
-  const loadDiff = async (id) => {
-    if (diff?.files) return
-    setDiff({ loading: true })
-    try {
-      const d = await api(`/api/boards/${encodeURIComponent(detailBoard)}/tasks/${encodeURIComponent(id)}/diff`)
-      setDiff(d)
-    } catch (e) {
-      setDiff({ ok: false, reason: e.message })
-    }
-  }
-
-  /** 1ファイルのパッチ。 */
-  const loadPatch = async (id, file) => {
-    if (patch?.path === file) {
-      setPatch(null)
-      return
-    }
-    setPatch({ path: file, loading: true })
-    try {
-      const d = await api(
-        `/api/boards/${encodeURIComponent(detailBoard)}/tasks/${encodeURIComponent(id)}/diff?file=${encodeURIComponent(file)}`,
-      )
-      setPatch({ ...d, path: file })
-    } catch (e) {
-      setPatch({ path: file, ok: false, reason: e.message })
-    }
-  }
-
-  const abortTask = async (task) => {
-    setBusy(true)
-    try {
-      const targetBoard = String(task?.board ?? detailBoard).trim()
-      const r = await api(
-        `/api/boards/${encodeURIComponent(targetBoard)}/tasks/${encodeURIComponent(task.id)}/abort`,
-        {
-          method: 'POST',
-          body: { reason: t('tasks.abortReason') },
-        },
-      )
-      if (r?.ok === false) {
-        notify(r?.error || r?.output || t('live.abortFailed', { id: task.id }))
-        return
-      }
-      notify(t('tasks.aborted', { reclaim: r.reclaimed, block: r.blocked }))
-      emitHmEvent(HM_EVENTS.WAKE_SYNC)
-      setDetail(null)
-      loadTasks(targetBoard)
-    } catch (e) {
-      notify(e.message)
-    } finally {
-      setBusy(false)
-    }
   }
 
   const gatewayAction = async (action) => {
@@ -1166,192 +1062,8 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     }
   }
 
-  // 詳細（右ペインと Sheet で同じ中身を使う。2 ペインのときは右ペインに常設する）
-  const detailBody = detail
-    ? detail.loading
-      ? <Loader label={t('tasks.detailLoading')} />
-      : (
-          <>
-            <div className="kv">
-              <span>{t('tasks.status')}</span>
-              <b>
-                {STATUS_KEY[detail.status] ? t(STATUS_KEY[detail.status]) : detail.status}
-                {detail.workerPid ? ` ${sep()} pid ${detail.workerPid}` : ''}
-              </b>
-            </div>
-            <div className="kv">
-              <span>{t('tasks.started')}</span>
-              <b>{detail.startedAt ? relTime(detail.startedAt) : '—'}</b>
-            </div>
-            {detail.branch ? (
-              <div className="kv">
-                <span>{t('tasks.branch')}</span>
-                <b className="mono">{detail.branch}</b>
-              </div>
-            ) : null}
-            {detail.body ? <div className="body-text">{detail.body}</div> : null}
-            {detail.result ? <div className="body-text result">{detail.result}</div> : null}
-
-            {detail.git?.head ? (
-              <>
-                <div className="kv">
-                  <span>{t('tasks.commit')}</span>
-                  <b className="mono">
-                    {detail.git.head}
-                    {detail.git.branch ? ` (${detail.git.branch})` : ''}
-                  </b>
-                </div>
-                <div className="kv">
-                  <span>{t('tasks.message')}</span>
-                  <b className="git-msg">{detail.git.subject || '—'}</b>
-                </div>
-                <button
-                  className="accordion"
-                  onClick={() => {
-                    if (diff?.loading) return
-                    if (diff) setDiff(null)
-                    else loadDiff(detail.id)
-                  }}
-                >
-                  <span className="acc-title">
-                    {t('tasks.changedFiles')}
-                    {diff?.ok ? (
-                      <span className="diff-sum">
-                        <span className="add">+{diff.total.add}</span> <span className="del">−{diff.total.del}</span>
-                      </span>
-                    ) : null}
-                  </span>
-                  <span className="acc-caret">{diff ? '▾' : '▸'}</span>
-                </button>
-                {diff ? (
-                  diff.loading ? (
-                    <div className="row-sub hm-btn-inner" style={{ padding: '6px 4px' }}>
-                      <Spinner size={12} />
-                      <span>{t('common.loading')}</span>
-                    </div>
-                  ) : diff.ok ? (
-                    <div className="diff-list">
-                      {(diff.files ?? []).map((f) => (
-                        <div key={f.path}>
-                          <button
-                            className={`diff-row${patch?.path === f.path ? ' on' : ''}`}
-                            onClick={() => loadPatch(detail.id, f.path)}
-                          >
-                            <span className="diff-path mono">{f.path}</span>
-                            <span className="diff-nums">
-                              {f.binary ? (
-                                <span className="git-dirty">binary</span>
-                              ) : (
-                                <>
-                                  <span className="add">+{f.add}</span> <span className="del">−{f.del}</span>
-                                </>
-                              )}
-                            </span>
-                          </button>
-                          {patch?.path === f.path ? (
-                            patch.loading ? (
-                              <div className="row-sub hm-btn-inner" style={{ padding: '6px 10px' }}>
-                                <Spinner size={12} />
-                                <span>{t('common.loading')}</span>
-                              </div>
-                            ) : patch.ok ? (
-                              <pre className="patch">{patch.text}</pre>
-                            ) : (
-                              <div className="row-sub" style={{ padding: '6px 10px' }}>
-                                {localizeError(patch)}
-                              </div>
-                            )
-                          ) : null}
-                        </div>
-                      ))}
-                      {!(diff.files ?? []).length ? <div className="empty">{t('tasks.noDiff')}</div> : null}
-                      {diff.truncated ? <div className="row-sub">{t('tasks.diffLimit')}</div> : null}
-                      {diff.dirty ? <div className="row-sub">{t('tasks.dirtyNote')}</div> : null}
-                    </div>
-                  ) : (
-                    <div className="row-sub" style={{ padding: '6px 4px' }}>
-                      {localizeError(diff)}
-                    </div>
-                  )
-                ) : null}
-                </>
-              ) : null}
-
-              {detail.discord?.url ? (
-                <button
-                  className="btn dc-btn"
-                  onClick={() => window.open(detail.discord.url, '_blank', 'noopener')}
-                >
-                  {t('tasks.openThread')}
-                </button>
-              ) : null}
-
-              {detail.status === 'running' || detail.workerPid ? (
-                <div style={{ marginTop: 12 }}>
-                  <HoldButton
-                    label={t('tasks.abortTask')}
-                    sub={t('tasks.abortSub')}
-                    tone="danger"
-                    disabled={busy}
-                    onFire={() => abortTask(detail)}
-                  />
-                </div>
-              ) : detail.status && detail.status !== 'done' && detail.status !== 'archived' ? (
-                <div style={{ marginTop: 12 }}>
-                  <CloseActions
-                    board={detailBoard}
-                    taskId={detail.id}
-                    notify={notify}
-                    onClosed={() => {
-                      emitHmEvent(HM_EVENTS.WAKE_SYNC)
-                      setDetail(null)
-                      if (detailBoard) loadTasks(detailBoard)
-                      refresh?.()
-                    }}
-                  />
-                </div>
-              ) : null}
-
-              {detail.sessionId ? (
-                <div style={{ marginTop: 12 }}>
-                  <WorkerFeed
-                    taskId={detail.id}
-                    open={detail.status === 'running' || detail.status === 'ready'}
-                    endpoint={`/api/boards/${encodeURIComponent(detailBoard)}/tasks/${encodeURIComponent(detail.id)}/worker?limit=30`}
-                  />
-                </div>
-              ) : null}
-
-              <div className="list-head" style={{ marginTop: 16 }}>
-                <span>{t('tasks.events')}</span>
-              </div>
-              <div className="timeline">
-                {collapseTaskEvents(detail.events ?? []).map((e, i) => {
-                  const merged = e.kind === 'heartbeat' && e.count > 1
-                  return (
-                    <div key={i} className="tl">
-                      <span className="tl-dot" />
-                      <span className="tl-main">
-                        <span className="row-title">
-                          {merged ? t('tasks.heartbeatCount', { n: e.count }) : e.kind}
-                        </span>
-                        <span className="row-sub">
-                          {merged
-                            ? t('tasks.heartbeatRange', { first: relTime(e.firstAt), last: relTime(e.at) })
-                            : relTime(e.at)}
-                        </span>
-                      </span>
-                    </div>
-                  )
-                })}
-                {!(detail.events ?? []).length ? <div className="empty">{t('tasks.noEvents')}</div> : null}
-              </div>
-          </>
-        )
-    : null
-
   const closeDetail = () => {
-    setDetail(null)
+    setDetailTarget(null)
     setConfirmText('')
   }
 
@@ -2253,33 +1965,18 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
 
       </div>
 
-      {detail && !split ? (
-        <Sheet title={detail.title ?? detail.id} onClose={closeDetail}>
-          {detailBody}
-        </Sheet>
-      ) : null}
-
-      {/* >=820px: 右ペインに詳細を常設（左の一覧から選ぶだけで切り替わる） */}
-      {split ? (
-        <div className="split-detail">
-          {detail ? (
-            <>
-              <div className="split-detail-head">
-                <span className="split-detail-title">{detail.title ?? detail.id}</span>
-                <button className="icon-btn" onClick={closeDetail} aria-label={t('common.close')}>
-                  <Icon name="close" size={18} />
-                </button>
-              </div>
-              <div className="split-detail-body">{detailBody}</div>
-            </>
-          ) : (
-            <div className="split-placeholder">
-              <b>{t('tasks.selectPlaceholder')}</b>
-              <span>{t('tasks.selectHint')}</span>
-            </div>
-          )}
-        </div>
-      ) : null}
+      {/* タスク詳細（Sheet / >=820px の右ペイン）。取得・ポーリング・差分は TaskDetailSheet 側 */}
+      <TaskDetailSheet
+        target={detailTarget}
+        fallbackBoard={board}
+        mode={split ? 'split' : 'sheet'}
+        notify={notify}
+        onClose={closeDetail}
+        onChanged={(targetBoard) => {
+          if (targetBoard) loadTasks(targetBoard)
+          refresh?.()
+        }}
+      />
     </div>
   )
 }

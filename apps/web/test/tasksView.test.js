@@ -202,8 +202,9 @@ test('splitSpecsByArchive は archived フラグで分け、順序を保つ', ()
 })
 
 test('TasksPane のタスク詳細ドロワーは非実行・未完了タスクにも CloseActions（完了/破棄）を出す', () => {
-  const src = fs.readFileSync(new URL('../src/features/TasksPane.jsx', import.meta.url), 'utf8')
-  assert.match(src, /import \{ CloseActions \} from ['"]\.\.\/components\/CloseActions\.jsx['"]/)
+  // 分割後: 詳細ドロワー本体は features/tasks/TaskDetailSheet.jsx が持つ（TasksPane は対象を渡すだけ）
+  const src = fs.readFileSync(new URL('../src/features/tasks/TaskDetailSheet.jsx', import.meta.url), 'utf8')
+  assert.match(src, /import \{ CloseActions \} from ['"]\.\.\/\.\.\/components\/CloseActions\.jsx['"]/)
   assert.match(src, /detail\.status && detail\.status !== 'done' && detail\.status !== 'archived'[\s\S]*?<CloseActions/)
 })
 
