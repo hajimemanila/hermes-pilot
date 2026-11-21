@@ -18,10 +18,11 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { CHAT_SPLIT_STACK, CHAT_SPLIT_DETAIL, chatGroupMarks, chatSplitChrome } from '../src/lib/chatSplit.js'
 import { MASTER_W, SPLIT_WIDE_MIN } from '../src/lib/layout.js'
+import { readStyles } from './helpers/styles.js'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const jsx = fs.readFileSync(path.join(ROOT, 'src/features/ChatPane.jsx'), 'utf8')
-const css = fs.readFileSync(path.join(ROOT, 'src/styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+const css = readStyles().replace(/\/\*[\s\S]*?\*\//g, '')
 const splitSrc = fs.readFileSync(path.join(ROOT, 'src/lib/chatSplit.js'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
 
 /** `@media <query> { … }` の中身（対応する閉じ括弧まで）。 */
@@ -155,7 +156,10 @@ test('JSX: 左カラムは 一覧＋下端スタック（4 グループを chatS
 })
 
 test('JSX: セッション一覧は 1 つだけ定義し、ドロワーと左カラムで共用する', () => {
-  const defs = jsx.match(/function ChatSessionList\(/g) ?? []
+  // 一覧の定義は `features/chat/ChatParts.jsx` へ切り出し済み（ChatPane の肥大化解消）。
+  // 「定義は 1 つだけ」は両ファイルを合わせて数える。
+  const parts = fs.readFileSync(path.join(ROOT, 'src/features/chat/ChatParts.jsx'), 'utf8')
+  const defs = `${jsx}\n${parts}`.match(/function ChatSessionList\(/g) ?? []
   assert.equal(defs.length, 1, 'ChatSessionList が 1 つではない（中身を書き分けている）')
   // 一覧の実体は 1 ペインのドロワーと 2 カラムの左で同じものを使う
   assert.match(jsx, /<Sheet title=\{t\('chat\.drawerTitle'\)\} onClose=\{\(\) => setDrawer\(false\)\}>\s*\{sessionListNode\}\s*<\/Sheet>/)
