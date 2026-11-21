@@ -210,8 +210,3 @@ export function resetSoundEngine() {
   }
   engineCtx = null
 }
-
-/** @returns {'idle'|'ready'} 現在のエンジン状態（診断用） */
-export function soundEngineState() {
-  return engineCtx ? 'ready' : 'idle'
-}

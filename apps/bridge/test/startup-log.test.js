@@ -140,7 +140,10 @@ test('起動・PTY・500 のログは標準英語（日本語の直書きが無�
 })
 
 test('ログイン案内はトークンファイルを指す（起動ログではない）', () => {
-  const source = fs.readFileSync(SERVER, 'utf8')
+  // ログイン画面の文言は `http/login-page.js` に切り出してある（無ければ server.js 側を読む）
+  const loginPage = path.resolve(HERE, '../src/http/login-page.js')
+  const source =
+    fs.readFileSync(SERVER, 'utf8') + (fs.existsSync(loginPage) ? fs.readFileSync(loginPage, 'utf8') : '')
   assert.equal(source.includes('起動ログにあります'), false, '旧文言（起動ログ案内）が残っている')
   // EN（英語既定）と JA の両方がトークンファイルを指す（D71 / §3.2-5）。
   assert.match(source, /hint: 'Find the token in <code>~\/\.hermes\/plugin-data\/hermes-pilot\/token<\/code>\.'/)

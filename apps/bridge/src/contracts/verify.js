@@ -35,9 +35,6 @@ export const VERIFY_COMMAND_NOUN_JA = '対象リポジトリが宣言する検�
 /** 検証コマンド＋委ね先（和文）。 */
 export const VERIFY_CONTRACT_JA = `${VERIFY_COMMAND_NOUN_JA}（SPEC の Verify 欄・プロファイルメモリ・AGENTS.md）`
 
-/** 実画面確認の呼称（和文）。 */
-export const SCREEN_CHECK_CONTRACT_JA = '対象リポジトリが宣言する画面サイズ（SPEC の Verify 欄・デザイン規約）'
-
 /**
  * 抽象化が崩れていないかを 1 箇所で判定する（テストと将来の `check:coherence` 用）。
  *

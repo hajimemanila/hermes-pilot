@@ -22,11 +22,6 @@ export const PASTE_GLOBAL_MARKS = ['全体へのレビュー:', '全体への赤
 /** 未選択を表す接頭辞（シートが出力する・日英）。 */
 export const PASTE_UNSELECTED_MARKS = ['(未選択', '(unselected']
 
-/** 旧名（単数・ja 表記）も互換のため残す。 */
-export const PASTE_NOTE_MARK = PASTE_NOTE_MARKS[0]
-export const PASTE_GLOBAL_MARK = PASTE_GLOBAL_MARKS[0]
-export const PASTE_UNSELECTED = PASTE_UNSELECTED_MARKS[0]
-
 /** 正規表現のメタ文字を落とす（見出しは固定文字列だが、後で増やしても壊れないように）。 */
 const esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 

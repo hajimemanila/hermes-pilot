@@ -1,5 +1,5 @@
 import { getCapabilities, serviceCommands } from './capabilities.js'
-import { normalizeCustom, normalizeOverrides, langOf, BUILTIN_IDS as CHAT_IDS } from './snippets.js'
+import { normalizeCustom, normalizeOverrides, langOf } from './snippets.js'
 
 /**
  * 端末タブの定型コマンド（SPEC §3.3 / D12）。
@@ -223,6 +223,3 @@ export function listTermSnippets(caps, lang = 'en', overrides = {}, custom = [])
 
 /** 既定 Capability・既定言語（en）で組み立てた一覧（後方互換・テスト用）。 */
 export const TERM_SNIPPETS = buildTermSnippets()
-
-/** 端末側でも「チャットの ID を上書きしない」ことを明示（テスト用）。 */
-export const CHAT_BUILTIN_IDS = CHAT_IDS

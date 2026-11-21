@@ -163,15 +163,6 @@ function rawDataModules(version) {
 }
 
 /**
- * 余りビット数（型番により 0/3/4/7）。
- * @param {number} version 型番
- * @returns {number} ビット数
- */
-function remainderBits(version) {
-  return rawDataModules(version) - Math.floor(rawDataModules(version) / 8) * 8
-}
-
-/**
  * 入力バイト列を型番に合わせてコードワード化し、ブロック間でインターリーブする。
  * @param {Uint8Array} bytes 入力（UTF-8）
  * @param {number} version 型番

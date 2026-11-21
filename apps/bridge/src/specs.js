@@ -64,9 +64,6 @@ const OBJECTIVE_RE = /^[-*]?\s*\*\*\s*(?:目的|Objective)\s*\*\*\s*[:：]\s*(.+
 export const EXECUTION_MODE_RE =
   /^[-*]?\s*\*\*\s*(?:Execution\s*Mode|実行モード)\s*\*\*\s*[:：]\s*[`\s]*\[?\s*(?:Mode\s*[:：]\s*)?(Zero-Stop|Fast-Track\s*Review|Visual\s*Gate)/im
 
-/** 正規化した実行モード（`batch.mode` に入る値）。 */
-export const EXECUTION_MODES = ['zero-stop', 'fast-track-review', 'visual-gate']
-
 /**
  * 実行モード表記を正規化する（未知の値・未宣言は `null`）。
  *

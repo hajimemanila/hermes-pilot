@@ -46,5 +46,3 @@ export function query(min) {
 export const SPLIT_QUERY = query(SPLIT_MIN)
 /** 現行の 2 ペイン以上のクエリ（820px〜）。 */
 export const WIDE_QUERY = query(SPLIT_WIDE_MIN)
-/** 全幅 2 ペイン（左 420px + 本文 1040px 上限）のクエリ（1440px〜）。 */
-export const XWIDE_QUERY = query(SPLIT_XWIDE_MIN)

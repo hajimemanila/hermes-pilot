@@ -19,8 +19,6 @@ import { HM_STORAGE } from '../contracts/storage.js'
 
 /** `localStorage` のキー。 */
 export const VIBE_KEY = HM_STORAGE.VIBE
-/** 選べるモード。 */
-export const VIBES = ['dopamine', 'serotonin']
 /** 既定（`prefers-reduced-motion: reduce` の端末だけ serotonin になる）。 */
 export const DEFAULT_VIBE = 'dopamine'
 /** 端末の「視差効果を減らす」設定。 */

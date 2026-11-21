@@ -2,13 +2,13 @@
   "note": "Ratchet baseline: a file may not grow past these line counts. Lower them with --update-baseline when a file shrinks.",
   "maxLines": 800,
   "files": {
-    "apps/web/src/styles.css": 7012,
-    "apps/web/src/features/ChatPane.jsx": 3330,
+    "apps/web/src/styles.css": 31,
+    "apps/web/src/features/ChatPane.jsx": 2992,
     "apps/web/src/demo/mockApi.js": 2291,
     "apps/web/src/features/TasksPane.jsx": 2057,
     "apps/dashboard/index.js": 2014,
-    "apps/bridge/src/review.js": 2003,
-    "apps/bridge/src/server.js": 1941,
+    "apps/bridge/src/review.js": 1993,
+    "apps/bridge/src/server.js": 1715,
     "apps/web/src/features/ReviewPane.jsx": 1501,
     "apps/bridge/test/review.test.js": 1467,
     "apps/dashboard/pilot_dashboard.py": 1466,
@@ -25,6 +25,6 @@
     "apps/bridge/test/specs.test.js": 980,
     "apps/dashboard/style.css": 928,
     "apps/bridge/src/specs.js": 883,
-    "apps/bridge/src/qr.js": 808
+    "apps/bridge/src/qr.js": 799
   }
 }
