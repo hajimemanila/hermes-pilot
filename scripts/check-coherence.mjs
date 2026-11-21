@@ -1061,7 +1061,7 @@ export function silentServerProblems(text) {
       if (consultsOk) continue
       problems.push({
         route: block.route,
-        line: block.line,
+        line: block.line + block.text.slice(0, call.index).split('\n').length - 1,
         reason: `write route '${block.route}' answers HTTP 200 with '${id}' without consulting '${id}.ok'`,
       })
     }
