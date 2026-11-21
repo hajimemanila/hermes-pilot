@@ -1,5 +1,8 @@
 # SPEC: 英語環境ゼロ日本語リーク保証仕様書 (`SPEC-EN-ZERO-LEAK`)
 
+- **Status**: archived
+- **アーカイブ日**: 2026-11-21（COH-4・全バッチ完了済み。以後は参照用に保持し、新規起票の対象外）
+
 - **状態**: 仕様確定（2026-11-21・全レイヤー多言語監査の結果に基づく残存 5 項目の解消仕様）
 - **前提仕様**: [SPEC-i18n-gen.md](./SPEC-i18n-gen.md) / [SPEC-CATALOG-ADMISSION.md](./SPEC-CATALOG-ADMISSION.md) / [SPEC-UI-POLISH-V22.md](./SPEC-UI-POLISH-V22.md)
 - **対象リポジトリ**: `hermes-mobile-pwa`（プラグイン名: `hermes-pilot` / `Hermes Pilot`）

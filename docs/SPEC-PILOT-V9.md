@@ -1,5 +1,8 @@
 # SPEC-PILOT-V9: Hermes Pilot V9 — A2B パイプライン完成度向上（Agy Opt-in 重複起票防止・Architect ライブ監視導線・ボード横断 Review 同期・旧 Cron 整理）仕様書
 
+- **Status**: archived
+- **アーカイブ日**: 2026-11-21（COH-4・全バッチ完了済み。以後は参照用に保持し、新規起票の対象外）
+
 - **状態**: 仕様確定（2026-11-15 A2B Pipeline 精査 D41〜D44）
 - **前提**: `docs/SPEC-PILOT-V8.md`（commit `8ed0172`）まで実装済みであること
 - **対象リポジトリ**: `hermes-mobile-pwa`（Bridge / Web PWA / Migration Script / Interactive Demo）

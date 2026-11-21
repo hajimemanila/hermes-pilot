@@ -1,5 +1,8 @@
 # SPEC: Hermes Pilot v5 (`SPEC-PILOT-V5`) — A2Bパイプライン統合・Dopamine/Serotonin UX・ゼロタイピング操縦 ＆ PC/スマホ対応ライブデモ仕様書
 
+- **Status**: archived
+- **アーカイブ日**: 2026-11-21（COH-4・全バッチ完了済み。以後は参照用に保持し、新規起票の対象外）
+
 状態: **仕様確定（2026-11-15 インタビュー D23〜D27 合意済み）**
 前提仕様: [SPEC-PILOT-V4.md](./SPEC-PILOT-V4.md)（Batch V4-1 〜 V4-4 / `47523c8` 完走済み）
 想定実装ランナー: **Hermes Agent / DeepSeek V4.1 Flash**（Batch V5-1 〜 V5-6 カンバン自走 ＋ 実機相当検証）

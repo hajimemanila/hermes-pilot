@@ -1,5 +1,8 @@
 # SPEC: Hermes Pilot v4 (`SPEC-PILOT-V4`) — パイプライン完走統合レポート ＆ チャットドロワー既読/更新UX改善仕様書
 
+- **Status**: archived
+- **アーカイブ日**: 2026-11-21（COH-4・全バッチ完了済み。以後は参照用に保持し、新規起票の対象外）
+
 状態: **仕様確定（2026-11-15 実機監査 ＆ Q&A D20〜D22 合意済み）**
 前提仕様: [SPEC-PILOT-V3.md](./SPEC-PILOT-V3.md)（Batch V3-1 〜 V3-5 / `c547918` 完走済み）
 想定実装ランナー: **Hermes Agent / DeepSeek V4.1 Flash**（Batch V4-1 〜 V4-4 カンバン自走 ＋ 実機相当検証）

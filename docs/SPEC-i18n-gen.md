@@ -1,5 +1,8 @@
 # SPEC: 英語モードの生成物（シート HTML・注釈文・パイプラインのプロンプト）(`i18n-gen`)
 
+- **Status**: archived
+- **アーカイブ日**: 2026-11-21（COH-4・全バッチ完了済み。以後は参照用に保持し、新規起票の対象外）
+
 対象: `~/Projects/hermes-mobile-pwa`（PWA `apps/web` ＋ ブリッジ `apps/bridge` ＋ 同梱 skills）
 決定: 赤ペンシート `spec-quick-review-annotation-html` round 1（回答 `sheets/spec-quick-review-annotation-html-1.answer.json`・**Q1〜Q4 すべて A**）
 前提仕様: `docs/SPEC-i18n-resp.md`（Q1=B で「長文生成物（パイプライン報告・シート HTML・CLI 出力）」として延期した部分がこの SPEC）

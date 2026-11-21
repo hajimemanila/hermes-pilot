@@ -1,5 +1,8 @@
 # SPEC: Hermes Agent 公式プラグインカタログ掲載対応 (`SPEC-CATALOG-ADMISSION`)
 
+- **Status**: archived
+- **アーカイブ日**: 2026-11-21（COH-4・全バッチ完了済み。以後は参照用に保持し、新規起票の対象外）
+
 - **状態**: 対応完了（`NousResearch/hermes-agent#156102` レビュー指摘事項 #1〜#5 を実装。`v0.2.0` として
   npm 公開・Release 公開済み、PR には再レビュー依頼を投稿済み）
 - **対象 PR**: <https://github.com/NousResearch/hermes-agent/pull/156102>（レビュアー: `@teknium1`、

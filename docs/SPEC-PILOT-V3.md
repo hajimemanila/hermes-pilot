@@ -1,5 +1,8 @@
 # SPEC: Hermes Pilot v3 (`SPEC-PILOT-V3`) — バッジ同期整合・チャット履歴/Markdown強化・設定＆標準Web UI刷新仕様書
 
+- **Status**: archived
+- **アーカイブ日**: 2026-11-21（COH-4・全バッチ完了済み。以後は参照用に保持し、新規起票の対象外）
+
 状態: **仕様確定（2026-11-14 監査 ＆ Q&A D16〜D19 合意済み）**
 前提仕様: [SPEC-PILOT-V2.md](./SPEC-PILOT-V2.md)（Batch P1〜P5 完走済み）
 想定実装ランナー: **Hermes Agent / DeepSeek V4.1 Flash**（Batch V3-1 〜 V3-5 カンバン自走 ＋ 実機相当検証）

@@ -1,5 +1,8 @@
 # SPEC: Hermes Pilot v6 (`SPEC-PILOT-V6`) — Architect進行可視化・agy自動フォールバック・Spec階層アコーディオン＆MDプレビュー・Demo Google Sites対応仕様書
 
+- **Status**: archived
+- **アーカイブ日**: 2026-11-21（COH-4・全バッチ完了済み。以後は参照用に保持し、新規起票の対象外）
+
 状態: **仕様確定（2026-11-15 Q1〜Q4 インタビュー D28〜D32 合意済み）**
 前提仕様: [SPEC-PILOT-V5.md](./SPEC-PILOT-V5.md)（`e1a8944` まで実装・実機検証済み）
 想定実装ランナー: **Hermes Agent（Spec Launchpad 一括起票: Batch V6-1 〜 V6-5）**

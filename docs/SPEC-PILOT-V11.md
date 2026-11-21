@@ -1,5 +1,8 @@
 # SPEC: Hermes Pilot V11 — `agy Opt-in` 完全削除・ファイル経由疎結合 A2B ＆ Hermes Native 仕様策定強化仕様書 (`SPEC-PILOT-V11`)
 
+- **Status**: archived
+- **アーカイブ日**: 2026-11-21（COH-4・全バッチ完了済み。以後は参照用に保持し、新規起票の対象外）
+
 - **状態**: 仕様確定（2026-11-16 Google 利用規約 §6 リスク評価 ＆ Hermes Native パイプライン維持・強化方針合意済み）
 - **前提仕様**: [SPEC-PILOT-V10.md](./SPEC-PILOT-V10.md)（commit `8c7d8d8` まで完了済み）
 - **対象リポジトリ**: `hermes-mobile-pwa`（プラグイン名: `hermes-pilot` / `Hermes Pilot`）

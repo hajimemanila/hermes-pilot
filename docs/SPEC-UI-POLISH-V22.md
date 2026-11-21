@@ -1,5 +1,8 @@
 # SPEC: UI 視認性・Worker ログ・Terminal チャンク復旧・メモリスト右端配置修正仕様書 (`SPEC-UI-POLISH-V22`)
 
+- **Status**: archived
+- **アーカイブ日**: 2026-11-21（COH-4・全バッチ完了済み。以後は参照用に保持し、新規起票の対象外）
+
 - **状態**: 仕様確定（2026-11-19・実機スクショ 5 枚から 4 件の真因特定済み）
 - **前提仕様**: [SPEC-ver-0-2-1.md](./SPEC-ver-0-2-1.md) / [SPEC-ROLE-DELEGATION-ROUTING.md](./SPEC-ROLE-DELEGATION-ROUTING.md)
 - **対象リポジトリ**: `hermes-mobile-pwa`（プラグイン名: `hermes-pilot` / `Hermes Pilot`）

@@ -1,5 +1,8 @@
 # SPEC — ターミナルの Enter と、レポートバナーの `Open`
 
+- **Status**: archived
+- **アーカイブ日**: 2026-11-21（COH-4・全バッチ完了済み。以後は参照用に保持し、新規起票の対象外）
+
 対象: `~/Projects/hermes-mobile-pwa`
 赤ペン: `spec-enter-enter-discuss-next-ste` round 1（4 問すべて A・既定 0）
 決定: 2026-11-21

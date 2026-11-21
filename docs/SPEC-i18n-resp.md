@@ -1,5 +1,8 @@
 # SPEC: 多言語の穴とレスポンシブの甘い部分（i18n-resp）
 
+- **Status**: archived
+- **アーカイブ日**: 2026-11-21（COH-4・全バッチ完了済み。以後は参照用に保持し、新規起票の対象外）
+
 対象: `~/Projects/hermes-mobile-pwa`（PWA `apps/web` ＋ ブリッジ `apps/bridge`）
 決定: 赤ペンシート `spec-i18n-resp-01` round 1（回答は `plugin-data/hermes-pilot/review/sheets/spec-i18n-resp-01-1.answer.json`）
 起票先: board `hermes-pilot`（実体はこのリポジトリ）

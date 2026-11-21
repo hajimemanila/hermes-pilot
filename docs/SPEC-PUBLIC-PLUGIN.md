@@ -1,5 +1,8 @@
 # SPEC: Hermes Pilot (`hermes-pilot`) — 公開プラグイン化・Quick Review / Annotation 同梱・多言語（i18n）対応仕様書
 
+- **Status**: archived
+- **アーカイブ日**: 2026-11-21（COH-4・全バッチ完了済み。以後は参照用に保持し、新規起票の対象外）
+
 状態: **仕様確定（2026-11-13 インタビュー D1〜D10 合意済み）**
 対象リポジトリ: `hermes-mobile-pwa` → 公開プラグイン名 **`Hermes Pilot` (`hermes-pilot`)**
 想定実装ランナー: **Hermes Agent / DeepSeek V4.1 Flash**（カンバン自走 ＋ 実機リモートデバッグ検証）

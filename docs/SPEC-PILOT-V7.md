@@ -1,5 +1,8 @@
 # SPEC-PILOT-V7: Hermes Pilot V7 — Architect 安定化・実行方針選択・正確な稼働計測・表示トグル・用語統一
 
+- **Status**: archived
+- **アーカイブ日**: 2026-11-21（COH-4・全バッチ完了済み。以後は参照用に保持し、新規起票の対象外）
+
 - **状態**: 仕様確定（2026-11-15 インタビュー D33〜D37 合意済み）
 - **前提**: `docs/SPEC-PILOT-V6.md`（commit `fa84514`）まで実装済みであること
 - **対象リポジトリ**: `hermes-mobile-pwa`（Bridge / Web PWA / Dashboard / Interactive Demo）

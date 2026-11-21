@@ -1,5 +1,8 @@
 # SPEC: Hermes Pilot V10 — 公開前最終改修・Interactive Demo 完全パリティ・ドキュメント総整備仕様書 (`SPEC-PILOT-V10`)
 
+- **Status**: archived
+- **アーカイブ日**: 2026-11-21（COH-4・全バッチ完了済み。以後は参照用に保持し、新規起票の対象外）
+
 - **状態**: 仕様確定（2026-11-15 公開前総合監査 [PRE-RELEASE-AUDIT.md](./PRE-RELEASE-AUDIT.md) 合意済み）
 - **前提仕様**:
   - [SPEC-PILOT-V9.md](./SPEC-PILOT-V9.md)（`V9-B1`〜`V9-B4` / commit `abf5ae5` まで実装完了）

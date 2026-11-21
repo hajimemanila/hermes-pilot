@@ -1,5 +1,8 @@
 # SPEC: 新しい会話でリポジトリと板を選ぶ
 
+- **Status**: archived
+- **アーカイブ日**: 2026-11-21（COH-4・全バッチ完了済み。以後は参照用に保持し、新規起票の対象外）
+
 状態: **実装済み（2026-11-12）** / 起票 `t_f7823266`
 赤ペン: `~/Projects/akapen/sheets/repo-picker-01-1.html`（4 問すべて A）
 実装: `apps/bridge/src/repos.js`（repo×board の合成）/ `apps/web/src/lib/repoPicker.js`（純関数）/ `apps/web/src/features/ChatPane.jsx`（シート・ヘッダー・`session.create` の cwd）

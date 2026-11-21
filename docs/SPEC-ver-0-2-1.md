@@ -1,5 +1,8 @@
 # SPEC: Ver.0.2.1 — メモ表示・タブレット横持ち 2 カラム・赤ペン注釈の磨き込み
 
+- **Status**: archived
+- **アーカイブ日**: 2026-11-21（COH-4・全バッチ完了済み。以後は参照用に保持し、新規起票の対象外）
+
 対象: `~/Projects/hermes-mobile-pwa`（PWA `apps/web`）
 決定: 赤ペンシート `spec-ver-0-2-1-1` round 1（回答は `plugin-data/hermes-pilot/review/sheets/spec-ver-0-2-1-1.answer.json`・4 問すべて A）
 起票先: board `hermes-pilot`（レビュー実体は board `mobile` 固定 — `apps/bridge/src/review.js:562`）

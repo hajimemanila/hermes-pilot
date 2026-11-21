@@ -1,5 +1,8 @@
 # SPEC-PILOT-V8: Hermes Pilot V8 — Quick Review ドロワー統合フォーム復旧・仕様策定（Hermes Native）高速化・タスク詳細ライブ進捗仕様書
 
+- **Status**: archived
+- **アーカイブ日**: 2026-11-21（COH-4・全バッチ完了済み。以後は参照用に保持し、新規起票の対象外）
+
 - **状態**: 仕様確定（2026-11-15 実機検証監査 D38〜D40 合意済み）
 - **前提**: `docs/SPEC-PILOT-V7.md`（commit `213c5b1`）まで実装済みであること
 - **対象リポジトリ**: `hermes-mobile-pwa`（Bridge / Web PWA / Skills / Interactive Demo）

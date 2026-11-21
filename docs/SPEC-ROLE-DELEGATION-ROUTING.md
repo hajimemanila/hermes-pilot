@@ -1,5 +1,8 @@
 # SPEC: 抽象ロール定義・Delegation/Fallback ルーティング最適化仕様書 (`SPEC-ROLE-DELEGATION-ROUTING`)
 
+- **Status**: archived
+- **アーカイブ日**: 2026-11-21（COH-4・全バッチ完了済み。以後は参照用に保持し、新規起票の対象外）
+
 - **状態**: 仕様確定（2026-11-19・`mobile` プロファイル運用方針・規約遵守境界合意済み）
 - **前提仕様**: [SPEC-PILOT-V11.md](./SPEC-PILOT-V11.md)
 - **対象リポジトリ**: `hermes-mobile-pwa`（プラグイン名: `hermes-pilot` / `Hermes Pilot`）および実機 Hermes Agent 環境（`~/.hermes/`, `~/.hermes/profiles/mobile/`）
