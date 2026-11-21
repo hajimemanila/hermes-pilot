@@ -4,7 +4,7 @@
   "files": {
     "apps/web/src/styles.css": 31,
     "apps/web/src/features/ChatPane.jsx": 2992,
-    "apps/web/src/demo/mockApi.js": 2382,
+    "apps/web/src/demo/mockApi.js": 96,
     "apps/web/src/features/TasksPane.jsx": 2107,
     "apps/dashboard/index.js": 2014,
     "apps/bridge/src/review.js": 798,

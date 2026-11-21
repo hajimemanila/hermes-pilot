@@ -464,7 +464,8 @@ export async function loadRouteRegistry(root) {
 /** (1) API parity: web literals <-> API_ROUTES <-> server.js <-> mockApi.js. */
 async function ruleApiParity(root, findings) {
   const rule = 'api-parity'
-  const webFiles = walkCode(root, LAYOUT.webSrc).filter((file) => file.rel !== LAYOUT.mockApi)
+  const demoRels = [LAYOUT.mockApi, 'apps/web/src/demo/route.js', 'apps/web/src/demo/fetch.js']
+  const webFiles = walkCode(root, LAYOUT.webSrc).filter((file) => !demoRels.includes(file.rel))
   const webPaths = collectApiPaths(webFiles)
   const serverText = bundleServerSource(root, readText)
   if (serverText === null) {
@@ -472,8 +473,8 @@ async function ruleApiParity(root, findings) {
     return
   }
   const serverRoutes = extractServerRoutes(serverText)
-  const mockAbs = path.join(root, LAYOUT.mockApi)
-  const mockPaths = readText(mockAbs) === null ? [] : collectApiPaths([{ rel: LAYOUT.mockApi, abs: mockAbs }], true)
+  const demoFiles = demoRels.map((rel) => ({ rel, abs: path.join(root, rel) })).filter((e) => readText(e.abs) !== null)
+  const mockPaths = collectApiPaths(demoFiles, true)
   const registry = await loadRouteRegistry(root)
 
   const uniqueWeb = [...new Map(webPaths.map((p) => [p.path, p])).values()]
@@ -520,7 +521,6 @@ async function ruleApiParity(root, findings) {
     })
   }
 
-  // Demo parity: mocked routes need a mockApi handler, bridge-only routes need a server route.
   const demoMissing = []
   const serverMissing = []
   const serverList = [...serverRoutes]
