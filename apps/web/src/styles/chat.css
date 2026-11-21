@@ -1,0 +1,747 @@
+/* chat: header, bubbles, markdown body, composer, snippet bar
+   (split from the former monolithic src/styles.css) */
+/* ---------- チャット ---------- */
+.chat-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.chat-title {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 会話のプロファイル表示（SPEC-PROFILE-CHAT D3/D4）。押せない小さな札 */
+.prof-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  max-width: 96px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+.chat-head > .prof-chip { margin-left: -2px; }
+.prof-chip.on {
+  border-color: rgba(45, 212, 191, 0.45);
+  color: var(--accent);
+}
+.prof-chip.worker {
+  border-color: rgba(245, 185, 66, 0.5);
+  color: var(--warn);
+}
+.row-sub .prof-chip { margin-right: 6px; }
+.row-title .prof-chip { margin-left: 6px; }
+
+/* 会話ヘッダーのリポジトリ札（repo-picker-01 Q2=A）。押すと新しい会話シートが開く */
+.repo-chip {
+  font: inherit;
+  font-size: 10px;
+  background: none;
+  cursor: pointer;
+  max-width: 104px;
+}
+.repo-chip:active { opacity: 0.7; }
+
+/* 新しい会話シートの節の見出し（プロファイル / リポジトリ） */
+.sheet-body .sec {
+  padding: 12px 6px 4px;
+  margin-top: 6px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+/* スクロール領域を 1 枚の箱にして、「↓ 最新へ」ピルをその下端基準で置けるようにする
+   （spec-chat-jump-pos Q1=A）。下端に何が積まれても（チップ帯・入力欄の伸長・添付レール・
+   バナー）ピルはスクロール領域の最下部に留まる。伸長（flex/min-height）は箱側が持つ。 */
+.chat-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-scroll > * {
+  flex-shrink: 0;
+}
+
+.msg {
+  display: flex;
+  flex-shrink: 0;
+}
+
+.msg.user {
+  justify-content: flex-end;
+}
+
+.bubble {
+  max-width: 86%;
+  padding: 9px 12px;
+  border-radius: 14px;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.msg.user .bubble {
+  background: var(--user-bubble);
+  color: var(--bubble-fg);
+  border-bottom-right-radius: 5px;
+}
+
+.msg.bot .bubble {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-bottom-left-radius: 5px;
+}
+
+.msg.notice {
+  justify-content: center;
+  font-size: 11.5px;
+  color: var(--bad);
+}
+
+/* レビューの完了報告（起票した会話へ流す 1 行）。エラーの notice と色を分ける —
+   同じ赤で出すと「失敗した」と読まれる（レビュー chat-report-01: q3=A の 1 行） */
+.msg.report {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted);
+  text-align: center;
+  padding: 4px 12px;
+}
+
+.report-link {
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--accent-2);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.dots {
+  color: var(--muted);
+}
+
+.thinking {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 2px 8px 6px;
+  /* 1行の "thinking…" 前提だった。いまはタイマー＋ツール行のブロックを載せるので、
+     nowrap + overflow hidden のままだと高さ8pxに潰れて中身が全部見切れる（実測） */
+  white-space: normal;
+  overflow: visible;
+  font-variant-numeric: tabular-nums;
+  max-width: 100%;
+}
+.thinking > b { font-style: normal; }
+.thinking .tool-rows { margin-top: 5px; }
+
+.thinking-card {
+  padding: 9px 11px;
+  border-radius: 12px;
+  border: 1px solid rgba(45, 212, 191, 0.28);
+  border-left: 3px solid var(--accent);
+  background: var(--overlay);
+}
+
+.working-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.working-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 0 rgba(45, 212, 191, 0.55);
+  animation: hm-working-pulse 1.5s ease-in-out infinite;
+}
+
+/* 色（背景の --accent）は動かさず、外側リングだけを明滅させる。
+   要素全体を薄くする指定は暗い面で黒く見えるため置かない（SPEC-ver-0-2-1 §2.1）。 */
+@keyframes hm-working-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(45, 212, 191, 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(45, 212, 191, 0);
+  }
+}
+
+@keyframes hm-shimmer {
+  0% { background-position: 120% 0; }
+  100% { background-position: -120% 0; }
+}
+
+.working-shimmer {
+  flex: none;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-2);
+  background: linear-gradient(90deg, var(--accent) 0%, var(--glint) 45%, var(--accent) 90%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: hm-shimmer 2.1s linear infinite;
+}
+
+.working-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* 完了メッセージ上の折りたたみツール履歴・コードブロック */
+.msg-tools {
+  margin-bottom: 6px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--overlay);
+  padding: 5px 8px;
+  font-size: 11.5px;
+}
+
+.msg-tools summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11.5px;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.msg-tools summary::after {
+  content: '▾';
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.msg-tools[open] summary::after {
+  content: '▴';
+}
+
+.code-block {
+  margin: 6px 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--scrim);
+  overflow: hidden;
+}
+
+.code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: 10.5px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.code-copy {
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--accent-2);
+  border-radius: 6px;
+  padding: 1px 7px;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.code-block pre {
+  margin: 0;
+  padding: 8px 10px;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  word-break: normal;
+}
+
+/* アシスタント本文の Markdown（SPEC V3-3 / §3.3 ③）。
+   気泡は `white-space: pre-wrap`（素のテキスト用）なので、ブロックを並べる本文側で normal に戻す。
+   長い URL・コードは 390px 幅で気泡の外へ横溢れさせず、折り返す／枠内スクロールに閉じ込める。 */
+.md-body {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.md-body > *:first-child {
+  margin-top: 0;
+}
+
+.md-body > *:last-child {
+  margin-bottom: 0;
+}
+
+.md-p {
+  margin: 0 0 6px;
+}
+
+.md-h1,
+.md-h2,
+.md-h3 {
+  margin: 10px 0 4px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.md-h1 {
+  font-size: 16px;
+}
+
+.md-h2 {
+  font-size: 15px;
+}
+
+.md-h3 {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.md-list {
+  margin: 4px 0 6px;
+  padding-left: 20px;
+}
+
+ul.md-list {
+  list-style: disc;
+}
+
+ol.md-list {
+  list-style: decimal;
+}
+
+.md-list li {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * 完了サマリのカードは左ペイン（280–450px）の中に出すので、箇条書きのぶら下げを
+ * 少し詰める。20px のままだと「トークン数: …（キャッシュ読取 4197.6M）)」のような
+ * 行が 6px はみ出して `overflow: hidden` で切られていた（実測 744px / li 219px で 225px）。
+ * マークダウン全体（`.md-list`）は 20px のまま。
+ */
+.pipeline-summary-body .md-list {
+  padding-left: 14px;
+}
+
+.md-quote {
+  margin: 6px 0;
+  padding: 3px 10px;
+  border-left: 3px solid var(--accent-2);
+  border-radius: 0 8px 8px 0;
+  background: var(--overlay);
+  color: var(--muted);
+}
+
+.md-quote > *:last-child,
+.md-quote .md-p:last-child {
+  margin-bottom: 0;
+}
+
+.md-code {
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--scrim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.md-link {
+  color: var(--accent-2);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+/* 危険スキームは `<a>` にせず平文（何が書かれていたか隠さない） */
+.md-link-bare {
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.md-body .code-block {
+  max-width: 100%;
+}
+
+/* Review 判断待ち・自律ワーカー稼働中のライブカード */
+.chat-live-card {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px 11px;
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+}
+
+.chat-live-card.warn {
+  border-color: rgba(245, 185, 66, 0.48);
+  border-left: 3px solid var(--warn);
+  background: rgba(245, 185, 66, 0.1);
+}
+
+.chat-live-card.running {
+  border-color: rgba(45, 212, 191, 0.36);
+  border-left: 3px solid var(--accent);
+  background: var(--overlay);
+}
+
+.chat-live-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.chat-live-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--warn);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-live-card.running .working-shimmer {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-live-sub {
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+/* 上へスクロールしている時の「↓ 最新へ」ピル。
+   `.chat-body` の中に居るので、bottom はスクロール領域の下端からの距離になる
+   （spec-chat-jump-pos Q2=A: 見た目の縁は 8px 内側）。 */
+.chat-jump-bottom {
+  position: absolute;
+  right: 12px;
+  bottom: 8px;
+  z-index: 15;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--glass-strong);
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 600;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+
+/* 見た目は 26px 前後のまま、当たり判定だけ 44px に広げる（spec-chat-jump-pos Q3=A）。
+   スクロール中に片手で押しても外さない。 */
+.chat-jump-bottom::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 100%;
+  height: 44px;
+  transform: translate(-50%, -50%);
+}
+
+.chat-jump-bottom.active {
+  border-color: var(--accent);
+  color: var(--accent-2);
+}
+
+/* 上端の「↑ 過去の履歴を読み込む」（`before=<oldestId>` のページネーション） */
+.chat-older {
+  align-self: center;
+  flex: none;
+  margin: 2px auto 6px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px dashed var(--line-strong);
+  background: var(--glass-strong);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chat-older:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.chat-older:active:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent-2);
+}
+
+.usage {
+  align-self: flex-end;
+  font-size: 10.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  padding: 0 4px 6px;
+}
+
+.composer {
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--line);
+  background: var(--glass);
+}
+
+/* ＋（添付） */
+.composer .plus {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--accent);
+  font-size: 22px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+}
+
+.composer .plus[disabled] {
+  opacity: 0.45;
+}
+
+/* ---------- 定型スニペットバー ---------- */
+.action-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  background: var(--glass);
+}
+
+.chips-scroll {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  /* チップは 30px の見た目のまま、当たり判定（44px）が切られない高さを確保する */
+  padding: 7px 0;
+  mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent);
+}
+
+.chips-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.snippet-chip {
+  flex: none;
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 15px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.snippet-chip:active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* 意思決定トリガー（Quick Review / Annotate Shot）。Serotonin 準拠の単色強調をベースとし、グラデーションは Dopamine 層で付与 */
+.snippet-chip.trigger {
+  border: 1px solid var(--accent);
+  background: var(--rec-bg);
+  color: var(--rec-fg);
+  font-weight: 600;
+}
+
+.snippet-chip[disabled] {
+  opacity: 0.4;
+}
+
+/* 端末用: 実行できない（挿入のみ）ものは点線で区別 */
+.snippet-chip.ro {
+  border-style: dashed;
+  color: var(--muted);
+}
+
+/* 読み取り専用（カンバン作業ログ）と検索ヒットの強調 */
+.banner.ro {
+  background: rgba(45, 212, 191, 0.1);
+  color: var(--accent-2);
+  border-bottom: 1px solid rgba(45, 212, 191, 0.25);
+}
+
+/* 承認待ちインボックスのバー */
+.inbox-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(245, 185, 66, 0.45);
+  background: rgba(245, 185, 66, 0.12);
+  color: var(--warn);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.inbox-bar-go {
+  font-size: 11.5px;
+  opacity: 0.9;
+}
+
+/* 一時停止（ESTOP）中 */
+.banner.paused {
+  background: rgba(245, 185, 66, 0.12);
+  color: var(--warn);
+  border-bottom: 1px solid rgba(245, 185, 66, 0.3);
+  justify-content: space-between;
+}
+
+.banner.paused button {
+  flex: none;
+  white-space: nowrap;
+  border: 1px solid rgba(245, 185, 66, 0.5);
+  background: transparent;
+  color: var(--warn);
+  border-radius: 8px;
+  padding: 3px 10px;
+  font: inherit;
+  font-size: 11.5px;
+}
+
+.composer-ro {
+  flex: none;
+  padding: 12px 12px calc(12px + var(--safe-b));
+  border-top: 1px solid var(--line);
+  font-size: 11.5px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.msg.hit .bubble {
+  outline: 2px solid rgba(45, 212, 191, 0.65);
+  outline-offset: 2px;
+}
+
+/* クイック起票の OS 標準音声入力ヒント（自前の Web Speech API マイクは廃止。SPEC V7 §1.3） */
+.capture-hint {
+  margin: 6px 0 0;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.snippet-chip.add {
+  flex: none;
+  /* 当たり判定は 44x44、見た目の丸は 30px のまま ::before で塗る（WCAG 2.5.5）。
+     30px の箱のまま疑似要素を外へ広げると、隣のチップの当たり判定と 1px 重なる */
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  background: none;
+  border-radius: 50%;
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+}
+
+/* 面を塗る ::before は絶対配置なので、そのままだと「＋」より上に描かれる。
+   文字側を positioned にして上に載せる。 */
+.snippet-chip-add-glyph {
+  position: relative;
+}
+
+.snippet-chip.add::before {
+  content: '';
+  position: absolute;
+  inset: 7px;
+  width: auto;
+  height: auto;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  transform: none;
+}
+

@@ -13,10 +13,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
+import { readStyles } from './helpers/styles.js'
 
 const here = import.meta.dirname
-const css = fs
-  .readFileSync(path.resolve(here, '../src/styles.css'), 'utf8')
+const css = readStyles()
   .replace(/\/\*[\s\S]*?\*\//g, '')
 const editor = fs.readFileSync(path.resolve(here, '../src/features/AnnotationEditor.jsx'), 'utf8')
 

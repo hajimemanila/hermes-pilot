@@ -17,9 +17,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
+import { readStyles } from './helpers/styles.js'
 
-const CSS_PATH = path.resolve(import.meta.dirname, '../src/styles.css')
-const css = fs.readFileSync(CSS_PATH, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+const css = readStyles().replace(/\/\*[\s\S]*?\*\//g, '')
 
 /** 平坦な CSS を `{ selector, body }` に割る（入れ子・@media の中身も規則として拾える）。 */
 const RULES = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({

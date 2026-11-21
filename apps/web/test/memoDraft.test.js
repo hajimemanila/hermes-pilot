@@ -16,6 +16,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { DRAFT_FIELDS, draftSnapshot, hasDraftContent, isDraftDirty } from '../src/lib/memoDraft.js'
+import { readStyles } from './helpers/styles.js'
 
 const here = import.meta.dirname
 const readSrc = (rel) => fs.readFileSync(path.join(here, '..', 'src', rel), 'utf8')
@@ -118,6 +119,6 @@ test('UI 配線: シートの onClose は requestClose を通り、3 択のキ�
   assert.match(pane, /const discardAndClose = [\s\S]{0,400}?setEditing\(null\)/, '破棄は下書きを捨てる')
   // 「戻る」は confirm を畳むだけで editing を保つ（入力が残る）
   assert.match(pane, /const keepEditing = \(\) =>[\s\S]{0,200}?setConfirming\(false\)/, '戻るは入力を保つ')
-  const css = readSrc('styles.css')
+  const css = readStyles()
   assert.match(css, /\.memo-unsaved\b/, '確認ブロックのスタイルがある')
 })

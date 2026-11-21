@@ -13,12 +13,12 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
+import { readStyles } from './helpers/styles.js'
 
 const SRC = path.resolve(import.meta.dirname, '../src/features/ChatPane.jsx')
-const CSS = path.resolve(import.meta.dirname, '../src/styles.css')
 
 const jsx = fs.readFileSync(SRC, 'utf8')
-const css = fs.readFileSync(CSS, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+const css = readStyles().replace(/\/\*[\s\S]*?\*\//g, '')
 
 /**
  * `className="<name>"`（完全一致）の要素を開始タグから対応する閉じタグまで切り出す。

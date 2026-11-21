@@ -1,0 +1,263 @@
+/* bottom nav + top tabs
+   (split from the former monolithic src/styles.css) */
+/* ---------- ナビ ---------- */
+.nav {
+  flex: 0 0 auto;
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  /* タブが増えても崩れない: 4つまでは等分、5つ以上は横スクロール */
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  height: calc(var(--nav-h) + var(--safe-b));
+  padding-bottom: var(--safe-b);
+  border-top: 1px solid var(--line);
+  background: var(--glass-strong);
+  backdrop-filter: blur(10px);
+}
+
+.nav::-webkit-scrollbar { display: none; }
+
+/* 端に「まだ先がある」ことを示す淡いフェード（タップは通す） */
+.nav::before,
+.nav::after {
+  content: "";
+  position: sticky;
+  z-index: 2;
+  flex: 0 0 14px;
+  pointer-events: none;
+}
+.nav::before { left: 0; margin-right: -14px; background: linear-gradient(90deg, var(--glass-strong), transparent); }
+.nav::after { right: 0; margin-left: -14px; background: linear-gradient(270deg, var(--glass-strong), transparent); }
+
+.nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  /* 6 タブでも 390px に収まる最小幅（390 / 6 = 65px） */
+  flex: 1 0 56px;
+  min-width: 56px;
+  scroll-snap-align: center;
+  white-space: nowrap;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-family: inherit;
+}
+
+.nav-item.on {
+  color: var(--accent-2);
+}
+
+/* 判断待ちの件数（ティッカー）: アイコン右上の小さい丸に数字。
+   注釈 1377.jpg の赤 =「このナビゲーションに小さい丸に数字」。タブ内の表示は変えない */
+.nav-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nav-badge {
+  position: absolute;
+  top: -5px;
+  right: -9px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--warn);
+  color: var(--on-warn);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  /* ナビ背景に丸の縁を抜く（アイコンの線と重ねない） */
+  box-shadow: 0 0 0 2px var(--badge-ring);
+}
+
+/* 進行中（青）と未読の完了（緑）は数字ではなく点で出す。
+   数字は「判断待ち＝あなたの番」にだけ使う（2 つの数字を混ぜない） */
+.nav-dot {
+  position: absolute;
+  top: 1px;
+  right: -3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  box-shadow: 0 0 0 2px var(--badge-ring);
+}
+
+.nav-dot.running { background: var(--accent); }
+.nav-dot.done { background: var(--good); }
+
+/*
+ * 会話一覧の行に出す「レビューの完了報告が届いている」の点（レビュー chat-badge-01 q2=A）。
+ * 数字は出さない（q3=B）: 数字は判断待ち専用で、同じ数字を 2 つの意味に使わない。
+ */
+.row-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  margin: 0 2px 0 6px;
+  background: var(--muted);
+}
+.row-dot.done { background: var(--good); }
+.row-dot.running { background: var(--accent); }
+
+/* 未読の数（完了報告）と返信新着（NEW / +N）のピル。行の右に並べる。
+   数字は「あなたの番」と「新着」で混ぜない: 完了報告だけ数字、返信は NEW。 */
+.row-badge {
+  flex: none;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--on-good);
+  margin-left: 6px;
+}
+.row-badge.done { background: var(--good); }
+.row-badge.new {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+/* 会話一覧の「継続可 / 閲覧専用」区別とメタ行。タイトル末尾（line-clamp で切れる）ではなく
+   メタ行の先頭に固定配置し、開く前から指示を継続できる会話か一目で判別できるようにする。 */
+.row-sub.session-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+.row-sub.session-meta .prof-chip {
+  margin-right: 0;
+}
+.row-mode {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1.45;
+  white-space: nowrap;
+}
+.row-mode.resumable {
+  color: var(--accent);
+  background: rgba(45, 212, 191, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(45, 212, 191, 0.35);
+}
+.row-mode.ro {
+  color: var(--muted);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.row.ro:not(.on) .row-title {
+  color: var(--muted);
+}
+html[data-vibe='dopamine'] .row-mode.resumable {
+  box-shadow: inset 0 0 0 1px var(--vibe-border), 0 0 8px rgba(34, 211, 238, 0.16);
+}
+
+/* チャットヘッダの `≡`（会話一覧）に出す未読会話数。点だと「何かある」しか
+   分からないので、件数は数字で出す（D16③）。 */
+.drawer-btn-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  z-index: 2;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--good);
+  color: var(--on-good);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 0 0 2px var(--badge-ring);
+}
+
+/* チャットドロワー上部の操作バー（↻ 更新 / ✓ すべて既読・SPEC-PILOT-V4 §3.1 / D22③）。
+   390px 幅でも折り返さず横溢れしないよう、2 つを等分（`flex: 1` ＋ `min-width: 0`）にする。 */
+.drawer-actions {
+  display: flex;
+  gap: 8px;
+  padding: 4px 2px 10px;
+  align-items: stretch;
+}
+
+.drawer-actions .btn {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.drawer-actions .drawer-mark-read {
+  color: var(--good);
+  border-color: rgba(52, 211, 153, 0.45);
+}
+
+.drawer-actions .drawer-mark-read:disabled {
+  color: var(--muted);
+  border-color: var(--line-strong);
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--nav-h) + var(--safe-b) + 14px);
+  transform: translateX(-50%);
+  max-width: 86vw;
+  padding: 9px 14px;
+  border-radius: 12px;
+  background: var(--glass-strong);
+  border: 1px solid var(--line-strong);
+  font-size: 12.5px;
+  z-index: 90;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+}
+
+/* チャット / 端末は下端に入力欄＋スニペット帯がある。トーストがそれを覆うと
+   押したい定型文が見えなくなる（P5 の 390x844 実測）。その 2 タブだけ持ち上げる。 */
+.toast.chat,
+.toast.term {
+  bottom: calc(var(--nav-h) + var(--safe-b) + 108px);
+}
+
+/* ソフトキーボードが出ている間は「見えている領域の下端」を基準にする。
+   `position: fixed` は**レイアウト**ビューポート基準なので、キーボードが出ても動かず
+   裏に隠れる（実測: 端末タブの「再接続中」トーストがキーボードの下で見えなかった）。
+   `--kb-inset` は lib/viewport.js が visualViewport から書く（キーボード無しなら 0px）。 */
+html[data-kb='1'] .toast {
+  bottom: calc(var(--kb-inset, 0px) + var(--safe-b) + 12px);
+}
+
+html[data-kb='1'] .toast.chat,
+html[data-kb='1'] .toast.term {
+  bottom: calc(var(--kb-inset, 0px) + var(--safe-b) + 74px);
+}
+

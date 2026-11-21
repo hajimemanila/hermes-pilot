@@ -13,11 +13,12 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
+import { readStyles } from './helpers/styles.js'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'public/manifest.webmanifest'), 'utf8'))
 const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8')
-const rawCss = fs.readFileSync(path.join(ROOT, 'src/styles.css'), 'utf8')
+const rawCss = readStyles()
 const css = rawCss.replace(/\/\*[\s\S]*?\*\//g, '')
 
 /** セレクタ直後の `{ … }`（入れ子なし前提）。 */

@@ -12,9 +12,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { SPLIT_QUERY, WIDE_QUERY, isSplitLayout } from '../src/lib/useSplitLayout.js'
 import { MASTER_W } from '../src/lib/layout.js'
+import { readStyles } from './helpers/styles.js'
 
-const CSS_PATH = path.resolve(import.meta.dirname, '../src/styles.css')
-const css = fs.readFileSync(CSS_PATH, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+const css = readStyles().replace(/\/\*[\s\S]*?\*\//g, '')
 
 /** `@media (min-width: 820px) { … }` の中身（対応する閉じ括弧まで）。 */
 function mediaBlock(source, query) {

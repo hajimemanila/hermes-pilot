@@ -1,0 +1,163 @@
+/* Spec Launchpad cards + toggle chips
+   (split from the former monolithic src/styles.css) */
+/* ---------- Spec Launchpad（SPEC §5.4） ---------- */
+/* Spec Launchpad のカードは完了報告カードと同じ見た目にする（同じ列に並ぶので揃える） */
+.spec-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 10px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.spec-bar:active {
+  border-color: var(--accent);
+}
+
+/* 全バッチ完了のカードは成功色に寄せる（🚀 の起票待ちと一目で区別する。Q3=A） */
+.spec-bar.is-done {
+  border-left-color: var(--good);
+}
+
+.spec-bar-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 1px;
+}
+
+.spec-bar-title {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.spec-bar-name {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spec-bar-n {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.spec-check {
+  flex: 0 0 auto;
+  width: 16px;
+  text-align: center;
+  color: var(--accent);
+}
+
+.spec-taken {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--good);
+  white-space: nowrap;
+}
+
+/* Execution Mode ピル（SPEC V5 §3.2）。行タイトルの下に 1 行だけ、幅を食わない */
+.spec-mode {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 3px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.spec-mode.is-zero-stop {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.spec-mode.is-visual-gate {
+  border-color: var(--good);
+  color: var(--good);
+}
+
+.spec-mode.is-fast-track-review {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.list-item:disabled {
+  opacity: 0.55;
+}
+
+
+/* ---------- チップ（固定少数のトグル専用） ----------
+   Q1=B / Q2=A: 横スクロールのチップ列は「増えないトグル」（フィルタ・言語・テーマ・
+   スニペット種別）と、例外扱いのスニペットバー（.chips-scroll）にだけ使う。
+   増えうる一覧（仕様・ボード・撮影候補）は必ず .pick-list（縦）にする — 見切れを作らないため。 */
+.chips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  /* チップは 30px の見た目のまま、当たり判定（44px）が切られない高さを確保する */
+  padding: 7px 0;
+  scrollbar-width: none;
+}
+.chips::-webkit-scrollbar {
+  display: none;
+}
+
+/* ボード切替の帯（.chip-row / .chip-more）は廃止した。増えうる一覧は .pick-list（縦）に統一（Q2=A）。 */
+
+/* シート内の選択中ボード */
+.list-item.on {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
+.chip {
+  flex: none;
+  height: 30px;
+  padding: 0 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.chip.on {
+  color: var(--text);
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+}
+

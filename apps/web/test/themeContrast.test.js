@@ -13,8 +13,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
+import { readStyles } from './helpers/styles.js'
 
-const CSS_PATH = path.resolve(import.meta.dirname, '../src/styles.css')
 
 /** コメントを落とす（`/* … *\/`）。 */
 function stripComments(css) {
@@ -63,7 +63,7 @@ function contrast(a, b) {
   return (hi + 0.05) / (lo + 0.05)
 }
 
-const css = stripComments(fs.readFileSync(CSS_PATH, 'utf8'))
+const css = stripComments(readStyles())
 const dark = tokens(block(css, ':root {'))
 const light = tokens(block(css, "html[data-theme='light'] {"))
 

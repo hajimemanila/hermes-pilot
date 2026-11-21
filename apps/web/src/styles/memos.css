@@ -1,0 +1,665 @@
+/* new-SPEC banner, memos view
+   (split from the former monolithic src/styles.css) */
+/* ---------- 新着 SPEC バナー（3 箇所のうち ③） ----------
+   幅は viewport ではなく「置かれた箱」で決まる（820px でも 2 ペインの狭い側に
+   入ると 340px 程度になる）。メディアクエリで切り替えず、常に折り返し可能にし、
+   flex-basis で「入らなければ次の行へ」を自然に決める。 */
+.spec-banner {
+  flex-wrap: wrap;
+}
+
+.spec-banner-main {
+  flex: 1 1 220px;
+}
+
+.spec-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1 1 190px;
+  justify-content: flex-end;
+}
+
+.spec-banner-actions .spec-banner-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 10px;
+  white-space: normal;
+  line-height: 1.25;
+}
+
+.spec-banner-btn.ghost {
+  background: transparent;
+  color: var(--accent);
+}
+
+/* ===========================================================================
+ * Google Keep 風メモ・ひらめき＆定期レポート受信箱（MemosPane）＆バブルメニュー
+ * ========================================================================= */
+
+.memos-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 10px;
+  margin-bottom: 10px;
+}
+
+.memos-header-titles {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.memos-header-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.memos-header-sub {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.35;
+  margin-top: 2px;
+}
+
+.memos-header-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.memos-header-actions .btn,
+.memos-new-btn {
+  width: auto;
+  flex: none;
+  padding: 7px 12px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.memos-quick-bar,
+.memos-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+/* 検索入力は潰れない（390px でも縮んで、右端の表示切替セグメントが残る） */
+.memos-search-row .memos-search-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.memos-quick-bar .btn {
+  flex: 0 0 auto;
+  width: auto;
+  padding: 8px 14px;
+  white-space: nowrap;
+}
+
+.memo-check-add-row .btn {
+  flex: 0 0 auto;
+  width: auto;
+  padding: 8px 12px;
+  white-space: nowrap;
+}
+
+.memos-quick-input,
+.memos-search-input,
+.memo-input,
+.memo-textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  padding: 8px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.memos-quick-input:focus,
+.memos-search-input:focus,
+.memo-input:focus,
+.memo-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.memos-filter-chips {
+  padding: 0 0 8px;
+}
+
+.memos-inbox-box {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+}
+
+.memos-inbox-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+  /* 見出しは 1 行（実測 21px）だが、タップ対象は 44px 必要（WCAG 2.5.5） */
+  min-height: 44px;
+}
+
+.memos-inbox-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.memos-inbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+/*
+ * 受信箱の行に置く「メモへ保存」は、共通 `.btn`（padding 10px + 13px 文字 = 実測 42px）を
+ * そのまま使うとタップ対象が 44px を割る。行の中だけ当たり判定を確保する（WCAG 2.5.5）。
+ */
+.memos-inbox-row .btn {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  flex: 0 0 auto;
+  padding-inline: 12px;
+}
+
+.memos-inbox-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.memos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(165px, 1fr));
+  gap: 10px;
+}
+
+.memo-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.memo-card.color-teal {
+  border-color: rgba(45, 212, 191, 0.48);
+  background: rgba(45, 212, 191, 0.08);
+}
+
+.memo-card.color-amber {
+  border-color: rgba(245, 158, 11, 0.48);
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.memo-card.color-violet {
+  border-color: rgba(167, 139, 250, 0.48);
+  background: rgba(167, 139, 250, 0.08);
+}
+
+.memo-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.memo-card-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.memo-pin-btn {
+  flex: none;
+  border: none;
+  background: none;
+  padding: 2px 4px;
+  opacity: 0.4;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.memo-pin-btn.on {
+  opacity: 1;
+}
+
+.memo-card-body {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.memo-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.memo-check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  text-align: left;
+  border: none;
+  background: none;
+  padding: 2px 0;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* 一列・リストでは行そのものが押せる（付け外し）ので当たり判定を 44px にする。
+   二列は 220px に 3 件を詰めるため行は span（表示専用）で、ここには当たらない。 */
+button.memo-check-row {
+  align-items: center;
+  min-height: 44px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.memo-check-row.done {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+/* 二列で先頭 3 件の後ろに出す「残り N 件」（タップはカード全体＝編集シートを開く） */
+.memo-check-more {
+  padding: 2px 0;
+  color: var(--accent);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.memo-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.memo-tag {
+  font-size: 10.5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+}
+
+.memo-source-meta {
+  font-size: 10.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memo-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+/* 表示切替セグメント（検索行の右端・1 / 2 / ☰・Q2=A） */
+.memos-view-seg {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.memos-view-btn {
+  /* タップ対象は 44px（監査の tap チェック・WCAG 2.5.5 の目安） */
+  min-width: 44px;
+  height: 44px;
+  padding: 0 8px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.memos-view-btn + .memos-view-btn {
+  border-left: 1px solid var(--line-strong);
+}
+
+.memos-view-btn.on {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 700;
+}
+
+/* 一列表示: 自動列をやめて 1 列に固定（Q2=A） */
+.memos-grid.view-one {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* 二列表示: 2 列固定（Q2=A）・カードは高さ 220px で行の下端を揃える（Q4=A） */
+.memos-grid.view-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.view-two .memo-card {
+  height: 220px;
+  overflow: hidden;
+  gap: 3px;
+  padding: 8px 10px;
+}
+
+/* 本文は 4 行＋「…」（Q4=A）。flex で潰れないよう shrink を止める */
+.view-two .memo-card-body {
+  -webkit-line-clamp: 4;
+  flex: 0 0 auto;
+}
+
+.view-two .memo-card-head,
+.view-two .memo-checklist,
+.view-two .memo-card-actions {
+  flex: 0 0 auto;
+}
+
+/* 220px に収めるため、二列では出典行とタグを落とす */
+.view-two .memo-source-meta,
+.view-two .memo-tags {
+  display: none;
+}
+
+/* 220px の予算に合わせてチェックリストとボタン列を詰める（ボタンは 1 行に固定） */
+.view-two .memo-checklist {
+  gap: 2px;
+}
+
+.view-two .memo-check-row {
+  padding: 1px 0;
+  font-size: 11.5px;
+  line-height: 1.3;
+}
+
+.view-two .memo-card-actions {
+  flex-wrap: nowrap;
+  padding-top: 0;
+}
+
+.view-two .report-card-btn {
+  font-size: 10.5px;
+  padding: 4px 6px;
+}
+
+/* リスト表示: カードを 1 行に畳む（SPEC §2.2） */
+.memos-grid.view-list {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+
+.view-list .memo-card {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+}
+
+/* リスト行の並びは `[タイトル] [本文] [⋯]`（本文なしは `[タイトル全幅] [⋯]`）。
+   `⋯` をヘッダの外＝カード末尾へ出したので、ヘッダは本文なしのとき全幅を取る。 */
+.view-list .memo-card-head {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  align-items: center;
+}
+
+/* 本文があるときだけタイトルを 46% に抑え、残りを本文へ渡す */
+.view-list .memo-card.has-body .memo-card-head {
+  flex: 0 1 auto;
+  max-width: 46%;
+}
+
+.view-list .memo-card-title {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.view-list .memo-card-body {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  -webkit-line-clamp: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* リスト行では本文以外を持たない（高さを 1 行に固定する） */
+.view-list .memo-checklist,
+.view-list .memo-tags,
+.view-list .memo-source-meta {
+  display: none;
+}
+
+/* カードの `⋯`（リスト表示だけ・44px タップ領域・本文の有無に関わらず右端固定） */
+.memo-more-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  /* 左余白 auto で右端へ寄せる（本文が伸びても押し出されない） */
+  margin: -10px -6px -10px auto;
+  border: none;
+  border-radius: 10px;
+  background: none;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.memo-more-btn:active {
+  background: var(--line);
+}
+
+/* `⋯` メニューのシート本文 */
+.memo-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.memo-menu-row {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.memo-menu-row:active {
+  border-color: var(--accent);
+}
+
+.memo-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.memo-field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.memo-editor-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.memo-editor-check-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.memo-editor-check-item > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.memo-editor-check-item > span.done {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.memo-check-add-row,
+.memo-color-row,
+.memo-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.memo-color-row {
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.memo-editor-actions > .btn {
+  flex: 1 1 0;
+}
+
+/* 未保存で閉じようとしたときの 3 択（シート本文へインライン・タップ領域 44px） */
+.memo-unsaved {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+}
+
+.memo-unsaved-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.memo-unsaved-sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.memo-unsaved-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.memo-unsaved-actions > .btn {
+  min-height: 44px;
+  width: 100%;
+}
+
+/* チャットバブルのコンテキストメニューボタン（本文選択を邪魔しない独立ボタン） */
+.bubble {
+  position: relative;
+}
+
+.bubble-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  float: right;
+  margin: 2px -4px -2px 6px;
+  width: 24px;
+  height: 22px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.55;
+  cursor: pointer;
+}
+
+.bubble-menu-btn:active {
+  opacity: 1;
+}
+
+.bubble-menu-preview {
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Dark ⇄ Light テーマ切替の円形イリス展開（View Transitions API） */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+::view-transition-new(root) {
+  z-index: 9998;
+}

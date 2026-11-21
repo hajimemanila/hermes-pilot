@@ -1,0 +1,357 @@
+/* lists, pick-list (drawer choices), checkbox row, kill switch
+   (split from the former monolithic src/styles.css) */
+/* ---------- リスト ---------- */
+.list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  /* 中の `.link` が 44px の当たり判定を持つので、行の高さはその分だけ詰める
+     （以前の見た目のリズムを保つ） */
+  padding: 2px 2px 0;
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.link {
+  border: none;
+  background: none;
+  color: var(--accent-2);
+  font-size: 12px;
+  padding: 4px;
+  /* 枠を持たないテキストリンクなので、箱を 44px にしても見た目は変わらない
+     （タップ対象は 44px 必要: WCAG 2.5.5。疑似要素で外側へ広げると、隣の行を食う） */
+  min-height: 44px;
+  min-width: 44px;
+  justify-content: center;
+  display: inline-flex;
+  align-items: center;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* シート（ドロワー）内の選択肢。ブラウザ既定の白背景・中央寄せを打ち消すダークカード */
+.list-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.list-item:active {
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+}
+
+.list-item .row-title {
+  display: block;
+  font-size: 13.5px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-line-clamp: none;
+}
+
+.list-item > span {
+  min-width: 0;
+}
+
+.list-item svg {
+  flex: none;
+  color: var(--muted);
+}
+
+.list-item .link {
+  flex: none;
+  padding: 6px 8px;
+}
+
+/* ---------- 縦リスト（.pick-list） ----------
+   「増えうる一覧」の統一形（Q1=B / Q2=A）。横スクロールは使わず、常に縦に積む。
+   1 行 = タイトル（.pick-title）＋補足（.pick-sub）＋右端の .pick-meta。
+   タイトル・補足は 1 行省略にして、長い名前でも横に溢れない（scrollWidth == clientWidth）。 */
+.pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.pick-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.pick-item:active {
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+}
+
+.pick-item.on {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
+.pick-item .pick-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pick-title {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pick-sub {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pick-meta {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.pick-item.on .pick-meta {
+  color: var(--accent);
+}
+
+/* ボード切替の常設 1 行（帯の代わり。下のタスク一覧と間隔を空ける） */
+.pick-item.board-now {
+  margin-bottom: 10px;
+}
+
+/* 履歴の「完了」バッジ（Q3=A） */
+.pick-badge {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--good);
+  color: var(--good);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 10px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+}
+
+.row:active {
+  background: var(--surface);
+}
+
+.row.on {
+  background: var(--rec-bg);
+  box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 1px var(--line-strong);
+}
+
+.row.on .row-title {
+  color: var(--rec-fg);
+  font-weight: 700;
+}
+
+.row.static {
+  align-items: flex-start;
+}
+
+.row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.row-title {
+  display: block;
+  font-size: 13.5px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.row-sub {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+
+/* チェックボックスの行（`<label class="row-sub">` で行ごと包んでいる唯一の用途）。
+   実効のタップ対象はこの label なので、行の高さを 44px にする（WCAG 2.5.5）。
+   素の `<div class="row-sub">` の注記行には効かせない。 */
+label.row-sub {
+  min-height: 44px;
+}
+
+.dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.dot.running {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.18);
+}
+.dot.done {
+  background: var(--dot-done);
+}
+.dot.ready {
+  background: var(--warn);
+}
+.dot.blocked,
+.dot.failed {
+  background: var(--bad);
+}
+
+.empty {
+  padding: 26px 8px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* ---------- キルスイッチ ---------- */
+.kill-open {
+  margin-top: 16px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 13px;
+  border-radius: 14px;
+  border: 1px solid var(--danger-line);
+  background: var(--danger-bg-strong);
+  color: var(--danger-fg);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.warn-card {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-line);
+  color: var(--danger-fg);
+  font-size: 12px;
+  line-height: 1.6;
+  margin-bottom: 12px;
+}
+
+.hold-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hold {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  padding: 14px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.hold.danger {
+  border-color: var(--danger-line);
+}
+
+.hold.safe {
+  border-color: rgba(52, 211, 153, 0.4);
+}
+
+.hold-fill {
+  position: absolute;
+  inset: 0;
+  transform-origin: left center;
+  transform: scaleX(0);
+  background: var(--danger-bg-strong);
+}
+
+.hold.safe .hold-fill {
+  background: rgba(52, 211, 153, 0.22);
+}
+
+.hold-label {
+  position: relative;
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.hold-sub {
+  position: relative;
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+

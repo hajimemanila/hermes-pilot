@@ -1,0 +1,197 @@
+/* review pane (quick review, worker log)
+   (split from the former monolithic src/styles.css) */
+/* ------------------------------------------------------------------ レビュー */
+.ak-page { padding-bottom: 24px; }
+.ak-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 12px 2px 6px; }
+.ak-head > div { flex: 1 1 auto; min-width: 0; }
+/*
+ * 狭い左ペイン（680–819px の 280px マスター）では、題名の右に「注釈」「再読み込み」を
+ * 並べると題名の箱が 51–56px まで潰れ、`レビュー` が「レビュ／ー」に割れて見切れる（実測・744×1024）。
+ * 題名に 96px を確保できないときはボタンを 2 行目へ折り返す（380px の 820px 以上では折り返さない）。
+ */
+.split-master .ak-head { flex-wrap: wrap; }
+.split-master .ak-head > div { flex: 1 1 auto; min-width: 96px; }
+.ak-tabs { padding: 7px 0; }
+.ak-readonly { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
+.ak-head .btn { width: auto; flex: 0 0 auto; padding: 6px 14px; }
+.ak-title { font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: .02em; }
+.ak-sub { font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.45; }
+
+/* 作業フィード（監視 cron の 1 行）: 完了・停止をレビュータブの上端に出す。
+   3 行まで。長い本文は 2 行で畳む（一覧を押し下げない） */
+.ak-feed {
+  display: flex; flex-direction: column; gap: 3px; margin: 2px 0 6px;
+  padding: 7px 10px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--bg-2);
+}
+.ak-feed-row { display: flex; gap: 8px; align-items: baseline; font-size: 11.5px; line-height: 1.5; }
+.ak-feed-at { flex: 0 0 auto; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.ak-feed-text {
+  flex: 1 1 auto; min-width: 0; color: var(--text-dim);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.ak-group { margin-top: 10px; }
+.ak-group-title { font-size: 11px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; padding: 6px 2px; }
+.ak-row {
+  width: 100%; display: flex; align-items: center; gap: 10px; text-align: left;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  padding: 10px 12px; margin-bottom: 8px; color: var(--text); cursor: pointer;
+}
+.ak-row:active { background: var(--surface-2); }
+.ak-row-main { flex: 1 1 auto; min-width: 0; }
+.ak-row-title { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ak-row-sub { display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; color: var(--muted); margin-top: 4px; }
+.ak-label { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent-2); }
+.ak-row-side { flex: none; }
+.ak-chip {
+  display: inline-block; font-size: 10px; padding: 3px 8px; border-radius: 999px;
+  background: var(--surface-2); border: 1px solid var(--line-strong); color: var(--muted); white-space: nowrap;
+}
+.ak-chip.warn { background: var(--warn); border-color: var(--warn); color: var(--on-warn); font-weight: 700; }
+.ak-chip.good { background: var(--good-bg); border-color: var(--good-line); color: var(--good-fg); }
+.ak-chip.rec { background: var(--rec-bg); border-color: var(--line-strong); color: var(--rec-fg); }
+
+.ak-form { display: flex; flex-direction: column; gap: 12px; }
+.ak-q { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+.ak-q-head { display: flex; gap: 8px; align-items: baseline; margin-bottom: 8px; }
+.ak-q-no { font-size: 11px; font-weight: 700; color: var(--accent); border: 1px solid rgba(45,212,191,.4); border-radius: 6px; padding: 1px 6px; }
+.ak-q-text { font-size: 13.5px; color: var(--text); line-height: 1.5; }
+.ak-opts { display: flex; flex-direction: column; gap: 6px; }
+.ak-opt {
+  display: flex; flex-direction: column; gap: 3px; text-align: left;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 11px; color: var(--text); cursor: pointer;
+}
+.ak-opt.on {
+  border-color: var(--accent);
+  background: rgba(45, 212, 191, .16);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.ak-opt-check {
+  margin-left: auto; width: 18px; height: 18px; border-radius: 50%;
+  border: 1.5px solid var(--line-strong); display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; color: transparent;
+}
+.ak-opt.on .ak-opt-check { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.ak-opt-head { display: flex; align-items: center; gap: 7px; font-size: 13px; }
+.ak-opt-head b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent-2); }
+.ak-opt-detail { font-size: 11.5px; color: var(--muted); line-height: 1.45; }
+.ak-opt-thumb {
+  display: block; height: 72px; width: auto; max-width: 100%;
+  vertical-align: middle; border: 1px solid var(--line); border-radius: 6px; background: var(--code-bg);
+}
+/* 挿絵はタップで拡大（72px 固定では案の違いが判断できない） */
+.ak-thumb-btn {
+  position: relative; display: inline-block; max-width: 46%; margin: 6px 0 0 8px;
+  cursor: zoom-in; border-radius: 6px;
+}
+.ak-thumb-btn::after {
+  content: '拡大'; position: absolute; right: 3px; bottom: 3px;
+  font-size: 9px; line-height: 1.4; padding: 0 4px; border-radius: 4px;
+  background: var(--glass-strong); color: var(--accent-2); pointer-events: none;
+}
+.ak-thumb-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ak-zoom {
+  position: fixed; inset: 0; z-index: 90; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 10px; padding: 14px;
+  background: var(--zoom-scrim);
+}
+.ak-zoom figure { margin: 0; max-width: 100%; max-height: 100%; display: flex; flex-direction: column; gap: 8px; }
+.ak-zoom img {
+  max-width: 100%; max-height: 78dvh; width: auto; margin: 0 auto;
+  border: 1px solid var(--line-strong); border-radius: 10px; background: var(--code-bg);
+}
+.ak-zoom figcaption { font-size: 12px; color: var(--muted); text-align: center; display: flex; flex-direction: column; gap: 2px; padding: 0 6px; }
+.ak-zoom figcaption b { color: var(--text); font-weight: 600; font-size: 13px; }
+.ak-zoom figcaption span { font-size: 11px; line-height: 1.45; }
+.ak-zoom-close {
+  flex: none; padding: 9px 26px; border-radius: 999px; border: 1px solid var(--line-strong);
+  background: var(--surface-2); color: var(--text); font: inherit; font-size: 13px;
+}
+.ak-note, .ak-global {
+  width: 100%; margin-top: 8px; background: var(--bg-2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; font-size: 13px; font: inherit;
+}
+.ak-note:focus, .ak-global:focus { outline: none; border-color: var(--accent); }
+.ak-actions { display: flex; flex-direction: column; gap: 6px; }
+.ak-actions .btn.primary { width: 100%; padding: 14px; font-size: 15px; border-radius: 12px; }
+.ak-actions .ak-link {
+  text-align: center; font-size: 12px; color: var(--muted); text-decoration: underline;
+  padding: 4px; background: none; border: 0;
+}
+/* ドロワー先頭の「シート全体を開く」。設問が増えてもスクロールで隠れない位置に固定する。 */
+.ak-sheetlink { display: flex; justify-content: flex-end; margin: -2px 0 8px; }
+.ak-sheetlink .ak-link {
+  font-size: 12px; color: var(--accent); text-decoration: none;
+  border: 1px solid rgba(45, 212, 191, .35); border-radius: 999px;
+  padding: 3px 10px; background: rgba(45, 212, 191, .08);
+}
+.btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 700; }
+.ak-hint { font-size: 11px; color: var(--muted); line-height: 1.6; }
+
+/* 完了した項目の「レビュー回答（履歴）」。既定は畳んでおき、必要なとき開く
+   （390px では設問 3 問ぶんを常時開くと完了サマリが下に押し出される） */
+.ak-answers { margin-top: 10px; font-size: 11.5px; }
+.ak-answers > summary { cursor: pointer; color: var(--muted); padding: 4px 0; }
+.ak-answer-list { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 8px; }
+.ak-answer-q { color: var(--muted); line-height: 1.5; }
+.ak-answer-a { color: var(--text); line-height: 1.5; }
+.ak-answer-note { color: var(--muted); line-height: 1.5; font-style: italic; }
+.ak-answer-global { margin-top: 8px; color: var(--muted); line-height: 1.5; }
+.ak-error { background: var(--danger-bg); border: 1px solid var(--danger-line); color: var(--danger-fg); border-radius: 10px; padding: 8px 10px; font-size: 12px; }
+.ak-iframe { width: 100%; height: 62vh; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.ak-paste { margin-top: 10px; font-size: 12px; color: var(--muted); }
+.ak-paste textarea {
+  width: 100%; margin-top: 8px; background: var(--bg-2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; font: inherit; font-size: 12.5px;
+}
+.ak-paste .btn { margin-top: 8px; }
+/* 判断待ち・承認待ちを閉じる（完了 / 取消）。カードでもシートでも同じ見た目にする */
+.close-actions { margin-top: 10px; }
+.close-actions > .btn { width: 100%; }
+.ak-row-phase { margin-top: 3px; font-size: 11px; color: var(--accent); opacity: .9; }
+.ak-row-phase + .ak-row-sub { margin-top: 2px; }
+/* 判断待ち 0 件の空状態（レビュー review-empty-01: 枠付きカード / 塗りボタン / 件数行を残す） */
+.ak-empty-card {
+  margin-top: 14px; padding: 20px 16px 16px; text-align: center;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+}
+.ak-empty-title { font-size: 15px; font-weight: 700; line-height: 1.5; }
+.ak-empty-body { margin: 6px 0 14px; font-size: 13px; color: var(--muted); line-height: 1.7; }
+.ak-empty-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 44px; padding: 0 22px; border-radius: 10px;
+  background: var(--accent); border: 1px solid var(--accent); color: var(--on-accent);
+  font: inherit; font-size: 14px; font-weight: 700; cursor: pointer;
+}
+.ak-empty-note { margin: 10px 0 0; font-size: 11px; color: var(--muted); line-height: 1.6; }
+.ak-empty-meta { margin-top: 14px; font-size: 11px; color: var(--muted); }
+.ak-worker { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+.ak-worker summary { font-size: 12px; color: var(--muted); cursor: pointer; }
+.ak-worker-log {
+  max-height: 220px; overflow-y: auto; margin-top: 8px; display: flex; flex-direction: column; gap: 6px;
+}
+/* 2 列 2 段（D67）: 1 行目 = 時刻 + ツール名 / 2 行目 = ログ本文。
+   旧 `40px 62px 1fr` の 3 列固定では `kanban_comment` 等の長いツール名が 62px 列から
+   はみ出して右隣の本文と重なった。時刻（HH:MM・5 文字）だけ固定幅にし、ツール名と
+   本文は同じ 1 列を共有させる（`minmax(0, 1fr)` なので長い 1 語でも列を押し広げない）。 */
+.ak-worker-row {
+  display: grid; grid-template-columns: 42px minmax(0, 1fr);
+  column-gap: 8px; row-gap: 1px; font-size: 11px; line-height: 1.45;
+}
+.ak-worker-time {
+  grid-column: 1; grid-row: 1; color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums;
+}
+.ak-worker-tag {
+  grid-column: 2; grid-row: 1; min-width: 0;
+  color: var(--accent-2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ak-worker-row.tool .ak-worker-tag { color: var(--warn); }
+.ak-worker-text {
+  grid-column: 2; grid-row: 2; min-width: 0;
+  color: var(--text); opacity: .88; overflow-wrap: anywhere;
+}
+.ak-worker-empty { font-size: 11px; color: var(--muted); padding: 6px 0; }
+

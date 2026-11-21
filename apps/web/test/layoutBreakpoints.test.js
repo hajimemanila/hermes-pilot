@@ -21,9 +21,9 @@ import {
   DETAIL_READ_MAX,
   query,
 } from '../src/lib/layout.js'
+import { readStyles } from './helpers/styles.js'
 
-const CSS_PATH = path.resolve(import.meta.dirname, '../src/styles.css')
-const css = fs.readFileSync(CSS_PATH, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+const css = readStyles().replace(/\/\*[\s\S]*?\*\//g, '')
 
 /** `@media` の前口（`{` まで）を全部集める。 */
 function mediaQueries(source) {

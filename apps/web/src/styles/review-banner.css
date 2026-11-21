@@ -1,0 +1,686 @@
+/* other-conversation review banners + follow-ups
+   (split from the former monolithic src/styles.css) */
+/* ---------- 別会話のレビュー完了バナー & レビュー詳細フォローアップ ---------- */
+.chat-report-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--good-bg);
+  border-bottom: 1px solid var(--good-line);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.chat-report-banner-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-report-btn {
+  flex: 0 0 auto;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 11.5px;
+  padding: 4px 9px;
+  border-radius: 8px;
+  cursor: pointer;
+  /* タップ対象 44px（WCAG 2.5.5）。帯の中の小さなボタンなので、箱を広げる */
+  min-height: 44px;
+  min-width: 44px;
+  justify-content: center;
+  display: inline-flex;
+  align-items: center;
+}
+
+.chat-report-btn.primary {
+  background: var(--good);
+  border-color: transparent;
+  color: var(--on-good);
+  font-weight: 700;
+}
+
+.ak-anno-preview {
+  margin: 4px 0 8px;
+}
+.ak-anno-preview .ak-compare-pill { margin-bottom: 6px; }
+
+.ak-anno-preview-btn {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface-2);
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.ak-anno-preview-btn img {
+  display: block;
+  width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+}
+
+.ak-anno-preview-meta {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 5px;
+}
+
+.ak-followup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.ak-reopen {
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--surface);
+}
+
+.ak-reopen summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.ak-reopen .inp {
+  margin: 8px 0;
+}
+
+/* ------------------------------------------------------------------
+ * タブレット 2 ペイン分割（SPEC §7.2 / SPEC-i18n-resp §2 B3）
+ *
+ * 680px 未満は従来どおり 1 ペイン（詳細はシートの全画面被せ）。
+ * 680–819px は狭い 2 ペイン（左 280px）、820px 以上が現行の 2 ペイン（380/360）。
+ * 2 ペインでは左を一覧（固定幅・独立スクロール）、右を詳細（flex:1・独立スクロール）にする。
+ * どちらを出すかは JS 側の `lib/useSplitLayout.js` が判定する。境界の数値の正本は
+ * `lib/layout.js`（680 / 820）で、CSS とずれたら web/test/layoutBreakpoints.test.js が落ちる。
+ *
+ * 左右の safe-area はここでは足さない: `.app` が既に左右の padding を持っているので、
+ * `.split-master` / `.split-detail` で足すと 2 倍の余白になる（横向きで一覧が痩せる）。
+ * 上下（`--safe-b`）だけは各ペインのスクロール末尾に要るので個別に持つ。
+ * ------------------------------------------------------------------ */
+.split-layout.review {
+  --split-master-w: 380px;
+}
+
+.split-layout.tasks {
+  /* レビューと同じ幅にする（タスクだけ狭いと一覧の密度が変わって見える） */
+  --split-master-w: 380px;
+}
+
+/*
+ * チャットの 2 カラム（SPEC-ver-0-2-1 §2.3 / 決定 Q1=A）。左 = セッション一覧＋下端スタック。
+ * チャットだけは 820px 以上のときだけ 2 カラムにする（680–819 は 1 ペインのまま）。
+ */
+.split-layout.chat {
+  --split-master-w: 380px;
+}
+
+/*
+ * 狭い 2 ペイン（680–819px）。744/768（iPad mini 縦）では 820px に届かず、
+ * 右半分が空いたまま 1 ペインだった（SPEC-i18n-resp §2 B3）。
+ *
+ * 上限を `max-width: 819.98px` で切るのは、このブロックの `--split-master-w: 280px`
+ * が 820 以上の 380/360 を上書きしないため。820 以上のブロックは現行のまま。
+ * 境界の数値の正本は `lib/layout.js`（`SPLIT_MIN` / `SPLIT_WIDE_MIN`）。
+ */
+@media (min-width: 680px) and (max-width: 819.98px) {
+  .split-layout.review,
+  .split-layout.tasks {
+    --split-master-w: 280px;
+  }
+
+  .pane.split-layout {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .split-master {
+    flex: 0 0 var(--split-master-w, 280px);
+    width: var(--split-master-w, 280px);
+    min-width: 0;
+    height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    padding: 8px 8px calc(10px + var(--safe-b));
+    border-right: 1px solid var(--line);
+    background: var(--bg);
+  }
+
+  .split-detail {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    padding: 0 12px calc(12px + var(--safe-b));
+    background: var(--bg-elev);
+  }
+
+  .split-detail-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 0 -12px 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-elev);
+  }
+
+  .split-detail-title {
+    min-width: 0;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .split-detail-body {
+    padding-bottom: 8px;
+  }
+
+  .split-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 100%;
+    min-height: 180px;
+    padding: 16px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 12.5px;
+    line-height: 1.6;
+  }
+
+  .split-placeholder b {
+    color: var(--text);
+    font-size: 13.5px;
+    font-weight: 600;
+  }
+
+  /* 一覧行は幅が足りないので 2 行まで折り返す（390px の 1 ペインは 1 行のまま） */
+  .split-master .ak-row {
+    padding: 8px 8px;
+  }
+
+  .split-master .ak-row-title {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    white-space: normal;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
+  }
+
+  .split-master .ak-row-sub {
+    gap: 6px;
+    font-size: 10.5px;
+  }
+
+  .split-master .ak-head {
+    padding-top: 4px;
+  }
+
+  /* 狭い左では状態ストリップを 3 列に畳む（数字は落とさない） */
+  .split-master .strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  /* 注釈エディタは 1 ペインでは全画面固定。2 ペインでは右ペインに収める */
+  .split-detail .ak-anno {
+    position: static;
+    inset: auto;
+    z-index: auto;
+    height: 100%;
+    padding: 0;
+  }
+
+  .split-detail .ak-anno-canvas-wrap {
+    min-height: 0;
+  }
+}
+
+@media (min-width: 820px) {
+  .pane.split-layout {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .split-master {
+    flex: 0 0 var(--split-master-w, 360px);
+    width: var(--split-master-w, 360px);
+    min-width: 0;
+    height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    padding: 10px 12px calc(12px + var(--safe-b));
+    border-right: 1px solid var(--line);
+    background: var(--bg);
+  }
+
+  .split-detail {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    padding: 0 18px calc(18px + var(--safe-b));
+    background: var(--bg-elev);
+  }
+
+  /* 右ペインの見出し。スクロールしても対象名が残るよう上に貼る */
+  .split-detail-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 0 -18px 8px;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-elev);
+  }
+
+  .split-detail-title {
+    min-width: 0;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .split-detail-body {
+    padding-bottom: 8px;
+  }
+
+  /* 右ペインに何も選ばれていないとき（左から選ぶ） */
+  .split-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 100%;
+    min-height: 220px;
+    padding: 24px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.7;
+  }
+
+  .split-placeholder b {
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  /* 左ペインは狭いので状態ストリップを 3 列に畳む（数字は落とさない） */
+  .split-master .strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  /* 左ペインの一覧カードは幅が足りないぶん余白を詰める */
+  .split-master .ak-row {
+    padding: 9px 10px;
+  }
+
+  .split-master .ak-head {
+    padding-top: 4px;
+  }
+
+  /* ------------------------------------------------------------------
+   * チャットの 2 カラム（SPEC-ver-0-2-1 §2.3 / 決定 Q1=A）
+   *
+   * 左 = セッション一覧＋下端スタック / 右 = タイムラインだけ。
+   * `.pane.chat` は元々 flex の縦積み（padding 0 / overflow hidden）なので、
+   * 2 カラムでは横並びに切り替えるだけでよい（1 ペインの見た目は変えない）。
+   * 右に置くのは最小ヘッダとタイムラインだけで、バナー・チップ・定型チップ帯・
+   * 入力欄はすべて左の下端スタック（`lib/chatSplit.js` の 4 グループ）に寄せる。
+   * ------------------------------------------------------------------ */
+  .pane.chat.split-layout {
+    flex-direction: row;
+    align-items: stretch;
+    gap: 0;
+  }
+
+  /* タイムラインの最大幅 840px は 1 ペイン用。2 カラムでは左右に分けるので外す */
+  .pane-host > .pane.chat.split-layout {
+    max-width: none;
+  }
+
+  /*
+   * タスク / レビューの 2 ペインも同じ扱いにする（SPEC-ver-0-2-2 §2.1 / 案A+）。
+   * 820px 以上の共通規則 `.pane-host > * { max-width: 840px }` は「1 ペインの読み物」用で、
+   * 2 ペインに当てると 1920px で左右 540px ずつが空白になり、詳細が 480px しか残らなかった（実測）。
+   * 面は全幅にし、行長は下の `@media (min-width: 1200px)` で本文だけ抑える。
+   */
+  .pane-host > .pane.split-layout.tasks,
+  .pane-host > .pane.split-layout.review {
+    max-width: none;
+  }
+
+  .chat-split-master {
+    flex: 0 0 var(--split-master-w, 380px);
+    width: var(--split-master-w, 380px);
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--line);
+    background: var(--bg);
+    overflow: hidden;
+  }
+
+  /* 左の上 = セッション一覧（ここだけがスクロールする） */
+  .chat-split-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    padding: 6px 8px calc(8px + var(--safe-b));
+  }
+
+  /*
+   * 左の下端 = 固定スタック（バナー → チップ → 定型チップ帯 → 入力欄）。
+   * 段が増えても入力欄が画面外へ落ちないよう、スタックの高さは 62% で頭打ちにし、
+   * 超えた分だけ中でスクロールさせる（入力欄は常に触れる）。
+   */
+  .chat-split-stack {
+    flex: none;
+    max-height: 62%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-top: 1px solid var(--line);
+    background: var(--bg);
+  }
+
+  .chat-split-group {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* チップはヘッダに居たときと同じ「横 1 行」で積む */
+  .chat-split-stack [data-chat-group='chips'] {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+  }
+
+  /* 右 = 最小ヘッダ＋タイムライン（バナー・チップ・定型帯・入力欄は置かない） */
+  .chat-split-detail {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-elev);
+    overflow: hidden;
+  }
+
+  .chat-split-head {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .chat-split-head .chat-title {
+    flex: 1;
+  }
+
+  /*
+   * チャットは 820px〜1023px でタイムラインの最大幅を 840px に保つ
+   * （SPEC §7.2-3。1024px 以上の履歴サイドバーは任意要件なので作らない）。
+   */
+  .pane-host {
+    display: flex;
+    justify-content: center;
+  }
+
+  .pane-host > * {
+    width: 100%;
+    max-width: 840px;
+  }
+
+  /* 設定・端末は読み物なので中央に寄せて行長を抑える */
+  .pane.center-readable {
+    max-width: 840px;
+    margin: 0 auto;
+    width: 100%;
+  }
+
+  /*
+   * 注釈エディタは 1 ペインでは全画面固定だが、2 ペインでは右ペインに収める
+   * （`position: fixed` のままだと画面全体を覆って左の一覧が触れない）。
+   */
+  .split-detail .ak-anno {
+    position: static;
+    inset: auto;
+    z-index: auto;
+    height: 100%;
+    padding: 0;
+  }
+
+  .split-detail .ak-anno-canvas-wrap {
+    min-height: 0;
+  }
+}
+
+/*
+ * 広い画面の 2 ペイン（SPEC-ver-0-2-2 §2.1 / 案A+）。
+ *
+ * - 面は全幅、**本文だけ**行長を 1040px で頭打ちにする（12.5px で約 83 字/行）。
+ *   見出しの罫線（`.split-detail-head`）は全幅のまま。カードや表も 1040px に揃う。
+ * - 1440px 以上はマスターを 420px に広げる（一覧のタイトル省略を減らす）。
+ *   狭い 2 ペイン（680–819）の 280px と、820–1439 の 360/380px は現行のまま。
+ */
+@media (min-width: 1180px) {
+  .split-layout.tasks,
+  .split-layout.review {
+    --split-master-w: 450px;
+  }
+
+  .split-detail .split-detail-body {
+    max-width: 1040px;
+  }
+}
+
+/* ===========================================================================
+ * パイプライン統合レポート（SPEC-PILOT-V4 §3.3 ② / D20③）
+ *
+ * チャットのタイムラインに出す折りたたみカードと、Tasks タブの完走サマリバナー。
+ * 390px 幅で横溢れしないこと（ヘッダは 1 行に収め、長い名前は省略記号で切る）。
+ * ========================================================================= */
+
+.msg.report-card {
+  display: block;
+  align-self: stretch;
+  margin: 6px 12px;
+  padding: 0;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--accent-2);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.msg.report-card.is-halted {
+  border-left-color: var(--bad);
+}
+
+.report-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.report-card-head:active {
+  background: var(--rec-bg);
+}
+
+/*
+ * 見出しは 2 行まで折り返す。`nowrap` + ellipsis だと `scrollWidth > clientWidth` になり
+ * 長い Spec 名（例: 「SPEC: Hermes Pilot v4 (`SPEC-PILOT-V4`) — …仕様書」79 字）で
+ * 横溢れ判定に落ちる（V4-4 の 8 通り監査で実測）。全文はカード本文の見出しにそのまま出る。
+ */
+.report-card-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.report-chip {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  line-height: 1.6;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+}
+
+.report-chip.done {
+  color: var(--good);
+  border-color: var(--good-line);
+  background: var(--good-bg);
+}
+
+.report-chip.halted {
+  color: var(--warn);
+  border-color: var(--warn);
+  background: rgba(245, 158, 11, 0.14);
+}
+
+.report-card-time,
+.report-card-caret {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.report-card-summary {
+  padding: 0 10px 8px 30px;
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-card-body {
+  padding: 2px 10px 8px;
+  max-height: 60vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  font-size: 12.5px;
+  word-break: break-word;
+}
+
+.report-card-body .md-body {
+  font-size: 12.5px;
+}
+
+.report-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--line);
+}
+
+.report-card-btn {
+  flex: 0 1 auto;
+  max-width: 100%;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.4;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-card-btn.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.report-card-btn:active {
+  transform: scale(0.98);
+}
+

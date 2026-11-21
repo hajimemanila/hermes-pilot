@@ -23,9 +23,9 @@ import {
   readMemosView,
   rememberMemosView,
 } from '../src/lib/memoView.js'
+import { readStyles } from './helpers/styles.js'
 
-const CSS_PATH = path.resolve(import.meta.dirname, '../src/styles.css')
-const css = fs.readFileSync(CSS_PATH, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+const css = readStyles().replace(/\/\*[\s\S]*?\*\//g, '')
 
 /** localStorage の代わり（ブラウザ無しで読める素の入れ物）。 */
 function fakeStorage(initial = {}) {

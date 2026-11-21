@@ -1,0 +1,202 @@
+/* attachment rail + attachments inside a bubble
+   (split from the former monolithic src/styles.css) */
+/* ---------- 添付レール ---------- */
+.attach-rail {
+  flex: none;
+  display: flex;
+  gap: 8px;
+  padding: 6px 10px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.attach-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.attach-item {
+  position: relative;
+  flex: none;
+  max-width: 190px;
+  height: 56px;
+  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  display: grid;
+  place-items: center;
+  overflow: visible;
+}
+
+.attach-item.img {
+  width: 56px;
+}
+
+.attach-item.img img {
+  width: 54px;
+  height: 54px;
+  object-fit: cover;
+  border-radius: 9px;
+}
+
+.attach-file {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  font-size: 11.5px;
+  color: var(--muted);
+  max-width: 180px;
+  overflow: hidden;
+}
+
+.attach-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attach-x {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+/* ---------- 吹き出し内の添付 ---------- */
+.bubble-imgs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.bubble-img img {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 9px;
+  border: 1px solid var(--line-strong);
+  display: block;
+}
+
+.bubble-files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.file-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-size {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 設定の入力欄・小さいピル */
+.inp {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  /* 入力欄もタップ対象（WCAG 2.5.5）。実測 39px だったので 44px を下回らせない */
+  min-height: 44px;
+}
+
+.inp:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.pill {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 9px;
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+  font-size: 10.5px;
+  vertical-align: middle;
+}
+
+
+
+.composer textarea {
+  flex: 1;
+  /* 1行 = 行間19.6 + 余白18 + 枠2 = 39.6。38px だと常に 1.6px 溢れて
+     全高のスクロールバー（グレーの縦棒）が出る（実測: clientHeight 36 / scrollHeight 38）
+     44px はタップ対象の最小（WCAG 2.5.5）。textarea は疑似要素で当たり判定を
+     広げられない（置換要素）ので、箱そのものを 44px にする。 */
+  min-height: 44px;
+  max-height: 120px;
+  resize: none;
+  padding: 9px 11px;
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.4;
+  /* 縦棒は出さない（伸びきるまで自動で高さが増えるので、収まっているときの
+     スクロールバーは無意味。増えきった後も指・キャレットで送れる） */
+  scrollbar-width: none;
+  overflow-y: auto;
+}
+
+.composer textarea::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.composer textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.send {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent-grad);
+  color: #fff;
+  display: grid;
+  place-items: center;
+}
+
+.send[disabled] {
+  opacity: 0.45;
+}
+
+.send.stop {
+  background: var(--danger-grad);
+}
+

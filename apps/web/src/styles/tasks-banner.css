@@ -1,0 +1,84 @@
+/* Tasks tab: recent completion banner
+   (split from the former monolithic src/styles.css) */
+/* ---------- Tasks タブ: 直近の完走サマリバナー ---------- */
+.pipeline-summary-card {
+  margin-bottom: 10px;
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--good);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.pipeline-summary-card.is-halted {
+  border-left-color: var(--warn);
+}
+
+.pipeline-summary-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+}
+
+.pipeline-summary-head::-webkit-details-marker {
+  display: none;
+}
+
+/* 長い Spec 名でも横に溢れないよう 2 行まで折り返す（V4-4 実測: nowrap+ellipsis は
+   scrollWidth > clientWidth になる）。全文は本文（`.pipeline-summary-body`）に出る。 */
+.pipeline-summary-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.pipeline-summary-sub {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.pipeline-summary-when {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.pipeline-summary-body {
+  padding: 2px 10px 10px;
+  font-size: 12.5px;
+  max-height: 55vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  word-break: break-word;
+}
+
+.pipeline-summary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+

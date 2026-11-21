@@ -17,9 +17,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
+import { readStyles } from './helpers/styles.js'
 
-const CSS_PATH = path.resolve(import.meta.dirname, '../src/styles.css')
-const raw = fs.readFileSync(CSS_PATH, 'utf8')
+const raw = readStyles()
 const css = raw.replace(/\/\*[\s\S]*?\*\//g, '')
 
 /** セレクタ直後の `{ … }`（入れ子なし前提）。 */

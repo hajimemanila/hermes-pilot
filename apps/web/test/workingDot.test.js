@@ -10,9 +10,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
+import { readStyles } from './helpers/styles.js'
 
-const css = fs
-  .readFileSync(path.resolve(import.meta.dirname, '../src/styles.css'), 'utf8')
+const css = readStyles()
   .replace(/\/\*[\s\S]*?\*\//g, '')
 
 /** セレクタ 1 つの宣言ブロック（行頭一致・`.a .b` を `.b` と誤認しない）。 */

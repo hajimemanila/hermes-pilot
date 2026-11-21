@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url'
 
 import { reconnectDelay, RECONNECT_MAX_MS } from '../src/lib/termReconnect.js'
 import { keyboardInset, applyViewportVars, KB_MIN_INSET } from '../src/lib/viewport.js'
+import { readStyles } from './helpers/styles.js'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const SRC = path.resolve(HERE, '../src')
@@ -88,7 +89,7 @@ test('main.jsx: 起動時に viewport 変数の追従を入れる', () => {
 })
 
 test('styles.css: キーボード表示中は --kb-inset 基準でトーストを置く', () => {
-  const css = fs.readFileSync(path.join(SRC, 'styles.css'), 'utf8')
+  const css = readStyles()
   assert.match(css, /html\[data-kb='1'\] \.toast \{[\s\S]{0,120}?--kb-inset/)
   assert.match(css, /html\[data-kb='1'\] \.toast\.chat,[\s\S]{0,80}?--kb-inset/)
 })

@@ -1,0 +1,312 @@
+/* Spec Seed sheet + A2B quick intake
+   (split from the former monolithic src/styles.css) */
+/* --- 🎙️ Spec Seed シート（SPEC V5 §3.3 ① / D26①） --------------------------
+   390px で横溢れゼロ: 入力欄は幅いっぱい、チップは折返し（横スクロールにしない）。 */
+.seed-lead {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.seed-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  min-width: 0;
+}
+
+.seed-label {
+  font-size: 11.5px;
+  color: var(--muted);
+  flex: none;
+}
+
+.seed-row .pill {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seed-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 92px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.seed-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.seed-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px 0;
+  min-width: 0;
+}
+
+.seed-count {
+  font-size: 10.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+.seed-hint {
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+/* 入力欄の下の行（音声ヒント＋文字数）に置くヒントは横に伸ばす */
+.seed-hint-inline {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 実行方針のセグメント（Zero-stop 既定 / Visual-gate。SPEC V7 §3.3 ② / D35）
+   タップ領域は 44px 以上（`npm run audit:responsive` が実測する） */
+.seed-policy-head {
+  margin: 2px 0 6px;
+}
+
+.seed-seg {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 6px;
+  min-width: 0;
+}
+
+.seed-seg-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.seed-seg-btn.on {
+  border-color: var(--accent);
+  background: var(--accent-soft, var(--surface-2));
+  color: var(--accent-2, var(--accent));
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.seed-seg-name {
+  max-width: 100%;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.seed-seg-tag {
+  font-size: 9.5px;
+  line-height: 1.2;
+  color: var(--muted);
+}
+
+.seed-seg-btn.on .seed-seg-tag {
+  color: inherit;
+}
+
+.seed-policy-hint {
+  margin: 0 0 10px;
+}
+
+.seed-templates {
+  flex-wrap: wrap;
+  overflow: visible;
+  margin: 6px 0 10px;
+}
+
+.seed-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  min-width: 0;
+}
+
+.seed-toggle input {
+  margin-top: 2px;
+  flex: none;
+}
+
+.seed-toggle > span {
+  min-width: 0;
+}
+
+.seed-error {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--danger, #d9534f);
+  color: var(--danger, #d9534f);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.seed-submit {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 12px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.seed-submit:disabled {
+  opacity: 0.5;
+}
+
+/* --- A2B クイック起票カード（仕様書の準備完了）------------------------------ */
+.spec-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  margin: 0 0 8px;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  background: var(--accent-soft, var(--surface-2));
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  min-width: 0;
+}
+
+.spec-banner:active {
+  filter: brightness(1.1);
+}
+
+.spec-banner-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.spec-banner-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.spec-banner-sub {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.spec-banner-btn {
+  flex: none;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ===========================================================================
+ * 横向きスマホ（高さ 430px 以下）— SPEC-i18n-resp §2 B4 / 決定 Q3=A
+ *
+ * 844×390 のような「横長・低い」画面では、縦の余白が既定のままだと
+ * 一覧＋操作が 1 画面に入らず、毎回スクロールしないと操作できない。
+ * 高さだけを見て詰める（幅は 820px 以上なので 2 ペインのまま）。
+ *
+ * - `--nav-h` 58 → 48（ボトムナビは触れる高さ 48px を保ちつつ 10px 稼ぐ）
+ * - トップバー 46 → 40
+ * - シート（詳細の被せ）のヘッダ・本文の余白を詰める
+ *
+ * 左右の safe-area は `.app` が持っているのでここでは触らない（二重にしない）。
+ * ファイル末尾に置くのは、後勝ちで既存の高さ・余白を確実に上書きするため。
+ * ========================================================================= */
+@media (max-height: 430px) {
+  :root {
+    --nav-h: 48px;
+  }
+
+  .topbar {
+    height: 40px;
+  }
+
+  .pane {
+    padding-top: 8px;
+  }
+
+  .strip {
+    margin-bottom: 7px;
+  }
+
+  /* 844×390 は幅も 820px 以上なので 2 ペイン。低い画面ぶん余白だけ詰める */
+  .split-master {
+    padding: 8px 10px calc(10px + var(--safe-b));
+  }
+
+  .split-detail {
+    padding: 0 14px calc(12px + var(--safe-b));
+  }
+
+  .split-detail-head {
+    margin: 0 -14px 6px;
+    padding: 8px 14px;
+  }
+
+  /* ボトムシートは低い画面では高さを活かす（既定 82dvh だと選択肢が 1 件しか見えない） */
+  .sheet {
+    max-height: 94dvh;
+  }
+
+  .sheet-head {
+    padding: 8px 12px 6px;
+  }
+
+  .sheet-body {
+    padding: 8px 12px 12px;
+  }
+}
+

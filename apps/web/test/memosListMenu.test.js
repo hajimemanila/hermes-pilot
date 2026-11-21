@@ -14,6 +14,7 @@ import path from 'node:path'
 import { MEMO_MENU_ACTIONS, memoMenuRows, showsCardButtons, showsListMenu } from '../src/lib/memoListMenu.js'
 import { DEFAULT_MEMOS_VIEW, MEMOS_VIEW_KEY, VIEWS, parseMemosView, rememberMemosView } from '../src/lib/memoView.js'
 import { stripComments } from './helpers/stripComments.js'
+import { readStyles } from './helpers/styles.js'
 
 const here = import.meta.dirname
 const readDict = (lang) => JSON.parse(fs.readFileSync(path.join(here, '..', 'src', 'i18n', `${lang}.json`), 'utf8'))
@@ -95,7 +96,7 @@ test('MemosPane は ⋯ をリスト表示の分岐の中だけで描く（一�
 })
 
 // ---------------------------------------------------------------- D69（Batch U4）
-const css = stripComments(fs.readFileSync(path.join(here, '..', 'src', 'styles.css'), 'utf8'))
+const css = stripComments(readStyles())
 
 test('D69: ⋯ は .memo-card-head の外・本文の後ろ（カード末尾）に置く', () => {
   const src = readSource('features/MemosPane.jsx')

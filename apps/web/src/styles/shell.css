@@ -1,0 +1,224 @@
+/* status strip + cockpit instrument bar
+   (split from the former monolithic src/styles.css) */
+/* ---------- 状態ストリップ ---------- */
+.strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
+  margin-bottom: 10px;
+}
+
+.stat {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 8px 4px;
+  text-align: center;
+  font: inherit;
+  color: inherit;
+  min-width: 0;
+}
+
+button.stat:active {
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+}
+
+.stat-k {
+  display: block;
+  font-size: 10.5px;
+  color: var(--muted);
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 実行中ターンがあることを示す小さな点 */
+.live-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--warn);
+  vertical-align: middle;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.stat-v {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stat.good .stat-v {
+  color: var(--good);
+}
+.stat.bad {
+  border-color: var(--danger-line);
+}
+.stat.bad .stat-v {
+  color: var(--bad);
+}
+.stat.warn .stat-v {
+  color: var(--warn);
+}
+
+/* ---------- コックピット計器盤（上部ステータスバー・SPEC §5.5） ---------- */
+/*
+ * どのタブにいても同じ位置に出す。横に流れる 1 行（狭い端末では横スクロール）にして、
+ * ページ全体が横に伸びないようにする（scrollWidth <= clientWidth を保つ）。
+ *
+ * **折り返さない**（`flex-wrap: nowrap`）: 390px 幅で 🔔 判断待ちのピルが 1 枚増えると
+ * 4 枚目（💎 キャッシュ燃費）が 2 行目へ落ち、計器盤の高さが 46px → 74px に伸びて
+ * 下の一覧が 28px ずれる（実測）。1 行固定＋はみ出し分は横スクロールにすると
+ * 高さはピルの枚数に依らず 46px、ページの横溢れも出ない。
+ * スクロールバーは場所を食うので隠す（`scrollbar-width` + 下の `::-webkit-scrollbar`）。
+ */
+.telemetry {
+  flex: none;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px 6px;
+  /* ピルは 25px の見た目のまま、当たり判定（44px）が切られない高さを確保する */
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--glass);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  overscroll-behavior-x: contain;
+  /* 横スクロールで端のピルを出したとき、12px の余白を残す */
+  scroll-padding-inline: 12px;
+}
+
+.telemetry::-webkit-scrollbar {
+  display: none;
+}
+
+.t-pill {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  /* 1 行固定なので、極端に長いラベルでも 1 枚で計器盤を埋めないよう上限を掛ける */
+  max-width: 62vw;
+  /* 4 枚並んでも 390px に収まるよう左右 8px（9px だと 7px 溢れて 💎 が欠ける・実測） */
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.5;
+  white-space: nowrap;
+  /* ピル自身を overflow: hidden にすると、当たり判定を広げる ::before まで
+     自分で切ってしまう（実測: 44px に広げても 25px しか当たらなかった）。
+     切るのは中のテキスト側（下の `.t-pill > span` / `.t-tool`）に任せる。 */
+  overflow: visible;
+}
+
+/* 長いラベルは中のスパンで省略する（ピル自体は切らない） */
+.t-pill > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+button.t-pill:active {
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+}
+
+.t-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.t-dot.ok {
+  background: var(--good);
+}
+.t-dot.live {
+  /* 文字用の --on-warn（#1d1300）を点に流用していたため、両テーマで黒い点になっていた。
+     実行中ピルは accent 系の面なので、点も accent にする */
+  background: var(--accent);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.t-pill.gw {
+  color: var(--good);
+}
+.t-pill.gw.offline,
+.t-pill.gw.error {
+  max-width: none;
+  color: var(--danger-fg);
+  background: var(--danger-bg);
+  border-color: var(--bad);
+  padding-inline: 8px;
+}
+
+.t-pill.run {
+  color: var(--rec-fg);
+  background: var(--rec-bg);
+  border-color: var(--accent);
+}
+
+.t-tool {
+  /* ツール名は 1 行固定の計器盤では最も伸縮してよい部分（省略して詰める）。
+     26vw のままだと 390px で実行中ピルが 151px まで伸び、4 枚目が画面外へ出る。 */
+  max-width: 22vw;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+  color: inherit;
+  opacity: 0.85;
+}
+
+.t-pill.gem {
+  color: var(--text-dim);
+}
+
+/* 🔔 判断待ちは琥珀で埋める（人間がボトルネックであることを 1 目で示す） */
+.t-pill.warn {
+  color: var(--on-warn);
+  background: var(--warn);
+  border-color: var(--warn);
+}
+
+.pill-warn-pulse {
+  animation: t-pill-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes t-pill-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.55);
+    opacity: 1;
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(245, 158, 11, 0);
+    opacity: 0.88;
+  }
+}
+

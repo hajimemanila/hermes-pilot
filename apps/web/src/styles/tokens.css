@@ -1,0 +1,279 @@
+/* color tokens (Dark/Light) + base reset
+   (split from the former monolithic src/styles.css) */
+/*
+ * カラートークン（SPEC §7.1）。`:root` が Dark（既定）、
+ * `html[data-theme="light"]` が Light。切替は JS（`lib/theme.js`）が
+ * `<html data-theme>` を書き換えるだけで、CSS 側は変数を差し替える。
+ * 表に無い名前（`--bg-2` / `--surface-2` / `--text-dim` 等）は既存ルールが
+ * 参照している派生トークンで、両テーマで必ず定義する（未定義だと
+ * `var(--text-dim, #9fb3b0)` の暗色フォールバックが Light で漏れる）。
+ */
+:root {
+  /* --- SPEC §7.1 の表（Dark が既定） --- */
+  --bg: #051319;
+  --bg-elev: #0a2029;
+  --surface: #0e2a35;
+  --text: #e8f4f6;
+  --muted: #84a5ad;
+  --line: rgba(120, 190, 205, 0.16);
+  --accent: #2dd4bf;
+  --warn: #f59e0b;
+  --bad: #f87171;
+
+  /* --- 派生トークン（Dark） --- */
+  --bg-2: var(--bg-elev);
+  --surface-2: #123543;
+  --line-strong: rgba(120, 190, 205, 0.34);
+  --text-dim: #9fb3b0;
+  --accent-2: #5eead4;
+  --good: #34d399;
+  --bg-grad-top: #0a2630;
+  --glass: rgba(6, 22, 26, 0.92);
+  --glass-strong: rgba(6, 22, 26, 0.96);
+  --overlay: rgba(8, 32, 42, 0.72);
+  --scrim: rgba(6, 20, 24, 0.92);
+  --zoom-scrim: rgba(2, 10, 12, 0.94);
+  --code-bg: #0a1417;
+  --on-accent: #04191c;
+  --on-warn: #1d1300;
+  --danger-fg: #ffd7c9;
+  --danger-bg: rgba(120, 35, 25, 0.35);
+  --danger-bg-strong: rgba(80, 25, 20, 0.5);
+  --good-bg: rgba(52, 211, 153, 0.14);
+  --good-line: rgba(52, 211, 153, 0.35);
+  --good-fg: #b8f5d8;
+  --rec-bg: rgba(45, 212, 191, 0.16);
+  --rec-fg: #c9fff8;
+  --discord: #a5b4fc;
+  /* .hold.danger / .ak-error などの破壊的アクセントの枠線。以前は自己参照
+     （var(--danger-line)）で値が無効になり、border-color が currentColor
+     ＝白文字色に落ちて「白枠のボタン」になっていた（Dark のみ）。 */
+  --danger-line: rgba(248, 113, 113, 0.42);
+  --dot-done: #3f6b6a;
+  /* ナビの点・数字バッジの縁取り。ナビ面の色で塗るので、Light では白が正しい
+     （Dark の rgba(6,22,26,.96) 直書きだと Light で黒いリングになる・実測） */
+  --badge-ring: rgba(6, 22, 26, 0.96);
+  --glint: #c7fff7;
+  --user-bubble: linear-gradient(180deg, #11706c, #0d5a57);
+  --bubble-fg: #eafefb;
+  --on-good: #05261e;
+  --danger-grad: linear-gradient(180deg, #d1584c, #a33c33);
+  --sheet-scrim: rgba(0, 0, 0, 0.5);
+  --accent-grad: linear-gradient(180deg, #19a99e, #0f7d76);
+  color-scheme: dark;
+  --nav-h: 58px;
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-t: env(safe-area-inset-top, 0px);
+  /*
+   * 左右の safe-area（横向き・ノッチ・Android の 3 ボタンナビ）。
+   * `viewport-fit=cover`（apps/web/index.html:5）を指定しているので、指定しないと
+   * 横向きでノッチ／システムバーに内容が食われる。
+   * 足す場所は 1 箇所だけにする: 通常の画面は `.app` が左右を持つ（下の `.app` を参照）。
+   * `.sheet-wrap` のような `position: fixed` の被せ物は `.app` の padding の外に出るので、
+   * それぞれの側で足す（二重に足すと 2 倍の余白になる）。
+   * ノッチの無い端末・デスクトップでは `env()` が 0px に落ちるので、既存の見た目は変わらない。
+   */
+  --safe-l: env(safe-area-inset-left, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+}
+
+/*
+ * Light テーマ。`--bg` 上の本文 `--text` は 15.6:1、補助 `--muted` は 4.9:1
+ * （`apps/web/test/themeContrast.test.js` が 7:1 / 4.5:1 を機械検査する）。
+ */
+html[data-theme='light'] {
+  --bg: #f4f7f8;
+  --bg-elev: #ffffff;
+  --surface: #eef3f5;
+  --text: #0f242a;
+  --muted: #526d75;
+  --line: rgba(15, 45, 55, 0.12);
+  --accent: #0d9488;
+  --warn: #d97706;
+  --bad: #dc2626;
+
+  --bg-2: var(--bg-elev);
+  --surface-2: #e2ebee;
+  --line-strong: rgba(15, 45, 55, 0.24);
+  --text-dim: #3f5b63;
+  --accent-2: #0f766e;
+  --good: #047857;
+  --bg-grad-top: #e7eff1;
+  --glass: rgba(255, 255, 255, 0.92);
+  --glass-strong: rgba(255, 255, 255, 0.96);
+  --overlay: rgba(255, 255, 255, 0.82);
+  --scrim: rgba(238, 243, 245, 0.94);
+  --zoom-scrim: rgba(232, 240, 242, 0.96);
+  --code-bg: #eef3f5;
+  --on-accent: #04211f;
+  --on-warn: #1d1300;
+  --danger-fg: #8c1d12;
+  --danger-bg: rgba(220, 38, 38, 0.1);
+  --danger-bg-strong: rgba(220, 38, 38, 0.08);
+  --good-bg: rgba(5, 150, 105, 0.12);
+  --good-line: rgba(5, 150, 105, 0.32);
+  --good-fg: #065f46;
+  --rec-bg: rgba(13, 148, 136, 0.12);
+  --rec-fg: #0f5f58;
+  --discord: #4752c4;
+  --danger-line: rgba(220, 38, 38, 0.35);
+  --dot-done: #6d8785;
+  --badge-ring: rgba(255, 255, 255, 0.96);
+  --glint: #0f766e;
+  --user-bubble: linear-gradient(180deg, #0d9488, #0f766e);
+  --bubble-fg: #ffffff;
+  --on-good: #ffffff;
+  --danger-grad: linear-gradient(180deg, #dc2626, #b91c1c);
+  --sheet-scrim: rgba(15, 36, 42, 0.32);
+  --accent-grad: linear-gradient(180deg, #0d9488, #0f766e);
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  /* Android で画面OFF→復帰したときや、キーボードでビューポートが変わったときに
+     ページ自体がスクロールして下部ナビが画面外へ出るのを防ぐ */
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(120% 80% at 50% 0%, var(--bg-grad-top) 0%, var(--bg) 55%);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', system-ui, sans-serif;
+  font-size: 15px;
+  overscroll-behavior-y: none;
+}
+
+/*
+ * アプリの枠。上下の safe-area に加えて **左右も**ここで持つ。
+ *
+ * 左右を `.app` の padding で 1 回だけ入れるのが要点: 子（`.topbar` / `.pane` /
+ * `.split-master` / `.split-detail` / `.nav`）で個別に足すと、重なって余白が 2 倍になり、
+ * 横向きでコンテンツが狭くなる。背景（`--glass` のバー・ナビ）は端まで届かず
+ * ノッチ帯は body のグラデーションになるが、内容がノッチ／システムバーに食われない方が優先
+ * （`position: fixed` の被せ物だけは `.app` の外なので各側で足す）。
+ */
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-height: 100dvh;
+  overflow: hidden;
+  padding: var(--safe-t) var(--safe-r) 0 var(--safe-l);
+}
+
+.topbar {
+  flex: none;
+  height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--glass);
+  backdrop-filter: blur(8px);
+}
+
+.brand {
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+}
+
+.brand b {
+  color: var(--accent-2);
+  font-weight: 700;
+}
+
+.conn.ok {
+  color: var(--good);
+}
+.conn.offline,
+.conn.error {
+  color: var(--bad);
+}
+
+.banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  font-size: 12.5px;
+  color: var(--danger-fg);
+  background: var(--danger-bg);
+  border-bottom: 1px solid var(--danger-line);
+}
+
+.banner button {
+  margin-left: auto;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--danger-line);
+  background: transparent;
+  color: var(--danger-fg);
+  font-size: 12px;
+}
+
+.panes {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  /* チャットの pane-host を「隠すだけ」で重ねるための基準 */
+  position: relative;
+}
+
+/*
+ * チャットはタブ移動で作り直さないので、隠すときも display:none にしない
+ * （display:none はスクロール位置・入力欄の状態を落とす）。レイアウトは保ったまま
+ * 不可視・非対話にするので、戻った瞬間に元のスクロール位置と書きかけがそのまま出る。
+ */
+.pane-host {
+  height: 100%;
+}
+
+html[data-vibe='dopamine'] .pane-host:not(.is-hidden) {
+  animation: hm-pane-enter 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes hm-pane-enter {
+  from {
+    opacity: 0.86;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.pane-host.is-hidden {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.pane {
+  height: 100%;
+  overflow-y: auto;
+  padding: 10px 12px calc(12px + var(--safe-b));
+  -webkit-overflow-scrolling: touch;
+}
+
+.pane.chat {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  position: relative;
+}
+

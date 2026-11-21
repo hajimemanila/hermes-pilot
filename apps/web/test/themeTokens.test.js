@@ -17,9 +17,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
+import { readStyles } from './helpers/styles.js'
 
 const SRC = path.resolve(import.meta.dirname, '../src')
-const RAW = fs.readFileSync(path.join(SRC, 'styles.css'), 'utf8')
+const RAW = readStyles()
 const CSS = RAW.replace(/\/\*[\s\S]*?\*\//g, '')
 
 /** セレクタ 1 つの宣言ブロック（行頭一致）。 */
