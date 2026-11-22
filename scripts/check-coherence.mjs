@@ -82,6 +82,8 @@ export const RULES = Object.freeze([
   'sync-owner',
   'transport-owner',
   'transition-owner',
+  'write-owner',
+  'cli-owner',
 ])
 
 /* ------------------------------------------------------------------ */
@@ -1218,6 +1220,18 @@ export const TRANSITION_OWNER_FILES = Object.freeze(['apps/bridge/src/review.js'
 /** Kanban verbs that only `apps/bridge/src/review/transitions.js` may run. */
 const TRANSITION_VERBS = Object.freeze(['unblock', 'complete'])
 
+/** The only module allowed to call `fs.writeFileSync` (D101). */
+export const WRITE_OWNER_FILE = 'apps/bridge/src/lib/atomic.js'
+
+/** The only module allowed to spawn an external binary (D102). */
+export const CLI_OWNER_FILE = 'apps/bridge/src/lib/cli.js'
+
+/**
+ * Modules that spawn a binary on purpose and keep their own return shape (D102).
+ * Each one carries a comment at the call site explaining why it stays outside `run()`.
+ */
+export const CLI_OWNER_ALLOWED = Object.freeze(['apps/bridge/src/coherence.js', 'apps/bridge/src/server/helpers.js'])
+
 /**
  * (9) `setInterval(` call sites in a source file.
  *
@@ -1300,6 +1314,26 @@ export function transitionOwnerProblems(rel, text) {
   return problems
 }
 
+/**
+ * (12) `fs.writeFileSync` outside the atomic writer.
+ *
+ * Every state file write goes through `apps/bridge/src/lib/atomic.js` (D101) so a
+ * crash mid-write cannot leave a half written answer / token / state file behind.
+ *
+ * @param {string} rel repository relative path
+ * @param {string} text file source
+ * @returns {{line: number, reason: string}[]} problems
+ */
+export function writeOwnerProblems(rel, text) {
+  if (rel === WRITE_OWNER_FILE) return []
+  const src = stripComments(String(text ?? ''))
+  const problems = []
+  for (const m of src.matchAll(/\bwriteFileSync\s*\(/g)) {
+    problems.push({ line: lineOf(src, m.index), reason: `raw fs.writeFileSync outside ${WRITE_OWNER_FILE}` })
+  }
+  return problems
+}
+
 /** (9) Recurrence guard: one scheduler owns the periodic sync (D97). */
 async function ruleSyncOwner(root, findings) {
   const rule = 'sync-owner'
@@ -1351,6 +1385,69 @@ async function ruleTransitionOwner(root, findings) {
   }
   if (hits.length) {
     findings.violation(rule, `${hits.length} kanban transition call(s) bypass apps/bridge/src/review/transitions.js`, {
+      value: hits.length,
+      files: hits.slice(0, 10),
+    })
+  }
+}
+
+/** (12) Recurrence guard: one atomic writer owns every state file write (D101). */
+async function ruleWriteOwner(root, findings) {
+  const rule = 'write-owner'
+  const hits = []
+  for (const file of walkCode(root, LAYOUT.bridgeSrc)) {
+    const text = readText(file.abs)
+    if (text === null) continue
+    for (const problem of writeOwnerProblems(file.rel, text)) {
+      hits.push({ file: file.rel, line: problem.line, reason: problem.reason })
+    }
+  }
+  if (hits.length) {
+    findings.violation(rule, `${hits.length} raw fs.writeFileSync call(s) outside ${WRITE_OWNER_FILE}`, {
+      value: hits.length,
+      files: hits.slice(0, 10),
+    })
+  }
+}
+
+/**
+ * (13) `execFile(` outside the CLI boundary.
+ *
+ * Every external CLI call goes through `apps/bridge/src/lib/cli.js` (D102) so the
+ * caller only has to look at `ok`. `coherence.js` (node checker, soft signal by
+ * design) and `server/helpers.js` (tailscale probe where `null` is the spec) are
+ * allowed with a comment explaining the exception.
+ *
+ * @param {string} rel repository relative path
+ * @param {string} text file source
+ * @returns {{line: number, reason: string}[]} problems
+ */
+export function cliOwnerProblems(rel, text) {
+  if (rel === CLI_OWNER_FILE || CLI_OWNER_ALLOWED.includes(rel)) return []
+  const src = stripComments(String(text ?? ''))
+  const problems = []
+  for (const m of src.matchAll(/\bexecFile(Sync)?\s*\(/g)) {
+    problems.push({
+      line: lineOf(src, m.index),
+      reason: `execFile() outside ${CLI_OWNER_FILE}; use run() / runHermes() so callers only read ok`,
+    })
+  }
+  return problems
+}
+
+/** (13) Recurrence guard: one CLI boundary owns every external spawn (D102). */
+async function ruleCliOwner(root, findings) {
+  const rule = 'cli-owner'
+  const hits = []
+  for (const file of walkCode(root, LAYOUT.bridgeSrc)) {
+    const text = readText(file.abs)
+    if (text === null) continue
+    for (const problem of cliOwnerProblems(file.rel, text)) {
+      hits.push({ file: file.rel, line: problem.line, reason: problem.reason })
+    }
+  }
+  if (hits.length) {
+    findings.violation(rule, `${hits.length} direct external CLI spawn(s) outside ${CLI_OWNER_FILE}`, {
       value: hits.length,
       files: hits.slice(0, 10),
     })
@@ -1518,6 +1615,8 @@ export async function analyzeRepo(root = DEFAULT_ROOT, options = {}) {
     ruleSyncOwner,
     ruleTransportOwner,
     ruleTransitionOwner,
+    ruleWriteOwner,
+    ruleCliOwner,
   ]) {
     try {
       await rule(absRoot, findings)

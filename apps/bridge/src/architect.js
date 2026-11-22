@@ -44,11 +44,11 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { execFile } from 'node:child_process'
 import { listSpecs as scanSpecs, parseCreatedTask, taskStampMs } from './specs.js'
 import { appendChatReport } from './pipeline-watcher.js'
-import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'
+import { outcomeOf, outputOf, runHermes } from './lib/cli.js'
 import { DEFAULT_LANG } from './lang.js'
+import { writeJsonAtomic } from './lib/atomic.js'
 import { isJaLang, languageRule } from './language-rule.js'
 import {
   ACTIVE_JOB_STATUSES,
@@ -157,9 +157,9 @@ export { computePhase, findRecentSheet, isJobStalled, publicJob } from './archit
  * `hermes kanban --board <b> create "[ARCH] …" --assignee mobile --json --body …` という
  * **正規ルート**でカンバンに Architect タスクを起票する（自走ワーカーが着火する）。
  * 外部 AI CLI のラッパー起動は SPEC V11 D50 で廃止した（`RUNNERS = ['hermes']` の 1 本だけ）。
- * `PATH` は `buildAugmentedPath()` で補う（`launchd` の狭い PATH 対策）。
+ * `PATH` は `lib/cli.js` の `runHermes()` が `buildAugmentedPath()` で補う（`launchd` の狭い PATH 対策）。
  * @param {object} [cfg] 設定（`hermesBin`）
- * @returns {Function} `({runnerId, prompt, repoPath, board, seedText, jobId, executionPolicy, suggestedSlug, existingSpecs, timeoutMs}) => Promise<{code,stdout,stderr}>`
+ * @returns {Function} `({runnerId, prompt, repoPath, board, seedText, jobId, executionPolicy, suggestedSlug, existingSpecs, timeoutMs}) => Promise<{ok,code,stdout,stderr,timedOut,bin,args}>`
  */
 export function createCliRunner(cfg = {}) {
   return ({
@@ -175,35 +175,26 @@ export function createCliRunner(cfg = {}) {
     existingSpecs,
     usedBatchPrefixes,
     timeoutMs = RUNNER_TIMEOUT_MS,
-  }) =>
-    new Promise((resolve) => {
-      const bin = cfg.hermesBin ?? resolveHermesBin()
-      const slug = String(suggestedSlug ?? '').trim() || suggestSpecSlug(seedText || prompt, jobId)
-      const title = buildArchitectTaskTitle({ seedText: seedText || prompt })
-      const body = buildArchitectTaskBody({
-        prompt,
-        board,
-        repoPath,
-        jobId,
-        executionPolicy,
-        suggestedSlug: slug,
-        existingSpecs,
-        usedBatchPrefixes,
-        lang,
-      })
-      const rawAssignee = typeof cfg?.pilotProfile === 'function' ? cfg.pilotProfile() : cfg?.pilotProfile
-      const assignee = String(rawAssignee ?? '').trim() || 'mobile'
-      const args = buildKanbanCreateArgs({ board, title, body, assignee })
-      execFile(
-        bin,
-        args,
-        { cwd: repoPath, timeout: timeoutMs, maxBuffer: 4_000_000, env: { ...process.env, PATH: buildAugmentedPath() } },
-        (err, stdout, stderr) => {
-          const code = err ? (typeof err.code === 'number' ? err.code : 1) : 0
-          resolve({ code, stdout: String(stdout ?? ''), stderr: String(stderr ?? ''), bin, args })
-        },
-      )
+  }) => {
+    const slug = String(suggestedSlug ?? '').trim() || suggestSpecSlug(seedText || prompt, jobId)
+    const title = buildArchitectTaskTitle({ seedText: seedText || prompt })
+    const body = buildArchitectTaskBody({
+      prompt,
+      board,
+      repoPath,
+      jobId,
+      executionPolicy,
+      suggestedSlug: slug,
+      existingSpecs,
+      usedBatchPrefixes,
+      lang,
     })
+    const rawAssignee = typeof cfg?.pilotProfile === 'function' ? cfg.pilotProfile() : cfg?.pilotProfile
+    const assignee = String(rawAssignee ?? '').trim() || 'mobile'
+    const args = buildKanbanCreateArgs({ board, title, body, assignee })
+    // `bin` / `args` は新形（`lib/cli.js` の統一形）から取る。
+    return runHermes(args, { bin: cfg.hermesBin, cwd: repoPath, timeoutMs, maxBuffer: 4_000_000 })
+  }
 }
 /**
  * Architect を作る。
@@ -272,7 +263,7 @@ export function createArchitect(cfg = {}, deps = {}) {
     const ids = [...dismissedIds].slice(-DISMISSED_MAX)
     try {
       fs.mkdirSync(path.dirname(dismissedPath), { recursive: true })
-      fs.writeFileSync(dismissedPath, `${JSON.stringify({ ids }, null, 2)}\n`, { mode: 0o600 })
+      writeJsonAtomic(dismissedPath, { ids }, { newline: true })
       return true
     } catch {
       return false // 保存に失敗してもジョブはメモリ上で破棄済みにする（再取得で戻るのは次善）
@@ -316,7 +307,7 @@ export function createArchitect(cfg = {}, deps = {}) {
     if (configPath) {
       try {
         fs.mkdirSync(path.dirname(configPath), { recursive: true })
-        fs.writeFileSync(configPath, `${JSON.stringify({ runner: DEFAULT_RUNNER }, null, 2)}\n`, { mode: 0o600 })
+        writeJsonAtomic(configPath, { runner: DEFAULT_RUNNER }, { newline: true })
       } catch (e) {
         return { ok: false, code: 'WRITE_FAILED', error: e.message }
       }
@@ -436,12 +427,14 @@ export function createArchitect(cfg = {}, deps = {}) {
       )
       .then(async (res) => {
         job.finishedAt = now()
-        const code = typeof res?.code === 'number' ? res.code : 0
-        const taskId = res?.taskId ?? parseCreatedTask(res?.stdout)?.id ?? null
+        // 注入ランナーの旧形（`{code,stdout}`）も統一形へ揃えてから判定する。
+        const outcome = outcomeOf(res)
+        const code = typeof outcome.code === 'number' ? outcome.code : (outcome.ok ? 0 : 1)
+        const taskId = res?.taskId ?? parseCreatedTask(outcome.stdout)?.id ?? null
         if (code !== 0) {
           // 失敗しても自動で別経路の起票へ切り替えない（二重稼働・重複起票を根絶）。
           // 再試行は UI の明示操作（1 タップ再試行）だけ。
-          const reason = String(res?.stderr || res?.stdout || `runner exited with ${code}`).trim()
+          const reason = String(outputOf(outcome) || `runner exited with ${code}`).trim()
           job.status = 'failed'
           job.error = reason.slice(0, 600)
           return

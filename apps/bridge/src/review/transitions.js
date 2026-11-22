@@ -19,6 +19,8 @@
  * 言語を知らない）。CLI に残る英語（`Visual check passed`・metadata）もここで固定する。
  */
 
+import { outcomeOf, outputOf } from '../lib/cli.js'
+
 /** 表: 遷移名 → { from, kind, result? }。kind は 'unblock' | 'complete-then-unblock'。 */
 export const TRANSITION_TABLE = {
   approve: { from: ['blocked'], kind: 'complete-then-unblock', result: 'Visual check passed' },
@@ -35,13 +37,16 @@ export const APPROVE_METADATA = { closed_from: 'review', approved_by: 'mobile' }
  * 遷移を実行する 1 つの関数を作る。
  *
  * @param {object} ctx
- * @param {(args: string[]) => Promise<{code: number, out: string}>} ctx.runKanban カンバン CLI（注入可）
+ * @param {(args: string[]) => Promise<{code: number, stdout?: string, stderr?: string, out?: string}>} ctx.runKanban カンバン CLI（注入可・戻り値は `outcomeOf()` で統一形へ揃える）
  * @param {(id: string) => ({status?: string} | null)} ctx.bodyOf 現在のタスク行（status を読む）
  * @param {() => (string|Date)} [ctx.now] `approved_at` の時刻（テストで固定するため注入可）
  * @returns {{table: typeof TRANSITION_TABLE, canApply: (name: string, status: string) => boolean, apply: (name: string, options?: {id: string, reason?: string, metadata?: object}) => Promise<{code: number, out: string, status: string|null, moved: string|null, skipped?: string}>}}
  */
 export function createReviewTransitions(ctx = {}) {
   const { runKanban, bodyOf, now } = ctx
+
+  /** 注入された CLI の戻り値を統一形へ揃える（旧 `{code,out}` も吸収する・D102）。 */
+  const cli = async (args) => outcomeOf(await runKanban(args))
 
   const stamp = () => {
     const v = typeof now === 'function' ? now() : new Date()
@@ -74,9 +79,9 @@ export function createReviewTransitions(ctx = {}) {
     }
 
     if (spec.kind === 'unblock') {
-      const freed = await runKanban(['unblock', id, '--reason', reason])
+      const freed = await cli(['unblock', id, '--reason', reason])
       const ok = freed.code === 0
-      return { code: freed.code, out: freed.out ?? '', status: ok ? 'ready' : status, moved: ok ? 'ready' : null }
+      return { code: freed.code === null ? 1 : freed.code, out: outputOf(freed), status: ok ? 'ready' : status, moved: ok ? 'ready' : null }
     }
 
     if (spec.kind !== 'complete-then-unblock') throw new RangeError(`unknown kind: ${spec.kind}`)
@@ -86,7 +91,7 @@ export function createReviewTransitions(ctx = {}) {
       approved_at: stamp(),
       ...(options.metadata && typeof options.metadata === 'object' ? options.metadata : {}),
     }
-    const done = await runKanban([
+    const done = await cli([
       'complete',
       id,
       '--result',
@@ -94,14 +99,14 @@ export function createReviewTransitions(ctx = {}) {
       '--metadata',
       JSON.stringify(metadata),
     ])
-    if (done.code === 0) return { code: 0, out: done.out ?? '', status: 'done', moved: 'done' }
+    if (done.code === 0) return { code: 0, out: outputOf(done), status: 'done', moved: 'done' }
 
     // complete が通らない（ワーカーが抱えたまま等）ときだけ unblock に落とす。unblock は最大 1 回。
-    const freed = await runKanban(['unblock', id, '--reason', reason])
+    const freed = await cli(['unblock', id, '--reason', reason])
     const ok = freed.code === 0
     return {
-      code: freed.code,
-      out: `${done.out ?? ''}\n${freed.out ?? ''}`.trim(),
+      code: freed.code === null ? 1 : freed.code,
+      out: `${outputOf(done)}\n${outputOf(freed)}`.trim(),
       status: ok ? 'ready' : status,
       moved: ok ? 'ready' : null,
     }

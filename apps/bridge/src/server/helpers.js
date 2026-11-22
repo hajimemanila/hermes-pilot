@@ -228,6 +228,10 @@ function sendOutcome(res, out, okStatus = 200, failCode = 'CLI_FAILED') {
    *
    * Tailscale が無い・ログインしていない環境では素直に null（LAN 候補だけ出す）。
    * ここで失敗してもペアリングは成立させる（QR が出ない理由にしない）。
+   *
+   * D102 の対象外: best-effort なプローブで、失敗は `null` が仕様（`lib/cli.js` の `ok` に
+   * 寄せると「未ログイン」と「timeout」を区別する必要が生まれ、ペアリングの分岐が増える）。
+   *
    * @returns {Promise<string|null>} 生の JSON 文字列
    */
   let tailscaleCache = { at: 0, json: null }

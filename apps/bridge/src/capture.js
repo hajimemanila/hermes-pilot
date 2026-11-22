@@ -1,7 +1,6 @@
-import { execFile } from 'node:child_process'
 import crypto from 'node:crypto'
 import { ApiError } from './api-errors.js'
-import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'
+import { outcomeOf, runHermes } from './lib/cli.js'
 
 /**
  * クイック起票。
@@ -73,20 +72,11 @@ export function createCapture(cfg = {}) {
   /** @type {Map<string, {at: number, task: object}>} */
   const seen = new Map()
 
-  /** 既定の実行（テストでは差し替え可能）。 */
+  /** 既定の実行（テストでは差し替え可能）。戻り値は `lib/cli.js` の統一形。 */
   const run =
-    cfg.runner ??
-    ((args) =>
-      new Promise((resolve) => {
-        execFile(
-          cfg.hermesBin ?? resolveHermesBin(),
-          args,
-          { timeout: 30_000, maxBuffer: 1_000_000, env: { ...process.env, PATH: buildAugmentedPath() } },
-          (err, stdout, stderr) => {
-            resolve({ code: err ? (err.code ?? 1) : 0, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') })
-          },
-        )
-      }))
+    cfg.runner
+      ? (args) => Promise.resolve(cfg.runner(args)).then((res) => outcomeOf(res))
+      : (args) => runHermes(args, { bin: cfg.hermesBin, timeoutMs: 30_000, maxBuffer: 1_000_000 })
 
   function sweep() {
     const now = Date.now()

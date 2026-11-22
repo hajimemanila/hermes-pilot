@@ -1,8 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { execFile } from 'node:child_process'
 import { ApiError } from './api-errors.js'
-import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'
+import { outcomeOf, outputOf, runHermes as runHermesCli } from './lib/cli.js'
 
 /**
  * 運用系（状態の俯瞰 + キルスイッチ）。
@@ -166,9 +165,9 @@ export function createOps(cfg, hermes, auth, deps = {}) {
     auth.audit({ kind: 'gateway.pause', ok: res.code === 0, by, reason, state })
     if (res.code !== 0) {
       // CLI の出力は失敗理由の唯一の手掛かり。抜粋して `params.detail` に載せる（捨てない）。
-      throw new ApiError('CLI_FAILED', { detail: String(res.out ?? '').slice(0, 400) }, 502)
+      throw new ApiError('CLI_FAILED', { detail: outputOf(res).slice(0, 400) }, 502)
     }
-    return { ok: true, action: 'pause', state, output: res.out.slice(0, 400), at: Date.now() }
+    return { ok: true, action: 'pause', state, output: outputOf(res).slice(0, 400), at: Date.now() }
   }
 
   /**
@@ -181,9 +180,9 @@ export function createOps(cfg, hermes, auth, deps = {}) {
     const state = paused()
     auth.audit({ kind: 'gateway.resume', ok: res.code === 0, by, state })
     if (res.code !== 0) {
-      throw new ApiError('CLI_FAILED', { detail: String(res.out ?? '').slice(0, 400) }, 502)
+      throw new ApiError('CLI_FAILED', { detail: outputOf(res).slice(0, 400) }, 502)
     }
-    return { ok: true, action: 'resume', state, output: res.out.slice(0, 400), at: Date.now() }
+    return { ok: true, action: 'resume', state, output: outputOf(res).slice(0, 400), at: Date.now() }
   }
 
   /**
@@ -289,17 +288,8 @@ export function createOps(cfg, hermes, auth, deps = {}) {
 
   /** `hermes <args>` を実行する（シェルを介さない。テストでは runner を差し替え可）。 */
   function runHermes(args) {
-    if (cfg.runner) return cfg.runner(args)
-    return new Promise((resolve) => {
-      execFile(
-        cfg.hermesBin ?? resolveHermesBin(),
-        args,
-        { timeout: 20_000, maxBuffer: 1_000_000, env: { ...process.env, PATH: buildAugmentedPath() } },
-        (err, stdout, stderr) => {
-          resolve({ code: err ? (err.code ?? 1) : 0, out: `${stdout ?? ''}${stderr ?? ''}`.trim() })
-        },
-      )
-    })
+    if (cfg.runner) return Promise.resolve(cfg.runner(args)).then((res) => outcomeOf(res))
+    return runHermesCli(args, { bin: cfg.hermesBin, timeoutMs: 20_000, maxBuffer: 1_000_000 })
   }
 
   return { overview, gateway, paused, pause, resume, stopAll }

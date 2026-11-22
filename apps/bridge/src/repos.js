@@ -1,9 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { execFile } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
-import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'
+import { outcomeOf, runHermes } from './lib/cli.js'
+import { writeJsonAtomic } from './lib/atomic.js'
 
 /**
  * リポジトリ（作業ディレクトリ）の自動検出と、カンバンボードとの対応。
@@ -213,10 +213,7 @@ export function readReposConfig(file, home = os.homedir()) {
  */
 export function writeReposConfig(file, data) {
   const normalized = normalizeReposConfig(data)
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  const tmp = `${file}.tmp`
-  fs.writeFileSync(tmp, `${JSON.stringify(normalized, null, 2)}\n`, { mode: 0o600 })
-  fs.renameSync(tmp, file)
+  writeJsonAtomic(file, normalized, { newline: true })
   return normalized
 }
 
@@ -424,18 +421,9 @@ export function createRepos(cfg = {}, deps = {}) {
   const now = deps.now ?? (() => Date.now())
   const configPath = deps.configPath ?? cfg.reposPath ?? ''
   const run =
-    deps.runner ??
-    ((args) =>
-      new Promise((resolve) => {
-        execFile(
-          cfg.hermesBin ?? resolveHermesBin(),
-          args,
-          { timeout: 30_000, maxBuffer: 1_000_000, env: { ...process.env, PATH: buildAugmentedPath() } },
-          (err, stdout, stderr) => {
-            resolve({ code: err ? (err.code ?? 1) : 0, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') })
-          },
-        )
-      }))
+    deps.runner
+      ? (args) => Promise.resolve(deps.runner(args)).then((res) => outcomeOf(res))
+      : (args) => runHermes(args, { bin: cfg.hermesBin, timeoutMs: 30_000, maxBuffer: 1_000_000 })
 
   let cache = null
 

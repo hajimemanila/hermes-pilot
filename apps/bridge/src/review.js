@@ -15,10 +15,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import crypto from 'node:crypto'
-import { execFile } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
 import { readTailText } from './tail.js'
-import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'
+import { outcomeOf, outputOf, runHermes } from './lib/cli.js'
+import { writeJsonAtomic, writePairAtomic } from './lib/atomic.js'
 import { opsText, reopenTextOf, replyTextOf } from './review/text.js'
 import {
   answerHash,
@@ -125,7 +125,7 @@ export function createReview(cfg, opts = {}) {
         for (const k of keys.slice(0, keys.length - 500)) delete cur[k]
       }
       fs.mkdirSync(path.dirname(file), { recursive: true })
-      fs.writeFileSync(file, JSON.stringify(cur, null, 2), 'utf8')
+      writeJsonAtomic(file, cur)
     } catch {
       /* 補助情報なので失敗しても本処理を止めない */
     }
@@ -441,19 +441,14 @@ export function createReview(cfg, opts = {}) {
     return String(process.env.HP_REVIEW_ASSIGNEE ?? rawOpt ?? '').trim() || 'mobile'
   }
 
-  /** テストから差し替えられるように注入可能にしておく。 */
-  const runKanban = opts.runKanban || function runKanbanReal(args) {
-    return new Promise((resolve) => {
-      execFile(
-        opts.hermesBin || resolveHermesBin(),
-        ['kanban', '--board', board, ...args],
-        { timeout: 30000, maxBuffer: 1_000_000, env: { ...process.env, PATH: buildAugmentedPath() } },
-        (err, stdout, stderr) => {
-          resolve({ code: err ? (err.code ?? 1) : 0, out: `${stdout ?? ''}${stderr ?? ''}`.trim() })
-        },
-      )
+  /** テストから差し替えられるように注入可能にしておく（戻り値は `lib/cli.js` の統一形へ揃える）。 */
+  const runKanbanCli = (args) =>
+    runHermes(['kanban', '--board', board, ...args], {
+      bin: opts.hermesBin,
+      timeoutMs: 30_000,
+      maxBuffer: 1_000_000,
     })
-  }
+  const runKanban = async (args) => outcomeOf(await (opts.runKanban ?? runKanbanCli)(args))
 
   /**
    * blocked からの遷移の正本（D99 / `review/transitions.js`）。
@@ -542,9 +537,15 @@ export function createReview(cfg, opts = {}) {
       annotations,
       sha256: hash,
     }
-    fs.mkdirSync(answerDir, { recursive: true })
-    fs.writeFileSync(answerFile, JSON.stringify(record, null, 2), 'utf8')
-    fs.writeFileSync(textFile, toReplyText(ak.label ?? id, record.answers, global, questions, lang), 'utf8')
+    // 正本 `answer.json` → 派生 `answer.txt` の順（D101）。2 枚目で落ちても正本は壊れない。
+    const pair = writePairAtomic([
+      [answerFile, record, { json: true }],
+      [textFile, toReplyText(ak.label ?? id, record.answers, global, questions, lang)],
+    ])
+    if (pair.failedAt !== null) {
+      const reason = String(pair.error?.message ?? pair.error).slice(0, 200)
+      console.warn(`[review.answer] write failed at ${pair.written.length + 1}: ${reason}`)
+    }
 
     const summary = ops.answerSummary(
       questions.length || answers.length,
@@ -567,7 +568,7 @@ export function createReview(cfg, opts = {}) {
         const r = await runKanban(['assign', id, who])
         if (r.code === 0) {
           assigned = who
-          out = `${out}\n${r.out}`.trim()
+          out = `${out}\n${outputOf(r)}`.trim()
         }
       }
     }
@@ -579,7 +580,7 @@ export function createReview(cfg, opts = {}) {
       files: { answer: path.relative(workdir(), answerFile), text: path.relative(workdir(), textFile) },
       status,
       moved: status,
-      output: `${comment.out}\n${out}`.trim().slice(0, 800),
+      output: `${outputOf(comment)}\n${out}`.trim().slice(0, 800),
     }
   }
 
@@ -594,7 +595,7 @@ export function createReview(cfg, opts = {}) {
     const b = bodyOf(id)
     if (!b) return { ok: false, code: 'NOT_FOUND' }
     const out = await runKanban(['request-changes', id, String(reason || reopenTextOf(lang).defaultReason)])
-    return { ok: out.code === 0, status: b.status, output: out.out.slice(0, 800) }
+    return { ok: out.code === 0, status: b.status, output: outputOf(out).slice(0, 800) }
   }
 
   /**
@@ -677,8 +678,7 @@ export function createReview(cfg, opts = {}) {
       approved_at: new Date().toISOString(),
       verdict: 'visual-check-passed',
     }
-    fs.mkdirSync(path.dirname(abs), { recursive: true })
-    fs.writeFileSync(abs, JSON.stringify(record, null, 2), 'utf8')
+    writeJsonAtomic(abs, record)
 
     const comment = await runKanban(['comment', id, 'Visual check passed', '--author', by])
     if (comment.code !== 0) {
@@ -693,7 +693,7 @@ export function createReview(cfg, opts = {}) {
         code: 'COMMENT_FAILED',
         status: b.status,
         moved: null,
-        output: comment.out.slice(0, 400),
+        output: outputOf(comment).slice(0, 400),
       }
     }
     const adv = await approveAdvance(id, b, reason)
@@ -703,7 +703,7 @@ export function createReview(cfg, opts = {}) {
       status: adv.status,
       moved: adv.moved,
       files: { approval: rel },
-      output: `${comment.out}\n${adv.out}`.trim().slice(0, 600),
+      output: `${outputOf(comment)}\n${adv.out}`.trim().slice(0, 600),
     }
   }
 

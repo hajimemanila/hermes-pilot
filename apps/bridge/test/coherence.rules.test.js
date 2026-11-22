@@ -44,6 +44,7 @@ import {
   transportOwnerProblems,
   unusedErrorDetails,
   updateBaseline,
+  writeOwnerProblems,
 } from '../../../scripts/check-coherence.mjs'
 
 /** 一時ディレクトリを作る。 */
@@ -540,8 +541,44 @@ test('transition-owner: direct runKanban unblock / complete calls in the review 
   )
 })
 
+test('write-owner: fs.writeFileSync outside lib/atomic.js is a hard fail', async () => {
+  const RAW = ["import fs from 'node:fs'", 'export function save(file, value) {', '  fs.writeFileSync(file, JSON.stringify(value))', '}', ''].join('\n')
+  const VIA_ATOMIC = [
+    "import { writeJsonAtomic } from './lib/atomic.js'",
+    'export function save(file, value) {',
+    '  writeJsonAtomic(file, value)',
+    '}',
+    '',
+  ].join('\n')
+
+  const problems = writeOwnerProblems('apps/bridge/src/memos.js', RAW)
+  assert.equal(problems.length, 1)
+  assert.equal(problems[0].line, 3)
+  assert.ok(problems[0].reason.includes('lib/atomic.js'))
+  assert.deepEqual(writeOwnerProblems('apps/bridge/src/lib/atomic.js', RAW), [])
+  assert.deepEqual(writeOwnerProblems('apps/bridge/src/memos.js', VIA_ATOMIC), [])
+  // A comment that remembers the old idiom is not a call site.
+  assert.deepEqual(writeOwnerProblems('apps/bridge/src/memos.js', '// fs.writeFileSync(tmp, body)'), [])
+
+  const bad = await analyzeRepo(ruleFixture({ 'apps/bridge/src/memos.js': RAW }))
+  const issue = bad.hardFails.find((entry) => entry.rule === 'write-owner')
+  assert.ok(issue, 'the raw write must be reported')
+  assert.equal(issue.files[0].file, 'apps/bridge/src/memos.js')
+
+  const good = await analyzeRepo(
+    ruleFixture({
+      'apps/bridge/src/lib/atomic.js': RAW,
+      'apps/bridge/src/memos.js': VIA_ATOMIC,
+    }),
+  )
+  assert.deepEqual(
+    hardRules(good).filter((rule) => rule === 'write-owner'),
+    [],
+  )
+})
+
 test('the three recurrence guards are registered rules and stay ASCII', () => {
-  assert.equal(RULES.length, 11)
+  assert.equal(RULES.length, 13)
   for (const rule of [
     'cli-invocation-guard',
     'silent-failure-guard',
@@ -549,6 +586,8 @@ test('the three recurrence guards are registered rules and stay ASCII', () => {
     'sync-owner',
     'transport-owner',
     'transition-owner',
+    'write-owner',
+    'cli-owner',
   ]) {
     assert.ok(RULES.includes(rule), `${rule} must be registered`)
     assert.equal(containsCJK(rule), false)

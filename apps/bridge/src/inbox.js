@@ -1,9 +1,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { execFile } from 'node:child_process'
 import { ApiError } from './api-errors.js'
-import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'
+import { outcomeOf, outputOf, runHermes as runHermesCli } from './lib/cli.js'
 
 /**
  * 承認待ちインボックス。
@@ -205,26 +204,13 @@ export function createInbox(cfg, kanban) {
     if (res.code !== 0) {
       throw new ApiError('COMMENT_FAILED', {}, 502)
     }
-    return { ok: true, id, output: res.out.slice(0, 400), at: Date.now() }
+    return { ok: true, id, output: outputOf(res).slice(0, 400), at: Date.now() }
   }
 
-  /** CLI 実行（runner で差し替え可）。 */
+  /** CLI 実行（runner で差し替え可）。戻り値は `lib/cli.js` の統一形。 */
   function run(c, args) {
-    if (c.runner) return c.runner(args)
-    return new Promise((resolve) => {
-      execFile(
-        c.hermesBin ?? resolveHermesBin(),
-        args,
-        {
-          timeout: 20_000,
-          maxBuffer: 500_000,
-          env: { ...process.env, PATH: buildAugmentedPath() },
-        },
-        (err, stdout, stderr) => {
-          resolve({ code: err ? (err.code ?? 1) : 0, out: `${stdout ?? ''}${stderr ?? ''}`.trim() })
-        },
-      )
-    })
+    if (c.runner) return Promise.resolve(c.runner(args)).then((res) => outcomeOf(res))
+    return runHermesCli(args, { bin: c.hermesBin, timeoutMs: 20_000, maxBuffer: 500_000 })
   }
 
   /** 1タスクの現在の status（読めなければ null）。 */
@@ -313,7 +299,7 @@ export function createInbox(cfg, kanban) {
       action: act,
       status: after ?? null,
       changed: after !== before,
-      output: res.out.slice(0, 400),
+      output: outputOf(res).slice(0, 400),
       at: Date.now(),
     }
   }
@@ -364,7 +350,7 @@ export function createInbox(cfg, kanban) {
       id: tid,
       status: after ?? null,
       changed: after !== before,
-      output: res.out.slice(0, 400),
+      output: outputOf(res).slice(0, 400),
       at: Date.now(),
     }
   }

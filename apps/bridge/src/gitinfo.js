@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { execFile } from 'node:child_process'
+import { run } from './lib/cli.js'
 
 /**
  * タスクと Git の紐付け。
@@ -10,7 +10,7 @@ import { execFile } from 'node:child_process'
  * `metadata.session_anchor` = {chat_id, message_id, session_id, user} を残している）。
  * ここに無いタスクは**推測で埋めない**（バッジを出さない）。
  *
- * git は `execFile` でシェルを介さず実行し、リポジトリも head も履歴の値しか使わない。
+ * git は `lib/cli.js` の `run()` でシェルを介さず実行し、リポジトリも head も履歴の値しか使わない。
  */
 
 const MAX_PATCH_LINES = 200
@@ -66,15 +66,15 @@ export function createGitInfo(cfg) {
     return map.get(String(taskId)) ?? null
   }
 
-  /** `git -C repo args...` を実行して stdout を返す（失敗は null）。 */
+  /**
+   * `git -C repo args...` を実行する（戻り値は `lib/cli.js` の統一形）。
+   * `null` で潰さない: `ok` を見れば「git が無い」「リポジトリでない」「timeout」を区別できる。
+   */
   function git(repo, args, maxBuffer = 1_000_000) {
-    return new Promise((resolve) => {
-      execFile(
-        'git',
-        ['-C', repo, ...args],
-        { timeout: 10_000, maxBuffer, env: { ...process.env, GIT_PAGER: 'cat', GIT_TERMINAL_PROMPT: '0' } },
-        (err, stdout) => resolve(err ? null : String(stdout ?? '')),
-      )
+    return run('git', ['-C', repo, ...args], {
+      timeoutMs: 10_000,
+      maxBuffer,
+      env: { GIT_PAGER: 'cat', GIT_TERMINAL_PROMPT: '0' },
     })
   }
 
@@ -83,8 +83,8 @@ export function createGitInfo(cfg) {
     if (!repo || !head) return ''
     const key = `${repo}@${head}`
     if (subjectCache.has(key)) return subjectCache.get(key)
-    const out = await git(repo, ['log', '-1', '--format=%s', head])
-    const s = (out ?? '').trim().split('\n')[0] ?? ''
+    const res = await git(repo, ['log', '-1', '--format=%s', head])
+    const s = res.ok ? String(res.stdout).trim().split('\n')[0] ?? '' : ''
     subjectCache.set(key, s)
     return s
   }
@@ -127,9 +127,9 @@ export function createGitInfo(cfg) {
     let files = cached?.files
     let subj = cached?.subject
     if (!files) {
-      const out = await git(repo, ['show', '--numstat', '--format=%h%x09%s', head])
-      if (out == null) return { ok: false, code: 'GIT_SHOW_FAILED', reason: 'git show failed' }
-      const lines = out.split('\n')
+      const res = await git(repo, ['show', '--numstat', '--format=%h%x09%s', head])
+      if (!res.ok) return { ok: false, code: 'GIT_SHOW_FAILED', reason: 'git show failed' }
+      const lines = res.stdout.split('\n')
       const headLine = lines.shift() ?? ''
       subj = headLine.split('\t')[1] ?? ''
       files = []
@@ -177,8 +177,9 @@ export function createGitInfo(cfg) {
     const allowed = files.some((f) => f.path === file)
     if (!allowed) return { ok: false, code: 'FILE_NOT_IN_COMMIT', reason: 'That file is not part of this commit' }
 
-    const patch = await git(repo, ['show', '--format=', '--no-color', head, '--', file], MAX_PATCH_BYTES * 4)
-    if (patch == null) return { ok: false, code: 'GIT_SHOW_FAILED', reason: 'git show failed' }
+    const res = await git(repo, ['show', '--format=', '--no-color', head, '--', file], MAX_PATCH_BYTES * 4)
+    if (!res.ok) return { ok: false, code: 'GIT_SHOW_FAILED', reason: 'git show failed' }
+    const patch = res.stdout
     const lines = patch.split('\n')
     const clipped = lines.slice(0, MAX_PATCH_LINES).join('\n')
     const text = clipped.length > MAX_PATCH_BYTES ? clipped.slice(0, MAX_PATCH_BYTES) : clipped

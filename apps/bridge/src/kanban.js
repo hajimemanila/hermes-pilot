@@ -1,9 +1,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { execFile } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
 import { ApiError } from './api-errors.js'
-import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'
+import { outcomeOf, outputOf, runHermes } from './lib/cli.js'
 
 /**
  * タスク本文から紐づく SPEC パス（`Spec: <rel>` または先頭 5 行内の `SPEC*.md`）を読む。
@@ -37,7 +36,7 @@ export function extractSpecFromBody(body) {
 export function createKanban(cfg, deps = {}) {
   const boardsRoot = path.join(cfg.kanbanRoot, 'boards')
   const defaultDb = cfg.kanbanDb
-  const runKanbanImpl = deps.runKanban ?? cfg.runKanban ?? runKanban
+  const runKanbanImpl = async (slug, args) => outcomeOf(await (deps.runKanban ?? cfg.runKanban ?? runKanban)(slug, args))
 
   /**
    * ボード一覧（board.json + 件数）。
@@ -386,7 +385,7 @@ export function createKanban(cfg, deps = {}) {
         reclaimed: false,
         blocked: false,
         workerPid: detail.workerPid,
-        output: reclaim.out.trim().slice(0, 800),
+        output: outputOf(reclaim).slice(0, 800),
       }
     }
     const note = lang === 'ja' ? `モバイルから中断: ${reason}` : `Interrupted from mobile: ${reason}`
@@ -396,25 +395,16 @@ export function createKanban(cfg, deps = {}) {
       reclaimed: true,
       blocked: block.code === 0,
       workerPid: detail.workerPid,
-      output: `${reclaim.out}\n${block.out}`.trim().slice(0, 800),
+      output: `${outputOf(reclaim)}\n${outputOf(block)}`.trim().slice(0, 800),
     }
   }
 
-  /** `hermes kanban --board <slug> ...` を実行する（シェルを介さない）。 */
+  /** `hermes kanban --board <slug> ...` を実行する（戻り値は `lib/cli.js` の統一形）。 */
   function runKanban(slug, args) {
-    return new Promise((resolve) => {
-      execFile(
-        cfg.hermesBin ?? resolveHermesBin(),
-        ['kanban', '--board', slug, ...args],
-        {
-          timeout: 30000,
-          maxBuffer: 1_000_000,
-          env: { ...process.env, PATH: buildAugmentedPath() },
-        },
-        (err, stdout, stderr) => {
-          resolve({ code: err ? (err.code ?? 1) : 0, out: `${stdout ?? ''}${stderr ?? ''}`.trim() })
-        },
-      )
+    return runHermes(['kanban', '--board', slug, ...args], {
+      bin: cfg.hermesBin,
+      timeoutMs: 30_000,
+      maxBuffer: 1_000_000,
     })
   }
 

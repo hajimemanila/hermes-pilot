@@ -7,8 +7,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { readTailText } from '../tail.js'
+import { outputOf } from '../lib/cli.js'
 import { isSafeRel, parseReviewLine } from './parse.js'
 import { opsText } from './text.js'
+import { writeFileAtomic } from '../lib/atomic.js'
 
 export function createReviewFeeds(ctx = {}) {
   const {
@@ -209,8 +211,7 @@ export function createReviewFeeds(ctx = {}) {
     const label = `${slugOf(payload?.slug || title)}-${stamp}`
     const relShot = `shots/${label}-1${ext}`
     const shotAbs = path.join(path.resolve(workdir(), relShot))
-    fs.mkdirSync(path.dirname(shotAbs), { recursive: true })
-    fs.writeFileSync(shotAbs, buf)
+    writeFileAtomic(shotAbs, buf)
 
     // 注釈の反映先は登録済みリポジトリから選ぶ（自由入力は受けない）
     const picked = resolveTarget(payload?.target)
@@ -230,9 +231,10 @@ export function createReviewFeeds(ctx = {}) {
       `[review] label=${label} round=1 mode=annotation image=${relShot} target=${target}` + (chat ? ` chat=${chat}` : '')
     // assignee が無いと dispatcher が拾わない（実測: ready のまま止まる）
     const created = await runKanban(['create', title, '--body', body, '--assignee', reviewAssignee()])
-    const m = /t_[0-9a-f]{8}/.exec(created.out || '')
+    // ID 抽出は stdout を優先する（`stderr` は失敗本文用・D102）。
+    const m = /t_[0-9a-f]{8}/.exec(created.stdout || created.stderr || '')
     if (created.code !== 0 || !m) {
-      return { ok: false, code: 'CREATE_FAILED', message: created.out.slice(0, 300) }
+      return { ok: false, code: 'CREATE_FAILED', message: outputOf(created).slice(0, 300) }
     }
     const taskId = m[0]
     if (chat) rememberTaskChat(taskId, chat)
@@ -243,7 +245,7 @@ export function createReviewFeeds(ctx = {}) {
       image: relShot,
       label,
       blocked: blocked.code === 0,
-      output: blocked.out.slice(0, 300),
+      output: outputOf(blocked).slice(0, 300),
     }
   }
 

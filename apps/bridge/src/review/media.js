@@ -7,12 +7,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import crypto from 'node:crypto'
-import { execFile } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
 import { readTailText } from '../tail.js'
-import { buildAugmentedPath, resolveHermesBin } from '../capabilities.js'
+import { outputOf } from '../lib/cli.js'
 import { parseReviewLine } from './parse.js'
 import { opsText } from './text.js'
+import { writeFileAtomic, writeJsonAtomic } from '../lib/atomic.js'
 
 export function createReviewMedia(ctx = {}) {
   const {
@@ -125,8 +125,7 @@ export function createReviewMedia(ctx = {}) {
 
     const marks = Array.isArray(payload?.marks) ? payload.marks.slice(0, 200) : []
     const note = String(payload?.note ?? '').slice(0, 2000)
-    fs.mkdirSync(path.dirname(annotatedAbs), { recursive: true })
-    fs.writeFileSync(annotatedAbs, buf)
+    writeFileAtomic(annotatedAbs, buf)
     const record = {
       task_id: id,
       label: ak.label ?? null,
@@ -142,7 +141,7 @@ export function createReviewMedia(ctx = {}) {
       image_sha256: sha,
       annotated_at: new Date().toISOString(),
     }
-    fs.writeFileSync(jsonAbs, JSON.stringify(record, null, 2), 'utf8')
+    writeJsonAtomic(jsonAbs, record)
 
     const summary = ops.annotationSummary(marks.length, note ? note.slice(0, 60) : '', relAnnotated)
     const comment = await runKanban(['comment', id, summary, '--author', String(payload?.by ?? 'mobile')])
@@ -156,7 +155,7 @@ export function createReviewMedia(ctx = {}) {
       marks: marks.length,
       status,
       moved: status,
-      output: `${comment.out}\n${moved.out}`.trim().slice(0, 600),
+      output: `${outputOf(comment)}\n${moved.out}`.trim().slice(0, 600),
     }
   }
 

@@ -213,7 +213,12 @@ test('カンバン: abort は reclaim → block を順に実行し、reclaim 失
   // 実 CLI 呼び出しが `kanban --board <slug>` の正しい語順であることをソースレベルでも固定
   const src = fs.readFileSync(new URL('../src/kanban.js', import.meta.url), 'utf8')
   assert.match(src, /\['kanban',\s*'--board',\s*slug,\s*\.\.\.args\]/)
-  assert.match(src, /resolveHermesBin\(\)/)
+  // D102: バイナリ解決は `lib/cli.js` の `runHermes()` が持つ（kanban.js は spawn しない）。
+  assert.doesNotMatch(src, /execFile\(/)
+  assert.match(src, /from '\.\/lib\/cli\.js'/)
+  const boundary = fs.readFileSync(new URL('../src/lib/cli.js', import.meta.url), 'utf8')
+  assert.match(boundary, /resolveHermesBin\(\)/)
+  assert.match(boundary, /buildAugmentedPath\(\)/)
 })
 
 test('カンバン: 存在しないボード/タスクは 404', async () => {

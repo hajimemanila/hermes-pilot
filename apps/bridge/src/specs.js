@@ -1,9 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { execFile } from 'node:child_process'
 import { ApiError } from './api-errors.js'
-import { buildAugmentedPath, resolveHermesBin } from './capabilities.js'
+import { outcomeOf, runHermes } from './lib/cli.js'
 import { DEFAULT_LANG, normalizeLang } from './lang.js'
+import { writeFileAtomic } from './lib/atomic.js'
 import { CLOSED_STATUSES, extractExecutionMode, extractRecommendedRole } from './specs/mode.js'
 import { buildTaskBody, buildTaskTitle, findOpenBatchTask, sanitizeSpecChat } from './specs/task-body.js'
 import { appendRun, makeRunId } from './specs/runs.js'
@@ -398,16 +398,9 @@ export function archiveSpec(repoPath, specRelPath) {
   const insertAt = lines.length && /^#\s/.test(lines[0]) ? Math.min(Math.max(headEnd + 1, 1), 39) : 0
   const next = [...lines.slice(0, insertAt), SPEC_ARCHIVE_LINE, ...lines.slice(insertAt)]
 
-  const tmp = `${abs}.tmp`
   try {
-    fs.writeFileSync(tmp, next.join('\n'), 'utf8')
-    fs.renameSync(tmp, abs)
+    writeFileAtomic(abs, next.join('\n'))
   } catch {
-    try {
-      fs.unlinkSync(tmp)
-    } catch {
-      /* 残骸が無ければ noop */
-    }
     throw new ApiError('SPEC_ARCHIVE_FAILED', { path: rel }, 500)
   }
 
@@ -423,17 +416,7 @@ export function archiveSpec(repoPath, specRelPath) {
  */
 function defaultRunner(cfg = {}, runner) {
   if (runner) return runner
-  return (args) =>
-    new Promise((resolve) => {
-      execFile(
-        cfg.hermesBin ?? resolveHermesBin(),
-        args,
-        { timeout: 30_000, maxBuffer: 2_000_000, env: { ...process.env, PATH: buildAugmentedPath() } },
-        (err, stdout, stderr) => {
-          resolve({ code: err ? (err.code ?? 1) : 0, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') })
-        },
-      )
-    })
+  return (args) => runHermes(args, { bin: cfg.hermesBin, timeoutMs: 30_000, maxBuffer: 2_000_000 })
 }
 
 /**
@@ -470,7 +453,9 @@ export function parseCreatedTask(stdout) {
  * @returns {{listSpecs: Function, launchSpec: Function, resolveSpecPath: Function, readSpecContent: Function}} 操作
  */
 export function createSpecs(cfg = {}, deps = {}) {
-  const run = defaultRunner(cfg, deps.runner)
+  const runCli = defaultRunner(cfg, deps.runner)
+  /** 注入された runner の戻り値も統一形へ揃える（旧 `{code,out}` を吸収・D102）。 */
+  const run = async (args) => outcomeOf(await runCli(args))
   // 既存タスクの読み取り（サーバでは kanban.tasks を渡す。テストでは [] か一時 DB）
   const readTasks = deps.tasks ?? (() => [])
   const scan = deps.listSpecs ?? (() => [])

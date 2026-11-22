@@ -281,7 +281,7 @@ test('unblock は不正な入力・存在しないタスク・done タスク・C
   await assert.rejects(() => inbox.unblock('b1', 't_a1', ''), (e) => e.statusCode === 502)
 })
 
-test('close(cancel) は ready（Queued）タスクでも archive CLI を呼び、inbox.js は resolveHermesBin と buildAugmentedPath を使う', async () => {
+test('close(cancel) は ready（Queued）タスクでも archive CLI を呼び、inbox.js は lib/cli.js 経由で hermes を起動する', async () => {
   const { root } = fixture()
   const db = new DatabaseSync(path.join(root, 'kanban', 'boards', 'b1', 'kanban.db'))
   db.prepare('UPDATE tasks SET status = ? WHERE id = ?').run('ready', 't_a1')
@@ -304,7 +304,11 @@ test('close(cancel) は ready（Queued）タスクでも archive CLI を呼び�
   assert.deepEqual(calls[1], ['kanban', '--board', 'b1', 'archive', 't_a1'])
 
   const src = fs.readFileSync(new URL('../src/inbox.js', import.meta.url), 'utf8')
-  assert.match(src, /resolveHermesBin\(\)/)
-  assert.match(src, /buildAugmentedPath\(\)/)
+  // D102: spawn は `lib/cli.js` だけが持つ。inbox.js は `runHermes()` を呼ぶだけ。
+  assert.match(src, /from '\.\/lib\/cli\.js'/)
+  assert.doesNotMatch(src, /execFile\(/)
+  const boundary = fs.readFileSync(new URL('../src/lib/cli.js', import.meta.url), 'utf8')
+  assert.match(boundary, /resolveHermesBin\(\)/)
+  assert.match(boundary, /buildAugmentedPath\(\)/)
 })
 

@@ -429,6 +429,10 @@ function readBaseline(repoRoot, baselineFile) {
  * `execFile(process.execPath, [checker, '--json'], { cwd: repoRoot, shell: false })` のみ許可する。
  * 失敗・タイムアウト・JSON 不正は `softSignals` に落として本体を守る。
  *
+ * D102 の対象外: これは node チェッカー自身の起動で、失敗は soft signal（`null` が仕様）として
+ * 扱う。`lib/cli.js` の `ok` に寄せると「チェッカーが落ちた」と「違反がある」の区別が壊れるため、
+ * ここだけは独自の戻り値（`{ok, hardFails, softSignals}`）を保つ。
+ *
  * @param {string} repoRoot リポジトリの絶対パス
  * @param {string} rel 設定に書かれた相対パス
  * @returns {Promise<{ok: boolean, hardFails: object[], softSignals: object[]}>} 実行結果
