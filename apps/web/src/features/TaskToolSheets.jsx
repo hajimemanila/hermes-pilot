@@ -205,6 +205,8 @@ export function RefactorSheet({ board = '', repo = null, initialPreset = '', onC
   })
   // 人が選び直したら診断結果の推奨で上書きしない（`initialPreset` での起動も同じ扱い）
   const touched = useRef(Boolean(String(initialPreset ?? '').trim()))
+  const detailsRef = useRef(null)
+  const targetRef = useRef(null)
   const repoId = typeof repo === 'string' ? repo : ''
 
   useEffect(() => {
@@ -263,6 +265,12 @@ export function RefactorSheet({ board = '', repo = null, initialPreset = '', onC
   const applySignalTarget = (item) => {
     pick(presetForRule(item?.rule))
     setTarget(String(item?.file || item?.rule || ''))
+    if (detailsRef.current) detailsRef.current.open = false
+    const scrollToTarget = () => {
+      targetRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+    }
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(scrollToTarget)
+    else scrollToTarget()
   }
 
   const adviceText = (item) => {
@@ -356,7 +364,7 @@ export function RefactorSheet({ board = '', repo = null, initialPreset = '', onC
       </div>
 
       {reportState === 'ready' && hasSignals ? (
-        <details className="coh-details">
+        <details className="coh-details" ref={detailsRef}>
           <summary className="coh-details-summary">
             {activeSignalCount > 0
               ? t('coherence.detailsToggle', { n: activeSignalCount })
@@ -476,6 +484,7 @@ export function RefactorSheet({ board = '', repo = null, initialPreset = '', onC
       </div>
 
       <input
+        ref={targetRef}
         type="text"
         className="memo-input coh-target"
         value={target}

@@ -212,3 +212,17 @@ test('隣接コントロール（seed-seg / receipt / spec-banner ghost）に同
     assert.ok(minGhost >= 4.5, `${name} Dopamine: ghost の --accent-2 = ${minGhost.toFixed(2)}:1`)
   }
 })
+
+test('ArchitectJobBar のボタンは 1 行に収まり、再試行・対処ラベルも簡潔', () => {
+  const btn = rule('.job-bar-btn')
+  assert.equal(decl(btn.body, 'white-space'), 'nowrap')
+  assert.equal(decl(btn.body, 'overflow'), 'hidden')
+  assert.equal(decl(btn.body, 'text-overflow'), 'ellipsis')
+
+  const ja = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, '../src/i18n/ja.json'), 'utf8'))
+  const en = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, '../src/i18n/en.json'), 'utf8'))
+  assert.equal(ja['seed.retryHermes'], '再試行')
+  assert.equal(en['seed.retryHermes'], 'Retry')
+  assert.equal(ja['coherence.detailsApply'], '対処する')
+  assert.equal(en['coherence.detailsApply'], 'Address')
+})

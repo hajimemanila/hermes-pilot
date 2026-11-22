@@ -33,7 +33,7 @@ import { HM_EVENTS } from '../contracts/events.js'
  *   `hm:open-task`、タスクを持たないジョブは `hm:open-live` を発火する
  *   （カンバンタスクを作らないジョブでも死活監視を 1 タップで開ける）
  * - `awaiting_review`: インタビューシート到着 → **1 タップで Quick Review**（`hm:open-review`）
- * - `failed` / `stalled`: **明示の「🔄 Hermes Native で再試行」**（`shouldOfferHermesRetry`）。
+ * - `failed` / `stalled`: **明示の「🔄 再試行」**（`shouldOfferHermesRetry`）。
  *   ランナーは `Hermes Native` だけなので、止まったジョブはこのボタンで同じ種を撃ち直す
  *   （SPEC-PILOT-V11 §3.1 / D54）。
  *
