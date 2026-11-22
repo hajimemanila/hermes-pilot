@@ -26,6 +26,7 @@ export function createReviewMedia(ctx = {}) {
     rememberTaskChat,
     openDb,
     runKanban,
+    transitions,
   } = ctx
 
   function thumb(rel) {
@@ -116,12 +117,9 @@ export function createReviewMedia(ctx = {}) {
 
     const existing = readJsonIfExists(jsonAbs)
     if (existing && existing.image_sha256 === sha) {
-      let moved = { code: 0, out: '' }
-      let status = b.status
-      if (b.status === 'blocked') {
-        moved = await runKanban(['unblock', id, '--reason', ops.annotationReceivedAgain])
-        if (moved.code === 0) status = 'ready'
-      }
+      // 冪等: 同じ画像の再送は保存をやり直さず、遷移だけ補完する（transitions 側で no-op 判定）
+      const moved = await transitions.apply('annotation.again', { id, reason: ops.annotationReceivedAgain })
+      const status = moved.code === 0 ? moved.status || b.status : b.status
       return { ok: moved.code === 0, duplicate: true, status, moved: status, sha256: sha }
     }
 
@@ -148,12 +146,8 @@ export function createReviewMedia(ctx = {}) {
 
     const summary = ops.annotationSummary(marks.length, note ? note.slice(0, 60) : '', relAnnotated)
     const comment = await runKanban(['comment', id, summary, '--author', String(payload?.by ?? 'mobile')])
-    let moved = { code: 0, out: '' }
-    let status = b.status
-    if (b.status === 'blocked') {
-      moved = await runKanban(['unblock', id, '--reason', ops.annotationReceived])
-      if (moved.code === 0) status = 'ready'
-    }
+    const moved = await transitions.apply('annotation.fresh', { id, reason: ops.annotationReceived })
+    const status = moved.code === 0 ? moved.status || b.status : b.status
     return {
       ok: comment.code === 0 && moved.code === 0,
       duplicate: false,

@@ -39,6 +39,7 @@ import {
 } from './review/sheet-html.js'
 import { createReviewMedia } from './review/media.js'
 import { createReviewFeeds } from './review/feeds.js'
+import { createReviewTransitions } from './review/transitions.js'
 
 /*
  * 分割したモジュールの再エクスポート。`./review.js` からの import 契約は 1 つも変えない。
@@ -455,6 +456,18 @@ export function createReview(cfg, opts = {}) {
   }
 
   /**
+   * blocked からの遷移の正本（D99 / `review/transitions.js`）。
+   *
+   * 回答・回答の再送・検収・注釈・注釈の再送はすべてここを通す。判断は表 1 つ、実行は
+   * `apply()` 1 つ。テストから `approved_at` を固定したいときは `opts.now` を渡す。
+   */
+  const transitions = createReviewTransitions({
+    runKanban,
+    bodyOf,
+    now: opts.now,
+  })
+
+  /**
    * 回答を保存して状態を進める（冪等）。
    *
    * @param {string} id タスク ID
@@ -492,12 +505,8 @@ export function createReview(cfg, opts = {}) {
     const existing = readJsonIfExists(answerFile)
     if (existing && existing.sha256 === hash) {
       // 回答は保存済み。遷移だけ未了なら（再送で）ここで進める — 冪等の本体はこの分岐
-      let moved = { code: 0, out: '' }
-      let status = b.status
-      if (b.status === 'blocked') {
-        moved = await runKanban(['unblock', id, '--reason', ops.answeredAgain])
-        if (moved.code === 0) status = 'ready'
-      }
+      const moved = await transitions.apply('answer.again', { id, reason: ops.answeredAgain })
+      const status = moved.code === 0 ? moved.status || b.status : b.status
       return {
         ok: moved.code === 0,
         duplicate: true,
@@ -544,24 +553,21 @@ export function createReview(cfg, opts = {}) {
       path.relative(workdir(), answerFile),
     )
     const comment = await runKanban(['comment', id, summary, '--author', String(payload?.by ?? 'mobile')])
-    let moved = { code: 0, out: '' }
-    let status = b.status
-    if (b.status === 'blocked') {
-      moved = await runKanban(['unblock', id, '--reason', ops.answered])
-      if (moved.code === 0) status = 'ready'
-    }
+    const moved = await transitions.apply('answer.fresh', { id, reason: ops.answered })
+    let status = moved.code === 0 ? moved.status || b.status : b.status
     /*
      * 回答を受けたタスクに担当が無いと、ready になっても**誰も走らない**
      * （「回答済みだが自律ワーカー起動待ち」で止まる・実測）。未割当ならここで付ける。
      */
     let assigned = null
+    let out = moved.out
     if (status === 'ready' && !String(b.assignee ?? '').trim()) {
       const who = String(reviewAssignee() ?? '').trim()
       if (who) {
         const r = await runKanban(['assign', id, who])
         if (r.code === 0) {
           assigned = who
-          moved = { code: 0, out: `${moved.out}\n${r.out}`.trim() }
+          out = `${out}\n${r.out}`.trim()
         }
       }
     }
@@ -573,7 +579,7 @@ export function createReview(cfg, opts = {}) {
       files: { answer: path.relative(workdir(), answerFile), text: path.relative(workdir(), textFile) },
       status,
       moved: status,
-      output: `${comment.out}\n${moved.out}`.trim().slice(0, 800),
+      output: `${comment.out}\n${out}`.trim().slice(0, 800),
     }
   }
 
@@ -594,33 +600,21 @@ export function createReview(cfg, opts = {}) {
   /**
    * 検収（1 タップ合格）の状態遷移。
    *
-   * 「✅ Looks Good」の意味は **合格＝完了**（SPEC §5.2.3 / D15②）。まず `complete` を試し、
+   * 「✅ Looks Good」の意味は **合格＝完了**（SPEC §5.2.3 / D15②）。実体は
+   * `review/transitions.js` の `approve`（complete-then-unblock）で、まず `complete` を試し、
    * それが通らない（ワーカーが抱えたまま等）ときだけ `unblock` に落とす — どちらでも
    * ワーカーは止まらず、人間の判断は失われない。
    *
+   * ここは**互換シム**（D99）: `b` は読まない（遷移モジュールが `bodyOf` で status を読み直す）。
+   * 戻り値の形 `{ code, out, status, moved }` は従来どおりで、呼び出し側は変えていない。
+   *
    * @param {string} id タスク ID
-   * @param {{status: string}} b `bodyOf()` の行
+   * @param {{status: string}} b `bodyOf()` の行（互換のため受けるだけ）
    * @param {string} reason unblock に落ちたときの理由
    * @returns {Promise<{code: number, out: string, status: string, moved: string|null}>}
    */
   async function approveAdvance(id, b, reason) {
-    if (b.status !== 'blocked') return { code: 0, out: '', status: b.status, moved: null }
-    const done = await runKanban([
-      'complete',
-      id,
-      '--result',
-      'Visual check passed',
-      '--metadata',
-      JSON.stringify({ closed_from: 'review', approved_by: 'mobile', approved_at: new Date().toISOString() }),
-    ])
-    if (done.code === 0) return { code: 0, out: done.out, status: 'done', moved: 'done' }
-    const freed = await runKanban(['unblock', id, '--reason', reason])
-    return {
-      code: freed.code,
-      out: `${done.out}\n${freed.out}`,
-      status: freed.code === 0 ? 'ready' : b.status,
-      moved: freed.code === 0 ? 'ready' : null,
-    }
+    return transitions.apply('approve', { id, reason })
   }
 
   /**
@@ -738,6 +732,7 @@ export function createReview(cfg, opts = {}) {
     siblingIndex,
     compareRelOf,
     sessionId,
+    transitions,
     sheetHtml,
     sheetData,
     answer,

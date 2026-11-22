@@ -346,6 +346,7 @@ const SPLIT_FACTORIES = [
   { callerRel: 'apps/bridge/src/server.js', factoryRel: 'apps/bridge/src/server/ws-handlers.js', fnName: 'createWsHandlers' },
   { callerRel: 'apps/bridge/src/review.js', factoryRel: 'apps/bridge/src/review/media.js', fnName: 'createReviewMedia' },
   { callerRel: 'apps/bridge/src/review.js', factoryRel: 'apps/bridge/src/review/feeds.js', fnName: 'createReviewFeeds' },
+  { callerRel: 'apps/bridge/src/review.js', factoryRel: 'apps/bridge/src/review/transitions.js', fnName: 'createReviewTransitions' },
 ]
 
 function walkAst(node, fn, parent = null, key = null) {
