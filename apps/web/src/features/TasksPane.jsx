@@ -370,7 +370,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     }
   }, [active])
 
-  // 実行中ターン数（タイルの点。10秒ごと）
+  // 実行中ターン数と内訳（タイルの点。10 秒ごと）
   useEffect(() => {
     if (!active) return undefined
     let alive = true
@@ -383,7 +383,11 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
           try {
             window.dispatchEvent(
               new CustomEvent(HM_EVENTS.LIVE_TURNS, {
-                detail: { turns, items: Array.isArray(d?.turns) ? d.turns : [] },
+                detail: {
+                  turns,
+                  items: Array.isArray(d?.turns) ? d.turns : [],
+                  architect: Number(d?.counts?.architect ?? 0),
+                },
               }),
             )
           } catch {

@@ -16,7 +16,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { stripComments } from './helpers/stripComments.js'
 
-import { HM_EVENTS, HM_EVENT_META, emitHmEvent, onHmEvent } from '../src/contracts/events.js'
+import { HM_EVENTS, HM_EVENT_META, emitHmEvent, onHmEvent, requiredKeys } from '../src/contracts/events.js'
 import { HM_STORAGE } from '../src/contracts/storage.js'
 
 import { FX_EVENT, VIBE_EVENT, VIBE_KEY } from '../src/lib/vibe.js'
@@ -65,6 +65,58 @@ function code(rel) {
   return stripComments(fs.readFileSync(path.join(SRC, rel), 'utf8'))
 }
 
+/** イベント値 → `HM_EVENTS` のキー名（送信リテラルは `HM_EVENTS.<KEY>` で書かれる）。 */
+function eventKey(name) {
+  for (const [key, value] of Object.entries(HM_EVENTS)) if (value === name) return key
+  return null
+}
+
+/** `start` の `{` から釣り合う `}` までを返す（入れ子の `{}` を数える）。 */
+function balancedObject(text, start) {
+  let depth = 0
+  for (let i = start; i < text.length; i += 1) {
+    const ch = text[i]
+    if (ch === '{') depth += 1
+    else if (ch === '}') {
+      depth -= 1
+      if (depth === 0) return text.slice(start, i + 1)
+    }
+  }
+  return null
+}
+
+/**
+ * `new CustomEvent(HM_EVENTS.<KEY>, { detail: { … } })` の detail リテラル本文を集める。
+ *
+ * 送信側は `emitHmEvent` ではなく生の `CustomEvent` を直接投げている箇所があるため、
+ * 契約の `required` はこの**実リテラル**と突き合わせる（SPEC D98）。
+ */
+function detailLiterals(text, key) {
+  const out = []
+  const needle = `new CustomEvent(HM_EVENTS.${key}`
+  let at = text.indexOf(needle)
+  while (at !== -1) {
+    const detailAt = text.indexOf('detail', at)
+    const braceAt = detailAt === -1 ? -1 : text.indexOf('{', detailAt)
+    const body = braceAt === -1 ? null : balancedObject(text, braceAt)
+    if (body) out.push(body)
+    at = text.indexOf(needle, at + needle.length)
+  }
+  return out
+}
+
+/** detail リテラルにキーが現れるか（`{ a }` の省略記法と `a: …` の両方を許す）。 */
+function hasDetailKey(body, key) {
+  return new RegExp(`[{,\\s]${key}\\s*[:,}]`).test(body)
+}
+
+/** detail リテラル群に対して、要求キーのうち欠けているものを返す（純関数）。 */
+function missingDetailKeys(bodies, keys) {
+  const missing = []
+  for (const body of bodies) for (const key of keys) if (!hasDetailKey(body, key)) missing.push(key)
+  return missing
+}
+
 test('HM_EVENTS は 25 種で、値がすべて一意な hm: 名', () => {
   const values = Object.values(HM_EVENTS)
   assert.equal(values.length, 25)
@@ -84,6 +136,82 @@ test('HM_EVENT_META は全イベントの payload を宣言している', () => 
     assert.ok('detail' in meta, `${name} に detail の宣言が無い`)
     assert.equal(typeof meta.from, 'string', `${name} に送信側の記述が無い`)
     assert.equal(typeof meta.to, 'string', `${name} に購読側の記述が無い`)
+  }
+})
+
+test('LIVE_TURNS の契約は送信側の全量（turns / items / architect）を要求する', () => {
+  const meta = HM_EVENT_META[HM_EVENTS.LIVE_TURNS]
+  assert.deepEqual(requiredKeys(HM_EVENTS.LIVE_TURNS), ['turns', 'items', 'architect'])
+  assert.equal(meta.from, 'TasksPane')
+  assert.equal(meta.to, 'App')
+  for (const key of ['turns', 'items', 'architect']) {
+    assert.ok(meta.detail.includes(key), `detail 宣言に ${key} が無い`)
+  }
+  // `required` は「宣言した detail の部分集合」であること（勝手なキーを足さない）
+  for (const [name, entry] of Object.entries(HM_EVENT_META)) {
+    for (const key of requiredKeys(name)) {
+      assert.equal(typeof entry.detail, 'string', `${name}: detail が null なのに required がある`)
+      assert.ok(entry.detail.includes(key), `${name}: required の ${key} が detail 宣言に無い`)
+    }
+  }
+})
+
+test('required の全キーが送信リテラルに存在する（静的走査）', () => {
+  const files = sourceFiles()
+  const offenders = []
+  let literals = 0
+  for (const name of Object.values(HM_EVENTS)) {
+    const keys = requiredKeys(name)
+    if (!keys.length) continue
+    const key = eventKey(name)
+    const found = []
+    for (const file of files) {
+      const rel = path.relative(SRC, file)
+      const text = stripComments(fs.readFileSync(file, 'utf8'))
+      for (const body of detailLiterals(text, key)) found.push({ rel, body })
+    }
+    if (!found.length) {
+      offenders.push(`${name}: new CustomEvent(HM_EVENTS.${key}, …) の送信リテラルが 1 つも無い`)
+      continue
+    }
+    literals += found.length
+    for (const { rel, body } of found) {
+      for (const missing of missingDetailKeys([body], keys)) {
+        offenders.push(`${rel}: ${name} の detail に ${missing} が無い`)
+      }
+    }
+  }
+  assert.ok(literals > 0, 'required 付きイベントの送信リテラルを 1 つも見つけられていない')
+  assert.deepEqual(offenders, [])
+})
+
+test('architect を送信リテラルから落とすと検査が RED になる（フィクスチャ）', () => {
+  const keys = requiredKeys(HM_EVENTS.LIVE_TURNS)
+  const full =
+    'new CustomEvent(HM_EVENTS.LIVE_TURNS, { detail: { turns, items, architect: Number(d?.counts?.architect ?? 0) } })'
+  const dropped = 'new CustomEvent(HM_EVENTS.LIVE_TURNS, { detail: { turns, items } })'
+  const bodies = (text) => detailLiterals(text, 'LIVE_TURNS')
+
+  // 走査そのものは両方のリテラルを見つける（差は required の突き合わせだけ）
+  assert.equal(bodies(full).length, 1)
+  assert.equal(bodies(dropped).length, 1)
+  assert.deepEqual(missingDetailKeys(bodies(full), keys), [])
+  assert.deepEqual(missingDetailKeys(bodies(dropped), keys), ['architect'])
+})
+
+test('required の無いイベントは従来どおり素通りする', () => {
+  assert.deepEqual(requiredKeys(HM_EVENTS.WAKE_SYNC), [])
+  assert.deepEqual(requiredKeys(HM_EVENTS.CHAT_UNREAD), [])
+  assert.throws(() => requiredKeys('hm:not-a-contract'), /Unknown hm event/)
+
+  const events = []
+  const prevWindow = globalThis.window
+  globalThis.window = { dispatchEvent: (e) => events.push(e) }
+  try {
+    assert.equal(emitHmEvent(HM_EVENTS.CHAT_UNREAD, { count: 2 }), true)
+    assert.deepEqual(events[0].detail, { count: 2 })
+  } finally {
+    globalThis.window = prevWindow
   }
 })
 

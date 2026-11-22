@@ -43,7 +43,7 @@ export const HM_EVENTS = Object.freeze({
   REVIEW_SEEN: 'hm:review-seen',
   /** 承認待ち件数の共有（TasksPane → App）。 */
   INBOX_ITEMS: 'hm:inbox-items',
-  /** 実行中ターン数の共有（TasksPane → App）。 */
+  /** 実行中ターン数と内訳（turns / items / architect）の共有（TasksPane → App）。 */
   LIVE_TURNS: 'hm:live-turns',
   /** 他タブの未読会話数（ChatPane → App）。 */
   CHAT_UNREAD: 'hm:chat-unread',
@@ -72,6 +72,8 @@ export const HM_EVENTS = Object.freeze({
  *
  * - `detail`: `CustomEvent.detail` の形。`null` は detail を運ばない（`new Event` 相当）
  * - `from`: 送信側の代表ファイル、`to`: 購読側の代表ファイル（把握できている範囲）
+ * - `required`: `detail` のうち**購読側が必須で読むキー**（任意フィールド）。
+ *   送信側の実リテラルと突き合わせるのは `contracts.test.js`（SPEC D98）。
  */
 export const HM_EVENT_META = Object.freeze({
   [HM_EVENTS.OPEN_REVIEW]: { detail: '{ taskId, board?, focus? }', from: 'LiveSheet / ChatPane / ArchitectJobBar', to: 'App' },
@@ -88,7 +90,12 @@ export const HM_EVENT_META = Object.freeze({
   [HM_EVENTS.REVIEW_ITEMS]: { detail: '{ items }', from: 'ReviewPane', to: 'App' },
   [HM_EVENTS.REVIEW_SEEN]: { detail: '{ at }', from: 'ReviewPane', to: 'App' },
   [HM_EVENTS.INBOX_ITEMS]: { detail: '{ items }', from: 'TasksPane', to: 'App' },
-  [HM_EVENTS.LIVE_TURNS]: { detail: '{ turns }', from: 'TasksPane', to: 'App' },
+  [HM_EVENTS.LIVE_TURNS]: {
+    detail: '{ turns, items, architect }',
+    from: 'TasksPane',
+    to: 'App',
+    required: ['turns', 'items', 'architect'],
+  },
   [HM_EVENTS.CHAT_UNREAD]: { detail: '{ count }', from: 'ChatPane', to: 'App' },
   [HM_EVENTS.CHAT_STREAMING]: { detail: '{ streaming }', from: 'ChatPane', to: 'App' },
   [HM_EVENTS.MEMOS_CHANGED]: { detail: null, from: 'ChatPane / TaskToolSheets', to: 'MemosPane' },
@@ -100,6 +107,25 @@ export const HM_EVENT_META = Object.freeze({
   [HM_EVENTS.FX_BURST]: { detail: '{ kind, ... }', from: 'lib/vibe.js', to: 'FxLayer' },
   [HM_EVENTS.SNIPPET_BARS]: { detail: null, from: 'SettingsPane', to: 'snippet-bar consumers' },
 })
+
+/**
+ * `required` に宣言されたキー（購読側が必須で読む `detail` のキー）を返す。
+ *
+ * 宣言の無いイベントは `[]` を返す（従来どおり素通り）。未登録の名前は
+ * `emitHmEvent` と同じく throw する（生文字列の流入を実行時に見つけるため）。
+ *
+ * 送信側の実リテラルと全キーが揃っているかは `contracts.test.js` が静的走査で確かめる。
+ *
+ * @param {string} name `HM_EVENTS` の値
+ * @returns {string[]} 必須キー（宣言が無ければ空配列）
+ */
+export function requiredKeys(name) {
+  if (!Object.prototype.hasOwnProperty.call(HM_EVENT_META, name)) {
+    throw new Error(`Unknown hm event: ${String(name)}`)
+  }
+  const list = HM_EVENT_META[name].required
+  return Array.isArray(list) ? [...list] : []
+}
 
 /**
  * 契約済みイベントを `window` へ送る。
