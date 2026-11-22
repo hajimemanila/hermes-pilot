@@ -132,3 +132,31 @@ export function publicJob(job, { at = Date.now() } = {}) {
     error: job.error ?? null,
   }
 }
+
+/**
+ * 破棄済みレコードを読み取る（旧配列 / `{ ids }` / `{ ids, seeds }` を透過互換・D105）。
+ * @param {unknown} raw `JSON.parse` 済みデータ
+ * @returns {{ids: Set<string>, seeds: Set<string>}} ID と種ハッシュの集合
+ */
+export function parseDismissedData(raw) {
+  const idList = Array.isArray(raw) ? raw : Array.isArray(raw?.ids) ? raw.ids : []
+  const seedList = Array.isArray(raw?.seeds) ? raw.seeds : []
+  return {
+    ids: new Set(idList.map((v) => String(v ?? '').trim()).filter(Boolean)),
+    seeds: new Set(seedList.map((v) => String(v ?? '').trim()).filter(Boolean)),
+  }
+}
+
+/**
+ * 破棄済みセットを上限 `max` で切って永続化 JSON 形へ整形する（D105）。
+ * @param {Set<string>} ids
+ * @param {Set<string>} seeds
+ * @param {number} max
+ * @returns {{ids: string[], seeds: string[]}}
+ */
+export function formatDismissedData(ids, seeds, max = DISMISSED_MAX) {
+  return {
+    ids: [...ids].slice(-max),
+    seeds: [...seeds].slice(-max),
+  }
+}

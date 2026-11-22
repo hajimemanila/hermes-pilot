@@ -3,6 +3,7 @@ import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { parseReviewLine } from './review.js'
 import { writeJsonAtomic } from './lib/atomic.js'
+import { safeList } from './lib/safe.js'
 
 /**
  * ブリッジ内蔵のレビュー完了ウォッチャー（D7 / SPEC §4.3）。
@@ -97,26 +98,22 @@ export function createReviewWatcher(cfg, opts = {}) {
     return out
   }
 
-  /** 1 つの DB からレビュータスクを読む（読み取り専用・失敗は空）。 */
+  /** 1 つの DB からレビュータスクを読む（読み取り専用・失敗は warn + 空）。 */
   function readTasks(dbPath) {
-    let db
+    const db = safeList('reviewWatcher.openDb', () => new DatabaseSync(dbPath, { readOnly: true }), null)
+    if (!db) return []
     try {
-      db = new DatabaseSync(dbPath, { readOnly: true })
-    } catch {
-      return []
-    }
-    try {
-      return db
-        .prepare(
-          `SELECT id, title, body, status, result, completed_at, session_id
-             FROM tasks
-            WHERE COALESCE(body, '') LIKE '%[review]%' OR COALESCE(body, '') LIKE '%[akapen]%'
-            ORDER BY COALESCE(completed_at, created_at) DESC
-            LIMIT 500`,
-        )
-        .all()
-    } catch {
-      return []
+      return safeList('reviewWatcher.readTasks', () =>
+        db
+          .prepare(
+            `SELECT id, title, body, status, result, completed_at, session_id
+               FROM tasks
+              WHERE COALESCE(body, '') LIKE '%[review]%' OR COALESCE(body, '') LIKE '%[akapen]%'
+              ORDER BY COALESCE(completed_at, created_at) DESC
+              LIMIT 500`,
+          )
+          .all(),
+      )
     } finally {
       try {
         db.close()

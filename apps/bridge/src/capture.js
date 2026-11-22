@@ -1,5 +1,8 @@
 import crypto from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
 import { ApiError } from './api-errors.js'
+import { writeJsonAtomic } from './lib/atomic.js'
 import { outcomeOf, runHermes } from './lib/cli.js'
 
 /**
@@ -7,12 +10,13 @@ import { outcomeOf, runHermes } from './lib/cli.js'
  *
  * カンバン DB には直接書かず、**`hermes kanban create` を CLI で実行**する
  * （盤面のロック・イベント・通知の整合性は本体に任せる）。
- * 連打や二重送信は idempotency key で吸収する（既定10分の窓）。
+ * 連打や二重送信は「内容ベースの冪等キー + `capture-state.json` 永続化」で吸収する（D105）。
  */
 
 const TITLE_MAX = 200
 const BODY_MAX = 4000
-const DEDUPE_MS = 10 * 60_000
+export const DEDUPE_MS = 10 * 60_000
+export const CAPTURE_STATE_MAX = 500
 
 /**
  * 入力を検証・正規化する。
@@ -53,7 +57,7 @@ export function buildCreateArgs(c) {
 }
 
 /**
- * 冪等キー（未指定なら内容と10分窓から導く）。
+ * 冪等キー（未指定なら時刻バケットを含めない内容ハッシュから導く・D105）。
  * @param {object} c 正規化済み入力
  * @param {string|null} explicit 明示キー
  * @returns {string} キー
@@ -61,16 +65,57 @@ export function buildCreateArgs(c) {
 export function dedupeKey(c, explicit) {
   const given = String(explicit ?? '').trim().slice(0, 128)
   if (given) return `k:${given}`
-  const bucket = Math.floor(Date.now() / DEDUPE_MS)
   return crypto
     .createHash('sha1')
-    .update(`${c.board}|${c.title}|${c.body}|${c.priority}|${c.assignee ?? ''}|${bucket}`)
+    .update(`${c.board}|${c.title}|${c.body}|${c.priority}|${c.assignee ?? ''}`)
     .digest('hex')
 }
 
 export function createCapture(cfg = {}) {
+  const now = typeof cfg.now === 'function' ? cfg.now : () => Date.now()
+  const statePath = cfg.dataDir ? path.join(String(cfg.dataDir), 'capture-state.json') : null
+
   /** @type {Map<string, {at: number, task: object}>} */
   const seen = new Map()
+
+  function loadState() {
+    if (!statePath || !fs.existsSync(statePath)) return
+    try {
+      const raw = JSON.parse(fs.readFileSync(statePath, 'utf8'))
+      const rows = Array.isArray(raw?.seen) ? raw.seen : []
+      const t = now()
+      for (const r of rows) {
+        if (!r || typeof r.key !== 'string' || !Number.isFinite(Number(r.at)) || !r.task) continue
+        if (t - Number(r.at) <= DEDUPE_MS) seen.set(r.key, { at: Number(r.at), task: r.task })
+      }
+      trimSeen()
+    } catch {
+      /* 壊れた JSON でも空で立ち上がる（throw しない） */
+      seen.clear()
+    }
+  }
+
+  function trimSeen() {
+    while (seen.size > CAPTURE_STATE_MAX) {
+      const oldest = seen.keys().next().value
+      if (oldest == null) break
+      seen.delete(oldest)
+    }
+  }
+
+  function saveState() {
+    if (!statePath) return
+    trimSeen()
+    try {
+      const entries = [...seen.entries()].map(([key, v]) => ({ key, at: v.at, task: v.task }))
+      writeJsonAtomic(statePath, { version: 1, seen: entries }, { mode: 0o600 })
+    } catch (error) {
+      const msg = String(error?.message ?? error).slice(0, 200)
+      console.warn(`[capture.saveState] ${msg}`)
+    }
+  }
+
+  loadState()
 
   /** 既定の実行（テストでは差し替え可能）。戻り値は `lib/cli.js` の統一形。 */
   const run =
@@ -79,8 +124,8 @@ export function createCapture(cfg = {}) {
       : (args) => runHermes(args, { bin: cfg.hermesBin, timeoutMs: 30_000, maxBuffer: 1_000_000 })
 
   function sweep() {
-    const now = Date.now()
-    for (const [k, v] of seen) if (now - v.at > DEDUPE_MS) seen.delete(k)
+    const t = now()
+    for (const [k, v] of seen) if (t - v.at > DEDUPE_MS) seen.delete(k)
   }
 
   /**
@@ -127,7 +172,8 @@ export function createCapture(cfg = {}) {
       assignee: task.assignee ?? c.assignee,
       board: c.board,
     }
-    seen.set(key, { at: Date.now(), task: out })
+    seen.set(key, { at: now(), task: out })
+    saveState()
     return { ok: true, created: true, task: out }
   }
 

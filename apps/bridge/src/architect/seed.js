@@ -2,8 +2,10 @@
  * 仕様の種（seed）の整形・slug 提案・プロンプト組み立て。`architect.js` から分割。
  * 公開契約は `architect.js` の再エクスポートで維持する。
  */
+import crypto from 'node:crypto'
 import { DEFAULT_LANG } from '../lang.js'
 import { isJaLang, languageRule } from '../language-rule.js'
+import { safeList } from '../lib/safe.js'
 import { BOARD_RE, DEFAULT_EXECUTION_POLICY, DEFAULT_REVIEW_BOARD, SEED_MAX, SEED_MIN, executionPolicyLines } from './labels.js'
 import { batchIdPrefixForSlug } from './batch.js'
 
@@ -65,16 +67,14 @@ export function suggestSpecSlug(seedText, jobId) {
  * @returns {string[]} 相対パス（mtime の新しい順）
  */
 export function recentSpecPaths(listSpecsFn, repoPath, limit = EXISTING_SPECS_MAX) {
-  try {
+  return safeList('architect.recentSpecPaths', () => {
     const list = listSpecsFn(repoPath) ?? []
     return (Array.isArray(list) ? list : [])
       .filter((s) => s && s.path)
       .sort((a, b) => Number(b.mtime ?? 0) - Number(a.mtime ?? 0) || String(a.path).localeCompare(String(b.path)))
       .slice(0, Math.max(1, Number(limit) || EXISTING_SPECS_MAX))
       .map((s) => String(s.path))
-  } catch {
-    return []
-  }
+  })
 }
 
 /**
@@ -115,16 +115,29 @@ export function round2Headings(lang) {
   return isJaLang(lang) ? ROUND2_HEADINGS.ja : ROUND2_HEADINGS.en
 }
 /**
- * ジョブ ID（`arch-<base36 時刻>-<乱数 4>`）。
+ * 種テキストの安定ハッシュ先頭 8 桁（空白差を畳んだ `normalizeSeed()` を入力にする・D105）。
+ * @param {unknown} seedText 種の本文
+ * @returns {string} 8 桁の 16 進文字列
+ */
+export function seedHashOf(seedText) {
+  const norm = normalizeSeed(seedText) || String(seedText ?? '').replace(/\s+/g, ' ').trim()
+  return crypto.createHash('sha1').update(norm).digest('hex').slice(0, 8)
+}
+
+/**
+ * ジョブ ID（`arch-<base36 時刻>-<種ハッシュ8>-<乱数 4>`・D105）。
  * @param {number} [ms] 時刻
  * @param {Function} [rand] 乱数（テスト用）
+ * @param {string} [seedHash] 8 桁ハッシュまたは生の種文字列
  * @returns {string} ジョブ ID
  */
-export function makeJobId(ms = Date.now(), rand = Math.random) {
+export function makeJobId(ms = Date.now(), rand = Math.random, seedHash = '') {
+  const raw = String(seedHash ?? '').trim()
+  const hash8 = /^[0-9a-f]{8}$/i.test(raw) ? raw.toLowerCase() : raw ? seedHashOf(raw) : '00000000'
   const tail = Math.floor(rand() * 36 ** 4)
     .toString(36)
     .padStart(4, '0')
-  return `arch-${ms.toString(36)}-${tail}`
+  return `arch-${ms.toString(36)}-${hash8}-${tail}`
 }
 
 /**

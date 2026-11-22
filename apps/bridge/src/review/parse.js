@@ -47,6 +47,36 @@ export function sheetPaths(sheetRel) {
 }
 
 /**
+ * レビュー項目（設問シート / 注釈・検収）の回答・検収日時を読む（無ければ null）。
+ *
+ * @param {object} ak `parseReviewLine()` の結果
+ * @param {(rel: string) => (string|null)} resolveInside パス解決
+ * @param {(abs: string) => (object|null)} readJsonIfExists JSON 読取
+ * @param {string} [taskId] タスク ID（画像パス再利用時の誤爆防止）
+ * @returns {string|null} ISO 日時
+ */
+export function answeredAtForReview(ak, resolveInside, readJsonIfExists, taskId = '') {
+  if (ak?.sheet) {
+    const abs = resolveInside(sheetPaths(ak.sheet).answerRel)
+    const answered = abs ? readJsonIfExists(abs) : null
+    if (answered?.answered_at) return answered.answered_at
+  }
+  if (ak?.image) {
+    for (const suffix of ['.annotation.json', '.approval.json']) {
+      const rel = String(ak.image).replace(/\.(png|jpe?g|webp)$/i, suffix)
+      if (rel === ak.image) continue
+      const abs = resolveInside(rel)
+      const rec = abs ? readJsonIfExists(abs) : null
+      if (!rec) continue
+      if (taskId && rec.task_id && String(rec.task_id) !== String(taskId)) continue
+      if (rec.annotated_at) return rec.annotated_at
+      if (rec.approved_at) return rec.approved_at
+    }
+  }
+  return null
+}
+
+/**
  * 比較用（Before）画像の候補パスを優先順に返す（存在確認はしない純粋関数）。
  *
  * After = いまの下地画像（最新のスクショ）。Before = 前回の赤入れ／前ラウンドの画像。

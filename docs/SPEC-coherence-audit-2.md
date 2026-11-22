@@ -1,6 +1,7 @@
 # SPEC: 整合性監査 2 周目 — 書き込みの原子性・CLI 境界・サイレント失敗・状態表・冪等 ID (`SPEC-COHERENCE-AUDIT-2`)
 
-- **状態**: 仕様確定（2026-11-22・赤ペン Q1〜Q4 すべて **A** で確定。Batch `COA2-1`〜`COA2-5` は **未起票**＝人の「File batches & start」待ち）
+- **Status**: archived
+- **状態**: 全 5 バッチ実装完了・アーカイブ済み（`COA2-1` D101 / `COA2-2` D102 / `COA2-3` D103 / `COA2-4` D104 / `COA2-5` D105 を 2026-11-22 に `main` へ反映済み）
 - **決定の出所**: `~/.hermes/plugin-data/hermes-pilot/review/sheets/spec-coherence-audit-2-1.answer.json`（4 問・選択 4 / お任せ 0・note なし・global なし）
 - **前提仕様**: [SPEC-spec-execution-mode-mode-zer.md](./SPEC-spec-execution-mode-mode-zer.md)（D96〜D100）/ [SPEC-COHERENCE.md](./SPEC-COHERENCE.md) / [SPEC-RELIABILITY-GUARD.md](./SPEC-RELIABILITY-GUARD.md) / [SPEC-EN-ZERO-LEAK.md](./SPEC-EN-ZERO-LEAK.md)
 - **対象リポジトリ**: `hermes-mobile-pwa`（プラグイン名 `hermes-pilot` / `Hermes Pilot`）

@@ -4,6 +4,7 @@ import os from 'node:os'
 import { DatabaseSync } from 'node:sqlite'
 import { outcomeOf, runHermes } from './lib/cli.js'
 import { writeJsonAtomic } from './lib/atomic.js'
+import { safeList } from './lib/safe.js'
 
 /**
  * リポジトリ（作業ディレクトリ）の自動検出と、カンバンボードとの対応。
@@ -366,39 +367,34 @@ export function isSafeBoardSlug(slug) {
  */
 export function readSessionCwds(cfg = {}) {
   const dbPath = String(cfg.stateDb ?? '')
-  if (!dbPath) return []
-  try {
-    if (!fs.existsSync(dbPath)) return []
-  } catch {
-    return []
-  }
+  if (!dbPath || !fs.existsSync(dbPath)) return []
   let db
   try {
-    db = new DatabaseSync(dbPath, { readOnly: true })
-    const rows = db
-      .prepare(
-        `SELECT cwd, MAX(last_activity_at) AS t
-           FROM sessions
-          WHERE cwd IS NOT NULL AND cwd <> ''
-          GROUP BY cwd
-          ORDER BY t DESC
-          LIMIT 64`,
-      )
-      .all()
-    const kanbanRoot = String(cfg.kanbanRoot ?? '')
-    const out = []
-    for (const r of rows) {
-      const cwd = String(r.cwd ?? '').trim()
-      if (!cwd || !path.isAbsolute(cwd)) continue
-      // ワーカーの workspace（worktree）は同じリポジトリの重複なので候補にしない
-      if (kanbanRoot && cwd.startsWith(kanbanRoot)) continue
-      if (!isGitRepo(cwd)) continue
-      out.push(cwd)
-      if (out.length >= SESSION_LIMIT) break
-    }
-    return out
-  } catch {
-    return []
+    return safeList('repos.readSessionCwds', () => {
+      db = new DatabaseSync(dbPath, { readOnly: true })
+      const rows = db
+        .prepare(
+          `SELECT cwd, MAX(last_activity_at) AS t
+             FROM sessions
+            WHERE cwd IS NOT NULL AND cwd <> ''
+            GROUP BY cwd
+            ORDER BY t DESC
+            LIMIT 64`,
+        )
+        .all()
+      const kanbanRoot = String(cfg.kanbanRoot ?? '')
+      const out = []
+      for (const r of rows) {
+        const cwd = String(r.cwd ?? '').trim()
+        if (!cwd || !path.isAbsolute(cwd)) continue
+        // ワーカーの workspace（worktree）は同じリポジトリの重複なので候補にしない
+        if (kanbanRoot && cwd.startsWith(kanbanRoot)) continue
+        if (!isGitRepo(cwd)) continue
+        out.push(cwd)
+        if (out.length >= SESSION_LIMIT) break
+      }
+      return out
+    })
   } finally {
     try {
       db?.close()

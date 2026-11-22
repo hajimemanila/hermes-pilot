@@ -3,6 +3,7 @@ import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { ApiError } from './api-errors.js'
 import { outcomeOf, outputOf, runHermes } from './lib/cli.js'
+import { safeList } from './lib/safe.js'
 
 /**
  * タスク本文から紐づく SPEC パス（`Spec: <rel>` または先頭 5 行内の `SPEC*.md`）を読む。
@@ -43,12 +44,11 @@ export function createKanban(cfg, deps = {}) {
    * @returns {Array<{slug: string, name: string, icon?: string, archived: boolean, workdir?: string, counts: Record<string, number>}>} 一覧
    */
   function boards() {
-    let dirs = []
-    try {
-      dirs = fs.readdirSync(boardsRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name)
-    } catch {
-      return []
-    }
+    if (!fs.existsSync(boardsRoot)) return []
+    const dirs = safeList('kanban.boards', () =>
+      fs.readdirSync(boardsRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name),
+    )
+    if (!dirs.length) return []
     let current = ''
     try {
       current = fs.readFileSync(path.join(cfg.kanbanRoot, 'current'), 'utf8').trim()
@@ -409,11 +409,7 @@ export function createKanban(cfg, deps = {}) {
   }
 
   function safeAll(db, sql, arg) {
-    try {
-      return db.prepare(sql).all(arg)
-    } catch {
-      return []
-    }
+    return safeList('kanban.safeAll', () => db.prepare(sql).all(arg))
   }
 
   /**

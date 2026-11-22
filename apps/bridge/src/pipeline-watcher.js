@@ -7,6 +7,7 @@ import { summarizeTasks } from './telemetry.js'
 import { analyzeCoherence, coherenceAlertFrom } from './coherence.js'
 import { VERIFY_CONTRACT, VERIFY_CONTRACT_JA } from './contracts/verify.js'
 import { writeJsonAtomic } from './lib/atomic.js'
+import { safeList } from './lib/safe.js'
 
 /**
  * パイプライン完走ウォッチャー（SPEC §3.2 / D20 / D21）。
@@ -597,12 +598,9 @@ export function readPipelineReports(rootDir, opts = {}) {
   const file = path.join(String(rootDir ?? ''), 'pipeline-reports.jsonl')
   const limit = Math.min(Math.max(Number(opts.limit) || 20, 1), 100)
   const board = String(opts.board ?? '').trim()
-  let raw = ''
-  try {
-    raw = fs.readFileSync(file, 'utf8')
-  } catch {
-    return []
-  }
+  if (!fs.existsSync(file)) return []
+  const raw = safeList('pipelineWatcher.readReports', () => fs.readFileSync(file, 'utf8'), '')
+  if (!raw) return []
   const out = []
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue
@@ -752,26 +750,22 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
     return out
   }
 
-  /** 1 つの DB から非アーカイブタスクを読む（読み取り専用・失敗は空）。 */
+  /** 1 つの DB から非アーカイブタスクを読む（読み取り専用・失敗は warn + 空）。 */
   function readTasks(dbPath) {
-    let db
+    const db = safeList('pipelineWatcher.openDb', () => new DatabaseSync(dbPath, { readOnly: true }), null)
+    if (!db) return []
     try {
-      db = new DatabaseSync(dbPath, { readOnly: true })
-    } catch {
-      return []
-    }
-    try {
-      return db
-        .prepare(
-          `SELECT id, title, body, status, result, created_at, started_at, completed_at, session_id
-             FROM tasks
-            WHERE COALESCE(status, '') != 'archived'
-            ORDER BY COALESCE(completed_at, created_at) DESC
-            LIMIT ${TASKS_PER_DB}`,
-        )
-        .all()
-    } catch {
-      return []
+      return safeList('pipelineWatcher.readTasks', () =>
+        db
+          .prepare(
+            `SELECT id, title, body, status, result, created_at, started_at, completed_at, session_id
+               FROM tasks
+              WHERE COALESCE(status, '') != 'archived'
+              ORDER BY COALESCE(completed_at, created_at) DESC
+              LIMIT ${TASKS_PER_DB}`,
+          )
+          .all(),
+      )
     } finally {
       try {
         db.close()

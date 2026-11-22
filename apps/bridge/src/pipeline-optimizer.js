@@ -20,6 +20,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { VERIFY_COMMAND_NOUN } from './contracts/verify.js'
 import { writeFileAtomic } from './lib/atomic.js'
+import { safeList } from './lib/safe.js'
 
 /** リポジトリのルート（このファイルは `apps/bridge/src/` の下）。 */
 export const REPO_ROOT = path.resolve(import.meta.dirname, '../../..')
@@ -255,12 +256,9 @@ export const PROFILE_SOUL_CREATE_IF_MISSING = [DEFAULT_PILOT_PROFILE]
  * @returns {string[]} 昇順のプロファイル名
  */
 export function listProfileNames(hermesHome) {
-  let entries = []
-  try {
-    entries = fs.readdirSync(path.join(String(hermesHome), 'profiles'), { withFileTypes: true })
-  } catch {
-    return []
-  }
+  const dir = path.join(String(hermesHome), 'profiles')
+  if (!fs.existsSync(dir)) return []
+  const entries = safeList('pipelineOptimizer.listProfileNames', () => fs.readdirSync(dir, { withFileTypes: true }))
   return entries
     .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
     .map((e) => e.name)

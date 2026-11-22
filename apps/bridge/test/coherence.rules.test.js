@@ -577,8 +577,8 @@ test('write-owner: fs.writeFileSync outside lib/atomic.js is a hard fail', async
   )
 })
 
-test('the three recurrence guards are registered rules and stay ASCII', () => {
-  assert.equal(RULES.length, 13)
+test('the recurrence guards are registered rules and stay ASCII', () => {
+  assert.equal(RULES.length, 14)
   for (const rule of [
     'cli-invocation-guard',
     'silent-failure-guard',
@@ -588,6 +588,7 @@ test('the three recurrence guards are registered rules and stay ASCII', () => {
     'transition-owner',
     'write-owner',
     'cli-owner',
+    'swallow-owner',
   ]) {
     assert.ok(RULES.includes(rule), `${rule} must be registered`)
     assert.equal(containsCJK(rule), false)
@@ -595,4 +596,14 @@ test('the three recurrence guards are registered rules and stay ASCII', () => {
   // The live smoke prints machine output only, so its source stays ASCII.
   const smoke = fs.readFileSync(path.join(REPO_ROOT, 'scripts/smoke-live.mjs'), 'utf8')
   assert.equal(containsCJK(smoke), false)
+})
+
+test('silent-failure-guard: non-branching auth.audit({ ok: out.ok }) does not satisfy the guard', () => {
+  const auditedButSilent = SILENT_SERVER.replace(
+    '  return sendJson(res, 200, out)',
+    '  auth.audit({ ok: out.ok })\n  return sendJson(res, 200, out)',
+  )
+  const problems = silentServerProblems(auditedButSilent)
+  assert.equal(problems.length, 1)
+  assert.equal(problems[0].route, 'close')
 })

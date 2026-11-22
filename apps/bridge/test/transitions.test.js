@@ -31,22 +31,31 @@ function fake(cfg = {}) {
 
 const kinds = (calls) => calls.map((c) => c[0])
 
-test('遷移表: blocked からの 5 経路だけを持ち、approve だけが complete を含む', () => {
+test('遷移表: 8 経路の単一正本を持ち、approve だけが complete-then-unblock を使う', () => {
   assert.deepEqual(Object.keys(TRANSITION_TABLE).sort(), [
     'annotation.again',
     'annotation.fresh',
     'answer.again',
     'answer.fresh',
     'approve',
+    'close.cancel',
+    'close.done',
+    'unblock',
   ])
   for (const [name, spec] of Object.entries(TRANSITION_TABLE)) {
-    assert.deepEqual(spec.from, ['blocked'], `${name} は blocked からだけ`)
-    assert.ok(['unblock', 'complete-then-unblock'].includes(spec.kind), `${name} の kind`)
+    assert.ok(
+      ['unblock', 'complete', 'complete-then-unblock', 'comment-then-archive'].includes(spec.kind),
+      `${name} の kind`,
+    )
   }
+  assert.deepEqual(TRANSITION_TABLE.approve.from, ['blocked'])
   assert.equal(TRANSITION_TABLE.approve.kind, 'complete-then-unblock')
   assert.equal(TRANSITION_TABLE.approve.result, 'Visual check passed')
   assert.equal(TRANSITION_TABLE['answer.again'].kind, 'unblock', '再送は unblock だけ（complete を試さない）')
   assert.equal(TRANSITION_TABLE['annotation.again'].kind, 'unblock')
+  assert.deepEqual(TRANSITION_TABLE['close.done'].noop, ['done'])
+  assert.deepEqual(TRANSITION_TABLE['close.cancel'].noop, ['archived'])
+  assert.deepEqual(TRANSITION_TABLE.unblock.noop, ['ready', 'running'])
 })
 
 test('① blocked + approve で complete 成功 → moved:done、unblock は 0 回', async () => {
@@ -218,4 +227,59 @@ test('apply は毎回 bodyOf を読み直す（呼び出し側の古い status �
   assert.deepEqual(kinds(calls), ['complete'])
   assert.equal(second.skipped, 'not-in-from')
   assert.equal(second.moved, null)
+})
+
+import { TRANSITION_OWNER_FILES, transitionOwnerProblems } from '../../../scripts/check-coherence.mjs'
+
+test('D104: close.done / close.cancel / unblock と isNoop() / noop', async () => {
+  // noop: 既に目的の状態なら CLI を呼ばず skipped:'noop', noop:true
+  const doneNoop = fake({ status: 'done' })
+  assert.equal(doneNoop.transitions.isNoop('close.done', 'done'), true)
+  const rDoneNoop = await doneNoop.transitions.apply('close.done', { id: 't_n1', result: 'ok' })
+  assert.equal(rDoneNoop.noop, true)
+  assert.equal(rDoneNoop.skipped, 'noop')
+  assert.deepEqual(doneNoop.calls, [])
+
+  const cancelNoop = fake({ status: 'archived' })
+  assert.equal(cancelNoop.transitions.isNoop('close.cancel', 'archived'), true)
+  const rCancelNoop = await cancelNoop.transitions.apply('close.cancel', { id: 't_n2', comment: 'c' })
+  assert.equal(rCancelNoop.noop, true)
+  assert.deepEqual(cancelNoop.calls, [])
+
+  const unblockReady = fake({ status: 'ready' })
+  assert.equal(unblockReady.transitions.isNoop('unblock', 'ready'), true)
+  assert.equal(unblockReady.transitions.isNoop('unblock', 'running'), true)
+  const rUnblockNoop = await unblockReady.transitions.apply('unblock', { id: 't_n3', reason: 'go' })
+  assert.equal(rUnblockNoop.noop, true)
+  assert.deepEqual(unblockReady.calls, [])
+
+  // close.done: running 以外の非 done を complete 1 回で閉じる
+  const closeDone = fake({ status: 'blocked' })
+  const rClosed = await closeDone.transitions.apply('close.done', { id: 't_d1', result: 'Done from PWA' })
+  assert.deepEqual(kinds(closeDone.calls), ['complete'])
+  assert.equal(rClosed.moved, 'done')
+
+  // close.cancel: コメント付きなら comment -> archive
+  const closeCancel = fake({ status: 'ready' })
+  const rCancelled = await closeCancel.transitions.apply('close.cancel', {
+    id: 't_c3',
+    comment: 'Cancelled',
+    author: 'mobile',
+  })
+  assert.deepEqual(kinds(closeCancel.calls), ['comment', 'archive'])
+  assert.equal(rCancelled.moved, 'archived')
+
+  // unblock: blocked から unblock 1 回で ready へ
+  const unblockBlocked = fake({ status: 'blocked' })
+  const rUnblocked = await unblockBlocked.transitions.apply('unblock', { id: 't_u1', reason: 'Resume' })
+  assert.deepEqual(kinds(unblockBlocked.calls), ['unblock'])
+  assert.equal(rUnblocked.moved, 'ready')
+})
+
+test('D104: TRANSITION_OWNER_FILES に inbox.js が含まれ、直接 CLI 配列を検知する', () => {
+  assert.ok(TRANSITION_OWNER_FILES.includes('apps/bridge/src/inbox.js'))
+  const directComplete = "await run(cfg, ['kanban', '--board', b, 'complete', tid])"
+  const problems = transitionOwnerProblems('apps/bridge/src/inbox.js', directComplete)
+  assert.equal(problems.length, 1)
+  assert.match(problems[0].reason, /complete/)
 })

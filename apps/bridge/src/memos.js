@@ -3,6 +3,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { ApiError } from './api-errors.js'
 import { writeJsonAtomic } from './lib/atomic.js'
+import { safeList } from './lib/safe.js'
 
 /**
  * メモ・ひらめき・定期レポート受信箱ストア（`memos.json`）。
@@ -71,12 +72,11 @@ export function createMemosStore(dataDir) {
   const file = path.join(dataDir, 'memos.json')
 
   function readAll() {
-    try {
+    if (!fs.existsSync(file)) return []
+    return safeList('memos.readAll', () => {
       const raw = JSON.parse(fs.readFileSync(file, 'utf8'))
       return Array.isArray(raw?.memos) ? raw.memos : []
-    } catch {
-      return []
-    }
+    })
   }
 
   function writeAll(memos) {

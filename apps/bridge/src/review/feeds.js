@@ -11,6 +11,7 @@ import { outputOf } from '../lib/cli.js'
 import { isSafeRel, parseReviewLine } from './parse.js'
 import { opsText } from './text.js'
 import { writeFileAtomic } from '../lib/atomic.js'
+import { safeList } from '../lib/safe.js'
 
 export function createReviewFeeds(ctx = {}) {
   const {
@@ -29,12 +30,9 @@ export function createReviewFeeds(ctx = {}) {
 
   function feed(limit = 20, since = 0) {
     const file = path.join(reviewRoot(), 'feed.jsonl')
-    let raw = ''
-    try {
-      raw = readTailText(file, 128 * 1024)
-    } catch {
-      return [] // まだ 1 行も無いだけなので空でよい
-    }
+    if (!fs.existsSync(file)) return []
+    const raw = safeList('review.feeds.feed', () => readTailText(file, 128 * 1024), '')
+    if (!raw) return []
     const tail = raw.split('\n').filter((l) => l.trim()).slice(-Math.min(200, Math.max(1, Number(limit) || 20)))
     const out = []
     for (const line of tail) {
@@ -61,12 +59,9 @@ export function createReviewFeeds(ctx = {}) {
    */
   function readChatReportRows() {
     const file = path.join(reviewRoot(), 'chat-reports.jsonl')
-    let raw = ''
-    try {
-      raw = readTailText(file, 256 * 1024)
-    } catch {
-      return []
-    }
+    if (!fs.existsSync(file)) return []
+    const raw = safeList('review.feeds.chatReports', () => readTailText(file, 256 * 1024), '')
+    if (!raw) return []
     const taskChats = readTaskChats()
     const out = []
     for (const line of raw.split('\n')) {

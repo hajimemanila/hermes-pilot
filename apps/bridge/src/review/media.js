@@ -93,7 +93,7 @@ export function createReviewMedia(ctx = {}) {
     if (!b) return { ok: false, code: 'NOT_FOUND' }
     const ak = parseReviewLine(b.body)
     if (!ak?.image) return { ok: false, code: 'NO_IMAGE' }
-    if (b.status !== 'blocked') {
+    if (!transitions.canApply('annotation.fresh', b.status)) {
       return { ok: false, code: 'NOT_WAITING', status: b.status, params: { status: b.status } }
     }
     if (payload?.chat) rememberTaskChat(id, payload.chat)

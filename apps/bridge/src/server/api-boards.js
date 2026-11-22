@@ -213,15 +213,8 @@ export function createBoardsApi(ctx = {}) {
       const reason = String(body?.reason ?? 'mobile kill switch').slice(0, 200)
       const out = await kanban.abort(b, d, reason, langOf(req, url))
       auth.audit({ kind: 'kanban.abort', board: b, task: d, reason, result: out })
-      if (!out?.ok) {
-        return sendJson(res, 502, {
-          ...out,
-          code: 'CLI_FAILED',
-          error: out?.output || 'Failed to abort task',
-        })
-      }
-      nudgeWatchers()
-      return sendJson(res, 200, out)
+      if (out?.ok !== false) nudgeWatchers()
+      return sendOutcome(res, out?.ok === false ? { ...out, error: out?.output || 'Failed to abort task' } : out)
     }
     if (b && c === 'tasks' && d) {
       const detail = kanban.task(b, d)

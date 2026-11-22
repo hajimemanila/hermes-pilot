@@ -90,8 +90,8 @@ test('sanitizeRunner / runnerLabel / makeJobId / normalizeSeed', () => {
   assert.equal(runnerLabel('hermes'), 'Hermes Native')
   assert.equal(runnerLabel('antigravity'), RUNNER_LABELS.hermes)
 
-  const id = makeJobId(1_700_000_000_000, () => 0.5)
-  assert.match(id, /^arch-[0-9a-z]+-[0-9a-z]{4}$/)
+  const id = makeJobId(1_700_000_000_000, () => 0.5, 'seed-text')
+  assert.match(id, /^arch-[0-9a-z]+-[0-9a-f]{8}-[0-9a-z]{4}$/)
 
   assert.equal(normalizeSeed('  \n '), '')
   assert.equal(normalizeSeed('  a\r\nb  '), 'a\nb')

@@ -3,6 +3,8 @@ import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { ApiError } from './api-errors.js'
 import { outcomeOf, outputOf, runHermes as runHermesCli } from './lib/cli.js'
+import { safeList } from './lib/safe.js'
+import { createReviewTransitions } from './review/transitions.js'
 
 /**
  * 承認待ちインボックス。
@@ -156,8 +158,8 @@ export function createInbox(cfg, kanban) {
           lastComment,
         }
       })
-    } catch {
-      return []
+    } catch (err) {
+      return safeList('inbox.boardItems', () => { throw err }, [])
     } finally {
       try {
         db?.close()
@@ -235,6 +237,18 @@ export function createInbox(cfg, kanban) {
     }
   }
 
+  /** ボード単位の遷移実行器（状態表 D104 が唯一の正本）。 */
+  function boardTransitions(board) {
+    return createReviewTransitions({
+      runKanban: (args) => run(cfg, ['kanban', '--board', board, ...args]),
+      bodyOf: (tid) => {
+        const s = statusOf(board, tid)
+        return s == null ? null : { status: s }
+      },
+      now: cfg.now,
+    })
+  }
+
   /**
    * 判断待ちを閉じる。
    *
@@ -263,31 +277,26 @@ export function createInbox(cfg, kanban) {
     const text = String(note ?? '').trim().slice(0, 400)
     // カンバンに残す運用メモも UI 言語に合わせる（英語 UI に日本語のコメントを残さない）
     const L = CLOSE_TEXT[lang] ?? CLOSE_TEXT.en
-    if (act === 'done' && before === 'done') {
+    const transitions = boardTransitions(b)
+    const name = act === 'done' ? 'close.done' : 'close.cancel'
+    if (transitions.isNoop(name, before)) {
       return { ok: true, board: b, id: tid, action: act, status: before, noop: true, at: Date.now() }
     }
-    if (act === 'cancel' && before === 'archived') {
-      return { ok: true, board: b, id: tid, action: act, status: before, noop: true, at: Date.now() }
+    if (!transitions.canApply(name, before)) {
+      throw new ApiError('TASK_STATE_LOCKED', { status: before }, 409)
     }
-
-    // 取消は理由の欄が無いので、先にコメントで残す（失敗しても取消は続ける）
-    if (act === 'cancel') {
-      await run(cfg, [
-        'kanban', '--board', b, 'comment', tid,
-        `${L.cancel}${text ? `: ${text}` : ''}`,
-        '--author', actor,
-      ])
-    }
-
-    const args =
+    const res =
       act === 'done'
-        ? [
-            'kanban', '--board', b, 'complete', tid,
-            '--result', text || L.done,
-            '--metadata', JSON.stringify({ closed_from: 'mobile', closed_by: actor, closed_at: new Date().toISOString() }),
-          ]
-        : ['kanban', '--board', b, 'archive', tid]
-    const res = await run(cfg, args)
+        ? await transitions.apply('close.done', {
+            id: tid,
+            result: text || L.done,
+            metadata: { closed_from: 'mobile', closed_by: actor, closed_at: new Date().toISOString() },
+          })
+        : await transitions.apply('close.cancel', {
+            id: tid,
+            comment: `${L.cancel}${text ? `: ${text}` : ''}`,
+            author: actor,
+          })
     if (res.code !== 0) {
       throw new ApiError('CLI_FAILED', {}, 502)
     }
@@ -299,7 +308,7 @@ export function createInbox(cfg, kanban) {
       action: act,
       status: after ?? null,
       changed: after !== before,
-      output: outputOf(res).slice(0, 400),
+      output: String(res.out ?? '').slice(0, 400),
       at: Date.now(),
     }
   }
@@ -320,10 +329,11 @@ export function createInbox(cfg, kanban) {
     if (before == null) {
       throw new ApiError('TASK_NOT_FOUND', {}, 404)
     }
-    if (before === 'ready' || before === 'running') {
+    const transitions = boardTransitions(b)
+    if (transitions.isNoop('unblock', before)) {
       return { ok: true, board: b, id: tid, status: before, noop: true, at: Date.now() }
     }
-    if (before !== 'blocked') {
+    if (!transitions.canApply('unblock', before)) {
       throw new ApiError('TASK_STATE_LOCKED', { status: before }, 409)
     }
     const actor = String(by ?? 'mobile').slice(0, 40)
@@ -336,10 +346,7 @@ export function createInbox(cfg, kanban) {
         throw new ApiError('COMMENT_FAILED', {}, 502)
       }
     }
-    const res = await run(cfg, [
-      'kanban', '--board', b, 'unblock', tid,
-      '--reason', text || (CLOSE_TEXT[lang] ?? CLOSE_TEXT.en).resume,
-    ])
+    const res = await transitions.apply('unblock', { id: tid, reason: text || L.resume })
     if (res.code !== 0) {
       throw new ApiError('CLI_FAILED', {}, 502)
     }
@@ -350,7 +357,7 @@ export function createInbox(cfg, kanban) {
       id: tid,
       status: after ?? null,
       changed: after !== before,
-      output: outputOf(res).slice(0, 400),
+      output: String(res.out ?? '').slice(0, 400),
       at: Date.now(),
     }
   }

@@ -19,9 +19,11 @@ import { DatabaseSync } from 'node:sqlite'
 import { readTailText } from './tail.js'
 import { outcomeOf, outputOf, runHermes } from './lib/cli.js'
 import { writeJsonAtomic, writePairAtomic } from './lib/atomic.js'
+import { safeList } from './lib/safe.js'
 import { opsText, reopenTextOf, replyTextOf } from './review/text.js'
 import {
   answerHash,
+  answeredAtForReview,
   compareCandidates,
   isSafeRel,
   parseReplyText,
@@ -46,6 +48,7 @@ import { createReviewTransitions } from './review/transitions.js'
  */
 export {
   answerHash,
+  answeredAtForReview,
   compareCandidates,
   isSafeRel,
   parseReplyText,
@@ -124,7 +127,6 @@ export function createReview(cfg, opts = {}) {
       if (keys.length > 500) {
         for (const k of keys.slice(0, keys.length - 500)) delete cur[k]
       }
-      fs.mkdirSync(path.dirname(file), { recursive: true })
       writeJsonAtomic(file, cur)
     } catch {
       /* 補助情報なので失敗しても本処理を止めない */
@@ -148,27 +150,23 @@ export function createReview(cfg, opts = {}) {
   }
 
   function rows(limit = 80) {
-    let db
+    const db = safeList('review.rows.openDb', () => openDb(), null)
+    if (!db) return []
     try {
-      db = openDb()
-    } catch {
-      return []
-    }
-    try {
-      return db
-        .prepare(
-          `SELECT id, title, body, status, assignee, priority,
-                  created_at, started_at, completed_at, result, last_heartbeat_at
-             FROM tasks
-            WHERE status IN ('review','ready','running','blocked','done')
-            ORDER BY CASE status WHEN 'review' THEN 0 WHEN 'ready' THEN 1 WHEN 'running' THEN 2
-                                 WHEN 'blocked' THEN 3 ELSE 4 END,
-                     COALESCE(completed_at, started_at, created_at) DESC
-            LIMIT ?`,
-        )
-        .all(limit)
-    } catch {
-      return []
+      return safeList('review.rows.query', () =>
+        db
+          .prepare(
+            `SELECT id, title, body, status, assignee, priority,
+                    created_at, started_at, completed_at, result, last_heartbeat_at
+               FROM tasks
+              WHERE status IN ('review','ready','running','blocked','done')
+              ORDER BY CASE status WHEN 'review' THEN 0 WHEN 'ready' THEN 1 WHEN 'running' THEN 2
+                                   WHEN 'blocked' THEN 3 ELSE 4 END,
+                       COALESCE(completed_at, started_at, created_at) DESC
+              LIMIT ?`,
+          )
+          .all(limit),
+      )
     } finally {
       db.close()
     }
@@ -353,8 +351,7 @@ export function createReview(cfg, opts = {}) {
       const dataRel = paths ? paths.dataRel : null
       const dataAbs = dataRel ? resolveInside(dataRel) : null
       const sheet = dataAbs ? readJsonIfExists(dataAbs) : null
-      const answerRel = paths ? paths.answerRel : null
-      const answered = answerRel ? readJsonIfExists(resolveInside(answerRel) || '\0') : null
+      const answeredAt = answeredAtForReview(ak, resolveInside, readJsonIfExists, r.id)
       out.push({
         id: r.id,
         board,
@@ -385,7 +382,7 @@ export function createReview(cfg, opts = {}) {
           title: sheet?.title ?? null,
           topic: sheet?.topic ?? null,
           questions: Array.isArray(sheet?.questions) ? sheet.questions.length : 0,
-          answeredAt: answered?.answered_at ?? null,
+          answeredAt,
         },
       })
     }
@@ -512,9 +509,8 @@ export function createReview(cfg, opts = {}) {
         output: moved.out.slice(0, 400),
       }
     }
-    // 回答は「レビュー待ち（blocked）」のときだけ受け付ける。ready / running / review / done へ
-    // 送ると answer.json を上書きし、comment が二重に付く（レビューシートの付録 1-2）。
-    if (b.status !== 'blocked') {
+    // 回答は「レビュー待ち（blocked）」のときだけ受け付ける（状態表 D104 で判定）。
+    if (!transitions.canApply('answer.fresh', b.status)) {
       return {
         ok: false,
         code: 'NOT_WAITING',
@@ -537,11 +533,13 @@ export function createReview(cfg, opts = {}) {
       annotations,
       sha256: hash,
     }
-    // 正本 `answer.json` → 派生 `answer.txt` の順（D101）。2 枚目で落ちても正本は壊れない。
-    const pair = writePairAtomic([
+    // 正本 `answer.json` → 派生 `answer.txt` の順（D101）。正本（failedAt===0）が落ちたら中断し unblock しない。
+    const writePair = opts.writePairAtomic ?? writePairAtomic
+    const pair = writePair([
       [answerFile, record, { json: true }],
       [textFile, toReplyText(ak.label ?? id, record.answers, global, questions, lang)],
     ])
+    if (pair.failedAt === 0) throw pair.error
     if (pair.failedAt !== null) {
       const reason = String(pair.error?.message ?? pair.error).slice(0, 200)
       console.warn(`[review.answer] write failed at ${pair.written.length + 1}: ${reason}`)
@@ -659,7 +657,7 @@ export function createReview(cfg, opts = {}) {
         output: adv.out.slice(0, 400),
       }
     }
-    if (b.status !== 'blocked') {
+    if (!transitions.canApply('approve', b.status)) {
       return {
         ok: false,
         code: 'NOT_WAITING',

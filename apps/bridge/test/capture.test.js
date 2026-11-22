@@ -112,3 +112,66 @@ test('server.js の POST /api/boards/:slug/tasks は assignee 省略時に getPi
   assert.match(match[0], /getPilotProfile\(\)/, 'assignee 未指定時の既定パイロットプロファイル補完が欠けている')
   assert.match(match[0], /capture\.create\(\{ \.\.\.body, board: b, assignee \}\)/, 'assignee が capture.create に渡っていない')
 })
+
+import os from 'node:os'
+import path from 'node:path'
+import { DEDUPE_MS } from '../src/capture.js'
+
+test('D105: dedupeKey は時刻バケットを含めず、10 分境界をまたいでも同じ内容なら同一キー', () => {
+  const c = normalizeCapture({ board: 'b', title: 'Same Task', body: 'details', priority: 2 })
+  const origNow = Date.now
+  try {
+    Date.now = () => 1_700_000_599_999
+    const k1 = dedupeKey(c, null)
+    Date.now = () => 1_700_000_600_001
+    const k2 = dedupeKey(c, null)
+    assert.equal(k1, k2)
+  } finally {
+    Date.now = origNow
+  }
+})
+
+test('D105: capture-state.json を mode 0600 で永続化し、再起動後の重複起票と TTL 切れを扱う', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-cap-d105-'))
+  try {
+    let t = 1_000_000
+    let calls = 0
+    const runner = async () => {
+      calls += 1
+      return { code: 0, stdout: JSON.stringify({ id: `t_cap00${calls}`, title: 'Persist test', status: 'ready', priority: 0 }), stderr: '' }
+    }
+    const c1 = createCapture({ dataDir: dir, now: () => t, runner })
+    const r1 = await c1.create({ board: 'b', title: 'Persist test' })
+    assert.equal(r1.created, true)
+    assert.equal(calls, 1)
+
+    const stateFile = path.join(dir, 'capture-state.json')
+    assert.equal(fs.existsSync(stateFile), true)
+    assert.equal(fs.statSync(stateFile).mode & 0o777, 0o600)
+
+    // 再起動（新しい createCapture）でも TTL 内は CLI を呼ばずに既存を返す
+    t += 60_000
+    const c2 = createCapture({ dataDir: dir, now: () => t, runner })
+    const r2 = await c2.create({ board: 'b', title: 'Persist test' })
+    assert.equal(r2.ok, true)
+    assert.equal(r2.created, false)
+    assert.equal(r2.task.id, r1.task.id)
+    assert.equal(calls, 1)
+
+    // DEDUPE_MS を超えると新規起票になる
+    t += DEDUPE_MS + 1000
+    const c3 = createCapture({ dataDir: dir, now: () => t, runner })
+    const r3 = await c3.create({ board: 'b', title: 'Persist test' })
+    assert.equal(r3.created, true)
+    assert.equal(calls, 2)
+
+    // 壊れた JSON でも空起動して正常起票できる
+    fs.writeFileSync(stateFile, '{corrupt json')
+    const c4 = createCapture({ dataDir: dir, now: () => t, runner })
+    const r4 = await c4.create({ board: 'b', title: 'After corrupt' })
+    assert.equal(r4.created, true)
+    assert.equal(calls, 3)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})

@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { normalizeSpecRelPath } from './task-body.js'
 import { writeJsonAtomic } from '../lib/atomic.js'
+import { safeList } from '../lib/safe.js'
 
 /** `pipeline-runs.json` に保持するランの上限（古い完了分から剪定する）。 */
 export const RUNS_MAX = 50
@@ -32,20 +33,13 @@ export function runsPathFor(cfg = {}) {
  * @returns {Array<object>} ラン（新しい順は保証しない）
  */
 export function readRuns(file) {
-  let raw = ''
-  try {
-    raw = fs.readFileSync(file, 'utf8')
-  } catch {
-    return []
-  }
-  try {
-    const j = JSON.parse(raw)
+  if (!file || !fs.existsSync(file)) return []
+  return safeList('specs.runs.readRuns', () => {
+    const j = JSON.parse(fs.readFileSync(file, 'utf8'))
     const list = Array.isArray(j) ? j : j?.runs
     if (!Array.isArray(list)) return []
     return list.filter((r) => r && typeof r === 'object' && String(r.id ?? '').trim())
-  } catch {
-    return []
-  }
+  })
 }
 
 /**
