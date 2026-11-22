@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { ApiError } from './api-errors.js'
+import { writeJsonAtomic } from './lib/atomic.js'
 
 /**
  * メモ・ひらめき・定期レポート受信箱ストア（`memos.json`）。
@@ -79,10 +80,7 @@ export function createMemosStore(dataDir) {
   }
 
   function writeAll(memos) {
-    fs.mkdirSync(dataDir, { recursive: true })
-    const tmp = `${file}.tmp-${process.pid}`
-    fs.writeFileSync(tmp, JSON.stringify({ memos: memos.slice(0, MAX_MEMOS) }, null, 2))
-    fs.renameSync(tmp, file)
+    writeJsonAtomic(file, { memos: memos.slice(0, MAX_MEMOS) })
   }
 
   function list() {

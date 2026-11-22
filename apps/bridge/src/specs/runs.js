@@ -5,6 +5,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { normalizeSpecRelPath } from './task-body.js'
+import { writeJsonAtomic } from '../lib/atomic.js'
 
 /** `pipeline-runs.json` に保持するランの上限（古い完了分から剪定する）。 */
 export const RUNS_MAX = 50
@@ -111,17 +112,14 @@ export function pruneRuns(runs, max = RUNS_MAX) {
 }
 
 /**
- * ラン記録を `.tmp` → `renameSync` でアトミックに書く。
+ * ラン記録を `lib/atomic.js` の `writeJsonAtomic`（tmp → rename）で書く。
  *
  * @param {string} file パス
  * @param {Array<object>} runs ラン
  * @returns {void}
  */
 export function writeRuns(file, runs) {
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  const tmp = `${file}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify({ version: 1, runs: pruneRuns(runs) }, null, 2), 'utf8')
-  fs.renameSync(tmp, file)
+  writeJsonAtomic(file, { version: 1, runs: pruneRuns(runs) })
 }
 
 /**

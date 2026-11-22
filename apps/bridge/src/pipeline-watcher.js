@@ -6,6 +6,7 @@ import { readRuns, runsPathFor, writeRuns } from './specs.js'
 import { summarizeTasks } from './telemetry.js'
 import { analyzeCoherence, coherenceAlertFrom } from './coherence.js'
 import { VERIFY_CONTRACT, VERIFY_CONTRACT_JA } from './contracts/verify.js'
+import { writeJsonAtomic } from './lib/atomic.js'
 
 /**
  * パイプライン完走ウォッチャー（SPEC §3.2 / D20 / D21）。
@@ -24,7 +25,7 @@ import { VERIFY_CONTRACT, VERIFY_CONTRACT_JA } from './contracts/verify.js'
  *  - **重複通知なし**: `reportedKeys` に状態キー（Spec は最新完了時刻、ウェーブはタスク ID のハッシュ）
  *  - **`review/feed.jsonl` には書かない**（Review タブの通知を汚さない）。書く先は
  *    `review/chat-reports.jsonl`（`kind: 'pipeline'`）と `review/pipeline-reports.jsonl`
- *  - **アトミック**: 状態は `.tmp` → `renameSync`。JSONL は 1 行完結の append
+ *  - **アトミック**: 状態は `lib/atomic.js`（tmp → rename）。JSONL は 1 行完結の append
  *
  * @param {object} cfg ブリッジ設定（kanbanRoot / reviewDir / stateDb / hermesHome）
  * @param {{
@@ -727,12 +728,9 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
     }
   }
 
-  /** `.tmp` → rename でアトミックに書く。 */
+  /** 状態を書く（`lib/atomic.js` が tmp → rename を持つ）。 */
   function writeState(state) {
-    fs.mkdirSync(path.dirname(statePath), { recursive: true })
-    const tmp = `${statePath}.tmp`
-    fs.writeFileSync(tmp, JSON.stringify(state, null, 2), 'utf8')
-    fs.renameSync(tmp, statePath)
+    writeJsonAtomic(statePath, state)
   }
 
   /** 監視対象の DB（ボードごとの `kanban.db` ＋ ルート `kanban.db`）。 */

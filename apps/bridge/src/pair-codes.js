@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { writeJsonAtomic } from './lib/atomic.js'
 
 /**
  * ワンタイム・ペアリングコード（SPEC §8.2 の `?pair=<one-time token>`）。
@@ -39,9 +40,7 @@ export function createPairCodes(cfg, { ttlMs = 10 * 60 * 1000, max = 20, now = D
   const save = (codes) => {
     try {
       fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 })
-      const tmp = `${file}.tmp`
-      fs.writeFileSync(tmp, `${JSON.stringify({ version: 1, codes })}\n`, { mode: 0o600 })
-      fs.renameSync(tmp, file)
+      writeJsonAtomic(file, { version: 1, codes }, { pretty: 0 })
     } catch {
       /* 保存に失敗しても発行済みのコードはこのプロセス内有効（認証は止めない） */
     }

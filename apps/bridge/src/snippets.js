@@ -14,6 +14,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
+import { writeJsonAtomic } from './lib/atomic.js'
 
 /** @typedef {{label: string, text: string, placeholder?: string}} SnippetText */
 /** @typedef {{id: string, hot?: boolean, trigger?: boolean, action?: string, en: SnippetText, ja: SnippetText}} BuiltinSnippet */
@@ -364,9 +365,7 @@ export function writeSnippetStore(file, { custom, overrides } = {}, { ids = BUIL
     custom: normalizeCustom(custom ?? [], { max, withRun }),
   }
   fs.mkdirSync(path.dirname(file), { recursive: true })
-  const tmp = `${file}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 })
-  fs.renameSync(tmp, file)
+  writeJsonAtomic(file, data)
   return data
 }
 

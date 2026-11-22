@@ -2,6 +2,7 @@ import path from 'node:path'
 import os from 'node:os'
 import fs from 'node:fs'
 import { DEFAULT_PILOT_PROFILE, sanitizePilotProfile } from './pipeline-optimizer.js'
+import { writeJsonAtomic } from './lib/atomic.js'
 
 function readPackageVersion() {
   try {
@@ -54,9 +55,7 @@ export function writePilotProfile(configPath, profile) {
   }
   const merged = { ...current, pilotProfile: next }
   fs.mkdirSync(path.dirname(configPath), { recursive: true, mode: 0o700 })
-  const tmp = `${configPath}.tmp-${process.pid}`
-  fs.writeFileSync(tmp, `${JSON.stringify(merged, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
-  fs.renameSync(tmp, configPath)
+  writeJsonAtomic(configPath, merged, { newline: true })
   return next
 }
 

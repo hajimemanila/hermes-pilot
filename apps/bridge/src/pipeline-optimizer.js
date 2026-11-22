@@ -19,6 +19,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { VERIFY_COMMAND_NOUN } from './contracts/verify.js'
+import { writeFileAtomic } from './lib/atomic.js'
 
 /** リポジトリのルート（このファイルは `apps/bridge/src/` の下）。 */
 export const REPO_ROOT = path.resolve(import.meta.dirname, '../../..')
@@ -196,9 +197,7 @@ function applySoulFile(soulPath, { now = Date.now(), block = A2B_RULE_BLOCK, cre
       backupPath = nextBackupPath(soulPath, backupStamp(now))
       fs.copyFileSync(soulPath, backupPath)
     }
-    const tmp = `${soulPath}.tmp-${process.pid}`
-    fs.writeFileSync(tmp, merged.text, { encoding: 'utf8', mode: 0o600 })
-    fs.renameSync(tmp, soulPath)
+    writeFileAtomic(soulPath, merged.text, { mode: 0o600 })
   } catch (err) {
     return { ok: false, path: soulPath, mode: 'error', changed: false, backupPath, exists, applied, error: String(err?.message ?? err) }
   }

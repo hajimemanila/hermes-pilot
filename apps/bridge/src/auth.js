@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { writeFileAtomic, writeJsonAtomic } from './lib/atomic.js'
 
 /**
  * アプリの入り口認証。
@@ -48,7 +49,7 @@ export function createAuth(cfg, { pairCodes = null } = {}) {
   }
   if (!token) {
     token = crypto.randomBytes(24).toString('base64url')
-    fs.writeFileSync(cfg.tokenPath, token, { mode: 0o600 })
+    writeFileAtomic(cfg.tokenPath, token, { mode: 0o600 })
   }
 
   const hash = (v) => crypto.createHash('sha256').update(v).digest('hex')
@@ -78,11 +79,7 @@ export function createAuth(cfg, { pairCodes = null } = {}) {
     lastFlush = now
     dirty = false
     try {
-      const tmp = `${sessionsPath}.tmp`
-      fs.writeFileSync(tmp, JSON.stringify({ version: 1, tokenFingerprint: fingerprint, sessions: store.sessions }, null, 2), {
-        mode: 0o600,
-      })
-      fs.renameSync(tmp, sessionsPath)
+      writeJsonAtomic(sessionsPath, { version: 1, tokenFingerprint: fingerprint, sessions: store.sessions })
     } catch {
       /* 永続化に失敗しても認証は続ける */
     }

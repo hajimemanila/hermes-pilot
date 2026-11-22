@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { parseReviewLine } from './review.js'
+import { writeJsonAtomic } from './lib/atomic.js'
 
 /**
  * ブリッジ内蔵のレビュー完了ウォッチャー（D7 / SPEC §4.3）。
@@ -14,7 +15,7 @@ import { parseReviewLine } from './review.js'
  *  - **初回起動はベースライン確立のみ**（既存の done / blocked を通知しない。通知スパム防止）
  *  - **冪等**: 状態は `watcher-state.json` に持ち、`reportedDoneAt` / `reportedBlockedAt` が
  *    入っている遷移は二度書かない。`done` から離れたら印を消し、再度 done になったら 1 回だけ書く
- *  - **アトミック**: 状態ファイルは `.tmp` に書いて `fs.renameSync`。JSONL は 1 行完結 append
+ *  - **アトミック**: 状態ファイルは `lib/atomic.js`（tmp → rename）。JSONL は 1 行完結 append
  *
  * @param {object} cfg ブリッジ設定（kanbanRoot / pluginDataDir）
  * @param {{review?: object, intervalMs?: number, dbPaths?: string[], now?: () => number, logger?: object}} [opts]
@@ -72,12 +73,9 @@ export function createReviewWatcher(cfg, opts = {}) {
     }
   }
 
-  /** `.tmp` → rename でアトミックに書く。 */
+  /** 状態を書く（`lib/atomic.js` が tmp → rename を持つ）。 */
   function writeState(state) {
-    fs.mkdirSync(path.dirname(statePath), { recursive: true })
-    const tmp = `${statePath}.tmp`
-    fs.writeFileSync(tmp, JSON.stringify(state, null, 2), 'utf8')
-    fs.renameSync(tmp, statePath)
+    writeJsonAtomic(statePath, state)
   }
 
   /** 監視対象の DB。ボードごとの `kanban.db`（＋ルートの `kanban.db` があれば）。 */
