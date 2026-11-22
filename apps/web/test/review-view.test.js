@@ -1,7 +1,36 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { setLang } from '../src/i18n/lang.js'
-import { answerRows, appBadgeCount, capturedLabel, DONE_LIMIT, doneHint, extractRecommendedAnswers, groupItems, isAnswered, isRecommendedOption, isWaiting, navBadgeState, nextWaiting, pendingCount, repoLabel, runningCount, shouldFetchSheetData, shouldShowModeChip, thumbCaption, unseenNotices, waitingCount } from '../src/lib/reviewView.js'
+import {
+  DONE_LIMIT,
+  REVIEW_STATUS_KEY,
+  answerRows,
+  appBadgeCount,
+  capturedLabel,
+  doneHint,
+  extractRecommendedAnswers,
+  groupItems,
+  isAnswered,
+  isAnsweredReview,
+  isGenerating,
+  isRecommendedOption,
+  isReflecting,
+  isWaiting,
+  navBadgeState,
+  nextWaiting,
+  pendingCount,
+  repoLabel,
+  reviewChipKey,
+  reviewPhase,
+  reviewProgressText,
+  reviewTabFor,
+  runningCount,
+  shouldFetchSheetData,
+  shouldShowModeChip,
+  thumbCaption,
+  unseenNotices,
+  waitingCount,
+} from '../src/lib/reviewView.js'
 
 /** レビュー待ち（blocked + label）。 */
 const waitingItem = (id) => ({ id, status: 'blocked', review: { label: 'review-view-01', round: 1 } })
@@ -18,27 +47,38 @@ test('isWaiting は blocked かつ label 付きだけをレビュー待ちとす
   assert.equal(isWaiting(null), false)
 })
 
-test('groupItems: 判断待ち / 進行中 / 完了 に分かれ、完了は直近 8 件だけ（総数は別に持つ）', () => {
+test('groupItems: 生成中 / 判断待ち / 反映中 / 完了 に分かれ、完了は直近 8 件だけ（総数は別に持つ）', () => {
   const items = [
     waitingItem('w1'),
     waitingItem('w2'),
-    activeItem('a1', 'ready'),
-    activeItem('a2', 'running'),
-    { id: 'a3', status: 'blocked', review: { label: null } },
-    activeItem('r1', 'review'),
+    { id: 'g1', status: 'ready', review: { label: 'x' } },
+    { id: 'g2', status: 'running', review: { label: 'x' } },
+    { id: 'g3', status: 'blocked', review: { label: null } },
+    { id: 'g4', status: 'review', review: { label: 'x' } },
+    { id: 'f1', status: 'ready', review: { label: 'y', answeredAt: '2026-11-22T10:00:00Z' } },
+    { id: 'f2', status: 'running', review: { label: 'y', answeredAt: '2026-11-22T10:05:00Z' } },
     ...Array.from({ length: 10 }, (_, i) => doneItem(`d${i}`)),
   ]
   const g = groupItems(items)
 
+  assert.deepEqual(g.generating.map((i) => i.id), ['g1', 'g2', 'g3', 'g4'])
   assert.deepEqual(g.waiting.map((i) => i.id), ['w1', 'w2'])
-  assert.deepEqual(g.active.map((i) => i.id), ['a1', 'a2', 'a3', 'r1'])
+  assert.deepEqual(g.reflecting.map((i) => i.id), ['f1', 'f2'])
+  assert.deepEqual(g.active.map((i) => i.id), ['g1', 'g2', 'g3', 'g4', 'f1', 'f2'])
   assert.equal(g.done.length, DONE_LIMIT, '完了タブは直近 8 件まで')
   assert.equal(g.doneTotal, 10, '総数は偽らない（チップに件数を出さない根拠）')
   assert.deepEqual(g.done.map((i) => i.id), ['d0', 'd1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7'])
 })
 
 test('groupItems は空・壊れた入力を落とさない', () => {
-  assert.deepEqual(groupItems(undefined), { waiting: [], active: [], done: [], doneTotal: 0 })
+  assert.deepEqual(groupItems(undefined), {
+    generating: [],
+    waiting: [],
+    reflecting: [],
+    active: [],
+    done: [],
+    doneTotal: 0,
+  })
   assert.deepEqual(groupItems([null, undefined]).waiting, [])
 })
 
@@ -283,4 +323,54 @@ test('shouldShowModeChip: 既定の表示形式（standard / sheet）はバッ�
   assert.equal(shouldShowModeChip(''), false)
   assert.equal(shouldShowModeChip(null), false)
   assert.equal(shouldShowModeChip(undefined), false)
+})
+
+test('4段階分類 (reviewPhase / reviewChipKey / reviewProgressText / reviewTabFor) と exists:false ガード（問題①・②）', () => {
+  setLang('ja')
+  assert.equal(REVIEW_STATUS_KEY.running, 'review.status.running')
+
+  // sheet 不在 (exists:false) は blocked でも判断待ちに出さない（生成中扱い）
+  const unreadySheet = { id: 't1', status: 'blocked', review: { label: 's1', sheet: 'sheets/s1.html', exists: false } }
+  assert.equal(isWaiting(unreadySheet), false)
+  assert.equal(reviewPhase(unreadySheet), 'generating')
+  assert.equal(isGenerating(unreadySheet), true)
+  assert.equal(reviewTabFor(unreadySheet), 'generating')
+
+  // annotation モードは sheet 不要で waiting
+  const annoWait = { id: 't2', status: 'blocked', review: { label: 'a1', mode: 'annotation' } }
+  assert.equal(isWaiting(annoWait), true)
+  assert.equal(reviewPhase(annoWait), 'waiting')
+  assert.equal(reviewChipKey(annoWait), 'review.progress.waiting')
+
+  // 未回答 running / ready は生成中
+  const genRun = { id: 't3', status: 'running', review: { label: 's2' } }
+  assert.equal(isAnsweredReview(genRun), false)
+  assert.equal(reviewPhase(genRun), 'generating')
+  assert.equal(reviewChipKey(genRun), 'review.status.running')
+  assert.match(reviewProgressText(genRun, '・', 1000), /^生成中/)
+
+  const genReady = { id: 't4', status: 'ready', review: { label: 's3' } }
+  assert.equal(reviewPhase(genReady), 'generating')
+  assert.equal(reviewChipKey(genReady), 'review.status.queuedGenerate')
+  assert.match(reviewProgressText(genReady, '・', 1000), /^生成待ち/)
+
+  // 回答済み running / ready は反映中（右タグも「反映中」/「反映待ち」で揃う）
+  const refRun = { id: 't5', status: 'running', review: { label: 's4', answeredAt: '2026-11-22T10:00:00Z' } }
+  assert.equal(isAnsweredReview(refRun), true)
+  assert.equal(reviewPhase(refRun), 'reflecting')
+  assert.equal(isReflecting(refRun), true)
+  assert.equal(reviewTabFor(refRun), 'reflecting')
+  assert.equal(reviewChipKey(refRun), 'review.progress.reflecting')
+  assert.match(reviewProgressText(refRun, '・', 1000), /^反映中/)
+
+  const refReady = { id: 't6', status: 'ready', review: { label: 's5', answeredAt: '2026-11-22T10:00:00Z' } }
+  assert.equal(reviewPhase(refReady), 'reflecting')
+  assert.equal(reviewChipKey(refReady), 'review.status.ready')
+  assert.match(reviewProgressText(refReady, '・', 1000), /^反映待ち/)
+
+  // done
+  const done = { id: 't7', status: 'done', review: { label: 's6', answeredAt: '2026-11-22T10:00:00Z' } }
+  assert.equal(reviewPhase(done), 'done')
+  assert.equal(reviewChipKey(done), 'review.status.done')
+  assert.equal(reviewTabFor(done), 'done')
 })

@@ -2,7 +2,6 @@
   "_note": "acceptance baseline: 44px 未満のタップ対象と文字切れの受理済みパターン。新顔は違反、消えた項目は stale。生成: node scripts/audit-responsive.mjs --update-baseline",
   "tap": [
     "button.ak-new-btn.btn",
-    "button.attach-x",
     "button.board-now.pick-item",
     "button.btn.hm-refresh-btn",
     "button.bubble-menu-btn",

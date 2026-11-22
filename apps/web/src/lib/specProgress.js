@@ -174,3 +174,67 @@ export function specProgress(batches, tasks, specRelPath = null, opts = {}) {
   const allDone = allFiled && ids.every((id) => String(byId.get(id)?.status ?? '') === DONE_STATUS)
   return { byId, allFiled, allDone }
 }
+
+const RUNNING_BATCH_STATUSES = new Set(['running', 'ready', 'todo'])
+
+/**
+ * ボード上で現在動いている SPEC 実行のサマリ（TasksPane 上部の実行中カード用・問題③）。
+ *
+ * `running` > `ready` / `todo` の順に優先し、同じなら最新 `mtime` の SPEC を返す。
+ * 完了済み（全バッチ `done`）や進行中バッチが無い場合は `null`。
+ *
+ * @param {Array<object>} specs アクティブ SPEC 一覧
+ * @param {Array<object>} tasks ボードのタスク一覧
+ * @returns {{spec: object, path: string, title: string, total: number, done: number,
+ *            running: number, queued: number, activeCount: number, primaryTask: object}|null} サマリ
+ */
+export function activeSpecRunSummary(specs, tasks) {
+  const candidates = []
+  for (const spec of Array.isArray(specs) ? specs : []) {
+    if (!spec || spec.archived) continue
+    const batches = Array.isArray(spec.batches) ? spec.batches : []
+    if (!batches.length) continue
+    const prog = specProgress(batches, tasks, spec.path, {
+      specMtime: spec.mtime ?? null,
+      runTaskIds: spec.runTaskIds ?? null,
+    })
+    let done = 0
+    let running = 0
+    let queued = 0
+    let primaryTask = null
+    for (const b of batches) {
+      const task = prog.byId.get(String(b?.id ?? ''))
+      if (!task) continue
+      const st = String(task.status ?? '')
+      if (st === DONE_STATUS) done += 1
+      else if (st === 'running') {
+        running += 1
+        if (!primaryTask || primaryTask.status !== 'running') primaryTask = task
+      } else if (RUNNING_BATCH_STATUSES.has(st)) {
+        queued += 1
+        if (!primaryTask) primaryTask = task
+      }
+    }
+    const activeCount = running + queued
+    if (!activeCount || !primaryTask) continue
+    candidates.push({
+      spec,
+      path: String(spec.path),
+      title: String(spec.title ?? spec.path),
+      total: batches.length,
+      done,
+      running,
+      queued,
+      activeCount,
+      primaryTask,
+    })
+  }
+  if (!candidates.length) return null
+  candidates.sort(
+    (a, b) =>
+      (b.running > 0 ? 1 : 0) - (a.running > 0 ? 1 : 0) ||
+      Number(b.spec?.mtime ?? 0) - Number(a.spec?.mtime ?? 0) ||
+      a.path.localeCompare(b.path),
+  )
+  return candidates[0]
+}

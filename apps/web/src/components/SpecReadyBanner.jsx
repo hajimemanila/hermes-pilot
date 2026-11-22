@@ -89,7 +89,7 @@ export function SpecReadyBanner({ banner, onFile, busy = false, onDismiss, onPre
       {onDismiss ? (
         <button
           type="button"
-          className="attach-x"
+          className="job-bar-x"
           aria-label={t('seed.bannerLater')}
           onClick={() => {
             haptic('tap')

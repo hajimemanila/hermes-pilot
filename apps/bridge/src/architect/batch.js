@@ -163,3 +163,38 @@ export function reviewBoardsFor(jobBoard) {
   const own = String(jobBoard ?? '').trim()
   return [...new Set([own, DEFAULT_REVIEW_BOARD].filter(Boolean))]
 }
+
+/**
+ * 完成済みジョブ（`spec_ready`）を最新の SPEC・タスク状態で同期する（問題③・⑤）。
+ *
+ * - 凍結スナップショットを残さず毎回最新バッチ・未起票数を取り直す
+ * - 未起票が 0 件（手動起票済み・アーカイブ済み）なら自動で `launched` へ閉じ、起票カードを残さない
+ *
+ * @param {object} job ジョブ
+ * @param {Array<object>} specs `listSpecs()` の結果
+ * @param {Array<object>} tasks ボードのタスク一覧
+ */
+export function syncCompletedSpec(job, specs, tasks) {
+  if (!job?.spec || job.status !== 'spec_ready') return
+  const live = (Array.isArray(specs) ? specs : []).find((s) => s && s.path === job.spec) ?? null
+  if (!live || live.archived) {
+    job.status = 'launched'
+    job.launched = job.launched ?? { ok: true, created: [], skipped: [], failed: [], reason: live?.archived ? 'archived' : 'nothing-pending' }
+    return
+  }
+  const rem = pendingSpecs([live], tasks)
+  if (!rem.length) {
+    job.status = 'launched'
+    job.launched = job.launched ?? { ok: true, created: [], skipped: [], failed: [], reason: 'nothing-pending' }
+    return
+  }
+  const want = new Set(rem[0].pending.map((id) => String(id)))
+  job.completedSpec = {
+    path: live.path,
+    title: live.title,
+    batchCount: rem[0].pendingCount,
+    batches: (live.batches ?? [])
+      .filter((b) => want.has(String(b.id)))
+      .map((b) => ({ id: b.id, title: b.title, mode: b.mode ?? null })),
+  }
+}

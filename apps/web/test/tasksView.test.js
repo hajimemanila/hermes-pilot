@@ -293,3 +293,32 @@ test('organizeRowView は選択状態と「押せない理由」を返す', () =
   assert.deepEqual(organizeRowView(TASKS[0], []), { archivable: false, selected: false, reason: 'running' })
   assert.deepEqual(organizeRowView(TASKS[4], []), { archivable: false, selected: false, reason: 'archived' })
 })
+
+test('coherenceBannerView: 作業中 (busy:true) はアラートを抑止し、完了後に復帰する（問題④）', () => {
+  const alertReport = {
+    summary: { hardFailCount: 1, softSignalCount: 3, hotspotCount: 0 },
+    recommendedSweep: 'quick-scan',
+    highlights: ['stale drift'],
+  }
+  const duringWork = coherenceBannerView(alertReport, null, { busy: true })
+  assert.equal(duringWork.show, false)
+  assert.equal(duringWork.alert, true)
+  assert.equal(duringWork.suppressedByWork, true)
+
+  const afterWork = coherenceBannerView(alertReport, null, { busy: false })
+  assert.equal(afterWork.show, true)
+  assert.equal(afterWork.suppressedByWork, false)
+
+  // 非アラート時は suppressedByWork も false
+  const clean = coherenceBannerView({ summary: { hardFailCount: 0, softSignalCount: 1, hotspotCount: 0 } }, null, { busy: true })
+  assert.equal(clean.show, false)
+  assert.equal(clean.suppressedByWork, false)
+})
+
+test('TasksPane は workActive 中に Coherence バナー抑止・停止→idle で fresh 再取得を行う', () => {
+  const src = fs.readFileSync(new URL('../src/features/TasksPane.jsx', import.meta.url), 'utf8')
+  assert.match(src, /coherenceBannerView\([^)]*\{\s*busy:\s*workActive\s*\}/)
+  assert.match(src, /workActiveRef\.current/)
+  assert.match(src, /prevWorkActiveRef\.current/)
+  assert.match(src, /wasActive\s*&&\s*!workActive/)
+})

@@ -52,52 +52,34 @@ import { writeJsonAtomic } from './lib/atomic.js'
 import { isJaLang, languageRule } from './language-rule.js'
 import {
   ACTIVE_JOB_STATUSES,
-  ARCHITECT_PHASES,
   BOARD_RE,
   DEFAULT_EXECUTION_POLICY,
   DEFAULT_REVIEW_BOARD,
   DEFAULT_RUNNER,
   DISMISSED_MAX,
-  EXECUTION_POLICIES,
   JOBS_MAX,
   RUNNERS,
-  RUNNER_LABELS,
   RUNNER_TIMEOUT_MS,
-  SEED_MAX,
-  SEED_MIN,
   SPEC_LAUNCH_KIND,
   SPEC_MTIME_SLACK_MS,
   SPEC_READY_KIND,
-  STALLED_AFTER_MS,
   TERMINAL_TASK_STATUSES,
-  executionModeLabel,
-  executionPolicyLines,
   isSupportedRunner,
   normalizeExecutionPolicy,
-  runnerLabel,
   sanitizeRunner,
 } from './architect/labels.js'
-import { EXISTING_SPECS_MAX, SPEC_SLUG_MAX, buildArchitectTaskTitle, buildSeedPrompt, makeJobId, normalizeSeed, recentSpecPaths, round2Headings, suggestSpecSlug } from './architect/seed.js'
 import {
-  buildArchitectTaskBody,
-  buildKanbanCreateArgs,
-  findActiveJobReviewTask,
-  findJobReviewTask,
-  findJobSpec,
-  isReviewTask,
-  taskSpecPath,
-} from './architect/task.js'
-import {
-  batchIdPrefixForSlug,
-  batchIdPrefixOf,
-  filedBatchIds,
-  filedBatchIdsForSpec,
-  pendingSpecs,
-  queueStateOf,
-  reviewBoardsFor,
-  usedBatchIdPrefixes,
-} from './architect/batch.js'
-import { computePhase, findRecentSheet, isJobStalled, publicJob } from './architect/job-view.js'
+  buildArchitectTaskTitle,
+  buildSeedPrompt,
+  makeJobId,
+  normalizeSeed,
+  recentSpecPaths,
+  seedHashOf,
+  suggestSpecSlug,
+} from './architect/seed.js'
+import { buildArchitectTaskBody, buildKanbanCreateArgs, findJobSpec, syncJobFromKanban } from './architect/task.js'
+import { pendingSpecs, syncCompletedSpec, usedBatchIdPrefixes } from './architect/batch.js'
+import { findRecentSheet, formatDismissedData, parseDismissedData, publicJob } from './architect/job-view.js'
 
 /*
  * 分割したモジュールの再エクスポート。`./architect.js` からの import 契約は 1 つも変えない
@@ -130,7 +112,7 @@ export {
   runnerLabel,
   sanitizeRunner,
 } from './architect/labels.js'
-export { EXISTING_SPECS_MAX, SPEC_SLUG_MAX, buildArchitectTaskTitle, buildSeedPrompt, makeJobId, normalizeSeed, recentSpecPaths, suggestSpecSlug } from './architect/seed.js'
+export { EXISTING_SPECS_MAX, SPEC_SLUG_MAX, buildArchitectTaskTitle, buildSeedPrompt, makeJobId, normalizeSeed, recentSpecPaths, seedHashOf, suggestSpecSlug } from './architect/seed.js'
 export {
   buildArchitectTaskBody,
   buildKanbanCreateArgs,
@@ -138,6 +120,7 @@ export {
   findJobReviewTask,
   findJobSpec,
   isReviewTask,
+  reviewSheetReady,
 } from './architect/task.js'
 export {
   batchIdPrefixForSlug,
@@ -234,36 +217,25 @@ export function createArchitect(cfg = {}, deps = {}) {
 
   const configPath = cfg.dataDir ? path.join(cfg.dataDir, 'architect-config.json') : null
 
-  // 破棄したジョブ（リロード・再起動で復活させない）。SPEC V7 §3.1②
+  // 破棄したジョブ（リロード・再起動で復活させない・種ハッシュも含め D105）。SPEC V7 §3.1②
   const dismissedPath = cfg.dataDir ? path.join(cfg.dataDir, 'architect-dismissed.json') : null
-  /** @type {Set<string>} */
-  const dismissedIds = loadDismissed()
+  const { ids: dismissedIds, seeds: dismissedSeeds } = loadDismissed()
 
-  /**
-   * 破棄済みジョブ ID を読む（壊れた JSON・不在は空集合）。
-   * @returns {Set<string>} ID 集合
-   */
+  /** 破棄済み ID / 種ハッシュを読む（壊れた JSON・不在は空集合）。 */
   function loadDismissed() {
-    if (!dismissedPath) return new Set()
+    if (!dismissedPath) return parseDismissedData(null)
     try {
-      const raw = JSON.parse(fs.readFileSync(dismissedPath, 'utf8'))
-      const list = Array.isArray(raw) ? raw : Array.isArray(raw?.ids) ? raw.ids : []
-      return new Set(list.map((v) => String(v ?? '').trim()).filter(Boolean))
+      return parseDismissedData(JSON.parse(fs.readFileSync(dismissedPath, 'utf8')))
     } catch {
-      return new Set()
+      return parseDismissedData(null)
     }
   }
 
-  /**
-   * 破棄済みジョブ ID を保存する（最新 `DISMISSED_MAX` 件）。
-   * @returns {boolean} 保存できたら true（`dataDir` 未設定ならファイルを持たないので true）
-   */
+  /** 破棄済み ID / 種ハッシュを保存する（最新 `DISMISSED_MAX` 件）。 */
   function saveDismissed() {
     if (!dismissedPath) return true
-    const ids = [...dismissedIds].slice(-DISMISSED_MAX)
     try {
-      fs.mkdirSync(path.dirname(dismissedPath), { recursive: true })
-      writeJsonAtomic(dismissedPath, { ids }, { newline: true })
+      writeJsonAtomic(dismissedPath, formatDismissedData(dismissedIds, dismissedSeeds, DISMISSED_MAX), { newline: true })
       return true
     } catch {
       return false // 保存に失敗してもジョブはメモリ上で破棄済みにする（再取得で戻るのは次善）
@@ -272,7 +244,11 @@ export function createArchitect(cfg = {}, deps = {}) {
 
   /** ジョブが破棄済みか。 */
   function isDismissed(job) {
-    return Boolean(job?.dismissed) || dismissedIds.has(String(job?.id ?? ''))
+    return (
+      Boolean(job?.dismissed) ||
+      dismissedIds.has(String(job?.id ?? '')) ||
+      Boolean(job?.seedHash && dismissedSeeds.has(String(job.seedHash)))
+    )
   }
 
   /** ジョブが終端（親 [ARCH] が done / archived）か。 */
@@ -306,7 +282,6 @@ export function createArchitect(cfg = {}, deps = {}) {
     }
     if (configPath) {
       try {
-        fs.mkdirSync(path.dirname(configPath), { recursive: true })
         writeJsonAtomic(configPath, { runner: DEFAULT_RUNNER }, { newline: true })
       } catch (e) {
         return { ok: false, code: 'WRITE_FAILED', error: e.message }
@@ -346,8 +321,12 @@ export function createArchitect(cfg = {}, deps = {}) {
 
     const startedAt = now()
     const executionPolicy = normalizeExecutionPolicy(input.executionPolicy)
+    const seedHash = seedHashOf(seedText)
+    // 明示的に再投入・再試行された種ハッシュは過去の破棄記録から外す（再試行直後に消えない）
+    if (dismissedSeeds.delete(seedHash)) saveDismissed()
     const job = {
-      id: makeJobId(startedAt),
+      id: makeJobId(startedAt, Math.random, seedHash),
+      seedHash,
       board,
       repoPath,
       status: 'running',
@@ -507,14 +486,60 @@ export function createArchitect(cfg = {}, deps = {}) {
       return specsByRepo.get(repoPath)
     }
 
+    // カンバンのタスク状態を先にジョブへ写す（Round 2 実行中のフライング SPEC 検知を防ぐ・問題②/⑤）
+    const tasksByBoard = new Map()
+    const tasksOf = (slug) => {
+      const key = String(slug ?? '')
+      if (!tasksByBoard.has(key)) {
+        let list = []
+        try {
+          list = readTasks(key) ?? []
+        } catch {
+          list = []
+        }
+        tasksByBoard.set(key, Array.isArray(list) ? list : [])
+      }
+      return tasksByBoard.get(key)
+    }
+
+    if (cfg.reviewDir) {
+      for (const job of mine) {
+        if (job.sheetPath || !['running', 'awaiting_spec', 'awaiting_review'].includes(job.status)) continue
+        try {
+          job.sheetPath = findRecentSheet(cfg.reviewDir, job)
+        } catch {
+          job.sheetPath = null
+        }
+      }
+    }
+
+    const revBoard = String(cfg.reviewBoard ?? DEFAULT_REVIEW_BOARD).trim() || DEFAULT_REVIEW_BOARD
+    const writerActiveJobs = new Set()
+    const justDoneJobs = new Set()
+    const activeWriterSinceByRepo = new Map()
+    const markWriter = (job) => {
+      writerActiveJobs.add(job.id)
+      const cur = activeWriterSinceByRepo.get(job.repoPath)
+      if (cur === undefined || Number(job.startedAt) < cur) activeWriterSinceByRepo.set(job.repoPath, Number(job.startedAt))
+    }
+
+    for (const job of mine) {
+      const wasActive = ['running', 'awaiting_spec', 'awaiting_review'].includes(job.status)
+      if (syncJobFromKanban(job, { tasksOf, reviewDir: cfg.reviewDir, revBoard, at })) markWriter(job)
+      else if (wasActive && job.status === 'done' && !job.spec) justDoneJobs.add(job.id)
+    }
+
     // 先に「他のジョブが取った SPEC」を集める（新しいジョブが横取りしない）
     const taken = new Set()
     for (const job of [...mine].reverse()) {
       if (job.spec) taken.add(String(job.spec))
     }
 
+    // 執筆タスク完了後だけ SPEC 完成へ遷移させる（Round 2 中の部分ファイル検知を防ぐ・問題⑤）
     for (const job of [...mine].reverse()) {
-      if (!['awaiting_spec', 'awaiting_review', 'running'].includes(job.status) || job.spec) continue
+      const readyToCheck = ['awaiting_spec', 'awaiting_review', 'running'].includes(job.status) || justDoneJobs.has(job.id)
+      if (!readyToCheck || job.spec) continue
+      if (writerActiveJobs.has(job.id)) continue
       const found = findJobSpec(job, specsOf(job.repoPath), { taken })
       if (!found) continue
       taken.add(String(found.path))
@@ -537,105 +562,6 @@ export function createArchitect(cfg = {}, deps = {}) {
         originSessionId: job.chat,
         at: now(),
       })
-    }
-
-    // カンバンのタスク状態をジョブへ写す（`awaiting_review` 検知・failed 同期。SPEC V6 §3.2）
-    const tasksByBoard = new Map()
-    const tasksOf = (slug) => {
-      const key = String(slug ?? '')
-      if (!tasksByBoard.has(key)) {
-        let list = []
-        try {
-          list = readTasks(key) ?? []
-        } catch {
-          list = []
-        }
-        tasksByBoard.set(key, Array.isArray(list) ? list : [])
-      }
-      return tasksByBoard.get(key)
-    }
-
-    // D42: Round 1 の中間シート（review/sheets/spec-*.json）を観測する（phase / sheetPath の材料）。
-    // 早期フェーズのジョブだけ見る（毎ポーリングで全ジョブ分の readdir をしない）。
-    if (cfg.reviewDir) {
-      for (const job of mine) {
-        if (job.sheetPath) continue
-        if (!['running', 'awaiting_spec', 'awaiting_review'].includes(job.status)) continue
-        try {
-          job.sheetPath = findRecentSheet(cfg.reviewDir, job)
-        } catch {
-          job.sheetPath = null
-        }
-      }
-    }
-
-    for (const job of mine) {
-      if (!['running', 'awaiting_spec', 'awaiting_review'].includes(job.status)) continue
-      const tasks = tasksOf(job.board)
-      const self = job.taskId ? tasks.find((t) => t && String(t.id) === String(job.taskId)) ?? null : null
-      job.taskStatus = self?.status ? String(self.status) : null
-      job.queueState = queueStateOf(job.taskStatus)
-      if (job.spec) continue // 完成 SPEC を検知済み（spec_ready / launched）
-      // D42: `[review]` は job.board に加えて `mobile` ボードも探す（他ボード起点の種まき対策）
-      // 親 `[ARCH]` が先に done になっても、別タスクの `[review]` が blocked の間は終端に落とさず待つ。
-      let review = null
-      for (const slug of reviewBoardsFor(job.board)) {
-        const found = findJobReviewTask(job, tasksOf(slug))
-        if (found) {
-          review = { ...found, board: slug }
-          break
-        }
-      }
-      if (review) {
-        job.status = 'awaiting_review'
-        job.reviewTaskId = review.taskId
-        job.reviewTitle = review.title
-        job.reviewBoard = review.board
-        // 一度でも回答待ちを観測した = 以降は Round 2（SPEC 執筆中）として扱う
-        job.reviewSeenOnce = true
-        continue
-      }
-      // 親 [ARCH] が終端（done / archived）なら、SPEC 未検知でもジョブを終端にする。
-      // ただし Round 1 を通過した `[review]` タスクが別タスクとして ready / running で進行中なら、
-      // 親が閉じていても Round 2（`awaiting_spec`）として追い続ける。
-      if (self && TERMINAL_TASK_STATUSES.includes(String(self.status))) {
-        let activeReview = null
-        if (job.reviewSeenOnce) {
-          for (const slug of reviewBoardsFor(job.board)) {
-            const found = findActiveJobReviewTask(job, tasksOf(slug))
-            if (found) {
-              activeReview = { ...found, board: slug }
-              break
-            }
-          }
-        }
-        if (activeReview) {
-          job.status = 'awaiting_spec'
-          job.taskStatus = activeReview.status
-          job.queueState = queueStateOf(activeReview.status)
-          job.reviewTaskId = null
-          job.reviewTitle = null
-          job.reviewBoard = null
-          continue
-        }
-        job.status = String(self.status)
-        job.queueState = null
-        job.reviewTaskId = null
-        job.reviewTitle = null
-        job.reviewBoard = null
-        job.finishedAt = job.finishedAt ?? now()
-        continue
-      }
-      if (self && self.status === 'failed') {
-        job.status = 'failed'
-        job.error = String(self.result || job.error || 'Architect task failed').slice(0, 600)
-        continue
-      }
-      // 回答が返ってレビューが blocked でなくなったら「仕様書執筆中」へ戻す
-      job.reviewTaskId = null
-      job.reviewTitle = null
-      job.reviewBoard = null
-      if (job.status === 'awaiting_review') job.status = 'awaiting_spec'
     }
 
     // 公開表現の `stage`（カンバンタスクが動いている間は running として見せる）
@@ -705,9 +631,17 @@ export function createArchitect(cfg = {}, deps = {}) {
         job.status = 'spec_ready'
         job.launched = { ok: false, created: [], skipped: [], failed: [], error: String(e?.message ?? e).slice(0, 400) }
       }
+      tasksByBoard.delete(job.board)
     }
 
-    // 未起票の SPEC（Seed と関係なくても、新しく置かれた SPEC を拾う）
+    // 手動起票後に残る凍結バナーを防ぎ、最新バッチ構成へ同期する（問題③・⑤）
+    for (const job of visible) {
+      if (job.status === 'spec_ready' && job.spec) {
+        syncCompletedSpec(job, specsOf(job.repoPath), tasksOf(job.board))
+      }
+    }
+
+    // 未起票の SPEC（Seed と関係なくても、新しく置かれた SPEC を拾う。執筆中の未完成 SPEC は除外）
     const pending = []
     const seenRepo = new Set()
     const scans = visible.map((job) => ({ repoPath: job.repoPath, board: job.board }))
@@ -715,13 +649,12 @@ export function createArchitect(cfg = {}, deps = {}) {
     for (const scan of scans) {
       if (seenRepo.has(scan.repoPath)) continue
       seenRepo.add(scan.repoPath)
-      let tasks = []
-      try {
-        tasks = readTasks(scan.board) ?? []
-      } catch {
-        tasks = []
-      }
-      for (const row of pendingSpecs(specsOf(scan.repoPath), tasks)) {
+      const writingSince = activeWriterSinceByRepo.get(scan.repoPath)
+      const repoSpecs =
+        writingSince === undefined
+          ? specsOf(scan.repoPath)
+          : specsOf(scan.repoPath).filter((s) => !(Number(s?.mtime ?? 0) >= writingSince - SPEC_MTIME_SLACK_MS))
+      for (const row of pendingSpecs(repoSpecs, tasksOf(scan.board))) {
         pending.push({ ...row, board: scan.board, repoPath: scan.repoPath })
       }
     }
@@ -766,6 +699,10 @@ export function createArchitect(cfg = {}, deps = {}) {
     if (job) {
       job.dismissed = true
       job.dismissedAt = now()
+      const hasNewerSameSeed =
+        job.seedHash &&
+        [...jobs.values()].some((o) => o && o.id !== id && o.seedHash === job.seedHash && !o.dismissed && !isTerminal(o))
+      if (job.seedHash && !hasNewerSameSeed) dismissedSeeds.add(String(job.seedHash))
     }
     dismissedIds.add(id)
     trimDismissed()
@@ -773,12 +710,14 @@ export function createArchitect(cfg = {}, deps = {}) {
     return { ok: true, jobId: id, persisted }
   }
 
-  /** 破棄 ID の保持数を上限へ丸める（古いものから落とす）。 */
+  /** 破棄 ID / 種ハッシュの保持数を上限へ丸める（古いものから落とす）。 */
   function trimDismissed() {
-    while (dismissedIds.size > DISMISSED_MAX) {
-      const oldest = dismissedIds.values().next().value
-      if (oldest == null) break
-      dismissedIds.delete(oldest)
+    for (const set of [dismissedIds, dismissedSeeds]) {
+      while (set.size > DISMISSED_MAX) {
+        const oldest = set.values().next().value
+        if (oldest == null) break
+        set.delete(oldest)
+      }
     }
   }
 
@@ -786,6 +725,7 @@ export function createArchitect(cfg = {}, deps = {}) {
   function reset() {
     jobs.clear()
     dismissedIds.clear()
+    dismissedSeeds.clear()
   }
 
   return { seed, jobs: jobsFor, dismiss, getConfig, setConfig, reset }

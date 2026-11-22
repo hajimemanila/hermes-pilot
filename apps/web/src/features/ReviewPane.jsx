@@ -8,7 +8,24 @@ import { celebrate } from '../lib/vibe.js'
 import { readActiveChatId } from '../lib/chatReports.js'
 import { readReviewRepo, rememberReviewRepo } from '../lib/repoPicker.js'
 import { AnnotationEditor } from './AnnotationEditor.jsx'
-import { answerRows, capturedLabel, DONE_LIMIT, doneHint, extractRecommendedAnswers, groupItems, isWaiting, nextWaiting, repoLabel, shouldFetchSheetData, shouldShowModeChip, thumbCaption } from '../lib/reviewView.js'
+import {
+  DONE_LIMIT,
+  REVIEW_STATUS_KEY,
+  answerRows,
+  capturedLabel,
+  doneHint,
+  extractRecommendedAnswers,
+  groupItems,
+  isWaiting,
+  nextWaiting,
+  repoLabel,
+  reviewChipKey,
+  reviewProgressText,
+  reviewTabFor,
+  shouldFetchSheetData,
+  shouldShowModeChip,
+  thumbCaption,
+} from '../lib/reviewView.js'
 import { parsePastedReply } from '../lib/reviewPaste.js'
 import { t } from '../i18n/lang.js'
 import { useI18n } from '../i18n/index.js'
@@ -31,49 +48,12 @@ function toZoom(taskId, option, qIndex, question, thumb) {
 
 /** レビュービュー（標準は `sheet.json` からネイティブフォーム、既定は判断待ちのみ・送信で次へ）。 */
 
-/** 状態 → 辞書キー（未知は生の値）。 */
-const STATUS_KEY = {
-  review: 'review.status.review',
-  ready: 'review.status.ready',
-  running: 'review.status.running',
-  blocked: 'review.status.blocked',
-  done: 'review.status.done',
-}
-
 const TABS = [
+  { id: 'generating', key: 'review.tab.generating' },
   { id: 'waiting', key: 'review.tab.waiting' },
-  { id: 'active', key: 'review.tab.active' },
+  { id: 'reflecting', key: 'review.tab.reflecting' },
   { id: 'done', key: 'review.tab.done' },
 ]
-
-/** 進行状況の1行（「動いているのか」を数字で示す）。 */
-function progressText(item) {
-  const pr = item.progress || {}
-  const now = Date.now()
-  const ago = (ts) => {
-    if (!ts) return null
-    const s = Math.max(0, Math.round((now - ts) / 1000))
-    if (s < 90) return t('review.ago.seconds', { n: s })
-    if (s < 3600) return t('review.ago.minutes', { n: Math.round(s / 60) })
-    return t('review.ago.hours', { n: Math.round(s / 3600) })
-  }
-  if (item.status === 'running') {
-    const beat = ago(pr.heartbeatAt)
-    const since = ago(pr.startedAt)
-    return [
-      t('review.progress.reflecting'),
-      since ? t('review.progress.since', { ago: since }) : '',
-      beat ? t('review.progress.beat', { ago: beat }) : '',
-    ].join('')
-  }
-  if (item.status === 'ready') return t('review.progress.ready')
-  if (item.status === 'blocked' && item.review?.label) {
-    const at = ago(pr.lastEventAt)
-    return t('review.progress.waiting') + (at ? t('review.progress.presented', { ago: at }) : '')
-  }
-  if (item.status === 'done') return t('review.progress.done') + (pr.lastEventAt ? ` ${sep()} ${ago(pr.lastEventAt)}` : '')
-  return ''
-}
 
 function Chip({ tone, children }) {
   return <span className={`ak-chip ${tone || ''}`}>{children}</span>
@@ -84,6 +64,8 @@ function ItemRow({ item, onOpen }) {
   const ak = item.review || {}
   const waiting = isWaiting(item)
   const age = item.completedAt || item.createdAt ? relTime(item.completedAt || item.createdAt) : ''
+  const phaseLine = reviewProgressText(item, sep())
+  const chipKey = reviewChipKey(item)
   return (
     <button
       className="ak-row"
@@ -102,11 +84,11 @@ function ItemRow({ item, onOpen }) {
           {shouldShowModeChip(ak.mode) ? <span>{ak.mode}</span> : null}
           <span>{age}</span>
         </div>
-        {progressText(item) ? <div className="ak-row-phase">{progressText(item)}</div> : null}
+        {phaseLine ? <div className="ak-row-phase">{phaseLine}</div> : null}
       </div>
       <div className="ak-row-side">
         <Chip tone={waiting ? 'warn' : item.status === 'done' ? 'good' : ''}>
-          {waiting ? t('review.progress.waiting') : STATUS_KEY[item.status] ? t(STATUS_KEY[item.status]) : item.status}
+          {chipKey ? t(chipKey) : item.status}
         </Chip>
       </div>
     </button>
@@ -173,7 +155,7 @@ export function WorkerFeed({ taskId, open = false, endpoint = null }) {
   }, [feed])
 
   const msgs = (feed?.feed?.messages || []).filter((m) => m.role !== 'user')
-  const statusLabel = feed?.status ? (STATUS_KEY[feed.status] ? t(STATUS_KEY[feed.status]) : feed.status) : null
+  const statusLabel = feed?.status ? (REVIEW_STATUS_KEY[feed.status] ? t(REVIEW_STATUS_KEY[feed.status]) : feed.status) : null
   const waitingStart = open || feed?.status === 'ready'
   return (
     <details className="ak-worker" open={open}>
@@ -472,7 +454,8 @@ function SheetLink({ item }) {
 function ReadOnlyDetail({ item, data, answer, notify, onStartAnnotation, onReopened, onOpenChat }) {
   const { t } = useI18n()
   const ak = item.review || {}
-  const label = STATUS_KEY[item.status] ? t(STATUS_KEY[item.status]) : item.status
+  const chipKey = reviewChipKey(item)
+  const label = chipKey ? t(chipKey) : item.status
   const answered = ak.answeredAt ? relTime(Date.parse(ak.answeredAt)) : null
   const [anno, setAnno] = useState(null)
   const [zoomImg, setZoomImg] = useState(false)
@@ -1009,7 +992,11 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
     () => groupItems(state.items, showAllDone ? Number.MAX_SAFE_INTEGER : DONE_LIMIT),
     [state.items, showAllDone],
   )
-  const counts = { waiting: groups.waiting.length, active: groups.active.length }
+  const counts = {
+    generating: groups.generating.length,
+    waiting: groups.waiting.length,
+    reflecting: groups.reflecting.length,
+  }
   // シートを開いたときの「1 / N 判断待ち」と一括承認の材料（SPEC §5.1）
   const fastTrack = useMemo(() => extractRecommendedAnswers(data), [data])
   const waitIndex = open ? groups.waiting.findIndex((x) => x.id === open.id) + 1 : 0
@@ -1056,7 +1043,7 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
         (focusRequest.label && x.review?.label === focusRequest.label),
     )
     if (found) {
-      setTab(isWaiting(found) ? 'waiting' : found.status === 'done' ? 'done' : 'active')
+      setTab(reviewTabFor(found))
       openItem(found)
     } else {
       setTab('done')
@@ -1154,8 +1141,8 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
     const answered = items.find((x) => x && x.id === answeredId) || null
     const inProgress = Boolean(answered && ['ready', 'running'].includes(answered.status))
     if (inProgress) {
-      // 回答後にワーカーが動くタスクは「進行中」へ移し、回答後の沈黙時間も見失わないようにする
-      setTab('active')
+      // 回答後にワーカーが動くタスクは「反映中」へ移し、回答後の沈黙時間も見失わないようにする
+      setTab('reflecting')
       if (split) {
         await openItem(answered)
       } else {
@@ -1382,21 +1369,33 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
             </button>
             <p className="ak-empty-note">{t('review.emptyNote')}</p>
             <div className="ak-empty-meta">
-              {t('review.emptyMeta', { active: counts.active, done: groups.doneTotal })}
+              {t('review.emptyMeta', { active: counts.generating + counts.reflecting, done: groups.doneTotal })}
             </div>
           </div>
         )
       ) : null}
 
-      {!state.loading && hasItems && tab === 'active' ? (
-        groups.active.length ? (
+      {!state.loading && hasItems && tab === 'generating' ? (
+        groups.generating.length ? (
           <section className="ak-group">
-            {groups.active.map((it) => (
+            {groups.generating.map((it) => (
               <ItemRow key={it.id} item={it} onOpen={openItem} />
             ))}
           </section>
         ) : (
-          <div className="empty">{t('review.noActive')}</div>
+          <div className="empty">{t('review.noGenerating')}</div>
+        )
+      ) : null}
+
+      {!state.loading && hasItems && tab === 'reflecting' ? (
+        groups.reflecting.length ? (
+          <section className="ak-group">
+            {groups.reflecting.map((it) => (
+              <ItemRow key={it.id} item={it} onOpen={openItem} />
+            ))}
+          </section>
+        ) : (
+          <div className="empty">{t('review.noReflecting')}</div>
         )
       ) : null}
 

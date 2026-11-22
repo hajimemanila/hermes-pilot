@@ -2,12 +2,15 @@
  * `[ARCH]` タスクの組み立てと、ジョブ↔タスク／SPEC の照合。`architect.js` から分割。
  * 公開契約は `architect.js` の再エクスポートで維持する。
  */
+import fs from 'node:fs'
+import path from 'node:path'
 import { taskStampMs } from '../specs.js'
+import { parseReviewLine, sheetPaths } from '../review/parse.js'
 import { DEFAULT_LANG } from '../lang.js'
 import { isJaLang, languageRule } from '../language-rule.js'
-import { DEFAULT_EXECUTION_POLICY, SPEC_MTIME_SLACK_MS, executionPolicyLines, normalizeExecutionPolicy } from './labels.js'
+import { DEFAULT_EXECUTION_POLICY, DEFAULT_REVIEW_BOARD, SPEC_MTIME_SLACK_MS, TERMINAL_TASK_STATUSES, executionPolicyLines, normalizeExecutionPolicy } from './labels.js'
 import { round2Headings, suggestSpecSlug } from './seed.js'
-import { batchIdPrefixForSlug } from './batch.js'
+import { batchIdPrefixForSlug, queueStateOf, reviewBoardsFor } from './batch.js'
 
 /**
  * [`[ARCH]` タスクの本文]（spec-architect プロトコル＋実行契約）。
@@ -103,18 +106,51 @@ const ACTIVE_REVIEW_STATUSES = new Set(['ready', 'running', 'claimed', 'in_progr
 const BLOCKED_REVIEW_STATUSES = new Set(['blocked'])
 
 /**
+ * Round 1 シートが `reviewDir` 上に実在し、中身も読めるか確かめる（問題②）。
+ * シートを書き始める前に blocked になったタスクで「Review に届きました」を誤表示しないため。
+ *
+ * @param {string|null|undefined} reviewDir レビューディレクトリ
+ * @param {string|null|undefined} sheetRel `[review] sheet=...` の相対パス
+ * @returns {boolean} 確認ボタンを出してよい状態なら true
+ */
+export function reviewSheetReady(reviewDir, sheetRel) {
+  if (!reviewDir || !sheetRel) return false
+  const root = path.resolve(String(reviewDir))
+  const rel = String(sheetRel).trim()
+  if (!rel || path.isAbsolute(rel) || rel.includes('..')) return false
+  const { dataRel } = sheetPaths(rel)
+  const abs = path.resolve(root, rel)
+  const dataAbs = path.resolve(root, dataRel)
+  if (!abs.startsWith(root + path.sep) || !dataAbs.startsWith(root + path.sep)) return false
+  try {
+    if (fs.existsSync(dataAbs) && fs.statSync(dataAbs).isFile()) {
+      const parsed = JSON.parse(fs.readFileSync(dataAbs, 'utf8'))
+      return Boolean(parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0)
+    }
+    if (/\.html?$/i.test(abs) && fs.existsSync(abs) && fs.statSync(abs).isFile()) {
+      return fs.statSync(abs).size > 0
+    }
+  } catch {
+    return false
+  }
+  return false
+}
+
+/**
  * ジョブに紐づく Quick Review タスクを指定ステータス集合で探す（純関数）。
  *
  * 条件: ① `job.taskId`（または `job.reviewTaskId`）と一致する、または `startedAt - 猶予` 以降に作成。
  * ② `[review]` の印を持ち、状態が `statuses` に含まれる。
+ * ③ `[ARCH]` 自身のプロンプト文中の `[review]` 語には反応しない。
+ * ④ `sheet=` 付き（annotation 以外）は、`reviewBoard` 一致と `reviewSheetReady` を満たすときだけ採用する。
  *
  * @param {{taskId?: string|null, reviewTaskId?: string|null, startedAt: number}} job ジョブ
  * @param {Array<object>} tasks ボードのタスク
  * @param {Set<string>} statuses 対象ステータス集合
- * @param {{slackMs?: number}} [opts] 制約
+ * @param {{slackMs?: number, reviewDir?: string|null, boardSlug?: string|null, reviewBoard?: string|null, checkSheet?: boolean}} [opts] 制約
  * @returns {{taskId: string, title: string, status: string}|null} 一致タスク（無ければ null）
  */
-function matchJobReviewTask(job, tasks, statuses, { slackMs = SPEC_MTIME_SLACK_MS } = {}) {
+function matchJobReviewTask(job, tasks, statuses, { slackMs = SPEC_MTIME_SLACK_MS, reviewDir = null, boardSlug = null, reviewBoard = null, checkSheet = false } = {}) {
   const since = Number(job?.startedAt ?? 0) - slackMs
   const ownId = job?.taskId ? String(job.taskId) : ''
   const revId = job?.reviewTaskId ? String(job.reviewTaskId) : ''
@@ -126,8 +162,14 @@ function matchJobReviewTask(job, tasks, statuses, { slackMs = SPEC_MTIME_SLACK_M
     const fresh = Number(task.createdAt ?? 0) >= since
     if (!same && !fresh) continue
     if (!isReviewTask(task)) continue
+    const ak = parseReviewLine(task.body)
+    if (id === ownId && String(task.body ?? '').includes('[hermes-pilot:architect') && !ak) continue
     const status = String(task.status ?? '').trim().toLowerCase()
     if (!statuses.has(status)) continue
+    if (checkSheet && ak?.sheet && ak.mode !== 'annotation') {
+      if (reviewBoard && boardSlug && boardSlug !== reviewBoard) continue
+      if (reviewDir && !reviewSheetReady(reviewDir, ak.sheet)) continue
+    }
     return { taskId: id, title: String(task.title ?? ''), status }
   }
   return null
@@ -141,11 +183,11 @@ function matchJobReviewTask(job, tasks, statuses, { slackMs = SPEC_MTIME_SLACK_M
  *
  * @param {{taskId?: string|null, reviewTaskId?: string|null, startedAt: number}} job ジョブ
  * @param {Array<object>} tasks ボードのタスク
- * @param {{slackMs?: number}} [opts] 制約
+ * @param {{slackMs?: number, reviewDir?: string|null, boardSlug?: string|null, reviewBoard?: string|null}} [opts] 制約
  * @returns {{taskId: string, title: string, status: string}|null} 待機中タスク（無ければ null）
  */
-export function findJobReviewTask(job, tasks, opts) {
-  return matchJobReviewTask(job, tasks, BLOCKED_REVIEW_STATUSES, opts)
+export function findJobReviewTask(job, tasks, opts = {}) {
+  return matchJobReviewTask(job, tasks, BLOCKED_REVIEW_STATUSES, { ...opts, checkSheet: true })
 }
 
 /**
@@ -189,4 +231,73 @@ export function taskSpecPath(task) {
   const head = body.split(/\r?\n/).slice(0, 5).join('\n')
   const leg = /(?:docs\/)?SPEC[A-Za-z0-9._-]*\.md/i.exec(head)
   return leg ? leg[0].replace(/\\/g, '/').replace(/^\.\//, '').trim() : null
+}
+
+/**
+ * 1 件の Architect ジョブをカンバン状態（`[ARCH]` / `[review]`）へ同期する。
+ * @returns {boolean} 執筆・レビュー作業がまだ動いているとき true（SPEC フライング検知抑止用）
+ */
+export function syncJobFromKanban(job, { tasksOf, reviewDir, revBoard = DEFAULT_REVIEW_BOARD, at = Date.now() }) {
+  if (!['running', 'awaiting_spec', 'awaiting_review'].includes(job.status)) return false
+  const scanBoards = [revBoard, ...reviewBoardsFor(job.board).filter((s) => s !== revBoard)]
+  const tasks = tasksOf(job.board)
+  const self = job.taskId ? tasks.find((t) => t && String(t.id) === String(job.taskId)) ?? null : null
+  job.taskStatus = self?.status ? String(self.status) : null
+  job.queueState = queueStateOf(job.taskStatus)
+  if (job.spec) return false
+
+  let review = null
+  for (const slug of scanBoards) {
+    const found = findJobReviewTask(job, tasksOf(slug), { reviewDir, boardSlug: slug, reviewBoard: revBoard })
+    if (found) {
+      review = { ...found, board: slug }
+      break
+    }
+  }
+  if (review) {
+    job.status = 'awaiting_review'
+    job.reviewTaskId = review.taskId
+    job.reviewTitle = review.title
+    job.reviewBoard = review.board
+    job.reviewSeenOnce = true
+    return true
+  }
+  if (self && TERMINAL_TASK_STATUSES.includes(String(self.status))) {
+    let activeReview = null
+    if (job.reviewSeenOnce) {
+      for (const slug of scanBoards) {
+        const found = findActiveJobReviewTask(job, tasksOf(slug))
+        if (found) {
+          activeReview = { ...found, board: slug }
+          break
+        }
+      }
+    }
+    if (activeReview) {
+      job.status = 'awaiting_spec'
+      job.taskStatus = activeReview.status
+      job.queueState = queueStateOf(activeReview.status)
+      job.reviewTaskId = null
+      job.reviewTitle = null
+      job.reviewBoard = null
+      return true
+    }
+    job.status = String(self.status)
+    job.queueState = null
+    job.reviewTaskId = null
+    job.reviewTitle = null
+    job.reviewBoard = null
+    job.finishedAt = job.finishedAt ?? at
+    return false
+  }
+  if (self && self.status === 'failed') {
+    job.status = 'failed'
+    job.error = String(self.result || job.error || 'Architect task failed').slice(0, 600)
+    return false
+  }
+  job.reviewTaskId = null
+  job.reviewTitle = null
+  job.reviewBoard = null
+  if (job.status === 'awaiting_review') job.status = 'awaiting_spec'
+  return Boolean(self && ['running', 'ready', 'claimed', 'in_progress'].includes(String(self.status).toLowerCase()))
 }

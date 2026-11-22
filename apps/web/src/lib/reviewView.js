@@ -12,33 +12,157 @@
  */
 
 import { t } from '../i18n/lang.js'
+import { sep } from './format.js'
 
 /** 完了タブに出す件数（契約: 直近 8 件）。 */
 export const DONE_LIMIT = 8
 
-/** レビュー待ち = 回答を送ってよいタスク。 */
+/** 状態 → 辞書キー（ReviewPane / WorkerFeed 共有）。 */
+export const REVIEW_STATUS_KEY = Object.freeze({
+  review: 'review.status.review',
+  ready: 'review.status.ready',
+  running: 'review.status.running',
+  blocked: 'review.status.blocked',
+  done: 'review.status.done',
+})
+
+/**
+ * レビュー待ち = 回答を送ってよいタスク。
+ *
+ * `sheet` 指定タスクで `review.exists === false`（シート JSON がまだ生成前）のときは
+ * 「判断待ち／確認ボタン」を出さない（問題②）。
+ */
 export function isWaiting(item) {
-  return item?.status === 'blocked' && Boolean(item?.review?.label)
+  if (item?.status !== 'blocked' || !item?.review?.label) return false
+  const ak = item.review
+  if (ak.mode === 'annotation' || !ak.sheet) return true
+  return ak.exists !== false
 }
 
-/** 一覧に出す（回答できない）進行中の状態。`review` は契約上ほぼ来ないが落とさない。 */
+/** 回答・注釈・検収の記録がある（= 反映側フェーズ）か（問題①）。 */
+export function isAnsweredReview(item) {
+  return Boolean(item?.review?.answeredAt)
+}
+
+/** 一覧に出す（回答できない）状態。`review` は契約上ほぼ来ないが落とさない。 */
 const ACTIVE_STATUSES = new Set(['review', 'ready', 'running', 'blocked'])
 
 /**
- * 一覧 API の items を 3 グループへ分ける。
+ * レビュー項目を 4 段階（`generating` / `waiting` / `reflecting` / `done`）へ分類する（問題①）。
+ *
+ * @param {object|null|undefined} item `/api/review` の要素
+ * @returns {'generating'|'waiting'|'reflecting'|'done'|'other'} フェーズ
+ */
+export function reviewPhase(item) {
+  if (!item) return 'other'
+  if (item.status === 'done') return 'done'
+  if (isWaiting(item)) return 'waiting'
+  if (ACTIVE_STATUSES.has(item.status)) {
+    return isAnsweredReview(item) ? 'reflecting' : 'generating'
+  }
+  return 'other'
+}
+
+/** 生成中フェーズか（シート生成待ち／作成中）。 */
+export function isGenerating(item) {
+  return reviewPhase(item) === 'generating'
+}
+
+/** 反映中フェーズか（回答済み・コード反映待ち／反映中）。 */
+export function isReflecting(item) {
+  return reviewPhase(item) === 'reflecting'
+}
+
+/** 遷移先タブ ID（`focusRequest` 等で使う）。 */
+export function reviewTabFor(item) {
+  const phase = reviewPhase(item)
+  if (phase === 'generating' || phase === 'waiting' || phase === 'reflecting' || phase === 'done') return phase
+  return 'generating'
+}
+
+/**
+ * カード右端チップの辞書キー（`generating` と `reflecting` で意味を一致させる・問題①）。
+ *
+ * @param {object|null|undefined} item `/api/review` の要素
+ * @returns {string|null} i18n キー（未知状態は null）
+ */
+export function reviewChipKey(item) {
+  const phase = reviewPhase(item)
+  if (phase === 'waiting') return 'review.progress.waiting'
+  if (phase === 'done') return 'review.status.done'
+  if (phase === 'generating') {
+    if (item?.status === 'running') return 'review.status.running'
+    if (item?.status === 'ready') return 'review.status.queuedGenerate'
+    return REVIEW_STATUS_KEY[item?.status] ?? null
+  }
+  if (phase === 'reflecting') {
+    if (item?.status === 'running') return 'review.progress.reflecting'
+    if (item?.status === 'ready') return 'review.status.ready'
+    if (item?.status === 'blocked') return 'review.status.blocked'
+    return 'review.progress.reflecting'
+  }
+  return REVIEW_STATUS_KEY[item?.status] ?? null
+}
+
+/**
+ * カード左下に出す 1 行進行文（経過・心拍数・フェーズに応じた見出し）。
+ *
+ * @param {object} item `/api/review` の要素
+ * @param {string} [sepStr] 区切り記号（`sep()`）
+ * @param {number} [now] 現在時刻（テスト用）
+ * @returns {string} 進行文
+ */
+export function reviewProgressText(item, sepStr = sep(), now = Date.now()) {
+  if (!item) return ''
+  const pr = item.progress || {}
+  const ago = (ts) => {
+    if (!ts) return null
+    const s = Math.max(0, Math.round((now - ts) / 1000))
+    if (s < 90) return t('review.ago.seconds', { n: s })
+    if (s < 3600) return t('review.ago.minutes', { n: Math.round(s / 60) })
+    return t('review.ago.hours', { n: Math.round(s / 3600) })
+  }
+  const phase = reviewPhase(item)
+  if (item.status === 'running') {
+    const beat = ago(pr.heartbeatAt)
+    const since = ago(pr.startedAt)
+    const head = phase === 'generating' ? t('review.progress.generating') : t('review.progress.reflecting')
+    return [
+      head,
+      since ? t('review.progress.since', { ago: since }) : '',
+      beat ? t('review.progress.beat', { ago: beat }) : '',
+    ].join('')
+  }
+  if (item.status === 'ready') {
+    return phase === 'generating' ? t('review.progress.generatingReady') : t('review.progress.ready')
+  }
+  if (phase === 'waiting') {
+    const at = ago(pr.lastEventAt)
+    return t('review.progress.waiting') + (at ? t('review.progress.presented', { ago: at }) : '')
+  }
+  if (phase === 'done') return t('review.progress.done') + (pr.lastEventAt ? ` ${sepStr} ${ago(pr.lastEventAt)}` : '')
+  return ''
+}
+
+/**
+ * 一覧 API の items を 4 段階（`generating` / `waiting` / `reflecting` / `done`）へ分ける。
+ * 後方互換として `active`（`[...generating, ...reflecting]`）も併せて返す。
  *
  * @param {Array} items `/api/review` の items
  * @param {number} [doneLimit] 完了タブに残す件数
- * @returns {{waiting: Array, active: Array, done: Array, doneTotal: number}}
+ * @returns {{generating: Array, waiting: Array, reflecting: Array, active: Array, done: Array, doneTotal: number}}
  */
 export function groupItems(items, doneLimit = DONE_LIMIT) {
   const all = Array.isArray(items) ? items.filter(Boolean) : []
+  const generating = all.filter(isGenerating)
   const waiting = all.filter(isWaiting)
-  const active = all.filter((i) => !isWaiting(i) && i.status !== 'done' && ACTIVE_STATUSES.has(i.status))
+  const reflecting = all.filter(isReflecting)
   const doneAll = all.filter((i) => i.status === 'done')
   return {
+    generating,
     waiting,
-    active,
+    reflecting,
+    active: [...generating, ...reflecting],
     done: doneAll.slice(0, doneLimit),
     doneTotal: doneAll.length,
   }

@@ -145,20 +145,26 @@ export function parseCoherenceDismissed(raw) {
 /**
  * バナーを出すかどうか（純関数）。
  *
+ * 作業中（`opts.busy === true`）は過剰提案で判断を乱さないよう抑止する（問題④）。
+ *
  * @param {unknown} report レポート（`/api/coherence/report` か完走レポート）
  * @param {unknown} dismissedRaw `localStorage` の生値
- * @returns {{show: boolean, alert: boolean, dismissed: boolean, summary: object,
- *            recommendedSweep: string|null, highlights: string[], signature: string}} 判定
+ * @param {{busy?: boolean}} [opts] 表示制約
+ * @returns {{show: boolean, alert: boolean, dismissed: boolean, suppressedByWork: boolean,
+ *            summary: object, recommendedSweep: string|null, highlights: string[], signature: string}} 判定
  */
-export function coherenceBannerView(report, dismissedRaw) {
+export function coherenceBannerView(report, dismissedRaw, opts = {}) {
   const normalized = normalizeCoherenceAlert(report)
   const signature = coherenceSignature(normalized)
   const dismissed = parseCoherenceDismissed(dismissedRaw)
   const hidden = Boolean(dismissed && dismissed.signature === signature)
+  const busy = Boolean(opts?.busy)
+  const suppressedByWork = Boolean(normalized.alert && !hidden && busy)
   return {
-    show: normalized.alert && !hidden,
+    show: normalized.alert && !hidden && !busy,
     alert: normalized.alert,
     dismissed: hidden,
+    suppressedByWork,
     summary: normalized.summary,
     recommendedSweep: normalized.recommendedSweep,
     highlights: normalized.highlights,

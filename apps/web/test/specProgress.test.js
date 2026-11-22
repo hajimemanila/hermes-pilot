@@ -12,6 +12,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   SPEC_MTIME_SLACK_MS,
+  activeSpecRunSummary,
   batchHeaderIdOf,
   batchIdOf,
   specProgress,
@@ -194,4 +195,57 @@ test('タイトルに ID が無くても本文の Batch: ヘッダで紐づく�
   const p = specProgress([{ id: 'RG-1' }], [t], 'docs/SPEC-NEW.md')
   assert.equal(p.byId.get('RG-1')?.title, 'Renamed by a human')
   assert.equal(p.allDone, true)
+})
+
+test('activeSpecRunSummary: 実行中/待機中の SPEC サマリを優先順で返す（問題③）', () => {
+  const sDone = {
+    path: 'docs/SPEC-DONE.md',
+    title: 'Done Spec',
+    mtime: 3000,
+    batches: [{ id: 'D1' }],
+  }
+  const sQueued = {
+    path: 'docs/SPEC-Q.md',
+    title: 'Queued Spec',
+    mtime: 2000,
+    batches: [{ id: 'Q1' }, { id: 'Q2' }],
+  }
+  const sRunning = {
+    path: 'docs/SPEC-RUN.md',
+    title: 'Running Spec',
+    mtime: 1000,
+    batches: [{ id: 'R1' }, { id: 'R2' }, { id: 'R3' }],
+  }
+  const sArchived = {
+    path: 'docs/SPEC-ARCH.md',
+    title: 'Archived Spec',
+    archived: true,
+    mtime: 5000,
+    batches: [{ id: 'A1' }],
+  }
+  const tasks = [
+    { id: 't_d1', title: '[D1] Done', spec: 'docs/SPEC-DONE.md', status: 'done' },
+    { id: 't_q1', title: '[Q1] Ready', spec: 'docs/SPEC-Q.md', status: 'ready' },
+    { id: 't_r1', title: '[R1] Done', spec: 'docs/SPEC-RUN.md', status: 'done' },
+    { id: 't_r2', title: '[R2] Run', spec: 'docs/SPEC-RUN.md', status: 'running' },
+    { id: 't_r3', title: '[R3] Todo', spec: 'docs/SPEC-RUN.md', status: 'todo' },
+    { id: 't_a1', title: '[A1] Arch', spec: 'docs/SPEC-ARCH.md', status: 'running' },
+  ]
+  const pick = activeSpecRunSummary([sDone, sQueued, sRunning, sArchived], tasks)
+  assert.equal(pick?.path, 'docs/SPEC-RUN.md', 'running を持つ SPEC を queued より優先する')
+  assert.equal(pick?.done, 1)
+  assert.equal(pick?.total, 3)
+  assert.equal(pick?.running, 1)
+  assert.equal(pick?.queued, 1)
+  assert.equal(pick?.primaryTask?.id, 't_r2')
+
+  // running 無し・queued のみでも拾う
+  const qOnly = activeSpecRunSummary([sDone, sQueued], tasks)
+  assert.equal(qOnly?.path, 'docs/SPEC-Q.md')
+  assert.equal(qOnly?.running, 0)
+  assert.equal(qOnly?.queued, 1)
+
+  // 完了済み・空なら null
+  assert.equal(activeSpecRunSummary([sDone], tasks), null)
+  assert.equal(activeSpecRunSummary([], []), null)
 })

@@ -9,6 +9,8 @@ import { MissionReceiptSheet } from './MissionReceiptSheet.jsx'
 import { SpecSeedSheet } from './SpecSeedSheet.jsx'
 import { BrainstormSheet, RefactorSheet } from './TaskToolSheets.jsx'
 import { SpecReadyBanner } from '../components/SpecReadyBanner.jsx'
+import { SpecRunningBar } from '../components/SpecRunningBar.jsx'
+import { CoherenceBanner } from '../components/CoherenceBanner.jsx'
 import { SpecMarkdownSheet } from '../components/SpecMarkdownSheet.jsx'
 import { ArchitectJobBar } from '../components/ArchitectJobBar.jsx'
 import { countRunningArchitect, jobPollMs, pickActiveArchitectJob, pickSpecBanner } from '../lib/specSeed.js'
@@ -19,7 +21,7 @@ import { pendingCount } from '../lib/reviewView.js'
 import { fmtCost, sep } from '../lib/format.js'
 import { followUpPromptFor, readActiveChatId, reportBodyFor, reportSummaryLine, toEpochMs } from '../lib/chatReports.js'
 import { renderMarkdown } from '../lib/markdown.js'
-import { batchIdOf, specProgress } from '../lib/specProgress.js'
+import { activeSpecRunSummary, batchIdOf, specProgress } from '../lib/specProgress.js'
 import { localizeError } from '../i18n/lang.js'
 import { useI18n } from '../i18n/index.js'
 import { useSplitLayout } from '../lib/useSplitLayout.js'
@@ -107,6 +109,8 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
   // Coherence 提案バナー（SPEC-COHERENCE §3.6 / D83）。`null` の間は何も出さない。
   const [coherenceReport, setCoherenceReport] = useState(null)
   const [coherenceOpen, setCoherenceOpen] = useState(false)
+  const workActiveRef = useRef(false)
+  const prevWorkActiveRef = useRef(false)
   // 閉じた記録は localStorage（`HM_STORAGE.COHERENCE_DISMISSED`）に置く。初期値は 1 回だけ読む。
   const [coherenceDismissedRaw, setCoherenceDismissedRaw] = useState(() => {
     try {
@@ -469,9 +473,11 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
 
   useEffect(() => {
     if (!board || !active) return undefined
-    loadCoherence(board)
-    // リポジトリ全体の走査なので、タスク一覧（5 秒）ほど頻繁に叩かない。
-    const id = setInterval(() => document.visibilityState === 'visible' && loadCoherence(board), 120_000)
+    if (!workActiveRef.current) loadCoherence(board)
+    // リポジトリ全体の走査なので、タスク一覧（5 秒）ほど頻繁に叩かない。作業中はポーリングも抑止する。
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible' && !workActiveRef.current) loadCoherence(board)
+    }, 120_000)
     return () => clearInterval(id)
   }, [board, active, loadCoherence])
 
@@ -620,6 +626,17 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
 
   /* 稼働中（running / ready / todo）が 0 か。0 に変わった瞬間に完走レポートを取り直す。 */
   const idle = !tasks.some((x) => x.status === 'running' || x.status === 'ready' || x.status === 'todo')
+  /* 作業中（ワーカー稼働・Architect 稼働）は Coherence 推奨を出し控えて完了直後に fresh 再取得する（問題④）。 */
+  const workActive =
+    !idle ||
+    architectRunning > 0 ||
+    Boolean(activeJob && (activeJob.status === 'running' || activeJob.status === 'awaiting_spec'))
+  workActiveRef.current = workActive
+  useEffect(() => {
+    const wasActive = prevWorkActiveRef.current
+    prevWorkActiveRef.current = workActive
+    if (wasActive && !workActive && board && active) loadCoherence(board, { fresh: true })
+  }, [workActive, board, active, loadCoherence])
 
   /* 直近のパイプライン完走サマリ（SPEC-PILOT-V4 §3.3 ③ / D20③）。未実装時の 404 は無視。 */
   useEffect(() => {
@@ -670,8 +687,8 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
    * 生の診断が無いときは直近の完走レポートの `coherence_alert` を使う（2 系統）。
    */
   const coherenceView = useMemo(
-    () => coherenceBannerView(coherenceReport ?? latestReport ?? null, coherenceDismissedRaw),
-    [coherenceReport, latestReport, coherenceDismissedRaw],
+    () => coherenceBannerView(coherenceReport ?? latestReport ?? null, coherenceDismissedRaw, { busy: workActive }),
+    [coherenceReport, latestReport, coherenceDismissedRaw, workActive],
   )
 
   /** バナーの 1 タップ起動: 推奨スイープを選択済みにして `RefactorSheet` を開く。 */
@@ -866,6 +883,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
 
   /* Spec Launchpad（SPEC §5.4）: 既定選択は未起票バッチのみ。 */
   const specParts = { active: specsInfo?.active ?? [], archived: specsInfo?.archived ?? [] }
+  const activeSpecRun = useMemo(() => activeSpecRunSummary(specParts.active, tasks), [specParts.active, tasks])
   const specArchivedCount = specParts.archived.length
   // `Show archived` の状態で並びを切り替える（既定はアクティブのみ・純関数でテスト済み）
   const specList = specPickerList(specParts, specShowArchived)
@@ -1029,7 +1047,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
       notify(t('tasks.specLaunched', { created: (r.created ?? []).length, skipped: (r.skipped ?? []).length }))
       setSpecSheetOpen(false)
       setSpecSel([])
-      loadTasks(board)
+      await Promise.all([loadTasks(board), loadArchitectJobs(), loadSpecs(board)])
     } catch (e) {
       notify(e.message)
     } finally {
@@ -1085,76 +1103,27 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
         onArchive={archiveBannerSpec}
       />
 
+      {/* バッチ一括起票後の自走実行サマリ（問題③）: 稼働中の SPEC 進捗と詳細への導線 */}
+      <SpecRunningBar
+        summary={activeSpecRun}
+        onInspect={(task) => openTask(task, board)}
+        onOpenBatches={(spec) => {
+          pickSpec(spec, true)
+          setSpecSheetOpen(true)
+        }}
+      />
+
       {/*
-        完走予兆の提案バナー（SPEC-COHERENCE §3.6 / D83）。
-        読み取り専用の診断結果から、閾値超過のときだけ出す。1 タップで推奨スイープを選んだ
-        `RefactorSheet` を開き、✕ は署名つきで保存する（件数が変われば出し直す）。
+        完走予兆の提案バナー（SPEC-COHERENCE §3.6 / D83 / 問題④）。
+        作業中は表示と 120s 診断を控え、作業完了後に残る問題だけ 1 タップスイープで示す。
       */}
-      {coherenceView.show ? (
-        <section className={`coh-banner${coherenceOpen ? ' is-open' : ''}`} aria-label={t('coherence.bannerAria')}>
-          <div className="coh-banner-row">
-            <button
-              type="button"
-              className="coh-banner-head"
-              aria-expanded={coherenceOpen}
-              onClick={() => {
-                haptic('tap')
-                setCoherenceOpen((v) => !v)
-              }}
-            >
-              <span className="coh-banner-icon" aria-hidden="true">
-                🩺
-              </span>
-              <span className="coh-banner-main">
-                <span className="coh-banner-title">{t('coherence.bannerTitle')}</span>
-                <span className="coh-banner-sub">
-                  {t('coherence.bannerSummary', {
-                    hard: coherenceView.summary.hardFailCount,
-                    soft: coherenceView.summary.softSignalCount,
-                    hotspots: coherenceView.summary.hotspotCount,
-                  })}
-                </span>
-              </span>
-              <span className="coh-banner-chev" aria-hidden="true">
-                {coherenceOpen ? '▴' : '▾'}
-              </span>
-            </button>
-            <button
-              type="button"
-              className="coh-banner-close"
-              aria-label={t('coherence.bannerDismiss')}
-              onClick={dismissCoherence}
-            >
-              ✕
-            </button>
-          </div>
-          {coherenceOpen ? (
-            <div className="coh-banner-body">
-              {coherenceView.highlights.length ? (
-                <ul className="coh-banner-list">
-                  {coherenceView.highlights.map((h, i) => (
-                    <li key={`${i}-${h}`}>{h}</li>
-                  ))}
-                </ul>
-              ) : null}
-              <div className="coh-banner-actions">
-                <button type="button" className="btn primary" onClick={openCoherenceSweep}>
-                  {t('coherence.bannerOpen')}
-                </button>
-                <button type="button" className="btn" onClick={dismissCoherence}>
-                  {t('coherence.bannerHide')}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="coh-banner-actions is-inline">
-              <button type="button" className="btn primary" onClick={openCoherenceSweep}>
-                {t('coherence.bannerOpen')}
-              </button>
-            </div>
-          )}
-        </section>
-      ) : null}
+      <CoherenceBanner
+        view={coherenceView}
+        open={coherenceOpen}
+        onToggle={() => setCoherenceOpen((v) => !v)}
+        onOpenSweep={openCoherenceSweep}
+        onDismiss={dismissCoherence}
+      />
 
       {/* 📝 Spec Seed ＋ 🧠 ブレスト ＋ 🛠 リファクタリング（同列エントリ） */}
       <div className="seed-entry">
