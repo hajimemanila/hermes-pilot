@@ -692,6 +692,7 @@
   "app.search": "Search",
   "app.connected": "Connected",
   "app.disconnected": "Cannot connect",
+  "app.connRecovering": "Restoring the connection…",
   "app.bridgeOffline": "Cannot reach the bridge",
   "app.termLoading": "Loading the terminal…",
   "app.navWaiting": "{label} ({n} waiting for review)",

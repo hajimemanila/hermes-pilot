@@ -67,7 +67,8 @@ export function runningTotal({ tasksRunning = 0, turns = 0, architectRunning = 0
  */
 export function gwState({ conn = 'ok', bridge = null } = {}) {
   if (conn === 'offline') return 'offline'
-  if (conn !== 'ok') return 'error'
+  // 集約語彙（`lib/transport.js`）: `ready` だけが正常。`connecting` / `recovering` / `auth` は異常
+  if (conn !== 'ok' && conn !== 'ready') return 'error'
   if (bridge && bridge.ok === false) return 'error'
   return 'ok'
 }

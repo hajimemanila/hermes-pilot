@@ -104,9 +104,11 @@ test('api(): GET タイムアウトで code=OFFLINE / timedOut=true を投げ、
 test('回線復帰の契約が App・全主要ペイン・WebSocket に入っている', () => {
   const app = readCode('App.jsx')
   assert.match(app, /isConnectivityRecovery\(connRef\.current,\s*'ok'\)/)
-  assert.match(app, /syncAllBadges\(\{\s*force:\s*true,\s*skip:\s*refreshRef\.current\s*\}\)/)
+  // 復帰時の 1 周は表のスケジューラに集約（旧 `syncAllBadges` は廃止）
+  assert.match(app, /scheduler\.forceAll\(\{\s*skip:\s*'overview'\s*\}\)/)
   assert.match(app, /addEventListener\('pageshow',\s*onVis\)/)
-  assert.match(app, /syncAllBadges\(\{\s*force:\s*true\s*\}\)/)
+  assert.match(app, /createSyncScheduler\(/)
+  assert.match(app, /scheduler\.forceAll\(\)/)
 
   const tasks = readCode('features/TasksPane.jsx')
   assert.match(tasks, /if\s*\(boardsFailedRef\.current\)\s*loadBoards\(\{\s*silent:\s*true\s*\}\)/)

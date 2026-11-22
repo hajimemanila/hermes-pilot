@@ -1,24 +1,34 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
 import { openSocket } from '../api.js'
 import { HM_EVENTS, onHmEvent } from '../contracts/events.js'
 import { WS_HANDSHAKE_TIMEOUT_MS, WS_PROBE_TIMEOUT_MS } from './netRecovery.js'
+import { reconnectDelay, transport } from './transport.js'
 import { t } from '../i18n/lang.js'
+
+/** chat 系統の状態（接続状態の正本から読む。`ready` の語は変えない）。 */
+const chatSnapshot = () => transport.sourceState('chat')
 
 /**
  * Hermes の JSON-RPC（/ws/chat 経由）クライアント。
  *
  * 画面OFF→復帰でソケットが死ぬ前提で作る:
- * - close / error で指数バックオフ再接続（1s → 2s → 4s … 最大15s）
+ * - close / error で指数バックオフ再接続（1s → 2s → 4s … 最大15s・式は `lib/transport.js`）
  * - visibilitychange（復帰）/ online で即再接続
  * - 再接続できたら `session.resume` で元のセッションに繋ぎ直す（会話が切れない）
- * - 切断直後は赤帯を出さない（2秒の猶予。タブ切替の一瞬のフラッシュ対策）
+ * - 切断直後は赤帯を出さない（2秒の猶予）。猶予の判定元は接続状態の正本 1 か所
+ *   （SPEC-EXECUTION-MODE-INTEGRITY / D96。以前はこのフックが 400ms タイマーで自前判定していた）
  *
  * @param {{onEvent: Function, onReady: Function, onState: Function}} opts コールバック
  * @returns {{rpc: Function, state: string, reconnectNow: Function, showBanner: boolean}} クライアント
  */
 export function useChatSocket({ onEvent, onReady, onState }) {
-  const [state, setState] = useState('connecting') // connecting | ready | closed | error
-  const [showBanner, setShowBanner] = useState(false)
+  /*
+   * `state` は「この系統の状態」。`connecting` / `ready` / `recovering` / `offline` / `auth` を
+   * 返す（`ChatPane` のローダーと `connRef` ゲートは `ready` / `connecting` しか見ないので互換）。
+   */
+  const state = useSyncExternalStore(transport.subscribe, chatSnapshot)
+  /** 赤帯は「2 秒以上つながらない」ときだけ（猶予の判定はハブが持つ）。 */
+  const showBanner = state === 'recovering' || state === 'offline'
   const wsRef = useRef(null)
   const pending = useRef(new Map())
   const idRef = useRef(1)
@@ -27,8 +37,6 @@ export function useChatSocket({ onEvent, onReady, onState }) {
   const handshakeTimerRef = useRef(null)
   const probingRef = useRef(false)
   const closedByUs = useRef(false)
-  /** 切断が始まった時刻（null = つながっている）。 */
-  const offlineSince = useRef(Date.now())
 
   const eventRef = useRef(onEvent)
   const readyRef = useRef(onReady)
@@ -36,19 +44,6 @@ export function useChatSocket({ onEvent, onReady, onState }) {
   eventRef.current = onEvent
   readyRef.current = onReady
   stateRef.current = onState
-
-  /*
-   * 赤帯は「2秒以上つながらない」ときだけ出す。
-   * 再接続のたびにタイマーを張り直すと、バックオフ中に一度も発火しないので
-   * 「切断開始時刻」から経過時間で判定する（実測でハマった点）。
-   */
-  useEffect(() => {
-    const id = setInterval(() => {
-      const since = offlineSince.current
-      setShowBanner(Boolean(since) && Date.now() - since > 2000)
-    }, 400)
-    return () => clearInterval(id)
-  }, [])
 
   /** 未解決の RPC を解放する（呼び出し側を 20 秒待たせない）。 */
   const failPending = useCallback((message) => {
@@ -80,9 +75,8 @@ export function useChatSocket({ onEvent, onReady, onState }) {
 
   const connect = useCallback(() => {
     if (wsRef.current && wsRef.current.readyState <= WebSocket.OPEN) return
-    setState('connecting')
+    transport.report('chat', 'connecting')
     stateRef.current?.('connecting')
-    if (!offlineSince.current) offlineSince.current = Date.now()
 
     const ws = openSocket('/ws/chat')
     wsRef.current = ws
@@ -117,9 +111,7 @@ export function useChatSocket({ onEvent, onReady, onState }) {
       }
       const type = msg?.params?.type
       if (type === 'gateway.ready') {
-        offlineSince.current = null
-        setShowBanner(false)
-        setState('ready')
+        transport.report('chat', 'ready')
         stateRef.current?.('ready')
         readyRef.current?.()
       }
@@ -127,19 +119,18 @@ export function useChatSocket({ onEvent, onReady, onState }) {
     }
     ws.onerror = () => {
       if (wsRef.current !== ws) return
-      setState('error')
+      transport.report('chat', 'error')
       stateRef.current?.('error')
     }
     ws.onclose = () => {
       if (wsRef.current !== ws) return
       clearTimeout(handshakeTimerRef.current)
       wsRef.current = null
-      if (!offlineSince.current) offlineSince.current = Date.now()
-      setState('closed')
+      transport.report('chat', 'closed')
       stateRef.current?.('closed')
       failPending(t('socket.disconnected'))
       if (closedByUs.current) return
-      const delay = Math.min(15000, 1000 * 2 ** retryRef.current)
+      const delay = reconnectDelay(retryRef.current)
       retryRef.current += 1
       clearTimeout(timerRef.current)
       timerRef.current = setTimeout(() => connect(), delay)

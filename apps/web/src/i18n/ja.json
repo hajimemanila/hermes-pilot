@@ -692,6 +692,7 @@
   "app.search": "検索",
   "app.connected": "接続中",
   "app.disconnected": "接続できません",
+  "app.connRecovering": "接続を回復しています…",
   "app.bridgeOffline": "ブリッジに接続できません",
   "app.termLoading": "ターミナルを読み込み中…",
   "app.navWaiting": "{label}（判断待ち {n} 件）",

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -8,6 +8,7 @@ import { haptic } from '../lib/haptic.js'
 import { readSnippetBars, subscribeSnippetBars } from '../lib/snippetBars.js'
 import { termKeyBytes } from '../lib/termKey.js'
 import { reconnectDelay } from '../lib/termReconnect.js'
+import { transport } from '../lib/transport.js'
 import { useI18n } from '../i18n/index.js'
 import { HM_EVENTS, onHmEvent } from '../contracts/events.js'
 import { WS_HANDSHAKE_TIMEOUT_MS, WS_PROBE_TIMEOUT_MS } from '../lib/netRecovery.js'
@@ -31,7 +32,25 @@ import { WS_HANDSHAKE_TIMEOUT_MS, WS_PROBE_TIMEOUT_MS } from '../lib/netRecovery
  *   破棄されない（`visibility:hidden + inert` で生かしたまま）ので、mount 時の 1 回きりの接続だと
  *   **「未接続」のまま二度と戻らない**（実測）。close で 1s→2s→4s…最大 15s のバックオフ再接続、
  *   タブ復帰・`visibilitychange`・`online`・送信時の失敗でも即座に繋ぎ直す。
+ *
+ * 状態表示（`term.state.*`）は接続状態の正本（`lib/transport.js` / D96）から写像する。
+ * このペインは `setState('open' | 'reconnecting' | …)` をせず、ソケットの出来事を
+ * ハブへ報告するだけ（表示文言は増やさない）。
  */
+
+/** term 系統の状態（接続状態の正本から読む）。 */
+const termSnapshot = () => transport.sourceState('term')
+
+/** 集約語彙 → 端末ヘッダの表示語（`term.state.*` のキー）。 */
+const TERM_STATE_VIEW = Object.freeze({
+  ready: 'open',
+  connecting: 'connecting',
+  recovering: 'reconnecting',
+  offline: 'closed',
+  auth: 'error',
+  error: 'error',
+})
+
 export function TermPane({ notify, active = true }) {
   const { lang, t } = useI18n()
   const tRef = useRef(t)
@@ -46,7 +65,9 @@ export function TermPane({ notify, active = true }) {
   const reconnectTimer = useRef(null)
   /** 切断の行を書いたか（再試行のたびに積まない）。 */
   const droppedRef = useRef(false)
-  const [state, setState] = useState('connecting')
+  /** 端末ソケットの状態は接続状態の正本から写像する（`term.state.*` の語は変えない）。 */
+  const termState = useSyncExternalStore(transport.subscribe, termSnapshot)
+  const state = TERM_STATE_VIEW[termState] ?? 'connecting'
   const [snippets, setSnippets] = useState([])
   const [sheet, setSheet] = useState(false)
   const pressRef = useRef({})
@@ -104,8 +125,8 @@ export function TermPane({ notify, active = true }) {
       clearTimeout(handshakeTimer)
       clearTimeout(probeTimer)
       probeTimer = null
-      // 再試行中は「接続中」に戻さない（切断→接続中の点滅を避ける）
-      setState((s) => (s === 'reconnecting' ? s : 'connecting'))
+      // 再試行中は「接続中」に戻さない（切断→接続中の点滅を避ける）。猶予の判定はハブが持つ
+      transport.report('term', 'connecting')
       const ws = openSocket('/ws/term')
       wsRef.current = ws
       handshakeTimer = setTimeout(() => {
@@ -122,7 +143,7 @@ export function TermPane({ notify, active = true }) {
         clearTimeout(handshakeTimer)
         retryRef.current = 0
         droppedRef.current = false
-        setState('open')
+        transport.report('term', 'open')
         term.write(`\r\n\x1b[2m${tRef.current('term.connected')}\x1b[0m\r\n`)
         try {
           fit.fit()
@@ -147,7 +168,7 @@ export function TermPane({ notify, active = true }) {
       }
       ws.onerror = () => {
         if (wsRef.current !== ws) return
-        setState('error')
+        transport.report('term', 'error')
       }
       ws.onclose = () => {
         if (wsRef.current !== ws) return
@@ -156,7 +177,7 @@ export function TermPane({ notify, active = true }) {
         probeTimer = null
         wsRef.current = null
         if (disposed) return
-        setState('reconnecting')
+        transport.report('term', 'closed')
         if (!droppedRef.current) {
           droppedRef.current = true
           term.write(`\r\n\x1b[2m${tRef.current('term.reconnectLine')}\x1b[0m\r\n`)

@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
+import React, { Suspense, lazy, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { readDeepLink } from './lib/deeplink.js'
 
 import { api } from './api.js'
@@ -33,6 +33,8 @@ import { isChunkLoadError, reloadForChunkError, retryImport } from './lib/lazyRe
 import { HM_EVENTS, emitHmEvent } from './contracts/events.js'
 import { HM_STORAGE } from './contracts/storage.js'
 import { OVERVIEW_TIMEOUT_MS, isConnectivityRecovery } from './lib/netRecovery.js'
+import { transport } from './lib/transport.js'
+import { createSyncScheduler } from './lib/syncScheduler.js'
 
 /*
  * ターミナルは初回にしか読み込まない（起動を速くするため）。ただしスリープ復帰や
@@ -187,7 +189,12 @@ export function App() {
     deepLink?.open === 'inbox' || deepLink?.open === 'tasks' ? 'tasks' : deepLink?.open === 'chat' ? 'chat' : 'tasks',
   )
   const [overview, setOverview] = useState(null)
-  const [conn, setConn] = useState('ok')
+  /*
+   * 接続状態の正本は `lib/transport.js`（SPEC-EXECUTION-MODE-INTEGRITY / D96）。
+   * HTTP は `refresh()` が `ok` / `timeout` / `error` / `auth` を報告し、丸・赤帯・GW ピルは
+   * 集約値（chat / term も含む）を見る。以前はこの画面が `conn` を自前で持っていた。
+   */
+  const conn = useSyncExternalStore(transport.subscribe, transport.state)
   const [authNeeded, setAuthNeeded] = useState(false)
   const [tokenInput, setTokenInput] = useState('')
   const [toast, setToast] = useState(null)
@@ -320,63 +327,55 @@ export function App() {
     }
   }, [])
 
-  /* バッジ・各タブの即時同期（SPEC-PILOT-V3 §3.2 / D17②）。1,500ms スロットル、`force` は即時 */
-  const WAKE_THROTTLE_MS = 1500
-  const syncersRef = useRef([])
-  const lastWakeAtRef = useRef(0)
-  /** 同期関数を登録する（戻り値を呼ぶと解除）。 */
-  const registerSyncer = useCallback((fn) => {
-    syncersRef.current.push(fn)
-    return () => {
-      syncersRef.current = syncersRef.current.filter((f) => f !== fn)
+  /*
+   * 定期同期の正本は `lib/syncScheduler.js` の宣言表 + 1 本のスケジューラ（SPEC-EXECUTION-MODE-INTEGRITY D97）。
+   * 「何秒で・どのタブで止めるか」は表にだけ書き、ここではトピックごとの `fn` を購読するだけにする
+   * （以前は 7 本の `setInterval` と `registerSyncer` / 1,500ms スロットルが呼び出し側に散っていた）。
+   */
+  const schedulerRef = useRef(null)
+  if (!schedulerRef.current) {
+    schedulerRef.current = createSyncScheduler({
+      isVisible: () => document.visibilityState === 'visible',
+      currentTab: () => tabRef.current,
+    })
+  }
+  const scheduler = schedulerRef.current
+  // 自分が流した `WAKE_SYNC` で自分がもう一度走らないよう印を付ける（同じ 1 周を 2 回叩かない）
+  const selfWakeRef = useRef(false)
+  /** パネルへ「最新化して」を流す。自分が流した合図では自分は走らない。 */
+  const emitWake = useCallback(() => {
+    selfWakeRef.current = true
+    try {
+      emitHmEvent(HM_EVENTS.WAKE_SYNC)
+    } catch {
+      /* noop */
+    } finally {
+      selfWakeRef.current = false
     }
   }, [])
-  const syncAllBadges = useCallback(
-    ({ force = false, skip = null } = {}) => {
-      const now = Date.now()
-      if (!force && now - lastWakeAtRef.current < WAKE_THROTTLE_MS) return
-      lastWakeAtRef.current = now
-      for (const fn of syncersRef.current) {
-        if (fn === skip) continue
-        try {
-          Promise.resolve(fn()).catch(() => {})
-        } catch {
-          /* 1 本が落ちても他は叩く */
-        }
-      }
-      // 画面側（チャットの会話一覧・タスクの板）も同じ合図で最新化する
-      try {
-        emitHmEvent(HM_EVENTS.WAKE_SYNC)
-      } catch {
-        /* noop */
-      }
-    },
-    [WAKE_THROTTLE_MS],
-  )
-
-  // 復帰の合図: 表示に戻った / ページ復元 / フォーカスした / オンラインに戻った
+  /** 復帰時の 1 周。`overview` は `refresh()` 自身が復帰を検知して取り直すので skip する。 */
+  const wakeSync = useCallback(() => {
+    scheduler.forceAll({ skip: 'overview' })
+    emitWake()
+  }, [scheduler, emitWake])
+  /** 手動の再試行（GW ピル・赤帯の「再試行」）: `overview` も含めて表を 1 周する。 */
+  const resyncAll = useCallback(() => {
+    scheduler.forceAll()
+    emitWake()
+  }, [scheduler, emitWake])
+  // アンマウント後に届いた応答で state を触らない（旧: 各 effect が持っていた `alive`）
+  const mountedRef = useRef(true)
   useEffect(() => {
-    const onVis = () => {
-      if (document.visibilityState === 'visible') syncAllBadges()
-    }
-    const onFocus = () => syncAllBadges()
-    const onOnline = () => syncAllBadges({ force: true })
-    document.addEventListener('visibilitychange', onVis)
-    window.addEventListener('pageshow', onVis)
-    window.addEventListener('focus', onFocus)
-    window.addEventListener('online', onOnline)
+    mountedRef.current = true
     return () => {
-      document.removeEventListener('visibilitychange', onVis)
-      window.removeEventListener('pageshow', onVis)
-      window.removeEventListener('focus', onFocus)
-      window.removeEventListener('online', onOnline)
+      mountedRef.current = false
     }
-  }, [syncAllBadges])
+  }, [])
 
-  // 下部タブの切替: 出てきた画面の数字を待たせない
+  // 下部タブの切替: 出てきた画面の数字を待たせない（表を 1 周する。初回マウントもここ）
   useEffect(() => {
-    syncAllBadges({ force: true })
-  }, [tab, syncAllBadges])
+    scheduler.forceAll()
+  }, [tab, scheduler])
 
   // チャットタブへ移ったら既読（開いている＝見ている）。タブを離れている間に届いた分だけ点になる。
   useEffect(() => {
@@ -437,65 +436,13 @@ export function App() {
     }
   }, [])
 
+  // 完了報告の即時同期（`HM_EVENTS.REFRESH_REPORTS`）は表の `reports` を 1 回走らせるだけ。
+  // 定期取得の間隔・停止規則は表（`lib/syncScheduler.js`）が持つ。
   useEffect(() => {
-    let alive = true
-    const sync = async () => {
-      try {
-        const r = await api('/api/review/chat-reports?limit=200')
-        if (!alive) return
-        const items = Array.isArray(r.items) ? r.items : []
-        // チャットタブを開いている間は常に既読（点が出ても意味がない）
-        if (tabRef.current === 'chat') markChatSeen()
-        setChatReportItems(items)
-        setChatUnread(newerThan(items, chatSeenRef.current).length)
-        try {
-          const seenMap = readSeenMap(localStorage.getItem(SEEN_MAP_KEY))
-          // 未見のパイプライン報告はナビのタスクバッジに出す
-          setPipelineUnseen(unseenPipelineReports(items, seenMap).length)
-          if (!chatMountedRef.current) {
-            const activeId = readActiveChatId(localStorage)
-            setOtherChatUnread(otherUnreadReports(items, seenMap, activeId ? [activeId] : []).length)
-          }
-        } catch {
-          /* noop */
-        }
-        /*
-         * チャットタブを開いたままでも気づけるように、新しい報告が届いたらトーストを出す
-         * （点は「開いている間は既読」で消えるため、開いたまま待つと何も出なかった。実測）。
-         * 出すのは**チャットタブを見ているとき**だけ — 他のタブでは点が役目を果たす。
-         */
-        const newest = items.reduce((a, i) => (Number(i?.at) > Number(a?.at ?? -1) ? i : a), null)
-        const newestAt = Number(newest?.at) || 0
-        if (chatReportedAtRef.current === null) {
-          chatReportedAtRef.current = newestAt // 初回は「今の最新」を基準にするだけ
-        } else if (tabRef.current === 'chat' && newestAt > chatReportedAtRef.current) {
-          chatReportedAtRef.current = newestAt
-          const label = newest.label || newest.taskId || ''
-          // 15 秒ごとの interval から呼ばれるので、翻訳は現在の言語を読む tGlobal を使う
-          notify(label ? tGlobal('app.reviewDoneLabel', { label }) : tGlobal('app.reviewDone'))
-        } else if (newestAt > chatReportedAtRef.current) {
-          chatReportedAtRef.current = newestAt
-        }
-      } catch {
-        /* 完了報告は補助情報。取れなくても画面は壊さない */
-      }
-    }
-    sync()
-    const offSync = registerSyncer(sync)
-    const id = setInterval(() => {
-      if (document.visibilityState === 'visible') sync()
-    }, 15000)
-    const onManual = () => sync()
+    const onManual = () => scheduler.tick('reports')
     window.addEventListener(HM_EVENTS.REFRESH_REPORTS, onManual)
-    return () => {
-      alive = false
-      clearInterval(id)
-      offSync()
-      window.removeEventListener(HM_EVENTS.REFRESH_REPORTS, onManual)
-    }
-    // notify はこの useEffect より後で定義される（同一レンダー内で TDZ になるため deps に入れない）。
-    // 値は useCallback([]) で固定なので、依存に入れなくても stale にはならない。
-  }, [markChatSeen, registerSyncer])
+    return () => window.removeEventListener(HM_EVENTS.REFRESH_REPORTS, onManual)
+  }, [scheduler])
 
   useEffect(() => {
     try {
@@ -546,33 +493,34 @@ export function App() {
   }, [])
 
   const connRef = useRef('ok')
-  const refreshRef = useRef(null)
   const refresh = useCallback(async () => {
     try {
       const data = await api('/api/overview', { timeoutMs: OVERVIEW_TIMEOUT_MS })
       const recovered = isConnectivityRecovery(connRef.current, 'ok')
       connRef.current = 'ok'
       setOverview(data)
-      setConn('ok')
+      transport.report('http', 'ok')
       setAuthNeeded(false)
-      if (recovered) syncAllBadges({ force: true, skip: refreshRef.current })
+      // 回線が戻ったら他のトピックも 1 周させる（`overview` はいま取ったばかり）
+      if (recovered) wakeSync()
       return data
     } catch (e) {
       if (e.status === 401) {
         connRef.current = 'error'
+        // 401 は「繋がっているが認証が要る」。`ok` が来るまで auth のまま固定する
+        transport.report('http', 'auth')
         setAuthNeeded(true)
         return null
       }
       const next = e.code === 'OFFLINE' ? 'offline' : 'error'
       connRef.current = next
-      setConn(next)
+      transport.report('http', e.code === 'OFFLINE' ? 'timeout' : 'error')
       return null
     }
-  }, [syncAllBadges])
-  refreshRef.current = refresh
+  }, [wakeSync])
 
+  // 起動時の 1 回（QR ペアリング → overview）。以降の 5 秒は表の `overview` が持つ。
   useEffect(() => {
-    let alive = true
     ;(async () => {
       // QR ペアリング（`?token=` / `#token=`）: 補助経路なので失敗時は素のログイン画面へ
       try {
@@ -580,22 +528,160 @@ export function App() {
       } catch {
         /* noop */
       }
-      if (!alive) return
+      if (!mountedRef.current) return
       await refresh()
-      if (alive) setBooting(false)
+      if (mountedRef.current) setBooting(false)
     })()
-    const id = setInterval(() => {
-      if (!alive) return
-      if (document.visibilityState === 'visible') refresh()
-    }, 5000)
-    // 復帰時の取り直しは `syncAllBadges` がまとめて行う（リスナーを二重に張らない）
-    const offSync = registerSyncer(refresh)
-    return () => {
-      alive = false
-      clearInterval(id)
-      offSync()
+  }, [refresh])
+
+  /*
+   * トピックごとの同期（表の `id` と 1:1）。中身は旧 `useEffect` の `sync` をそのまま移しただけで、
+   * 取得 URL・state の更新・`catch` の握り方は変えていない。間隔と停止規則は表だけが持つ。
+   */
+  const syncReports = useCallback(async () => {
+    try {
+      const r = await api('/api/review/chat-reports?limit=200')
+      if (!mountedRef.current) return
+      const items = Array.isArray(r.items) ? r.items : []
+      // チャットタブを開いている間は常に既読（点が出ても意味がない）
+      if (tabRef.current === 'chat') markChatSeen()
+      setChatReportItems(items)
+      setChatUnread(newerThan(items, chatSeenRef.current).length)
+      try {
+        const seenMap = readSeenMap(localStorage.getItem(SEEN_MAP_KEY))
+        // 未見のパイプライン報告はナビのタスクバッジに出す
+        setPipelineUnseen(unseenPipelineReports(items, seenMap).length)
+        if (!chatMountedRef.current) {
+          const activeId = readActiveChatId(localStorage)
+          setOtherChatUnread(otherUnreadReports(items, seenMap, activeId ? [activeId] : []).length)
+        }
+      } catch {
+        /* noop */
+      }
+      /*
+       * チャットタブを開いたままでも気づけるように、新しい報告が届いたらトーストを出す
+       * （点は「開いている間は既読」で消えるため、開いたまま待つと何も出なかった。実測）。
+       * 出すのは**チャットタブを見ているとき**だけ — 他のタブでは点が役目を果たす。
+       */
+      const newest = items.reduce((a, i) => (Number(i?.at) > Number(a?.at ?? -1) ? i : a), null)
+      const newestAt = Number(newest?.at) || 0
+      if (chatReportedAtRef.current === null) {
+        chatReportedAtRef.current = newestAt // 初回は「今の最新」を基準にするだけ
+      } else if (tabRef.current === 'chat' && newestAt > chatReportedAtRef.current) {
+        chatReportedAtRef.current = newestAt
+        const label = newest.label || newest.taskId || ''
+        // 15 秒ごとの間隔から呼ばれるので、翻訳は現在の言語を読む tGlobal を使う
+        notify(label ? tGlobal('app.reviewDoneLabel', { label }) : tGlobal('app.reviewDone'))
+      } else if (newestAt > chatReportedAtRef.current) {
+        chatReportedAtRef.current = newestAt
+      }
+    } catch {
+      /* 完了報告は補助情報。取れなくても画面は壊さない */
     }
-  }, [refresh, registerSyncer])
+  }, [markChatSeen, notify])
+
+  const syncReviewWaiting = useCallback(async () => {
+    try {
+      const r = await api('/api/review')
+      if (!mountedRef.current) return
+      const items = Array.isArray(r.items) ? r.items : []
+      setReviewItems(items)
+      setReviewWaiting(waitingCount(items))
+      setReviewRunning(runningCount(items))
+    } catch {
+      /* 取れないときは前の値を保つ（バッジは補助情報なので画面を壊さない） */
+    }
+  }, [])
+
+  const syncReviewFeed = useCallback(async () => {
+    try {
+      const r = await api('/api/review/feed?limit=20')
+      if (mountedRef.current) setReviewUnseen(unseenNotices(r.items, lastSeenRef.current).length)
+    } catch {
+      /* フィードは補助情報。取れなくても画面は壊さない */
+    }
+  }, [])
+
+  const syncInbox = useCallback(async () => {
+    try {
+      const r = await api('/api/inbox')
+      if (mountedRef.current) setInboxPending(pendingCount(r.items))
+    } catch {
+      /* 取れないときは前の値を保つ（バッジは補助情報なので画面を壊さない） */
+    }
+  }, [])
+
+  const syncLive = useCallback(async () => {
+    try {
+      const d = await api('/api/live')
+      if (!mountedRef.current) return
+      setLiveTurns(Number(d?.counts?.turns ?? 0))
+      setLiveTurnsList(Array.isArray(d?.turns) ? d.turns : [])
+      setLiveArchitect(Number(d?.counts?.architect ?? 0))
+    } catch {
+      /* 補助情報 */
+    }
+  }, [])
+
+  const syncUsage = useCallback(async () => {
+    try {
+      const d = await api('/api/usage?hours=24')
+      if (mountedRef.current) setUsageData(d)
+    } catch {
+      /* 補助情報。取れなくてもピルを出さないだけ */
+    }
+  }, [])
+
+  /**
+   * 購読はここ 1 本だけ（以前は 7 本の `useEffect` がそれぞれタイマーを持っていた）。
+   * `start()` は表の `everyMs` でタイマーを張るだけで、再レンダーでは張り直さない。
+   */
+  useEffect(() => {
+    const offs = [
+      scheduler.subscribe('overview', refresh),
+      scheduler.subscribe('reports', syncReports),
+      scheduler.subscribe('reviewWaiting', syncReviewWaiting),
+      scheduler.subscribe('reviewFeed', syncReviewFeed),
+      scheduler.subscribe('inbox', syncInbox),
+      scheduler.subscribe('live', syncLive),
+      scheduler.subscribe('usage', syncUsage),
+    ]
+    scheduler.start()
+    // 初回は各画面を待たせない（`overview` は起動 effect が取るので二重にしない）
+    scheduler.forceAll({ skip: 'overview' })
+    return () => {
+      for (const off of offs) off()
+      scheduler.stop()
+    }
+  }, [scheduler, refresh, syncReports, syncReviewWaiting, syncReviewFeed, syncInbox, syncLive, syncUsage])
+
+  /*
+   * 復帰の合図: 表示に戻った / ページ復元 / フォーカスした / オンラインに戻った → 表を 1 周（`wakeSync`）。
+   * 他のパネルが流した `WAKE_SYNC` は同じ 1 周を overview 抜きで走らせる（自分が流した合図では走らない）。
+   */
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === 'visible') wakeSync()
+    }
+    const onFocus = () => wakeSync()
+    const onOnline = () => wakeSync()
+    const onWake = () => {
+      if (selfWakeRef.current) return
+      scheduler.forceAll({ skip: 'overview' })
+    }
+    document.addEventListener('visibilitychange', onVis)
+    window.addEventListener('pageshow', onVis)
+    window.addEventListener('focus', onFocus)
+    window.addEventListener('online', onOnline)
+    window.addEventListener(HM_EVENTS.WAKE_SYNC, onWake)
+    return () => {
+      document.removeEventListener('visibilitychange', onVis)
+      window.removeEventListener('pageshow', onVis)
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('online', onOnline)
+      window.removeEventListener(HM_EVENTS.WAKE_SYNC, onWake)
+    }
+  }, [wakeSync, scheduler])
 
   /*
    * OS アプリアイコンバッジ（SPEC-PILOT-V3 §3.2 / D17①）。
@@ -614,55 +700,21 @@ export function App() {
   }, [badgeCount])
 
   // レビュー待ちの件数と進行中件数をナビのバッジに出す。ReviewPane が一覧を取り直したら
-  // `hm:review-items` で同じ items を流してくるので、15 秒待たずに同期する。
+  // `hm:review-items` で同じ items を流してくるので、15 秒待たずに同期する（定期取得は表の `reviewWaiting`）。
   useEffect(() => {
-    let alive = true
-    const sync = async () => {
-      try {
-        const r = await api('/api/review')
-        if (!alive) return
-        const items = Array.isArray(r.items) ? r.items : []
-        setReviewItems(items)
-        setReviewWaiting(waitingCount(items))
-        setReviewRunning(runningCount(items))
-      } catch {
-        /* 取れないときは前の値を保つ（バッジは補助情報なので画面を壊さない） */
-      }
-    }
     const onItems = (e) => {
       const items = Array.isArray(e.detail?.items) ? e.detail.items : []
       setReviewItems(items)
       setReviewWaiting(waitingCount(items))
       setReviewRunning(runningCount(items))
     }
-    sync()
-    const id = setInterval(() => {
-      if (document.visibilityState === 'visible' && tabRef.current !== 'review') sync()
-    }, 15000)
     window.addEventListener(HM_EVENTS.REVIEW_ITEMS, onItems)
-    const offSync = registerSyncer(sync)
-    return () => {
-      alive = false
-      clearInterval(id)
-      offSync()
-      window.removeEventListener(HM_EVENTS.REVIEW_ITEMS, onItems)
-    }
-  }, [registerSyncer])
+    return () => window.removeEventListener(HM_EVENTS.REVIEW_ITEMS, onItems)
+  }, [])
 
-  // レビューの進行中件数と作業フィードの未読。判断待ちの件数（上の effect）と同じ 15 秒で回す。
+  // レビューの進行中件数と作業フィードの未読（定期取得は表の `reviewFeed`）。
   useEffect(() => {
-    let alive = true
-    const sync = async () => {
-      try {
-        const r = await api('/api/review/feed?limit=20')
-        if (alive) setReviewUnseen(unseenNotices(r.items, lastSeenRef.current).length)
-      } catch {
-        /* フィードは補助情報。取れなくても画面は壊さない */
-      }
-    }
-    const onItems = (e) => {
-      if (alive) setReviewRunning(runningCount(e.detail?.items))
-    }
+    const onItems = (e) => setReviewRunning(runningCount(e.detail?.items))
     // レビュータブを開いている間は「見ている＝既読」。開いた時点を端末に残す
     const onSeen = (e) => {
       const at = Number(e.detail?.at) || Date.now()
@@ -674,106 +726,34 @@ export function App() {
         /* 保存できなくても表示は続ける */
       }
     }
-    sync()
-    const id = setInterval(() => {
-      if (document.visibilityState === 'visible' && tabRef.current !== 'review') sync()
-    }, 15000)
     window.addEventListener(HM_EVENTS.REVIEW_ITEMS, onItems)
     window.addEventListener(HM_EVENTS.REVIEW_SEEN, onSeen)
-    const offSync = registerSyncer(sync)
     return () => {
-      alive = false
-      clearInterval(id)
-      offSync()
       window.removeEventListener(HM_EVENTS.REVIEW_ITEMS, onItems)
       window.removeEventListener(HM_EVENTS.REVIEW_SEEN, onSeen)
     }
-  }, [registerSyncer])
+  }, [])
 
   // 承認待ちの件数をタスクタブのバッジに出す。TasksPane が一覧を取り直したら
-  // `hm:inbox-items` で同じ items を流してくるので、15 秒待たずに同期する。
+  // `hm:inbox-items` で同じ items を流してくるので、15 秒待たずに同期する（定期取得は表の `inbox`）。
   useEffect(() => {
-    let alive = true
-    const sync = async () => {
-      try {
-        const r = await api('/api/inbox')
-        if (alive) setInboxPending(pendingCount(r.items))
-      } catch {
-        /* 取れないときは前の値を保つ（バッジは補助情報なので画面を壊さない） */
-      }
-    }
     const onItems = (e) => setInboxPending(pendingCount(e.detail?.items))
-    sync()
-    const id = setInterval(() => {
-      if (document.visibilityState === 'visible' && tabRef.current !== 'tasks') sync()
-    }, 15000)
     window.addEventListener(HM_EVENTS.INBOX_ITEMS, onItems)
-    const offSync = registerSyncer(sync)
-    return () => {
-      alive = false
-      clearInterval(id)
-      offSync()
-      window.removeEventListener(HM_EVENTS.INBOX_ITEMS, onItems)
-    }
-  }, [registerSyncer])
+    return () => window.removeEventListener(HM_EVENTS.INBOX_ITEMS, onItems)
+  }, [])
 
   // 稼働中のライブターン数をタスクタブの進行中ドットに出す。
-  // TasksPane の /api/live ポーリングとも `hm:live-turns` で同期する。
+  // TasksPane が `hm:live-turns` で全量（turns / items / architect）を運ぶ（契約の `required` で機械検査）。
+  // 定期取得は表の `live`（`pauseOnTabs: ['tasks']`）。タスクタブでは TasksPane の 10 秒が全量を運ぶ。
   useEffect(() => {
-    let alive = true
-    const sync = async () => {
-      try {
-        const d = await api('/api/live')
-        if (!alive) return
-        setLiveTurns(Number(d?.counts?.turns ?? 0))
-        setLiveTurnsList(Array.isArray(d?.turns) ? d.turns : [])
-        setLiveArchitect(Number(d?.counts?.architect ?? 0))
-      } catch {
-        /* 補助情報 */
-      }
-    }
     const onTurns = (e) => {
-      if (!alive) return
       setLiveTurns(Number(e.detail?.turns ?? 0))
       if (Array.isArray(e.detail?.items)) setLiveTurnsList(e.detail.items)
       if (e.detail?.architect !== undefined) setLiveArchitect(Number(e.detail.architect) || 0)
     }
-    sync()
-    // タスクタブでも止めない: TasksPane の `hm:live-turns` はターン数しか運ばないので、
-    // ここを省くと「タスクタブにいる間だけ Architect が ⚡ に数えられない」穴が空く（実測）。
-    const id = setInterval(() => {
-      if (document.visibilityState === 'visible') sync()
-    }, 15000)
     window.addEventListener(HM_EVENTS.LIVE_TURNS, onTurns)
-    const offSync = registerSyncer(sync)
-    return () => {
-      alive = false
-      clearInterval(id)
-      offSync()
-      window.removeEventListener(HM_EVENTS.LIVE_TURNS, onTurns)
-    }
-  }, [registerSyncer])
-
-  /* 計器盤の 💎（キャッシュ燃費）。SPEC §5.5 — サーバ側 30 秒キャッシュに対し端末は 60 秒 */
-  useEffect(() => {
-    let alive = true
-    const sync = async () => {
-      try {
-        const d = await api('/api/usage?hours=24')
-        if (alive) setUsageData(d)
-      } catch {
-        /* 補助情報。取れなくてもピルを出さないだけ */
-      }
-    }
-    sync()
-    const offSync = registerSyncer(sync)
-    const id = setInterval(() => document.visibilityState === 'visible' && sync(), 60_000)
-    return () => {
-      alive = false
-      clearInterval(id)
-      offSync()
-    }
-  }, [registerSyncer])
+    return () => window.removeEventListener(HM_EVENTS.LIVE_TURNS, onTurns)
+  }, [])
 
   // 計器盤の値（純関数で組み立てる。lib/telemetry.js）
   const gw = gwState({ conn, bridge: overview?.bridge ?? null })
@@ -827,7 +807,7 @@ export function App() {
   }
 
   return (
-    <div className="app">
+    <div className="app" data-transport={conn}>
       <header className="topbar">
         <span
           className="brand"
@@ -855,8 +835,11 @@ export function App() {
           >
             <Icon name="search" size={18} />
           </button>
-          <span className={`conn ${conn}`} title={conn === 'ok' ? t('app.connected') : t('app.disconnected')}>
-            {conn === 'ok' ? '●' : '○'}
+          <span
+            className={`conn ${conn === 'ready' ? 'ok' : conn === 'offline' ? 'offline' : 'error'}`}
+            title={conn === 'ready' ? t('app.connected') : conn === 'offline' || conn === 'auth' ? t('app.disconnected') : t('app.connRecovering')}
+          >
+            {conn === 'ready' ? '●' : '○'}
           </span>
         </span>
       </header>
@@ -871,7 +854,7 @@ export function App() {
           className={`t-pill gw ${gw}`}
           onClick={() => {
             haptic('tap')
-            syncAllBadges({ force: true })
+            resyncAll()
           }}
           aria-label={gw === 'ok' ? t('app.gwOkAria') : t('app.gwDownAria')}
           title={gw === 'ok' ? t('app.connected') : t('app.bridgeOffline')}
@@ -922,13 +905,13 @@ export function App() {
         ) : null}
       </div>
 
-      {conn !== 'ok' ? (
+      {conn === 'offline' || conn === 'auth' ? (
         <div className="banner">
           {t('app.bridgeOffline')}
           <button
             onClick={() => {
               haptic('tap')
-              syncAllBadges({ force: true })
+              resyncAll()
             }}
           >
             {t('common.retry')}

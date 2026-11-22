@@ -59,6 +59,16 @@ test('gwState は 接続と GW 本体の両方を見る', () => {
   assert.equal(gwState({ conn: 'error' }), 'error')
 })
 
+test('gwState は集約接続状態の語彙（transport.js / D96）を受ける', () => {
+  assert.equal(gwState({ conn: 'ready' }), 'ok', 'ready だけが正常')
+  assert.equal(gwState({ conn: 'recovering' }), 'error', '猶予中も異常として出す')
+  assert.equal(gwState({ conn: 'connecting' }), 'error')
+  assert.equal(gwState({ conn: 'auth' }), 'error')
+  assert.equal(gwState({ conn: 'offline' }), 'offline')
+  assert.equal(gwState({ conn: 'offline', bridge: { ok: false } }), 'offline', '接続断を優先する')
+  assert.equal(gwState({ conn: 'ready', bridge: { ok: false } }), 'error')
+})
+
 test('reviewJumpTarget は判断待ち → 承認待ち → 何もしない の順に落ちる', () => {
   const waiting = { id: 't_1', status: 'blocked', review: { label: 'p3' } }
   const done = { id: 't_2', status: 'done', review: { label: 'p2' } }
