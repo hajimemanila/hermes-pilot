@@ -173,6 +173,29 @@ Light の漏れと誤判定した）。機械走査の前に `*{transition:none!
 
 ---
 
+## P9. 正本を直したのに、呼び出し側が同じ判断を続けている
+
+**症状**: 正本（接続状態・定期同期・イベント payload・タスク遷移）を直したのに、しばらくすると
+別の場所で同じ判断が復活して静かにずれる。ビルドもテストも緑のままなので、症状が出るまで気づかない。
+
+**原因**: 「動いてはいるが、同じ事実を 2 か所以上が別々に決めている」箇所は、片方を直しても
+もう片方が**そのまま残る**。実測では接続状態が 4 系統、定期同期が 7 本の独立タイマー、
+blocked からの遷移判断が 5 か所に散っていた。正本を作っても、呼び出し側の実装を消さなければ戻る。
+
+**検出**: `npm run check:coherence` の 3 ルール。
+
+- `sync-owner` — `apps/web/src/App.jsx` の `setInterval(`
+- `transport-owner` — `apps/web/src/lib/transport.js` 以外の `offlineSince` と `1000 * 2 **`
+- `transition-owner` — `review.js` / `review/media.js` の `runKanban(['unblock'`・`runKanban(['complete'`
+
+`checkerPending` に入っている間はソフト信号（`fatal`）で、`--strict` で回すと落ちる。
+
+**対策**: 直すときは**呼び出し側の実装を消して正本を呼ぶ**（別名で包む・再エクスポートは可）。
+新機能は正本の表に 1 行足すだけで済ませ、`setInterval`・独自バックオフ・独自の `unblock` 分岐を増やさない。
+正本の場所は [OPERATIONS.md の「整合性の正本」](./OPERATIONS.md#整合性の正本このリポジトリの-4-つ)。
+
+---
+
 ## 再発防止の運用
 
 ```bash

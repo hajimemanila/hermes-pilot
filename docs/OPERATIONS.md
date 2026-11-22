@@ -94,6 +94,25 @@ Layer 1 は Node / npm / このリポジトリの語彙を一切仮定しない�
 - 自リポジトリの検証コマンド（ここでは `npm run verify`）の末尾に自分のチェッカーを連結しておくと、
   人が見落とすズレが関門で止まる
 
+### 整合性の正本（このリポジトリの 4 つ）
+
+「同じ事実を 2 か所以上が別々に決める」型のズレは、正本を 1 つに決めて**呼び出し側から実装を消す**。
+正本は次の 4 つで、うち 3 つは `npm run check:coherence` が戻りを機械で止める。
+
+- **接続状態**: `apps/web/src/lib/transport.js` — chat / term / HTTP の 3 系統はイベントを報告するだけで、
+  丸・赤帯・`gwState`・`data-transport` は `aggregate()` の 1 語を見る。バックオフ式もここ。
+  再エクスポートだけ `apps/web/src/lib/termReconnect.js` に残してよい（ルール `transport-owner`）
+- **定期同期**: `apps/web/src/lib/syncScheduler.js` の宣言表 + 1 本のスケジューラ。
+  `App.jsx` に `setInterval(` を書かない（ルール `sync-owner`）
+- **イベント payload**: `apps/web/src/contracts/events.js` の `HM_EVENT_META.required` が正本。
+  送信側の実リテラルと `contracts.test.js` が突き合わせる
+- **タスク遷移**: `apps/bridge/src/review/transitions.js` の遷移表 + `apply()` が唯一の実行者。
+  `review.js` / `review/media.js` から `runKanban(['unblock'` `runKanban(['complete'` を直接呼ばない
+  （ルール `transition-owner`）
+
+正本を持つバッチがまだ動いている間だけ `.hermes-coherence.json` の `checkerPending` にバッチ id を入れる
+（ソフト信号 `fatal` として出続け、`--strict` では落ちる）。**準拠したらその行を消す**。
+
 ### ラチェット（巨大ファイルの歯止め）
 
 - 基準ファイル（`baselineFile`。このリポジトリは `scripts/coherence-baseline.json`）に**ファイルごとの上限行数**を持つ。

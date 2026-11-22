@@ -79,6 +79,9 @@ export const RULES = Object.freeze([
   'cli-invocation-guard',
   'silent-failure-guard',
   'create-route-parity',
+  'sync-owner',
+  'transport-owner',
+  'transition-owner',
 ])
 
 /* ------------------------------------------------------------------ */
@@ -1197,6 +1200,164 @@ async function ruleCreateRouteParity(root, findings) {
 }
 
 /* ------------------------------------------------------------------ */
+/* recurrence guards: the four owners (D96 / D97 / D99 / D100)          */
+/* ------------------------------------------------------------------ */
+
+/** The app shell must not schedule anything itself (D97). */
+export const SYNC_OWNER_FILES = Object.freeze(['apps/web/src/App.jsx'])
+
+/** The only module allowed to keep a reconnect clock and the backoff formula (D96). */
+export const TRANSPORT_OWNER_FILE = 'apps/web/src/lib/transport.js'
+
+/** Modules that may re-export the backoff helper instead of copying it (D96). */
+export const TRANSPORT_REEXPORT_FILES = Object.freeze(['apps/web/src/lib/termReconnect.js'])
+
+/** Modules that must route blocked -> ready / done through the transition table (D99). */
+export const TRANSITION_OWNER_FILES = Object.freeze(['apps/bridge/src/review.js', 'apps/bridge/src/review/media.js'])
+
+/** Kanban verbs that only `apps/bridge/src/review/transitions.js` may run. */
+const TRANSITION_VERBS = Object.freeze(['unblock', 'complete'])
+
+/**
+ * (9) `setInterval(` call sites in a source file.
+ *
+ * The periodic sync is declared once in `lib/syncScheduler.js`; a timer written in
+ * the shell is the drift this rule exists for. Comments do not count.
+ *
+ * @param {string} text file source
+ * @returns {{line: number, reason: string}[]} problems
+ */
+export function syncOwnerProblems(text) {
+  const src = stripComments(String(text ?? ''))
+  const problems = []
+  for (const m of src.matchAll(/\bsetInterval\s*\(/g)) {
+    problems.push({
+      line: lineOf(src, m.index),
+      reason: 'setInterval( in the app shell; declare the topic in lib/syncScheduler.js',
+    })
+  }
+  return problems
+}
+
+/**
+ * Blank out `export { ... } from '...'` statements, keeping offsets intact.
+ *
+ * A re-export of the owner's helper is the sanctioned way to keep an old import
+ * path alive, so it must not be reported as a second implementation.
+ */
+function stripReexports(text) {
+  return text.replace(/^[ \t]*export\s*\{[^}]*\}[ \t]*from[ \t]*['"][^'"]+['"][ \t]*$/gm, (line) =>
+    line.replace(/[^\n]/g, ' '),
+  )
+}
+
+/**
+ * (10) Reconnect clock / hand written backoff outside the transport owner.
+ *
+ * `offlineSince` and the `1000 * 2 ** n` formula live in `lib/transport.js` only;
+ * `termReconnect.js` may re-export `reconnectDelay` from there.
+ *
+ * @param {string} rel repository relative path
+ * @param {string} text file source
+ * @returns {{line: number, reason: string}[]} problems
+ */
+export function transportOwnerProblems(rel, text) {
+  if (rel === TRANSPORT_OWNER_FILE) return []
+  let src = stripComments(String(text ?? ''))
+  if (TRANSPORT_REEXPORT_FILES.includes(rel)) src = stripReexports(src)
+  const problems = []
+  for (const m of src.matchAll(/\bofflineSince\b/g)) {
+    problems.push({ line: lineOf(src, m.index), reason: `'offlineSince' outside ${TRANSPORT_OWNER_FILE}` })
+  }
+  for (const m of src.matchAll(/1000\s*\*\s*2\s*\*\*/g)) {
+    problems.push({ line: lineOf(src, m.index), reason: `hand written backoff outside ${TRANSPORT_OWNER_FILE}` })
+  }
+  return problems
+}
+
+/**
+ * (11) Direct `runKanban(['unblock' | 'complete'` calls.
+ *
+ * Every transition out of `blocked` goes through `review/transitions.js`, so the
+ * decision is explained in one place and a repeat answer stays a no-op.
+ *
+ * @param {string} rel repository relative path (used in the reason only)
+ * @param {string} text file source
+ * @returns {{line: number, reason: string}[]} problems
+ */
+export function transitionOwnerProblems(rel, text) {
+  const src = stripComments(String(text ?? ''))
+  const problems = []
+  for (const verb of TRANSITION_VERBS) {
+    const re = new RegExp(`runKanban\\(\\s*\\[\\s*['"\`]${verb}['"\`]`, 'g')
+    for (const m of src.matchAll(re)) {
+      problems.push({
+        line: lineOf(src, m.index),
+        reason: `runKanban(['${verb}'] in ${rel}; call transitions.apply() instead`,
+      })
+    }
+  }
+  return problems
+}
+
+/** (9) Recurrence guard: one scheduler owns the periodic sync (D97). */
+async function ruleSyncOwner(root, findings) {
+  const rule = 'sync-owner'
+  const hits = []
+  for (const rel of SYNC_OWNER_FILES) {
+    const text = readText(path.join(root, rel))
+    if (text === null) continue
+    for (const problem of syncOwnerProblems(text)) {
+      hits.push({ file: rel, line: problem.line, reason: problem.reason })
+    }
+  }
+  if (hits.length) {
+    findings.violation(rule, `${hits.length} raw setInterval( call site(s) in the app shell`, {
+      value: hits.length,
+      files: hits.slice(0, 10),
+    })
+  }
+}
+
+/** (10) Recurrence guard: one transport hub owns the connection state (D96). */
+async function ruleTransportOwner(root, findings) {
+  const rule = 'transport-owner'
+  const hits = []
+  for (const file of walkCode(root, LAYOUT.webSrc)) {
+    const text = readText(file.abs)
+    if (text === null) continue
+    for (const problem of transportOwnerProblems(file.rel, text)) {
+      hits.push({ file: file.rel, line: problem.line, reason: problem.reason })
+    }
+  }
+  if (hits.length) {
+    findings.violation(rule, `${hits.length} connection state copy outside ${TRANSPORT_OWNER_FILE}`, {
+      value: hits.length,
+      files: hits.slice(0, 10),
+    })
+  }
+}
+
+/** (11) Recurrence guard: one transition table owns blocked -> ready / done (D99). */
+async function ruleTransitionOwner(root, findings) {
+  const rule = 'transition-owner'
+  const hits = []
+  for (const rel of TRANSITION_OWNER_FILES) {
+    const text = readText(path.join(root, rel))
+    if (text === null) continue
+    for (const problem of transitionOwnerProblems(rel, text)) {
+      hits.push({ file: rel, line: problem.line, reason: problem.reason })
+    }
+  }
+  if (hits.length) {
+    findings.violation(rule, `${hits.length} kanban transition call(s) bypass apps/bridge/src/review/transitions.js`, {
+      value: hits.length,
+      files: hits.slice(0, 10),
+    })
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* ratchet + akapen soft signals                                        */
 /* ------------------------------------------------------------------ */
 
@@ -1354,6 +1515,9 @@ export async function analyzeRepo(root = DEFAULT_ROOT, options = {}) {
     ruleCliInvocationGuard,
     ruleSilentFailureGuard,
     ruleCreateRouteParity,
+    ruleSyncOwner,
+    ruleTransportOwner,
+    ruleTransitionOwner,
   ]) {
     try {
       await rule(absRoot, findings)

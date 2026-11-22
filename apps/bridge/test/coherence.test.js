@@ -39,6 +39,9 @@ import {
   pathMatches,
   silentServerProblems,
   stripComments,
+  syncOwnerProblems,
+  transitionOwnerProblems,
+  transportOwnerProblems,
   unusedErrorDetails,
   updateBaseline,
 } from '../../../scripts/check-coherence.mjs'
@@ -760,9 +763,135 @@ test('create-route-parity: a filing route without --assignee or a watcher nudge 
   assert.ok(hardRules(report).includes('create-route-parity'))
 })
 
+test('sync-owner: a raw setInterval in App.jsx is a hard fail, a scheduler subscription is not', async () => {
+  const APP_WITH_TIMER = [
+    'export function App() {',
+    '  useEffect(() => {',
+    '    const t = setInterval(() => sync(), 5000)',
+    '    return () => clearInterval(t)',
+    '  }, [])',
+    '}',
+    '',
+  ].join('\n')
+  const APP_WITH_SCHEDULER = [
+    "import { createSyncScheduler } from './lib/syncScheduler.js'",
+    'const scheduler = createSyncScheduler({ isVisible: () => !document.hidden, currentTab: () => tab })',
+    "useEffect(() => scheduler.subscribe('overview', sync), [])",
+    '',
+  ].join('\n')
+
+  const problems = syncOwnerProblems(APP_WITH_TIMER)
+  assert.equal(problems.length, 1)
+  assert.equal(problems[0].line, 3)
+  assert.match(problems[0].reason, /syncScheduler/)
+  assert.deepEqual(syncOwnerProblems(APP_WITH_SCHEDULER), [])
+  // A comment that remembers the old timer is not a call site.
+  assert.deepEqual(syncOwnerProblems('// setInterval( used to live here\n'), [])
+
+  const bad = await analyzeRepo(ruleFixture({ 'apps/web/src/App.jsx': APP_WITH_TIMER }))
+  const issue = bad.hardFails.find((entry) => entry.rule === 'sync-owner')
+  assert.ok(issue, 'the shell timer must be reported')
+  assert.equal(issue.files[0].file, 'apps/web/src/App.jsx')
+  assert.equal(issue.files[0].line, 3)
+
+  const good = await analyzeRepo(ruleFixture({ 'apps/web/src/App.jsx': APP_WITH_SCHEDULER }))
+  assert.deepEqual(
+    hardRules(good).filter((rule) => rule === 'sync-owner'),
+    [],
+  )
+})
+
+test('transport-owner: offlineSince and the backoff formula only live in lib/transport.js', async () => {
+  const COPY = [
+    'const offlineSince = useRef(Date.now())',
+    'const delay = Math.min(15000, 1000 * 2 ** retryRef.current)',
+    '',
+  ].join('\n')
+  const REEXPORT = "export { reconnectDelay } from './transport.js'\n"
+
+  const problems = transportOwnerProblems('apps/web/src/lib/useChatSocket.js', COPY)
+  assert.equal(problems.length, 2)
+  assert.ok(problems.some((problem) => /offlineSince/.test(problem.reason)))
+  assert.ok(problems.some((problem) => /backoff/.test(problem.reason)))
+  // The owner keeps both spellings.
+  assert.deepEqual(transportOwnerProblems('apps/web/src/lib/transport.js', COPY), [])
+  // A permitted re-export is not a second implementation, a copied formula is.
+  assert.deepEqual(transportOwnerProblems('apps/web/src/lib/termReconnect.js', REEXPORT), [])
+  assert.equal(
+    transportOwnerProblems('apps/web/src/lib/termReconnect.js', 'export const d = 1000 * 2 ** n\n').length,
+    1,
+  )
+
+  const bad = await analyzeRepo(ruleFixture({ 'apps/web/src/lib/useChatSocket.js': COPY }))
+  const issue = bad.hardFails.find((entry) => entry.rule === 'transport-owner')
+  assert.ok(issue, 'the second connection clock must be reported')
+  assert.equal(issue.files[0].file, 'apps/web/src/lib/useChatSocket.js')
+  assert.equal(issue.value, 2)
+
+  const good = await analyzeRepo(
+    ruleFixture({
+      'apps/web/src/lib/transport.js': COPY,
+      'apps/web/src/lib/termReconnect.js': REEXPORT,
+    }),
+  )
+  assert.deepEqual(
+    hardRules(good).filter((rule) => rule === 'transport-owner'),
+    [],
+  )
+})
+
+test('transition-owner: direct runKanban unblock / complete calls in the review modules are hard fails', async () => {
+  const DIRECT = [
+    'export async function answer(id, ops) {',
+    "  return runKanban(['unblock', id, '--reason', ops.answered])",
+    '}',
+    'export async function approve(id) {',
+    "  const done = await runKanban(['complete', id, '--result', 'ok'])",
+    '  if (!done.ok) return runKanban(["unblock", id, "--reason", "fallback"])',
+    '  return done',
+    '}',
+    '',
+  ].join('\n')
+  const VIA_TABLE = [
+    'export async function answer(id, ops) {',
+    "  return transitions.apply('answer.fresh', { id, reason: ops.answered })",
+    '}',
+    'export async function approve(id, ops) {',
+    "  return transitions.apply('approve', { id, reason: ops.approved })",
+    '}',
+    '',
+  ].join('\n')
+
+  const problems = transitionOwnerProblems('apps/bridge/src/review.js', DIRECT)
+  assert.equal(problems.length, 3)
+  assert.equal(problems.filter((problem) => /unblock/.test(problem.reason)).length, 2)
+  assert.deepEqual(transitionOwnerProblems('apps/bridge/src/review.js', VIA_TABLE), [])
+  // A comment that names the verb is not a call site.
+  assert.deepEqual(transitionOwnerProblems('apps/bridge/src/review/media.js', "// runKanban(['unblock', id]\n"), [])
+
+  const bad = await analyzeRepo(ruleFixture({ 'apps/bridge/src/review.js': DIRECT }))
+  const issue = bad.hardFails.find((entry) => entry.rule === 'transition-owner')
+  assert.ok(issue, 'the bypassing transition must be reported')
+  assert.equal(issue.files[0].file, 'apps/bridge/src/review.js')
+  assert.equal(issue.value, 3)
+
+  const good = await analyzeRepo(ruleFixture({ 'apps/bridge/src/review/media.js': VIA_TABLE }))
+  assert.deepEqual(
+    hardRules(good).filter((rule) => rule === 'transition-owner'),
+    [],
+  )
+})
+
 test('the three recurrence guards are registered rules and stay ASCII', () => {
-  assert.equal(RULES.length, 8)
-  for (const rule of ['cli-invocation-guard', 'silent-failure-guard', 'create-route-parity']) {
+  assert.equal(RULES.length, 11)
+  for (const rule of [
+    'cli-invocation-guard',
+    'silent-failure-guard',
+    'create-route-parity',
+    'sync-owner',
+    'transport-owner',
+    'transition-owner',
+  ]) {
     assert.ok(RULES.includes(rule), `${rule} must be registered`)
     assert.equal(containsCJK(rule), false)
   }
