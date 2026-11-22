@@ -59,14 +59,15 @@ test('gwState は 接続と GW 本体の両方を見る', () => {
   assert.equal(gwState({ conn: 'error' }), 'error')
 })
 
-test('gwState は集約接続状態の語彙（transport.js / D96）を受ける', () => {
-  assert.equal(gwState({ conn: 'ready' }), 'ok', 'ready だけが正常')
-  assert.equal(gwState({ conn: 'recovering' }), 'error', '猶予中も異常として出す')
-  assert.equal(gwState({ conn: 'connecting' }), 'error')
+test('gwState は集約・HTTP 状態の語彙（transport.js / D96）で猶予中の点滅を抑える', () => {
+  assert.equal(gwState({ conn: 'ready' }), 'ok')
+  assert.equal(gwState({ conn: 'recovering' }), 'ok', '猶予中は点滅させず ok を保つ')
+  assert.equal(gwState({ conn: 'connecting' }), 'ok', '初回接続中も即異常にしない')
   assert.equal(gwState({ conn: 'auth' }), 'error')
   assert.equal(gwState({ conn: 'offline' }), 'offline')
   assert.equal(gwState({ conn: 'offline', bridge: { ok: false } }), 'offline', '接続断を優先する')
   assert.equal(gwState({ conn: 'ready', bridge: { ok: false } }), 'error')
+  assert.equal(gwState({ conn: 'recovering', bridge: { ok: false } }), 'error', 'GW 停止時は猶予中でも異常を示す')
 })
 
 test('reviewJumpTarget は判断待ち → 承認待ち → 何もしない の順に落ちる', () => {

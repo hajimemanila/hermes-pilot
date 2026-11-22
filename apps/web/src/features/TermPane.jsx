@@ -68,6 +68,8 @@ export function TermPane({ notify, active = true }) {
   /** 端末ソケットの状態は接続状態の正本から写像する（`term.state.*` の語は変えない）。 */
   const termState = useSyncExternalStore(transport.subscribe, termSnapshot)
   const state = TERM_STATE_VIEW[termState] ?? 'connecting'
+  const activeRef = useRef(active)
+  activeRef.current = active
   const [snippets, setSnippets] = useState([])
   const [sheet, setSheet] = useState(false)
   const pressRef = useRef({})
@@ -204,7 +206,8 @@ export function TermPane({ notify, active = true }) {
       if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'resize', c: term.cols, r: term.rows }))
     }
     /** 復帰・回線復旧時は未接続を即張り直し、OPEN のまま半開きなら ping で生存確認する。 */
-    const reconnectNow = () => {
+    const reconnectNow = (arg = false) => {
+      const forceProbe = arg === true
       if (disposed) return
       const ws = wsRef.current
       if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -213,6 +216,7 @@ export function TermPane({ notify, active = true }) {
         connect(true)
         return
       }
+      if (!activeRef.current && !forceProbe) return
       if (probeTimer) return
       try {
         ws.send(JSON.stringify({ t: 'ping' }))
@@ -231,11 +235,12 @@ export function TermPane({ notify, active = true }) {
     const onVisible = () => {
       if (document.visibilityState === 'visible') reconnectNow()
     }
+    const onOnline = () => reconnectNow(true)
     const offWake = onHmEvent(HM_EVENTS.WAKE_SYNC, reconnectNow)
     window.addEventListener('resize', onResize)
     document.addEventListener('visibilitychange', onVisible)
     window.addEventListener('pageshow', onVisible)
-    window.addEventListener('online', reconnectNow)
+    window.addEventListener('online', onOnline)
     const focusTimer = setTimeout(() => {
       term.focus()
       onResize()
@@ -252,7 +257,7 @@ export function TermPane({ notify, active = true }) {
       window.removeEventListener('resize', onResize)
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('pageshow', onVisible)
-      window.removeEventListener('online', reconnectNow)
+      window.removeEventListener('online', onOnline)
       sub.dispose()
       const ws = wsRef.current
       wsRef.current = null

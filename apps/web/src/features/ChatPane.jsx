@@ -28,7 +28,7 @@ import { localizeError, t } from '../i18n/lang.js'
 import { sep } from '../lib/format.js'
 import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
 import { HM_STORAGE } from '../contracts/storage.js'
-import { isOfflineError } from '../lib/netRecovery.js'
+import { isOfflineError, shouldReconnectToast } from '../lib/netRecovery.js'
 import { useWakeSync } from '../lib/useWakeSync.js'
 import { ChatSessionList, DRAWER_REFRESH_THROTTLE_MS, MarkdownBody, PipelineReportCard, ToolRows, commitProgressToBlocks, fitComposer } from './chat/ChatParts.jsx'
 import { ChatDrawer } from './chat/ChatDrawer.jsx'
@@ -141,6 +141,8 @@ export function ChatPane({
   const stickRef = useRef(true)
   const progressRef = useRef([])
   progressRef.current = progress
+  const activeRef = useRef(active)
+  activeRef.current = active
   const notifiedOffline = useRef(false)
   const objectUrlsRef = useRef(new Set())
 
@@ -546,10 +548,8 @@ export function ChatPane({
   const onReady = useCallback(async () => {
     const rpc = sockRef.current?.rpc
     if (!rpc) return
-    if (notifiedOffline.current) {
-      notifiedOffline.current = false
-      notify(t('chat.reconnected'))
-    }
+    if (shouldReconnectToast({ active: activeRef.current, wasOffline: notifiedOffline.current })) notify(t('chat.reconnected'))
+    notifiedOffline.current = false
     await loadSessions(rpc)
     // 検索結果などから「開く」を先に頼まれていたら、接続後にそれを優先する
     const pending = pendingOpenRef.current
@@ -582,16 +582,13 @@ export function ChatPane({
   }, [loadSessions, notify, resumeInto])
 
   const onState = useCallback((s) => {
-    if (s === 'closed' || s === 'error') {
-      setStreaming(false)
-      notifiedOffline.current = true
-    }
+    if (s === 'closed' || s === 'error') setStreaming(false)
   }, [])
-
-  const sock = useChatSocket({ onEvent, onReady, onState })
+  const sock = useChatSocket({ onEvent, onReady, onState, active })
   sockRef.current = sock
   const { rpc, showBanner, state: connState } = sock
   connRef.current = connState
+  useEffect(() => { if (showBanner) notifiedOffline.current = true }, [showBanner])
 
   // 直近の会話を端末に覚える（プロファイルもセットで。他プロファイルの resume に要る）
   useEffect(() => {
@@ -789,6 +786,7 @@ export function ChatPane({
 
   // 復帰・回線回復時に会話一覧・Architect 進行バー・未取得スニペットを取り直す
   useWakeSync(() => {
+    if (!activeRef.current) return
     const rpcNow = sockRef.current?.rpc
     if (rpcNow) loadSessions(rpcNow)
     loadSpecJobs()
@@ -1629,7 +1627,7 @@ export function ChatPane({
   /* オフライン・完了レポート・読み取り専用のバナー（Q1=A: 2 カラムでは左の下端へ） */
   const bannerNode = (
     <>
-      {/* 切断直後（2秒未満）は出さない */}
+      {/* 切断直後（4秒未満）は出さない */}
       {showBanner ? <div className="banner">{t('chat.recovering')}</div> : null}
       {otherUnreads.length ? (
         <div className="chat-report-banner" role="status">

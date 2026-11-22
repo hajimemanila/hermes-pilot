@@ -32,8 +32,8 @@ import { consumePairToken } from './lib/pairing.js'
 import { isChunkLoadError, reloadForChunkError, retryImport } from './lib/lazyRetry.js'
 import { HM_EVENTS, emitHmEvent } from './contracts/events.js'
 import { HM_STORAGE } from './contracts/storage.js'
-import { OVERVIEW_TIMEOUT_MS, isConnectivityRecovery } from './lib/netRecovery.js'
-import { transport } from './lib/transport.js'
+import { OVERVIEW_TIMEOUT_MS, WAKE_THROTTLE_MS, isConnectivityRecovery } from './lib/netRecovery.js'
+import { shouldShowBanner, transport } from './lib/transport.js'
 import { createSyncScheduler } from './lib/syncScheduler.js'
 
 /*
@@ -154,6 +154,8 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+const httpSnapshot = () => transport.sourceState('http')
+
 export function App() {
   const { t } = useI18n()
   const [deepLink] = useState(() => readDeepLink())
@@ -195,6 +197,9 @@ export function App() {
    * 集約値（chat / term も含む）を見る。以前はこの画面が `conn` を自前で持っていた。
    */
   const conn = useSyncExternalStore(transport.subscribe, transport.state)
+  const httpConn = useSyncExternalStore(transport.subscribe, httpSnapshot)
+  const overviewRef = useRef(null)
+  overviewRef.current = overview
   const [authNeeded, setAuthNeeded] = useState(false)
   const [tokenInput, setTokenInput] = useState('')
   const [toast, setToast] = useState(null)
@@ -345,18 +350,15 @@ export function App() {
   /** パネルへ「最新化して」を流す。自分が流した合図では自分は走らない。 */
   const emitWake = useCallback(() => {
     selfWakeRef.current = true
-    try {
-      emitHmEvent(HM_EVENTS.WAKE_SYNC)
-    } catch {
-      /* noop */
-    } finally {
-      selfWakeRef.current = false
-    }
+    try { emitHmEvent(HM_EVENTS.WAKE_SYNC) } catch { /* noop */ } finally { selfWakeRef.current = false }
   }, [])
   /** 復帰時の 1 周。`overview` は `refresh()` 自身が復帰を検知して取り直すので skip する。 */
   const wakeSync = useCallback(() => {
-    scheduler.forceAll({ skip: 'overview' })
-    emitWake()
+    if (scheduler.wake({ skip: 'overview', minGapMs: WAKE_THROTTLE_MS }).length) emitWake()
+  }, [scheduler, emitWake])
+  /** 画面復帰／フォーカス／online シグナル起点の同期（スロットル付き・`overview` も含む）。 */
+  const wakeFromSignal = useCallback(() => {
+    if (scheduler.wake({ minGapMs: WAKE_THROTTLE_MS }).length) emitWake()
   }, [scheduler, emitWake])
   /** 手動の再試行（GW ピル・赤帯の「再試行」）: `overview` も含めて表を 1 周する。 */
   const resyncAll = useCallback(() => {
@@ -367,15 +369,11 @@ export function App() {
   const mountedRef = useRef(true)
   useEffect(() => {
     mountedRef.current = true
-    return () => {
-      mountedRef.current = false
-    }
+    return () => { mountedRef.current = false }
   }, [])
 
-  // 下部タブの切替: 出てきた画面の数字を待たせない（表を 1 周する。初回マウントもここ）
-  useEffect(() => {
-    scheduler.forceAll()
-  }, [tab, scheduler])
+  // 下部タブの切替: 出てきた画面の数字を待たせない（停止規則に従い可視・対象トピックだけ回す）
+  useEffect(() => { scheduler.tickVisible() }, [tab, scheduler])
 
   // チャットタブへ移ったら既読（開いている＝見ている）。タブを離れている間に届いた分だけ点になる。
   useEffect(() => {
@@ -496,13 +494,14 @@ export function App() {
   const refresh = useCallback(async () => {
     try {
       const data = await api('/api/overview', { timeoutMs: OVERVIEW_TIMEOUT_MS })
+      const prevHttp = transport.sourceState('http')
       const recovered = isConnectivityRecovery(connRef.current, 'ok')
       connRef.current = 'ok'
       setOverview(data)
       transport.report('http', 'ok')
       setAuthNeeded(false)
-      // 回線が戻ったら他のトピックも 1 周させる（`overview` はいま取ったばかり）
-      if (recovered) wakeSync()
+      // 本当のオフライン／初回未取得からの回復時だけ他トピックを一斉同期する（1 回の揺らぎは無音）
+      if (recovered && (prevHttp === 'offline' || prevHttp === 'auth' || !overviewRef.current)) wakeSync()
       return data
     } catch (e) {
       if (e.status === 401) {
@@ -661,10 +660,10 @@ export function App() {
    */
   useEffect(() => {
     const onVis = () => {
-      if (document.visibilityState === 'visible') wakeSync()
+      if (document.visibilityState === 'visible') wakeFromSignal()
     }
-    const onFocus = () => wakeSync()
-    const onOnline = () => wakeSync()
+    const onFocus = () => wakeFromSignal()
+    const onOnline = () => wakeFromSignal()
     const onWake = () => {
       if (selfWakeRef.current) return
       scheduler.forceAll({ skip: 'overview' })
@@ -681,7 +680,7 @@ export function App() {
       window.removeEventListener('online', onOnline)
       window.removeEventListener(HM_EVENTS.WAKE_SYNC, onWake)
     }
-  }, [wakeSync, scheduler])
+  }, [wakeFromSignal, scheduler])
 
   /*
    * OS アプリアイコンバッジ（SPEC-PILOT-V3 §3.2 / D17①）。
@@ -712,9 +711,8 @@ export function App() {
     return () => window.removeEventListener(HM_EVENTS.REVIEW_ITEMS, onItems)
   }, [])
 
-  // レビューの進行中件数と作業フィードの未読（定期取得は表の `reviewFeed`）。
+  // 作業フィードの未読既読同期（定期取得は表の `reviewFeed`）。
   useEffect(() => {
-    const onItems = (e) => setReviewRunning(runningCount(e.detail?.items))
     // レビュータブを開いている間は「見ている＝既読」。開いた時点を端末に残す
     const onSeen = (e) => {
       const at = Number(e.detail?.at) || Date.now()
@@ -726,12 +724,8 @@ export function App() {
         /* 保存できなくても表示は続ける */
       }
     }
-    window.addEventListener(HM_EVENTS.REVIEW_ITEMS, onItems)
     window.addEventListener(HM_EVENTS.REVIEW_SEEN, onSeen)
-    return () => {
-      window.removeEventListener(HM_EVENTS.REVIEW_ITEMS, onItems)
-      window.removeEventListener(HM_EVENTS.REVIEW_SEEN, onSeen)
-    }
+    return () => window.removeEventListener(HM_EVENTS.REVIEW_SEEN, onSeen)
   }, [])
 
   // 承認待ちの件数をタスクタブのバッジに出す。TasksPane が一覧を取り直したら
@@ -756,7 +750,7 @@ export function App() {
   }, [])
 
   // 計器盤の値（純関数で組み立てる。lib/telemetry.js）
-  const gw = gwState({ conn, bridge: overview?.bridge ?? null })
+  const gw = gwState({ conn: httpConn, bridge: overview?.bridge ?? null })
   const waitingTotal = reviewWaiting + inboxPending
   const running = runningTotal({ tasksRunning: overview?.runningTasks, turns: liveTurns, architectRunning: liveArchitect })
   const lastTool = latestToolName(liveTurnsList)
@@ -905,7 +899,7 @@ export function App() {
         ) : null}
       </div>
 
-      {conn === 'offline' || conn === 'auth' ? (
+      {shouldShowBanner(httpConn) ? (
         <div className="banner">
           {t('app.bridgeOffline')}
           <button

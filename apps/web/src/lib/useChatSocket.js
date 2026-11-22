@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
 import { openSocket } from '../api.js'
 import { HM_EVENTS, onHmEvent } from '../contracts/events.js'
 import { WS_HANDSHAKE_TIMEOUT_MS, WS_PROBE_TIMEOUT_MS } from './netRecovery.js'
-import { reconnectDelay, transport } from './transport.js'
+import { reconnectDelay, shouldShowBanner, transport } from './transport.js'
 import { t } from '../i18n/lang.js'
 
 /** chat 系統の状態（接続状態の正本から読む。`ready` の語は変えない）。 */
@@ -21,14 +21,17 @@ const chatSnapshot = () => transport.sourceState('chat')
  * @param {{onEvent: Function, onReady: Function, onState: Function}} opts コールバック
  * @returns {{rpc: Function, state: string, reconnectNow: Function, showBanner: boolean}} クライアント
  */
-export function useChatSocket({ onEvent, onReady, onState }) {
+export function useChatSocket({ onEvent, onReady, onState, active = true }) {
   /*
    * `state` は「この系統の状態」。`connecting` / `ready` / `recovering` / `offline` / `auth` を
    * 返す（`ChatPane` のローダーと `connRef` ゲートは `ready` / `connecting` しか見ないので互換）。
    */
   const state = useSyncExternalStore(transport.subscribe, chatSnapshot)
-  /** 赤帯は「2 秒以上つながらない」ときだけ（猶予の判定はハブが持つ）。 */
-  const showBanner = state === 'recovering' || state === 'offline'
+  /** 赤帯は猶予（4 秒）を超えて `offline` / `auth` になったときだけ出す。 */
+  const showBanner = shouldShowBanner(state)
+  const activeRef = useRef(active)
+  activeRef.current = active
+  const wasActiveRef = useRef(active)
   const wsRef = useRef(null)
   const pending = useRef(new Map())
   const idRef = useRef(1)
@@ -158,12 +161,13 @@ export function useChatSocket({ onEvent, onReady, onState }) {
   }, [connect, failPending])
 
   /** 復帰・通信回復時に半開きソケットを ping 確認し、応答が無ければ張り直す。 */
-  const probeOrReconnect = useCallback(async () => {
+  const probeOrReconnect = useCallback(async ({ forceProbe = false } = {}) => {
     const ws = wsRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       reconnectNow()
       return
     }
+    if (!activeRef.current && !forceProbe) return
     if (probingRef.current) return
     probingRef.current = true
     try {
@@ -184,12 +188,18 @@ export function useChatSocket({ onEvent, onReady, onState }) {
   }, [connect, failPending, reconnectNow, rpc])
 
   useEffect(() => {
+    const becameActive = active && !wasActiveRef.current
+    wasActiveRef.current = active
+    if (becameActive) probeOrReconnect({ forceProbe: true })
+  }, [active, probeOrReconnect])
+
+  useEffect(() => {
     closedByUs.current = false
     connect()
     const onVisible = () => {
       if (document.visibilityState === 'visible') probeOrReconnect()
     }
-    const onOnline = () => probeOrReconnect()
+    const onOnline = () => probeOrReconnect({ forceProbe: true })
     const offWake = onHmEvent(HM_EVENTS.WAKE_SYNC, probeOrReconnect)
     document.addEventListener('visibilitychange', onVisible)
     window.addEventListener('online', onOnline)

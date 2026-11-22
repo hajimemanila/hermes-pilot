@@ -14,7 +14,10 @@ export const OVERVIEW_TIMEOUT_MS = 8_000
 export const WS_HANDSHAKE_TIMEOUT_MS = 10_000
 
 /** 開いたまま半開きになった WebSocket の生存確認タイムアウト。 */
-export const WS_PROBE_TIMEOUT_MS = 4_000
+export const WS_PROBE_TIMEOUT_MS = 8_000
+
+/** 復帰シグナル（visibilitychange / focus / online 等）の連続発火を束ねる間隔。 */
+export const WAKE_THROTTLE_MS = 2_500
 
 /** 非オフライン系エラーの背景トースト連続表示を抑える間隔。 */
 export const ERROR_TOAST_COOLDOWN_MS = 30_000
@@ -53,13 +56,27 @@ export function isConnectivityRecovery(prevConn, nextConn) {
  */
 export function isOfflineError(err) {
   if (!err || typeof err !== 'object') return false
-  return Boolean(
+  if (
     err.code === 'OFFLINE' ||
-      err.code === 'TIMEOUT' ||
-      err.timedOut === true ||
-      err.name === 'AbortError' ||
-      err.name === 'TimeoutError',
-  )
+    err.code === 'TIMEOUT' ||
+    err.timedOut === true ||
+    err.name === 'AbortError' ||
+    err.name === 'TimeoutError'
+  ) {
+    return true
+  }
+  // Tailscale / プロキシ / SW の瞬断による 502/503/504 は一時的な回線断とみなす（CLI_FAILED 等の独自コード付きは除く）
+  return !err.code && (err.status === 502 || err.status === 503 || err.status === 504)
+}
+
+/**
+ * チャット「再接続しました」トーストを出すべきか（チャット画面が表示中かつオフライン帯が出ていた復帰のみ）。
+ *
+ * @param {{active?: boolean, wasOffline?: boolean}} [opts]
+ * @returns {boolean}
+ */
+export function shouldReconnectToast({ active = false, wasOffline = false } = {}) {
+  return Boolean(active && wasOffline)
 }
 
 /**

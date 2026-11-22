@@ -11,10 +11,13 @@ import {
   DEFAULT_GET_TIMEOUT_MS,
   ERROR_TOAST_COOLDOWN_MS,
   OVERVIEW_TIMEOUT_MS,
+  WAKE_THROTTLE_MS,
+  WS_PROBE_TIMEOUT_MS,
   isConnectivityRecovery,
   isOfflineError,
   resolveTimeoutMs,
   shouldNotifyError,
+  shouldReconnectToast,
 } from '../src/lib/netRecovery.js'
 import { api } from '../src/api.js'
 import { demoSocket } from '../src/demo/sockets.js'
@@ -44,15 +47,29 @@ test('isConnectivityRecovery: offline / error から ok への遷移だけを検
   assert.equal(isConnectivityRecovery('offline', 'error'), false)
 })
 
-test('isOfflineError: OFFLINE / TIMEOUT / timedOut / AbortError を識別', () => {
+test('isOfflineError: OFFLINE / TIMEOUT / timedOut / AbortError とコード無し 502/503/504 を識別', () => {
   assert.equal(isOfflineError({ code: 'OFFLINE' }), true)
   assert.equal(isOfflineError({ code: 'TIMEOUT' }), true)
   assert.equal(isOfflineError({ timedOut: true }), true)
   assert.equal(isOfflineError({ name: 'AbortError' }), true)
   assert.equal(isOfflineError({ name: 'TimeoutError' }), true)
+  assert.equal(isOfflineError({ status: 502 }), true, 'プロキシ／回線起因の 502 は瞬断扱い')
+  assert.equal(isOfflineError({ status: 503, code: null }), true)
+  assert.equal(isOfflineError({ status: 504 }), true)
+  assert.equal(isOfflineError({ status: 502, code: 'CLI_FAILED' }), false, 'アプリコード付き 502 は通常エラーのまま')
   assert.equal(isOfflineError({ status: 500, code: 'INTERNAL' }), false)
+  assert.equal(isOfflineError({ status: 500 }), false)
   assert.equal(isOfflineError(null), false)
   assert.equal(isOfflineError('OFFLINE'), false)
+})
+
+test('shouldReconnectToast と定数: 非表示・短瞬断では再接続トーストを出さず WS/Wake 定数も過剰でない', () => {
+  assert.equal(shouldReconnectToast({ active: true, wasOffline: true }), true)
+  assert.equal(shouldReconnectToast({ active: false, wasOffline: true }), false, '裏タブでは通知しない')
+  assert.equal(shouldReconnectToast({ active: true, wasOffline: false }), false, '赤帯未満の瞬断では通知しない')
+  assert.equal(shouldReconnectToast(), false)
+  assert.ok(WS_PROBE_TIMEOUT_MS >= 8_000)
+  assert.ok(WAKE_THROTTLE_MS >= 2_000)
 })
 
 test('shouldNotifyError: 手動操作は常時通知、背景オフラインは抑制・一般背景はクールダウン', () => {
@@ -104,8 +121,12 @@ test('api(): GET タイムアウトで code=OFFLINE / timedOut=true を投げ、
 test('回線復帰の契約が App・全主要ペイン・WebSocket に入っている', () => {
   const app = readCode('App.jsx')
   assert.match(app, /isConnectivityRecovery\(connRef\.current,\s*'ok'\)/)
-  // 復帰時の 1 周は表のスケジューラに集約（旧 `syncAllBadges` は廃止）
-  assert.match(app, /scheduler\.forceAll\(\{\s*skip:\s*'overview'\s*\}\)/)
+  // 復帰時の 1 周は表のスケジューラに集約し、シグナル連打は WAKE_THROTTLE_MS で束ねる
+  assert.match(app, /scheduler\.wake\(\{\s*skip:\s*'overview',\s*minGapMs:\s*WAKE_THROTTLE_MS\s*\}\)/)
+  assert.match(app, /scheduler\.wake\(\{\s*minGapMs:\s*WAKE_THROTTLE_MS\s*\}\)/)
+  assert.match(app, /shouldShowBanner\(httpConn\)/)
+  assert.match(app, /scheduler\.tickVisible\(\)/)
+  assert.equal((app.match(/addEventListener\(HM_EVENTS\.REVIEW_ITEMS\b/g) ?? []).length, 1, 'REVIEW_ITEMS の二重購読を残さない')
   assert.match(app, /addEventListener\('pageshow',\s*onVis\)/)
   assert.match(app, /createSyncScheduler\(/)
   assert.match(app, /scheduler\.forceAll\(\)/)
@@ -113,6 +134,10 @@ test('回線復帰の契約が App・全主要ペイン・WebSocket に入って
   const tasks = readCode('features/TasksPane.jsx')
   assert.match(tasks, /if\s*\(boardsFailedRef\.current\)\s*loadBoards\(\{\s*silent:\s*true\s*\}\)/)
   assert.match(tasks, /if\s*\(tasksBoardRef\.current\s*!==\s*slug\)\s*setTasks\(\[\]\)/)
+  assert.match(tasks, /if\s*\(archBoardRef\.current\s*!==\s*board\)\s*setArchitectJobs\(null\)/)
+  assert.match(tasks, /if\s*\(specsBoardRef\.current\s*!==\s*slug\)\s*setSpecsInfo\(null\)/)
+  assert.match(tasks, /if\s*\(cohBoardRef\.current\s*!==\s*slug\)\s*setCoherenceReport\(null\)/)
+  assert.match(tasks, /reportBoardRef\.current\s*!==\s*board\)\s*setLatestReport\(null\)/)
   assert.match(tasks, /useWakeSync\(\(\)\s*=>/)
 
   const review = readCode('features/ReviewPane.jsx')
@@ -122,9 +147,13 @@ test('回線復帰の契約が App・全主要ペイン・WebSocket に入って
   for (const rel of ['features/MemosPane.jsx', 'features/SettingsPane.jsx', 'features/PipelinePanel.jsx', 'features/ChatPane.jsx']) {
     assert.match(readCode(rel), /useWakeSync\(/, `${rel} が useWakeSync を使っていない`)
   }
+  const chatPane = readCode('features/ChatPane.jsx')
+  assert.match(chatPane, /shouldReconnectToast\(/)
 
   const chatSock = readCode('lib/useChatSocket.js')
   assert.match(chatSock, /if\s*\(wsRef\.current\s*!==\s*ws\)\s*return/)
+  assert.match(chatSock, /shouldShowBanner\(state\)/)
+  assert.doesNotMatch(chatSock, /state\s*===\s*'recovering'\s*\|\|\s*state\s*===\s*'offline'/)
   assert.match(chatSock, /rpc\('bridge\.ping',\s*\{\},\s*WS_PROBE_TIMEOUT_MS\)/)
   assert.match(chatSock, /onHmEvent\(HM_EVENTS\.WAKE_SYNC,\s*probeOrReconnect\)/)
 

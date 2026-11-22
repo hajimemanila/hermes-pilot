@@ -68,6 +68,7 @@ export function createSyncScheduler({
   /** @type {Map<string, any>} */
   const timers = new Map()
   let running = false
+  let lastWakeAt = 0
 
   const startTimer = (topic) => {
     if (!topic) return
@@ -121,6 +122,23 @@ export function createSyncScheduler({
     return ran
   }
 
+  /** スロットル付きの全体同期（短時間の復帰イベント連打を 1 回に束ねる）。 */
+  function wake({ skip = null, minGapMs = 2500 } = {}) {
+    const at = Number(now())
+    if (minGapMs > 0 && lastWakeAt > 0 && at - lastWakeAt < minGapMs) return []
+    lastWakeAt = at
+    return forceAll({ skip })
+  }
+
+  /** 現在見えている画面の規則（`isVisible` / `pauseOnTabs`）に従って表を 1 周する。 */
+  function tickVisible() {
+    const ran = []
+    for (const topic of list) {
+      if (tick(topic.id)) ran.push(topic.id)
+    }
+    return ran
+  }
+
   /**
    * トピックに同期関数を登録する。戻り値を呼ぶと解除。
    * 実行中に購読したトピックは、その場でタイマーを張る（購読順に依存しない）。
@@ -156,5 +174,5 @@ export function createSyncScheduler({
     for (const id of [...timers.keys()]) stopTimer(id)
   }
 
-  return { topics: list, subscribe, start, stop, forceAll, tick, now }
+  return { topics: list, subscribe, start, stop, forceAll, wake, tickVisible, tick, now }
 }

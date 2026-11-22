@@ -17,6 +17,7 @@ import {
   createTransportHub,
   reconnectDelay,
   severity,
+  shouldShowBanner,
 } from '../src/lib/transport.js'
 
 /** タイマーを張らないハブ（`now` を進めて状態を確かめる）。 */
@@ -49,7 +50,7 @@ test('語彙: 系統は http / chat / term、状態は 5 語（報告イベン�
   for (const reportName of ['open', 'closed', 'ok', 'error']) {
     assert.equal(TRANSPORT_STATES.includes(reportName), false, `${reportName} は報告イベント名`)
   }
-  assert.deepEqual(GRACE_MS, { http: 8000, chat: 2000, term: 2000 })
+  assert.deepEqual(GRACE_MS, { http: 12000, chat: 4000, term: 4000 })
 })
 
 test('① reconnectDelay の刻み: 1→1000, 2→2000, 4→8000, 6→上限 15000', () => {
@@ -243,4 +244,31 @@ test('未知の系統・未知の報告名は状態を動かさない', () => {
   assert.equal(hub.report('nope', 'closed'), 'connecting')
   assert.equal(hub.report('http', 'nope'), 'ready')
   assert.equal(hub.state(), 'ready')
+})
+
+test('shouldShowBanner: recovering / connecting では非表示、offline / auth のみ赤帯を出す', () => {
+  assert.equal(shouldShowBanner('ready'), false)
+  assert.equal(shouldShowBanner('connecting'), false)
+  assert.equal(shouldShowBanner('recovering'), false)
+  assert.equal(shouldShowBanner('offline'), true)
+  assert.equal(shouldShowBanner('auth'), true)
+})
+
+test('裏タブ WS（chat / term）が猶予超過しても http 正常中は http 系統へ赤帯を出さない', () => {
+  const { hub, at } = makeHub()
+  hub.report('http', 'ok')
+  hub.report('chat', 'ready')
+  hub.report('term', 'open')
+
+  hub.report('chat', 'closed')
+  hub.report('term', 'closed')
+  at(1_000 + GRACE_MS.chat - 1)
+  assert.equal(shouldShowBanner(hub.sourceState('chat')), false, 'chat 猶予中はチャット帯も出さない')
+  assert.equal(shouldShowBanner(hub.sourceState('http')), false)
+
+  at(1_000 + GRACE_MS.chat)
+  assert.equal(hub.sourceState('chat'), 'offline')
+  assert.equal(shouldShowBanner(hub.sourceState('chat')), true, 'chat 側は猶予後にチャット帯を出す')
+  assert.equal(hub.sourceState('http'), 'ready', 'http は裏タブ WS 断で offline にならない')
+  assert.equal(shouldShowBanner(hub.sourceState('http')), false, '他タブのグローバル赤帯は出さない')
 })

@@ -29,11 +29,16 @@ export const RECONNECT_MAX_MS = 15000
 /**
  * 切断とみなすまでの猶予（ms）。
  *
- * `http: 8000` は「`/api/overview` のタイムアウト 8 秒（`netRecovery.js` の
- * `OVERVIEW_TIMEOUT_MS`）＋ 1 ポーリング」で、**1 回の失敗では赤帯を出さない**ための値。
- * `chat` / `term` の 2000ms は現行の 2 秒猶予（タブ切替の一瞬のフラッシュ対策）をそのまま移した。
+ * `http: 12000` は「`/api/overview` のタイムアウト 8 秒＋ 2 ポーリング相当」で、
+ * 電波揺らぎの 1〜2 回の失敗では赤帯を出さないための値。
+ * `chat` / `term` の 4000ms は移動中の WS 再接続が 1〜2 回で戻る間は赤帯を出さないための猶予。
  */
-export const GRACE_MS = Object.freeze({ http: 8000, chat: 2000, term: 2000 })
+export const GRACE_MS = Object.freeze({ http: 12000, chat: 4000, term: 4000 })
+
+/** 赤帯（完全オフライン／認証要）を出すべき状態か（猶予中の `recovering` / `connecting` は出さない）。 */
+export function shouldShowBanner(state) {
+  return state === 'offline' || state === 'auth'
+}
 
 /** 集約の優先順（数値が大きいほど強い）。 */
 const SEVERITY = Object.freeze({ ready: 0, connecting: 1, recovering: 2, offline: 3, auth: 4 })

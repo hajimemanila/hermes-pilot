@@ -207,3 +207,44 @@ test('shouldRun は表の停止規則だけを見る', () => {
   assert.equal(shouldRun(reviewWaiting, { tab: 'chat', visible: false }), false)
   assert.equal(shouldRun(null, { tab: 'chat', visible: true }), false)
 })
+
+test('⑦ wake(): 短時間の復帰連打を minGapMs で束ね、skip 無しなら overview も走る', () => {
+  let clock = 10_000
+  const ran = []
+  const scheduler = createSyncScheduler({
+    isVisible: () => true,
+    currentTab: () => 'tasks',
+    now: () => clock,
+  })
+  for (const topic of SYNC_TOPICS) scheduler.subscribe(topic.id, () => ran.push(topic.id))
+
+  const first = scheduler.wake({ minGapMs: 2_500 })
+  assert.ok(first.includes('overview'), 'シグナル復帰では overview をスキップしない')
+  assert.equal(first.length, SYNC_TOPICS.length)
+
+  clock += 1_000
+  assert.deepEqual(scheduler.wake({ minGapMs: 2_500 }), [], 'スロットル窓内の連続イベントは無視する')
+
+  clock += 1_500
+  const third = scheduler.wake({ skip: 'overview', minGapMs: 2_500 })
+  assert.equal(third.includes('overview'), false, 'recovery 時は skip を尊重する')
+  assert.equal(third.length, SYNC_TOPICS.length - 1)
+})
+
+test('⑧ tickVisible(): 表示中タブの pauseOnTabs と可視性に従って対象トピックだけを回す', () => {
+  const state = { tab: 'tasks', visible: true }
+  const calls = []
+  const scheduler = createSyncScheduler({
+    isVisible: () => state.visible,
+    currentTab: () => state.tab,
+  })
+  for (const topic of SYNC_TOPICS) scheduler.subscribe(topic.id, () => calls.push(topic.id))
+
+  const ranTasks = scheduler.tickVisible()
+  assert.equal(ranTasks.includes('inbox'), false, 'tasks タブでは inbox を走らせない')
+  assert.equal(ranTasks.includes('live'), false, 'tasks タブでは live を走らせない')
+  assert.equal(ranTasks.includes('reviewWaiting'), true)
+
+  state.visible = false
+  assert.deepEqual(scheduler.tickVisible(), [], '非表示中は 1 本も走らない')
+})

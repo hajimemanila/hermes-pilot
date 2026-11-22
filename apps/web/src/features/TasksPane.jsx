@@ -278,8 +278,8 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
         archBoardRef.current = board
         setArchitectJobs(d)
       }
-    } catch (e) {
-      if (!isOfflineError(e) || archBoardRef.current !== board) setArchitectJobs(null)
+    } catch {
+      if (archBoardRef.current !== board) setArchitectJobs(null)
     }
   }, [board])
 
@@ -381,18 +381,8 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
           const turns = Number(d?.counts?.turns ?? 0)
           setLiveTurns(turns)
           try {
-            window.dispatchEvent(
-              new CustomEvent(HM_EVENTS.LIVE_TURNS, {
-                detail: {
-                  turns,
-                  items: Array.isArray(d?.turns) ? d.turns : [],
-                  architect: Number(d?.counts?.architect ?? 0),
-                },
-              }),
-            )
-          } catch {
-            /* noop */
-          }
+            window.dispatchEvent(new CustomEvent(HM_EVENTS.LIVE_TURNS, { detail: { turns, items: Array.isArray(d?.turns) ? d.turns : [], architect: Number(d?.counts?.architect ?? 0) } }))
+          } catch { /* noop */ }
         })
         .catch(() => {})
     load()
@@ -452,8 +442,8 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
         if (cur && all.some((s) => s.path === cur)) return cur
         return split.active[0]?.path ?? split.archived[0]?.path ?? null
       })
-    } catch (e) {
-      if (!isOfflineError(e) || specsBoardRef.current !== slug) setSpecsInfo(null)
+    } catch {
+      if (specsBoardRef.current !== slug) setSpecsInfo(null)
     }
   }, [])
 
@@ -472,8 +462,8 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
       const d = await api(`/api/coherence/report?board=${encodeURIComponent(slug)}${fresh ? '&fresh=1' : ''}`)
       cohBoardRef.current = slug
       setCoherenceReport(d && typeof d === 'object' ? d : null)
-    } catch (e) {
-      if (!isOfflineError(e) || cohBoardRef.current !== slug) setCoherenceReport(null)
+    } catch {
+      if (cohBoardRef.current !== slug) setCoherenceReport(null)
     }
   }, [])
 
@@ -557,7 +547,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     loadArchitectJobs()
     loadTasks(board, { silent: true })
     loadSpecs(board)
-    loadCoherence(board, { fresh: true })
+    loadCoherence(board)
   })
   useEffect(
     () =>
@@ -648,8 +638,8 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
           const list = Array.isArray(d?.reports) ? d.reports : Array.isArray(d?.items) ? d.items : []
           setLatestReport(list[0] ?? null)
         })
-        .catch((e) => {
-          if (alive && (!isOfflineError(e) || reportBoardRef.current !== board)) setLatestReport(null)
+        .catch(() => {
+          if (alive && reportBoardRef.current !== board) setLatestReport(null)
         })
     load()
     const id = setInterval(() => document.visibilityState === 'visible' && load(), 30_000)
