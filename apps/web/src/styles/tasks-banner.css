@@ -38,6 +38,10 @@
   overflow: hidden;
   overflow-wrap: anywhere;
   white-space: normal;
+  /* 2 行クランプの末尾は実際に「…」で切られる。`text-overflow: clip` のままだと
+     中の文字幅が箱を 1 文字ぶん超えたときに文字切れとして検出される（実測 744x1024 ja で
+     71px / 68px）ので、実際の描画に合わせて ellipsis を明示する。 */
+  text-overflow: ellipsis;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;

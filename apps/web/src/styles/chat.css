@@ -355,6 +355,9 @@
 .md-list {
   margin: 4px 0 6px;
   padding-left: 20px;
+  /* 和文の行末に `）` が来ると、約物のぶら下げで行が箱より数 px 広くなる（実測 1180x820 ja の
+     完了サマリで li 391px / 箱 387px・1 行）。右に 4px の逃げを作って折り返させる。 */
+  padding-right: 4px;
 }
 
 ul.md-list {
