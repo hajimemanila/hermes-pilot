@@ -9,6 +9,8 @@ kanban, chat, terminal and usage into a single installable PWA.
 
 **[▶ Try the interactive demo](https://hajimemanila.github.io/hermes-pilot/)** — no install, no Hermes: a self-contained mock of the A2B flow (Spec Seed → Quick Review → Spec Launchpad → Architect progress → Mission Receipt). The single file is also in this repo at [`demo/index.html`](demo/index.html) and embeds into Google Sites.
 
+**[📖 Manual & Showcase Wiki](docs/wiki/ja/Home.md)** — the full Japanese-edition manual (installation & setup, A2B tasks & review, chat / memos / terminal) plus the `FocusFlow` end-to-end showcase: all 48 screenshots, each scene shown as a phone portrait (`390×844`) and a tablet two-pane (`1180×820`) side by side.
+
 ```text
 [phone / tablet PWA] → https://<tailscale-host>/ (or http://<lan-ip>:4097)
                               │

@@ -9,6 +9,8 @@ English README: [`README.md`](README.md)
 
 **[▶ インタラクティブデモを試す](https://hajimemanila.github.io/hermes-pilot/)** — インストール不要・Hermes 不要。A2B フロー（Spec Seed → Quick Review → Spec Launchpad → Architect 進行 → Mission Receipt）をモックで一通り触れます。単一ファイルは [`demo/index.html`](demo/index.html) にも同梱（Google Sites に埋め込み可）。
 
+**[📖 マニュアル＆ショーケース Wiki](docs/wiki/ja/Home.md)** — 全 48 カットの日本語マニュアル（導入・設定 / A2B タスク＆レビュー / Chat・Memos・Terminal）と、`FocusFlow` を題材にした一気通貫ショーケース。各シーンはスマホ縦（`390×844`）とタブレット 2 ペイン（`1180×820`）を並べて見比べられます。
+
 ```text
 [スマホ / タブレット PWA] → https://<tailscale-host>/（または http://<lan-ip>:4097）
                               │
