@@ -132,6 +132,8 @@ function resolveRelativeTarget(fromAbs, spec) {
 test('package.json の files は同梱 JS の全相対 import と plugin.json 入口を漏れなく含む', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
   const plugin = JSON.parse(fs.readFileSync(path.join(ROOT, 'plugin.json'), 'utf8'))
+  // Agent Plugins v1 は独自キーを extensions 配下にしか許さない（top-level の独自キーは install 時に捨てられる）
+  const meta = plugin.extensions?.['hermes-pilot'] ?? plugin
   const patterns = Array.isArray(pkg.files) ? pkg.files : []
   const packaged = collectPackagedFiles(patterns)
 
@@ -140,7 +142,7 @@ test('package.json の files は同梱 JS の全相対 import と plugin.json �
     assert.ok(packaged.has(rel), `package.json bin が同梱対象に無い: ${rel}`)
   }
 
-  for (const [name, rel] of Object.entries(plugin.entrypoints ?? {})) {
+  for (const [name, rel] of Object.entries(meta.entrypoints ?? {})) {
     if (name === 'ui') {
       assert.ok(isRuleCovered(rel, patterns), `plugin.json entrypoints.ui (${rel}) が files ルール外`)
       continue
@@ -148,7 +150,7 @@ test('package.json の files は同梱 JS の全相対 import と plugin.json �
     assert.ok(packaged.has(rel), `plugin.json entrypoints.${name} が同梱対象に無い: ${rel}`)
   }
 
-  for (const skill of plugin.skills ?? []) {
+  for (const skill of meta.skills ?? []) {
     assert.ok(packaged.has(skill), `plugin.json skill が同梱対象に無い: ${skill}`)
   }
 

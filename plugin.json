@@ -1,73 +1,82 @@
 {
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "hermes-pilot",
-  "displayName": "Hermes Pilot",
   "version": "0.2.4",
   "description": "The A2B pipeline for an autonomous Hermes Agent, in your pocket: turn a one-line Spec Seed into a Quick Review interview, a spec the batch runner can execute, filed kanban batches, live monitoring and a Mission Receipt — plus annotation, chat, terminal and usage in one installable PWA.",
-  "author": "Hermes Pilot contributors",
-  "license": "MIT",
-  "kind": "app",
+  "author": {
+    "name": "Hermes Pilot contributors",
+    "url": "https://github.com/hajimemanila/hermes-pilot"
+  },
   "homepage": "https://github.com/hajimemanila/hermes-pilot",
-  "entrypoints": {
-    "cli": "bin/hermes-pilot.mjs",
-    "bridge": "apps/bridge/src/server.js",
-    "ui": "apps/web/dist/index.html"
-  },
-  "commands": {
-    "init": "First-run setup: data directories, 256-bit token (0600), bundled skills, pairing QR",
-    "start": "Build the UI when needed and run the bridge (--port, --host, --tls-port)",
-    "qr": "Print the pairing URL candidates and a terminal QR code",
-    "service": "install | uninstall | restart | status (launchd on macOS, systemd --user on Linux)",
-    "migrate": "Copy data from the legacy akapen / mobile-pwa layout"
-  },
-  "skills": [
-    "skills/quick-review/SKILL.md",
-    "skills/annotation/SKILL.md",
-    "skills/spec-architect/SKILL.md"
-  ],
-  "storage": {
-    "data": "~/.hermes/plugin-data/hermes-pilot",
-    "review": "~/.hermes/plugin-data/hermes-pilot/review",
-    "env": ["HP_DATA_DIR", "HM_DATA", "HM_PORT", "HM_HOST", "HERMES_HOME"]
-  },
-  "service": {
-    "darwin": {
-      "label": "ai.hermes.pilot",
-      "plist": "~/Library/LaunchAgents/ai.hermes.pilot.plist"
-    },
-    "linux": {
-      "unit": "hermes-pilot.service",
-      "path": "~/.config/systemd/user/hermes-pilot.service"
-    },
-    "legacy": "ai.hermes.hermes-mobile is intentionally left running during migration; see README"
-  },
-  "api": {
-    "auth": ["POST /api/auth/login", "GET /api/auth/pairing"],
-    "pipeline": ["GET /api/pipeline/status", "POST /api/pipeline/optimize"],
-    "architect": [
-      "POST /api/architect/seed",
-      "GET /api/architect/jobs",
-      "POST /api/architect/jobs/:id/dismiss",
-      "GET /api/architect/config",
-      "PUT /api/architect/config"
-    ],
-    "specs": [
-      "GET /api/specs",
-      "GET /api/specs/content",
-      "POST /api/specs/launch",
-      "POST /api/specs/archive",
-      "GET /api/specs/reports"
-    ],
-    "coherence": "GET /api/coherence/report",
-    "emergency": ["POST /api/emergency/stop-all", "POST /api/gateway/:action"],
-    "review": "/api/review/*",
-    "boards": "/api/boards/*",
-    "telemetry": "GET /api/telemetry/receipt",
-    "live": "GET /api/live",
-    "usage": "GET /api/usage",
-    "capabilities": "GET /api/capabilities"
-  },
-  "i18n": ["en", "ja"],
-  "engines": {
-    "node": ">=22.19.0"
+  "repository": "https://github.com/hajimemanila/hermes-pilot",
+  "license": "MIT",
+  "extensions": {
+    "hermes-pilot": {
+      "displayName": "Hermes Pilot",
+      "kind": "app",
+      "entrypoints": {
+        "cli": "bin/hermes-pilot.mjs",
+        "bridge": "apps/bridge/src/server.js",
+        "ui": "apps/web/dist/index.html"
+      },
+      "commands": {
+        "init": "First-run setup: data directories, 256-bit token (0600), bundled skills, pairing QR",
+        "start": "Build the UI when needed and run the bridge (--port, --host, --tls-port)",
+        "qr": "Print the pairing URL candidates and a terminal QR code",
+        "service": "install | uninstall | restart | status (launchd on macOS, systemd --user on Linux)",
+        "migrate": "Copy data from the legacy akapen / mobile-pwa layout"
+      },
+      "skills": [
+        "skills/quick-review/SKILL.md",
+        "skills/annotation/SKILL.md",
+        "skills/spec-architect/SKILL.md"
+      ],
+      "storage": {
+        "data": "~/.hermes/plugin-data/hermes-pilot",
+        "review": "~/.hermes/plugin-data/hermes-pilot/review",
+        "env": ["HP_DATA_DIR", "HM_DATA", "HM_PORT", "HM_HOST", "HERMES_HOME"]
+      },
+      "service": {
+        "darwin": {
+          "label": "ai.hermes.pilot",
+          "plist": "~/Library/LaunchAgents/ai.hermes.pilot.plist"
+        },
+        "linux": {
+          "unit": "hermes-pilot.service",
+          "path": "~/.config/systemd/user/hermes-pilot.service"
+        },
+        "legacy": "ai.hermes.hermes-mobile is intentionally left running during migration; see README"
+      },
+      "api": {
+        "auth": ["POST /api/auth/login", "GET /api/auth/pairing"],
+        "pipeline": ["GET /api/pipeline/status", "POST /api/pipeline/optimize"],
+        "architect": [
+          "POST /api/architect/seed",
+          "GET /api/architect/jobs",
+          "POST /api/architect/jobs/:id/dismiss",
+          "GET /api/architect/config",
+          "PUT /api/architect/config"
+        ],
+        "specs": [
+          "GET /api/specs",
+          "GET /api/specs/content",
+          "POST /api/specs/launch",
+          "POST /api/specs/archive",
+          "GET /api/specs/reports"
+        ],
+        "coherence": "GET /api/coherence/report",
+        "emergency": ["POST /api/emergency/stop-all", "POST /api/gateway/:action"],
+        "review": "/api/review/*",
+        "boards": "/api/boards/*",
+        "telemetry": "GET /api/telemetry/receipt",
+        "live": "GET /api/live",
+        "usage": "GET /api/usage",
+        "capabilities": "GET /api/capabilities"
+      },
+      "i18n": ["en", "ja"],
+      "engines": {
+        "node": ">=22.19.0"
+      }
+    }
   }
 }
