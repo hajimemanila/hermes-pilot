@@ -54,12 +54,12 @@ export const DEMO_BUILTIN = [
     en: {
       label: '📸 Annotate Shot',
       text:
-        'Deploy the latest build, take a 390x844 screenshot into review/shots/, and file a blocked [review] mode=annotation task using the annotation skill so I can redline it.',
+        "Reflect the latest changes, capture a screenshot at the target repository's declared screen size (or mobile width if unspecified) into review/shots/, and file a blocked [review] mode=annotation task using the annotation skill so I can redline it.",
     },
     ja: {
       label: '📸 スクショ注釈起票',
       text:
-        '最新ビルドを反映して 390x844 の実機スクショを review/shots/ に撮り、annotation スキルで赤入れ用の blocked [review] タスクを起票して。',
+        '最新の変更を反映し、対象リポジトリの規定サイズ（未指定ならモバイル幅）でスクショを review/shots/ に撮り、annotation スキルで赤入れ用の blocked [review] タスクを起票して。',
     },
   },
   {
@@ -128,8 +128,14 @@ export const DEMO_BUILTIN = [
   },
   {
     id: 'test',
-    en: { label: 'Run Verify', text: 'Run npm run verify (or the project test suite) and fix any failing tests.' },
-    ja: { label: 'テスト・検証', text: 'npm run verify（または関連テスト）を実行し、失敗があれば修正して。' },
+    en: {
+      label: 'Run Verify',
+      text: "Run the target repository's declared verification command (its profile memory, AGENTS.md, or test suite) and fix any failing checks.",
+    },
+    ja: {
+      label: 'テスト・検証',
+      text: '対象リポジトリの検証コマンド（プロファイルメモリ・AGENTS.md・テストスイート等）を実行し、失敗があれば修正して。',
+    },
   },
   {
     id: 'review',

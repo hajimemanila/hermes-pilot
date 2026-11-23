@@ -752,7 +752,7 @@ function NewAnnotationSheet({ onCreated, onClose, notify, initialTarget = '' }) 
         if (!alive) return
         setTargets(list)
         const hit = findTarget(list, initialTarget)
-        // 既定は指定リポジトリまたは hermes-mobile-pwa（サーバ側で先頭に並ぶ）
+        // 既定は指定リポジトリまたは先頭候補（サーバ側で先頭に並ぶ）
         setTarget((prev) => prev || hit?.path || list[0]?.path || '')
       })
       .catch(() => {

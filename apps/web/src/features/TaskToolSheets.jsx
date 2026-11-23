@@ -22,29 +22,9 @@ import {
   sweepCounts,
 } from '../lib/coherenceSweep.js'
 import { buildSeedPayload } from '../lib/specSeed.js'
+import { BRAINSTORM_ANGLES, buildBrainstormChatPrompt, buildBrainstormItems } from '../lib/brainstorm.js'
 import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
 import { HM_STORAGE } from '../contracts/storage.js'
-
-const ANGLES = [
-  { id: 'feature', key: 'brainstorm.angleFeature' },
-  { id: 'ux', key: 'brainstorm.angleUx' },
-  { id: 'edge', key: 'brainstorm.angleEdge' },
-]
-
-function buildBrainstormItems(seed, angles, t) {
-  const topic = String(seed ?? '').trim()
-  const items = []
-  if (angles.includes('feature')) {
-    items.push(t('brainstorm.tpl.feature1', { topic }), t('brainstorm.tpl.feature2'))
-  }
-  if (angles.includes('ux')) {
-    items.push(t('brainstorm.tpl.ux1'), t('brainstorm.tpl.ux2'))
-  }
-  if (angles.includes('edge')) {
-    items.push(t('brainstorm.tpl.edge1'), t('brainstorm.tpl.edge2'))
-  }
-  return items.map((text, idx) => ({ id: `bs_${Date.now()}_${idx}`, text, done: false }))
-}
 
 export function BrainstormSheet({ initialSeed = '', board = '', repo = null, onClose, notify }) {
   const { t } = useI18n()
@@ -94,8 +74,7 @@ export function BrainstormSheet({ initialSeed = '', board = '', repo = null, onC
   }
 
   const sendToChat = () => {
-    const lines = items.map((c) => `- [ ] ${c.text}`).join('\n')
-    const prompt = [seed.trim(), lines].filter(Boolean).join('\n\n')
+    const prompt = buildBrainstormChatPrompt({ seed, angles, items, t })
     window.dispatchEvent(
       new CustomEvent(HM_EVENTS.DISCUSS_PIPELINE, {
         detail: { prompt, board: board || undefined, repoPath: repo || undefined },
@@ -118,7 +97,7 @@ export function BrainstormSheet({ initialSeed = '', board = '', repo = null, onC
         {t('brainstorm.angles')}
       </div>
       <div className="chips" style={{ padding: 0, flexWrap: 'wrap' }}>
-        {ANGLES.map((a) => (
+        {BRAINSTORM_ANGLES.map((a) => (
           <button
             key={a.id}
             type="button"

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { findHardcodedVerification } from '../src/contracts/verify.js'
 import {
   listSnippets,
   allSnippets,
@@ -175,5 +176,15 @@ test('保存ストア: 壊れた JSON・存在しないファイルでも空の�
     assert.deepEqual(readSnippetStore(path.join(dir, 'missing.json')), { version: 2, overrides: {}, custom: [] })
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('公開プラグイン汎用性: 全組み込みスニペット（ja/en）に固有検証コマンドや特定リポジトリ名を含めない', () => {
+  for (const lang of ['en', 'ja']) {
+    for (const s of listSnippets([], lang)) {
+      const check = findHardcodedVerification(s.text)
+      assert.equal(check.ok, true, `${lang} snippet ${s.id} has hardcoded verification: ${check.hits.join(', ')}`)
+      assert.doesNotMatch(s.text, /\b(hermes-mobile-pwa|Dopamine|Serotonin)\b/i, `${lang} snippet ${s.id}`)
+    }
   }
 })

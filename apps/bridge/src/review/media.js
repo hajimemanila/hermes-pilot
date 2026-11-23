@@ -184,7 +184,7 @@ export function createReviewMedia(ctx = {}) {
     if (!list.length) return null
     const want = raw ? path.resolve(String(raw).replace(/^~/, os.homedir())) : null
     if (want) return list.find((x) => x.path === want) || null
-    return list.find((x) => x.id === 'hermes-mobile-pwa') || list[0]
+    return list[0]
   }
 
   /**
