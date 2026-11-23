@@ -111,23 +111,53 @@ async function waitFor(predicate, timeoutMs, what) {
 }
 
 let bridge = null
-function stopBridge() {
+let bridgePort = 0
+function portClosed(ms) {
+  const deadline = Date.now() + ms
+  return new Promise((resolve) => {
+    const retry = () => {
+      if (Date.now() > deadline) resolve(false)
+      else setTimeout(attempt, 150)
+    }
+    const attempt = () => {
+      const sock = net.connect({ port: bridgePort, host: '127.0.0.1' })
+      sock.setTimeout(400)
+      sock.once('connect', () => { sock.destroy(); retry() })
+      sock.once('error', () => { sock.destroy(); resolve(true) })
+      sock.once('timeout', () => { sock.destroy(); retry() })
+    }
+    attempt()
+  })
+}
+async function stopBridge() {
   if (!bridge) return
-  if (bridge.exitCode === null && !bridge.killed) {
-    try { process.kill(-bridge.pid, 'SIGTERM') } catch { try { bridge.kill('SIGTERM') } catch { /* gone */ } }
+  const pid = bridge.pid
+  try { process.kill(-pid, 'SIGTERM') } catch { try { bridge.kill('SIGTERM') } catch { /* already gone */ } }
+  if (!(await portClosed(4000))) {
+    try { process.kill(-pid, 'SIGKILL') } catch { /* already gone */ }
+    if (!(await portClosed(2000))) log(`warning — port ${bridgePort} still listening after SIGKILL`)
   }
   bridge = null
 }
+function cleanupSync() {
+  if (!bridge) return
+  try { process.kill(-bridge.pid, 'SIGKILL') } catch { /* already gone */ }
+  bridge = null
+}
 function cleanup() {
-  stopBridge()
+  cleanupSync()
   if (!KEEP) {
     try { fs.rmSync(base, { recursive: true, force: true }) } catch { /* best effort */ }
   } else {
     log(`kept ${base}`)
   }
 }
-process.on('exit', () => { if (KEEP) log(`kept ${base}`) })
+process.on('exit', () => {
+  cleanupSync()   // a fail() before stopBridge() would otherwise leave the bridge running
+  if (KEEP) log(`kept ${base}`)
+})
 process.on('SIGINT', () => { cleanup(); process.exit(130) })
+process.on('SIGTERM', () => { cleanup(); process.exit(143) })
 
 const started = Date.now()
 const step = (label) => log(`${label} (${((Date.now() - started) / 1000).toFixed(1)}s)`)
@@ -192,12 +222,12 @@ for (const name of SKILLS) {
 step('init + skills')
 
 // 5. bridge up, auth boundary holds
-const port = await freePort()
-bridge = spawn('node', ['bin/hermes-pilot.mjs', 'start', '--port', String(port), '--host', '127.0.0.1'], {
+bridgePort = await freePort()
+bridge = spawn('node', ['bin/hermes-pilot.mjs', 'start', '--port', String(bridgePort), '--host', '127.0.0.1'], {
   cwd: pluginDir, env, detached: true, stdio: 'ignore',
 })
 bridge.unref()   // detached + ignored stdio, but the handle still holds the event loop open until unref()
-const baseUrl = `http://127.0.0.1:${port}`
+const baseUrl = `http://127.0.0.1:${bridgePort}`
 const token = fs.readFileSync(tokenPath, 'utf8').trim()
 try {
   await waitFor(async () => {
@@ -213,7 +243,7 @@ const anonymous = await fetch(`${baseUrl}/api/capabilities`)
 if (anonymous.status !== 401) fail(`/api/capabilities without the token returned ${anonymous.status}, expected 401`)
 step('bridge + auth')
 
-stopBridge()
+await stopBridge()
 if (!KEEP) {
   try { fs.rmSync(base, { recursive: true, force: true }) } catch { /* best effort */ }
 }
