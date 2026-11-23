@@ -1,4 +1,4 @@
 name: hermes-pilot
 version: 0.2.4
-description: "Hermes Pilot — drive an autonomous Hermes Agent from your phone or tablet. Ships a Hermes dashboard tab (pairing QR, bridge status, scan directories, service control) and the PWA bridge it talks to."
+description: "Hermes Pilot — drive an autonomous Hermes Agent from your phone or tablet: review sheets and annotated screenshots, kanban batches, per-profile chat, a terminal, memos and usage, plus a Hermes dashboard tab (pairing QR, bridge status, scan directories, service control) and the PWA bridge it talks to."
 requires_hermes: ">=0.23.0"
