@@ -15,9 +15,9 @@
 | :--- | :--- | :--- | :--- |
 | 1 | **P0** | 修正済 `fc00590` | `hermes plugins install` が `plugin.json` の manifest 検証で失敗し、**カタログ掲載済みの版すら入らない** |
 | 2 | P1 | 修正済 `4b118b1` / `d598be6` | README の install 手順が CLI 仕様と不一致（`--ref` にタグ、owner/repo は `--force` 必須）、`verify` が install 経路を検査していない |
-| 3 | P1 | **未修正** | 遅延チャンクが空モジュールで返ると `TermPane` 参照で TypeError（自動復旧しない） |
-| 4 | P2 | **未修正** | メモの既定表示が 2 列で、390px でも 1 列に落ちない（178px カード・4 行クランプ・タグ非表示） |
-| 5 | P3 | **未修正** | レビュー履歴の時刻表記が上下で不統一（`03:07 PM` と `19h ago`） |
+| 3 | P1 | 修正済 `13e0632` | 遅延チャンクが空モジュールで返ると `TermPane` 参照で TypeError（自動復旧しない） |
+| 4 | P2 | 修正済 `13e0632` | メモの既定表示が 2 列で、390px でも 1 列に落ちない（178px カード・4 行クランプ・タグ非表示） |
+| 5 | P3 | 修正済 `13e0632` | レビュー作業フィードの時刻が絶対表記で、下の Done リスト（相対時刻）と不揃い |
 
 確認して**問題が無かった**もの: i18n 辞書の ja/en キー一致（各 1230 件・差分 0）、EN 値に含まれる CJK は
 `settings.languageJa`（=「日本語」）の 1 件のみ、6 タブ + 言語切替を通してコンソールエラー 0 件、
@@ -49,7 +49,7 @@
 - `scripts/check-cold-install.mjs` を新設し `npm run verify` の末尾に追加（使い捨て `HERMES_HOME`、
   `hermes` CLI が無い環境では skip、所要 30 秒）。上記 #1 と同種の退行を CI で塞ぐ。
 
-### #3 P1 — 遅延チャンクの空モジュールで TypeError（未修正）
+### #3 P1 — 遅延チャンクの空モジュールで TypeError（修正済）
 
 - 証拠: `~/.hermes/plugin-data/hermes-pilot/client-errors.log`（13 行）に 2 件。
   `Cannot read properties of undefined (reading 'TermPane')` — `at Lazy / at Suspense`、`tab=term`、
@@ -58,24 +58,27 @@
   `retryImport`（`lib/lazyRetry.js`）は「Failed to fetch dynamically imported module」等の**メッセージ一致**でしか
   chunk error を判定しないため、チャンクが空応答で成功扱いになると `m` が undefined のまま factory が TypeError を投げ、
   自動復旧（再読込 1 回）の対象外になる。
-- 改善案: factory で module 形状を検証し、`!m || typeof m !== 'object' || !m.TermPane` を chunk error として
-  `retryImport` 側へ渡す（判定をメッセージ文字列から「export が無い」にも広げる）。
+- 修正: `retryImport` に `expect`（解決したモジュールの検証）を足し、満たさない場合は
+  `name = 'ChunkLoadError'` の例外にして再試行と単発読み直しの対象に寄せた。`App.jsx` は
+  `expect: (m) => Boolean(m && m.TermPane)` を渡す。回帰テストは `apps/web/test/lazyRetry.test.js` に 3 件追加。
 
-### #4 P2 — メモ既定 2 列が 390px でも効く（未修正）
+### #4 P2 — メモ既定 2 列が 390px でも効く（修正済）
 
 - 既定は `DEFAULT_MEMOS_VIEW = 'two'`（`apps/web/src/lib/memoView.js`）。CSS は
   `styles/memos.css:377` の `.memos-grid.view-two { grid-template-columns: repeat(2, minmax(0, 1fr)) }` に
   画面幅の条件が無い。
 - 390×844 実測: `gridTemplateColumns: 178px 178px`、カード高 220px 固定、本文 `-webkit-line-clamp: 4`、
   出典行とタグは非表示。EN では "Brainst…" / "Spec S…" とボタンも切れる。
-- 改善案: 幅 `<=430px` では 1 列（またはリスト）に落とす媒体条件を 1 箇所足す。2 列は Q2=A/Q4=A の決定なので、
-  決定自体を覆すのではなく**幅の条件だけ**を足す形が最小。
+- 修正: `styles/memos.css` に `@media (max-width: 430px)` を 1 箇所足し、1 列・高さ自動・clamp 5・
+  出典とタグ表示へ戻した（決定 Q2=A/Q4=A は 431px 以上でそのまま）。
+- 修正後の実測（390×844・再ビルド後）: `gridTemplateColumns: 366px`（1 列）/ カード高 231・131（固定 220 でない）/
+  `.memo-tags` は `flex` で表示。
 
-### #5 P3 — レビュー履歴の時刻表記が不統一（未修正）
+### #5 P3 — レビュー作業フィードの時刻表記（修正済）
 
-- 画面上部のフィードは絶対時刻（`03:07 PM`）、下の Done リストは相対時刻（`Done · 19h ago`）。
-  同じ「履歴」が 2 つの書式で並ぶ。複数日をまたぐと上部の時刻だけでは日付が分からない。
-- 改善案: 上部を「今日なら時刻 / それ以外は相対」に寄せる（`lib/format.js` の既存ヘルパで足りる）。
+- 上部の `.ak-feed`（`/api/review/feed` の作業フィード）は絶対時刻（`03:07 PM`）、下の Done リストは
+  相対時刻（`Done · 19h ago`）。フィードには前日以前のイベントも残るため、時刻だけではいつの話か分からない。
+- 修正: フィードの時刻を `relTime()` に統一。修正後の実測: `20 時間前 / 19 時間前 / 19 時間前`（Done リストと同書式）。
 
 ---
 
