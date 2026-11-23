@@ -16,6 +16,7 @@ import { ArchitectJobBar } from '../components/ArchitectJobBar.jsx'
 import { countRunningArchitect, jobPollMs, pickActiveArchitectJob, pickSpecBanner } from '../lib/specSeed.js'
 import { LiveSheet } from './LiveSheet.jsx'
 import { InboxSheet } from './InboxSheet.jsx'
+import { BoardPickerSheet } from './tasks/BoardPickerSheet.jsx'
 import { CloseActions } from '../components/CloseActions.jsx'
 import { pendingCount } from '../lib/reviewView.js'
 import { fmtCost, sep } from '../lib/format.js'
@@ -1280,27 +1281,15 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
       </button>
 
       {boardSheetOpen && (
-        <Sheet title={t('tasks.board')} onClose={() => setBoardSheetOpen(false)}>
-          <div className="pick-list">
-            {boards.map((b) => (
-              <button
-                key={b.slug}
-                className={`pick-item${board === b.slug ? ' on' : ''}`}
-                onClick={() => {
-                  setBoard(b.slug)
-                  setBoardSheetOpen(false)
-                }}
-              >
-                <span aria-hidden="true">{b.icon}</span>
-                <span className="pick-main">
-                  <span className="pick-title">{b.name}</span>
-                  <span className="pick-sub">{boardMeta(b)}</span>
-                </span>
-                <span className="pick-meta">{board === b.slug ? '✓' : ''}</span>
-              </button>
-            ))}
-          </div>
-        </Sheet>
+        <BoardPickerSheet
+          boards={boards}
+          board={board}
+          boardMeta={boardMeta}
+          onSelect={setBoard}
+          onRefreshBoards={() => loadBoards({ silent: true })}
+          onClose={() => setBoardSheetOpen(false)}
+          notify={notify}
+        />
       )}
 
       {seedOpen ? (

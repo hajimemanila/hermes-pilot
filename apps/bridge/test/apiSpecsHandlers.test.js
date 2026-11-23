@@ -156,6 +156,7 @@ test('handleRepos の全ルートが正常系・異常系とも未定義参照�
   const h = makeHarness()
 
   assert.equal((await invoke(h.api.handleRepos, 'GET', '/api/repos')).status, 200)
+  assert.equal((await invoke(h.api.handleRepos, 'GET', '/api/repos?fresh=1')).status, 200)
   assert.equal((await invoke(h.api.handleRepos, 'POST', '/api/repos', { path: '/tmp/demo' })).status, 201)
   assert.equal((await invoke(h.api.handleRepos, 'POST', '/api/repos', { scanDirs: ['/tmp'] })).status, 201)
   assert.equal((await invoke(h.api.handleRepos, 'POST', '/api/repos', {})).status, 400)

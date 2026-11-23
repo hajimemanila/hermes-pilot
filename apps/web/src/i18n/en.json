@@ -739,6 +739,8 @@
   "tasks.boardBlocked": "blocked {n}",
   "tasks.boardArchived": "archived",
   "tasks.boardCount": "{n} boards",
+  "tasks.unboardedRepos": "Repositories without a board",
+  "tasks.createBoardAction": "Create board",
   "tasks.tasks": "Tasks",
   "tasks.newTask": "+ New",
   "tasks.empty": "No tasks",

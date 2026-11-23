@@ -739,6 +739,8 @@
   "tasks.boardBlocked": "停止 {n}",
   "tasks.boardArchived": "保管",
   "tasks.boardCount": "{n} ボード",
+  "tasks.unboardedRepos": "ボード未作成のリポジトリ",
+  "tasks.createBoardAction": "ボード作成",
   "tasks.tasks": "タスク",
   "tasks.newTask": "＋ 起票",
   "tasks.empty": "タスクがありません",

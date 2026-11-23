@@ -41,7 +41,7 @@ export function createSpecsApi(ctx = {}) {
   async function handleRepos(req, res, url, seg) {
     const [, a, b, c, d, e] = seg
     if (!b && req.method === 'GET') {
-      return sendJson(res, 200, { repos: repos.list(), scanDirs: repos.scanDirs() })
+      return sendJson(res, 200, { repos: repos.list({ force: url.searchParams.get('fresh') === '1' }), scanDirs: repos.scanDirs() })
     }
     if (!b && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {

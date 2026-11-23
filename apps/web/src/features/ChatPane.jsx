@@ -198,16 +198,16 @@ export function ChatPane({
     markAllSessionsRead,
   } = useChatSessions({ notify, isCurrentSession, listRef, stickRef, active, activeDrawerSid })
 
-  /** リポジトリ一覧（未取得なら /api/repos から取ってキャッシュ）。 */
-  const ensureRepos = useCallback(async () => {
-    if (reposRef.current.length) return reposRef.current
+  /** リポジトリ一覧（`force` で最新スキャン、通常はキャッシュ）。 */
+  const ensureRepos = useCallback(async ({ force = false } = {}) => {
+    if (!force && reposRef.current.length) return reposRef.current
     try {
-      const d = await api('/api/repos')
+      const d = await api(force ? '/api/repos?fresh=1' : '/api/repos')
       const list = Array.isArray(d?.repos) ? d.repos : []
       setRepos(list)
       return list
     } catch {
-      return []
+      return force ? reposRef.current : []
     }
   }, [])
 
@@ -1474,8 +1474,8 @@ export function ChatPane({
     setProfileSheet(true)
     setRepoStep(null)
     setRepoPick(profile || DEFAULT_PROFILE)
-    // リポジトリ一覧は開いたときに取りに行く（ボードの件数は変わらないので 1 回で足りる）
-    ensureRepos()
+    // 開くたびに最新リポ一覧を再取得（裏で git init したリポも即反映）
+    ensureRepos({ force: true })
   }, [profile, ensureRepos])
 
   /**
