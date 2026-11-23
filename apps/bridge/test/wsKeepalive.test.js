@@ -86,6 +86,42 @@ test('openTerm: {t:"ping"} は PTY へ書かず {t:"pong"} を返す', () => {
   assert.equal(killed, 1)
 })
 
+test('openTerm: WS が閉じたら destroy() で master fd を即返す（GC 任せにしない）', () => {
+  let destroyed = 0
+  let killed = 0
+  const handlers = createWsHandlers({
+    cfg: { hermesBase: 'http://127.0.0.1:8642' },
+    hermes: { wsUrl: async () => '' },
+    auth: { audit: () => {} },
+    pty: {
+      spawn: () => ({
+        pid: 4343,
+        onData: () => {},
+        onExit: () => {},
+        write: () => {},
+        resize: () => {},
+        destroy: () => {
+          destroyed += 1
+        },
+        kill: () => {
+          killed += 1
+        },
+      }),
+    },
+    listProfiles: async () => [],
+    checkFrame: (t) => ({ ok: true, text: t }),
+    rejectionFrame: () => '',
+    ptyGate: openGate(),
+  })
+
+  const ws = mockSocket()
+  handlers.openTerm(ws)
+  ws.close()
+  // kill() だけでは node-pty の `_close()` が fd を閉じない（PTY 枯渇の一因）。destroy を優先する。
+  assert.equal(destroyed, 1)
+  assert.equal(killed, 0)
+})
+
 test('proxyChat: bridge.ping に上流へ流さず JSON-RPC ok で即応する', async () => {
   const audits = []
   let rejectUpstream = null

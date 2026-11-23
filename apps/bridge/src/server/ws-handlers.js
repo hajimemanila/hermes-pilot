@@ -259,7 +259,19 @@ function openTerm(ws) {
     stopClientKa()
     auth.audit({ kind: 'term.close', pid: proc.pid })
     try {
-      proc.kill()
+      /*
+       * `destroy()` を優先する。node-pty の `kill()` だけでは **master fd が解放されない**
+       * （`Terminal._close()` は readable を落とすだけで fd を閉じず、`_socket.destroy()` まで
+       * 待つ = GC 任せ）。溜まると `kern.tty.ptmx_max`（実測 511）に達し、以後どのセッションも
+       * PTY を作れなくなる（実測: 312 本で枯渇）。destroy は fd を即返し、SIGHUP も送る。
+       *
+       * 残る漏れ: node-pty 1.1.0 の darwin 経路は spawn ごとに **もう 1 本** ptmx fd を漏らす
+       * （`pty_posix_spawn` が低 fd 確保用に開いた `low_fds[0]` を閉じない。実測: 5 spawn で
+       * ptmx fd 10 本 → destroy 後 5 本）。上限到達は避けられないので、そこは
+       * `ptyGate` が「spawn しない・理由を返す」で受け止め、bridge 再起動で解放する。
+       */
+      if (typeof proc.destroy === 'function') proc.destroy()
+      else proc.kill()
     } catch {
       /* noop */
     }
