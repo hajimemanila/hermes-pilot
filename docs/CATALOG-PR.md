@@ -4,6 +4,14 @@
 差分の公開は **SHA bump PR**（規則 4: 旧→新の upstream 差分が再レビュー対象）で行う。
 エントリの payload は `docs/catalog/hermes-pilot.yaml` に置いてある。
 
+## 現在の状態（2026-11-23 実施済み）
+
+- 本家: `main` を `69fef2b` まで push、tag `v0.2.4`（annotated `18d45e82`）を公開済み
+- PR: https://github.com/NousResearch/hermes-agent/pull/159092
+  （branch `catalog/hermes-pilot-0.2.4` → fork `hajimemanila/hermes-agent`、1 file +6 −3）
+- payload の `sha` は `69fef2bf5cd3eb937fb8b5c8862e03d30ba0df54` を記入済み
+
+
 ## 0. 前提（外部送信なので明示指示があるときだけ）
 
 `git push` / PR 作成は外部送信。次の順で、すべて成功してから PR を出します。
@@ -45,7 +53,7 @@ $PY -I scripts/ci/catalog_entry_fields.py \
 ## 3. PR 本文に書くこと（レビュアーが最初に見る）
 
 - 差分範囲: `5c82ba62..<新SHA>`（PR 作成時に `git rev-list --count` と `git diff --stat` で実測して書く。
-  2026-11-23 時点は 105 コミット / 325 ファイル +46,699 −17,294）
+  2026-11-23 の実測は 108 コミット / 328 ファイル +46,907 −17,325）
 - **新しく増えた権限**を先に列挙する（v0.2.0 の disclosure との diff）
   - gateway 操作（drain / restart / stop / start）を 127.0.0.1:9119 経由で叩ける
   - 緊急停止が `~/.hermes/ESTOP` を CLI 経由で作る
