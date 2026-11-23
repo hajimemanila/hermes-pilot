@@ -256,11 +256,15 @@ npm のパッケージ: <https://www.npmjs.com/package/hermes-pilot>（版は固
 **B. Hermes のプラグインカタログから**
 
 ```bash
-hermes plugins install hajimemanila/hermes-pilot --ref v0.2.4   # タグ／sha で固定。--ref を省くと既定ブランチ
+hermes plugins install hermes-pilot      # カタログ登録名。レビュー済みの pin がそのまま使われる
 cd ~/.hermes/plugins/hermes-pilot
 npm ci
 node bin/hermes-pilot.mjs init
 ```
+
+GitHub から直接入れることもできますが、`--ref` は**40 桁の commit SHA** を渡してください
+（`--ref v0.2.4` のようなタグ指定は CLI が拒否します）。owner/repo 指定は未レビューの
+community source としてスキャンされるため、`--force` の確認が 1 回入ります。
 
 **C. このリポジトリを clone して**
 

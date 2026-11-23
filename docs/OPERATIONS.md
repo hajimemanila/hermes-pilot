@@ -19,11 +19,15 @@ npm i -g hermes-pilot@0.2.4 && hermes-pilot service install
 
 ```bash
 # B) Hermes のプラグインとして入れる（ダッシュボードのタブも使う場合）: 取得 → 依存 → 初期化の 3 手
-hermes plugins install hajimemanila/hermes-pilot --ref v0.2.4   # タグ／sha で固定。省略すると既定ブランチ
+hermes plugins install hermes-pilot          # カタログ登録名（レビュー済みの pin が使われる）
 cd ~/.hermes/plugins/hermes-pilot
 npm ci                              # ws と node-pty。postinstall が spawn-helper の exec bit を直す
 node bin/hermes-pilot.mjs init
 ```
+
+GitHub から直接入れる場合は `hermes plugins install hajimemanila/hermes-pilot --ref <40 桁 SHA>`。
+`--ref` にタグ（`v0.2.4` 等）は渡せません（CLI が拒否）。owner/repo 指定は未レビューの
+community source としてスキャンされ、`--force` の確認が 1 回入ります。
 
 git clone から入れる場合も 2) 以降は同じ（`git clone https://github.com/hajimemanila/hermes-pilot.git`）。
 **B のコマンドはカレントディレクトリがリポジトリ／プラグインルートである前提**（A は不要）。
@@ -605,7 +609,7 @@ conn=ready → kill → conn=closed (t=18.1s) → conn=ready (t=20.0s)   ← リ
 ### 安全策
 
 - `git` は `execFile` で引数配列渡し。`repo` / `head` は履歴の値のみ（クライアント入力を使わない）
-- `file` パラメータは**そのコミットの numstat に含まれるパスだけ**許可（`../../etc/passwd` や `--upload-pack=...` は 404）
+- `file` パラメータは**そのコミットの numstat に含まれるパスだけ**許可（`../` で上へ抜ける指定や `--upload-pack=...` は 404）
 - 履歴に無いタスクはバッジも差分も出さない（推測で埋めない）
 - 差分は**アコーディオンを開いたときだけ**取得（初回表示を待たせない）。`git show` のサマリは起動時に温める
 
@@ -626,7 +630,7 @@ conn=ready → kill → conn=closed (t=18.1s) → conn=ready (t=20.0s)   ← リ
 Discord: カードにチップ、詳細に「Discord スレッドで開く」、チャットヘッダーに # ボタン
   古いスレッド 20260101_120000_deadbeef を resume → タイトル「開発環境構築の準備」+ # ボタン表示
 API: /tasks/:id/diff → ok:true / files 2件 / total +60 −1
-     ?file=../../etc/passwd → 404
+     ?file=<上へ抜けるパス> → 404
 ```
 
 ## 横断検索と読み取り専用トランスクリプト（2026-10-23 追加 / PLAN-V3 の A）

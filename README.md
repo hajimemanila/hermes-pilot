@@ -270,10 +270,18 @@ npm's tarball extraction drops, so the terminal tab works without extra steps.
 **B. From the Hermes plugin catalog**
 
 ```bash
-hermes plugins install hajimemanila/hermes-pilot --ref v0.2.4   # pin a tag/commit; omit --ref to track the default branch
+hermes plugins install hermes-pilot      # catalog entry: the reviewed pin is used as-is
 cd ~/.hermes/plugins/hermes-pilot
 npm ci
 node bin/hermes-pilot.mjs init
+```
+
+Installing straight from GitHub instead of the catalog works too, but pass a **full 40-character
+commit SHA** (`--ref v0.2.4` is rejected — tags and branches are refused by design) and expect one
+`--force` confirmation, because an owner/repo source is scanned as an unreviewed community source:
+
+```bash
+hermes plugins install hajimemanila/hermes-pilot --ref <40-char-sha>   # not a tag, not a branch
 ```
 
 **C. From a clone of this repository**

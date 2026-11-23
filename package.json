@@ -63,8 +63,9 @@
     "audit:responsive": "node scripts/audit-responsive.mjs",
     "check:term-enter": "node scripts/check-term-enter.mjs",
     "check:coherence": "node scripts/check-coherence.mjs",
+    "check:cold-install": "node scripts/check-cold-install.mjs",
     "smoke:live": "node scripts/smoke-live.mjs",
-    "verify": "npm test && npm run check:dashboard && npm run check:pwa && npm run check:oauth && npm run build && npm run audit:responsive && npm run check:term-enter && npm run check:coherence",
+    "verify": "npm test && npm run check:dashboard && npm run check:pwa && npm run check:oauth && npm run build && npm run audit:responsive && npm run check:term-enter && npm run check:coherence && npm run check:cold-install",
     "deploy": "node scripts/deploy.mjs",
     "migrate:pilot": "node scripts/migrate-to-hermes-pilot.mjs"
   },
