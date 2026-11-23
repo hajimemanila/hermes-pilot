@@ -1309,16 +1309,12 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
         </div>
       ) : null}
 
-      {/* 作業フィード: 完了・停止を「開いた瞬間」に読めるようにする（Discord と同じ 1 行）
-          時刻は相対表記。フィードは前日以前のイベントも残るので、時刻だけ（`15:07`）だと
-          いつの話か分からず、下の Done リスト（`19h ago`）とも表記が揃わない。 */}
+      {/* 作業フィード: 相対時刻で表記し Done リストと揃える */}
       {feed.length ? (
         <div className="ak-feed" aria-live="polite">
           {feed.slice(-3).map((n, i) => (
             <div className="ak-feed-row" key={`${n.at}-${i}`}>
-              <span className="ak-feed-at">
-                {relTime(n.at)}
-              </span>
+              <span className="ak-feed-at">{relTime(n.at)}</span>
               <span className="ak-feed-text">{n.text}</span>
             </div>
           ))}
