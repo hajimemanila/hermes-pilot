@@ -3,6 +3,7 @@
  * アップグレードの可否判定と `wss` の生成は `server.js` 側に残す。
  */
 import { WebSocket } from 'ws'
+import { createPtyGate, ptyUnavailableLine } from './ptyGate.js'
 
 /** 端末側 WebSocket の半開き（VPN/回線切替）を検知して切断する keepalive。 */
 export function attachClientKeepalive(ws, { intervalMs = 25_000, timeoutMs = 60_000 } = {}) {
@@ -36,6 +37,8 @@ export function attachClientKeepalive(ws, { intervalMs = 25_000, timeoutMs = 60_
 
 export function createWsHandlers(ctx = {}) {
   const { cfg, hermes, auth, pty, listProfiles, checkFrame, rejectionFrame } = ctx
+  // PTY の枯渇を自己増殖させないための前段（`server/ptyGate.js`）。テストは差し替える。
+  const ptyGate = ctx.ptyGate ?? createPtyGate()
 
 /**
  * チャット WS を Hermes の /api/ws へ中継する（プロトコルは素通し）。
@@ -183,11 +186,23 @@ async function proxyChat(client) {
 
 /**
  * 端末（実 PTY）。Hermes 側に汎用シェルの口が無いためブリッジが PTY を持つ。
+ *
+ * `ptyGate` は spawn の前段。PTY を使い切っている（`/dev/ptmx` が ENXIO）ときは
+ * **spawn を呼ばない**: node-pty の失敗経路は master fd を解放しないので、
+ * 呼ぶたびに 1 本漏れて枯渇が悪化する（`server/ptyGate.js` の注記）。
  * @param {WebSocket} ws 端末
  */
 function openTerm(ws) {
   if (!pty) {
     ws.send(JSON.stringify({ t: 'out', d: '\r\n[bridge] node-pty failed to load\r\n' }))
+    ws.close(1011)
+    return
+  }
+  const gate = ptyGate.attempt()
+  if (!gate.ok) {
+    // 失敗しても master を漏らさない経路（spawn を呼ばない）で理由だけ返す
+    auth.audit({ kind: 'term.error', message: `blocked:${gate.reason} ${gate.code ?? ''}`.trim() })
+    ws.send(JSON.stringify({ t: 'out', d: `\r\n[bridge] ${ptyUnavailableLine(gate)}\r\n` }))
     ws.close(1011)
     return
   }
@@ -204,11 +219,13 @@ function openTerm(ws) {
     })
   } catch (err) {
     // ここで例外を投げるとプロセスごと落ちる（実測: spawn-helper の実行権限欠落）
+    ptyGate.failed(err)
     auth.audit({ kind: 'term.error', message: String(err?.message ?? err) })
-    ws.send(JSON.stringify({ t: 'out', d: `\r\n[bridge] Failed to start PTY: ${err?.message ?? err}\r\n` }))
+    ws.send(JSON.stringify({ t: 'out', d: `\r\n[bridge] ${ptyUnavailableLine({ reason: 'spawn', message: String(err?.message ?? err) })}\r\n` }))
     ws.close(1011)
     return
   }
+  ptyGate.ok()
   auth.audit({ kind: 'term.open', pid: proc.pid, shell })
   const stopClientKa = attachClientKeepalive(ws)
   proc.onData((d) => {

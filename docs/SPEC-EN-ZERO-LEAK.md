@@ -63,9 +63,10 @@
 ### 3.2 Bridge ログ・`/ws/term` エラー・Reopen・AutoStart 言語整合（D71・D73）
 
 1. **`apps/bridge/src/server.js`**:
-   - `/ws/term`（`openTerm` L1699, L1717）:
+   - `/ws/term`（`openTerm`・現行は `apps/bridge/src/server/ws-handlers.js`）:
      - `'\r\n[bridge] node-pty failed to load\r\n'`
-     - `` `\r\n[bridge] Failed to start PTY: ${err?.message ?? err}\r\n` ``
+     - PTY を起動できないときの 1 行は `apps/bridge/src/server/ptyGate.js` の `ptyUnavailableLine()`
+       （英語で `PTY unavailable (...)`。枯渇時は `pty.spawn` を呼ばずに理由だけ返す）
    - 起動・異常終了・500 エラーログ（L1543, L1757–1787）:
      - L1543: `console.error('[api] failed:', err)`
      - L1757–1759: `` `[bridge] Port ${cfg.port} is already in use. Check for leftover manual processes: ` + `lsof -nP -iTCP:${cfg.port} -sTCP:LISTEN -> hermes-pilot service restart (or launchctl kickstart -k gui/$(id -u)/ai.hermes.pilot)` ``

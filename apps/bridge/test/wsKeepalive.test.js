@@ -7,6 +7,10 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 
 import { attachClientKeepalive, createWsHandlers } from '../src/server/ws-handlers.js'
+import { createPtyGate } from '../src/server/ptyGate.js'
+
+/** PTY を作れる環境を装う門番（/dev/ptmx を実際に触らない）。 */
+const openGate = () => createPtyGate({ openImpl: () => 7, closeImpl: () => {} })
 
 function mockSocket() {
   const ee = new EventEmitter()
@@ -65,6 +69,7 @@ test('openTerm: {t:"ping"} は PTY へ書かず {t:"pong"} を返す', () => {
     listProfiles: async () => [],
     checkFrame: (t) => ({ ok: true, text: t }),
     rejectionFrame: () => '',
+    ptyGate: openGate(),
   })
 
   const ws = mockSocket()

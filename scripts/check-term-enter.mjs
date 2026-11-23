@@ -38,18 +38,44 @@ const TAB_TERM = 4
 /**
  * `WebSocket.prototype.send` を差し替えて送信フレームを記録する。
  * `{t:'in'}` は**送らない**（本番 PTY に空行を流さない）。既に差し替え済みなら何もしない。
+ *
+ * あわせて `WebSocket` を薄く包み、`/ws/term` の開閉（close コード）を控える。
+ * 端末ソケットが開いた直後に閉じる症状（bridge の PTY 起動失敗）を、
+ * 「フレームが 0 本」ではなく理由つきで報告するため。
  */
 const PATCH_WS = `(() => {
   if (window.__hmTermProbe) return 'already'
   const orig = WebSocket.prototype.send
   window.__hmSent = []
+  window.__hmTermSockets = []
   WebSocket.prototype.send = function (d) {
     try { window.__hmSent.push(String(d)) } catch (e) {}
     try { const m = JSON.parse(String(d)); if (m && m.t === 'in') return undefined } catch (e) {}
     return orig.call(this, d)
   }
+  const Orig = window.WebSocket
+  window.WebSocket = class extends Orig {
+    constructor(...args) {
+      super(...args)
+      try {
+        if (String(args[0] || '').indexOf('/ws/term') === -1) return
+        const rec = { state: 'connecting', code: null, reason: '' }
+        window.__hmTermSockets.push(rec)
+        this.addEventListener('open', () => { rec.state = 'open' })
+        this.addEventListener('error', () => { if (rec.state !== 'closed') rec.state = 'error' })
+        this.addEventListener('close', (e) => { rec.state = 'closed'; rec.code = e.code; rec.reason = e.reason })
+      } catch (e) {}
+    }
+  }
   window.__hmTermProbe = true
   return 'patched'
+})()`
+
+/** 端末の見えている行（bridge が書いたエラー行を報告に載せるため）。 */
+const READ_SCREEN = `(() => {
+  const rows = document.querySelectorAll('.term-host .xterm-rows > div')
+  const text = [...rows].map((r) => r.textContent || '').map((t) => t.trimEnd()).filter((t) => t.trim()).slice(-4).join(' / ')
+  return text.slice(0, 300)
 })()`
 
 /**
@@ -216,6 +242,20 @@ async function main() {
       15000,
     )
     if (!wsOpen) fail('ターミナルの WebSocket が開かない（resize フレームが出ない）')
+    else {
+      // bridge が PTY を起動できないと open → resize 1 本 → close(**1011**) という
+      // 「開いているように見える」失敗になる（実測: 枯渇時はまさにこれ）。コード 1011 だけを拾う
+      // （1005/1006 はタブ切替の張り直しでも出るので違反にしない）。
+      const sockets = JSON.parse(String(await cdp.eval('JSON.stringify(window.__hmTermSockets || [])', sessionId)))
+      const refused = sockets.filter((s) => s.state === 'closed' && s.code === 1011)
+      if (refused.length) {
+        const screen = String((await cdp.eval(READ_SCREEN, sessionId)) || '')
+        fail(
+          `bridge が端末 WS を閉じた（code=1011・${refused.length} 回）= PTY を起動できていない` +
+            `${screen ? ` / 端末の表示: ${screen}` : ''}`,
+        )
+      }
+    }
 
     // 2) 別タブへ行って戻る = TabHost が blur → 戻ったときにフォーカスを繋ぎ直せるか
     const awayClick = await clickTab(cdp, sessionId, TAB_TASKS)
@@ -283,7 +323,17 @@ async function main() {
     }
     if (!writes.length) {
       const shapes = frames.map((f) => (f.t ? f.t : Object.keys(f).join(','))).join(' / ')
-      fail(`Enter で何も送られていない（この回の送信フレーム: ${shapes || 'なし'}）`)
+      // 原因の切り分けに要る材料を一緒に出す（端末ソケットの生死と、画面に出ている行）
+      const sockets = JSON.parse(String(await cdp.eval('JSON.stringify(window.__hmTermSockets || [])', sessionId)))
+      const lastSocket = sockets[sockets.length - 1]
+      const socketNote = lastSocket
+        ? `端末 WS: ${lastSocket.state}${lastSocket.code != null ? ` code=${lastSocket.code}` : ''}`
+        : '端末 WS: 記録なし'
+      const screen = String(await cdp.eval(READ_SCREEN, sessionId) || '')
+      fail(
+        `Enter で何も送られていない（この回の送信フレーム: ${shapes || 'なし'} / ${socketNote}` +
+          `${screen ? ` / 端末の表示: ${screen}` : ''}）`,
+      )
     }
 
     // 4) IME 変換中の Enter（Q2=A: 確定 Enter でも実行する）

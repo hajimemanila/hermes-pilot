@@ -131,7 +131,10 @@ test('起動・PTY・500 のログは標準英語（日本語の直書きが無�
   assert.match(source, /\[bridge\] Server error:/)
   assert.match(source, /\[api\] failed:/)
   assert.match(source, /\[bridge\] node-pty failed to load/)
-  assert.match(source, /\[bridge\] Failed to start PTY: \$\{err\?\.message \?\? err\}/)
+  // PTY を起動できないときの端末向け 1 行（`server/ptyGate.js` の英語文面）。
+  // 枯渇時は spawn を呼ばずに理由だけ返す（呼ぶと master fd が漏れる）。
+  assert.match(source, /PTY unavailable/)
+  assert.match(source, /ptyGate\.attempt\(\)/)
   assert.match(source, /\[bridge\] Upstream: \$\{cfg\.hermesBase\}/)
   assert.match(source, /\[bridge\] Hermes session token: resolved/)
   assert.match(source, /\[bridge\] Failed to resolve session token \(is the dashboard stopped\?\)/)
