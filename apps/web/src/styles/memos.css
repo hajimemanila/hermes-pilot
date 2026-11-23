@@ -424,6 +424,52 @@ button.memo-check-row {
   padding: 4px 6px;
 }
 
+/*
+ * 二列は 431px 以上でだけ効かせる。既定の表示は 'two'（`lib/memoView.js`）なので、幅の条件が
+ * 無いと 390px 級の端末でも 178px 幅・高さ 220px 固定・本文 4 行クランプ・出典とタグ非表示になり、
+ * 読み物として成立しない（実測 2026-11-23 / 390x844 で `gridTemplateColumns: 178px 178px`）。
+ * 狭い画面では 1 列に落とし、通常のカード見た目へ戻す。
+ */
+@media (max-width: 430px) {
+  .memos-grid.view-two {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .view-two .memo-card {
+    height: auto;
+    overflow: visible;
+    gap: 6px;
+  }
+
+  .view-two .memo-card-body {
+    -webkit-line-clamp: 5;
+  }
+
+  .view-two .memo-source-meta {
+    display: block;
+  }
+
+  .view-two .memo-tags {
+    display: flex;
+  }
+
+  .view-two .memo-card-actions {
+    flex-wrap: wrap;
+    padding-top: 4px;
+  }
+
+  .view-two .memo-check-row {
+    padding: 3px 0;
+    font-size: 12.5px;
+    line-height: 1.4;
+  }
+
+  .view-two .report-card-btn {
+    font-size: 12px;
+    padding: 6px 10px;
+  }
+}
+
 /* リスト表示: カードを 1 行に畳む（SPEC §2.2） */
 .memos-grid.view-list {
   grid-template-columns: minmax(0, 1fr);

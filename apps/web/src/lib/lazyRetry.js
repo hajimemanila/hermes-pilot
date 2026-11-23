@@ -84,19 +84,37 @@ function safeSessionStorage() {
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /**
+ * 動的 import が「成功」したのに期待の export が無い状態を表す例外（名前は ChunkLoadError）。
+ *
+ * チャンクが 404 ではなく**空の 200** で返る（CDN / Service Worker / 再デプロイ直後のハッシュ差し替え）と、
+ * `import()` は `undefined` を解決する。呼び出し側は `m.TermPane` を触って
+ * `TypeError: Cannot read properties of undefined (reading 'TermPane')` になるが、
+ * 文言がチャンク喪失のパターンに一致しないため自動復旧に乗らない（実測 2026-11-23）。
+ * `name` を ChunkLoadError にしておくと `isChunkLoadError` が拾い、再試行と読み直しの対象になる。
+ */
+function emptyModuleError() {
+  const error = new Error('dynamically imported module resolved without the expected export')
+  error.name = 'ChunkLoadError'
+  return error
+}
+
+/**
  * 動的 import を、チャンク読み込み失敗のときに限って刺し直す。
  *
  * @param {() => Promise<any>} importer `() => import('./features/TermPane.jsx')`
- * @param {{ retries?: number, delayMs?: number, sleep?: (ms: number) => Promise<void>, isChunkError?: (e: unknown) => boolean }} [options]
+ * @param {{ retries?: number, delayMs?: number, sleep?: (ms: number) => Promise<void>, isChunkError?: (e: unknown) => boolean, expect?: (mod: any) => boolean }} [options]
+ *   `expect` を渡すと、解決したモジュールがその条件を満たさないときもチャンク喪失として刺し直す
  * @returns {Promise<any>} 読み込めたモジュール（最後まで失敗したら最後の例外を投げる）
  */
 export function retryImport(
   importer,
-  { retries = 2, delayMs = 250, sleep = defaultSleep, isChunkError = isChunkLoadError } = {},
+  { retries = 2, delayMs = 250, sleep = defaultSleep, isChunkError = isChunkLoadError, expect } = {},
 ) {
   const attempt = async (n) => {
     try {
-      return await importer()
+      const mod = await importer()
+      if (expect && !expect(mod)) throw emptyModuleError()
+      return mod
     } catch (error) {
       // 実装バグ（チャンク以外）は何度刺しても直らないので即座に投げる
       if (n >= retries || !isChunkError(error)) throw error

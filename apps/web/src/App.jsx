@@ -40,9 +40,13 @@ import { createSyncScheduler } from './lib/syncScheduler.js'
  * ターミナルは初回にしか読み込まない（起動を速くするため）。ただしスリープ復帰や
  * 再デプロイの後は古いハッシュの `TermPane-<hash>.js` を取りに行って失敗するので、
  * `retryImport` で数回刺し直してから諦める（`lib/lazyRetry.js`）。
+ * `expect` は「空の 200 で返って undefined を解決した」場合もチャンク喪失として扱うため
+ * （実測: `Cannot read properties of undefined (reading 'TermPane')` が自動復旧に乗らなかった）。
  */
 const TermPane = lazy(() =>
-  retryImport(() => import('./features/TermPane.jsx')).then((m) => ({ default: m.TermPane })),
+  retryImport(() => import('./features/TermPane.jsx'), { expect: (m) => Boolean(m && m.TermPane) }).then(
+    (m) => ({ default: m.TermPane }),
+  ),
 )
 
 const TABS = [

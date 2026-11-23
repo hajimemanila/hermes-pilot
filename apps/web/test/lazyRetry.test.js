@@ -136,6 +136,40 @@ test('retryImport: 直らないチャンク喪失はリトライ上限で投げ�
   assert.equal(calls, 3) // 初回 + 2 回のリトライ
 })
 
+test('retryImport: 空モジュール（expect 不一致）はチャンク喪失として刺し直す', async () => {
+  const sleeps = []
+  let calls = 0
+  const module = { TermPane: () => null }
+  const result = await retryImport(
+    async () => {
+      calls += 1
+      // 1 回目は「空の 200」で undefined が解決した状態を作る
+      if (calls === 1) return undefined
+      return module
+    },
+    { expect: (m) => Boolean(m && m.TermPane), sleep: async (ms) => sleeps.push(ms) },
+  )
+  assert.equal(result, module)
+  assert.equal(calls, 2)
+  assert.deepEqual(sleeps, [250])
+})
+
+test('retryImport: 空モジュールのままなら ChunkLoadError 名で投げる（読み直し経路へ渡す）', async () => {
+  await assert.rejects(
+    retryImport(async () => ({}), { expect: (m) => Boolean(m && m.TermPane), retries: 1, sleep: async () => {} }),
+    (err) => {
+      assert.equal(err.name, 'ChunkLoadError')
+      assert.equal(isChunkLoadError(err), true)
+      return true
+    },
+  )
+})
+
+test('retryImport: expect を渡さなければ従来どおり素通しする', async () => {
+  const module = {}
+  assert.equal(await retryImport(async () => module), module)
+})
+
 test('retryImport: チャンク以外の例外はリトライしない', async () => {
   let calls = 0
   const error = new TypeError('notify is not a function')
@@ -228,7 +262,7 @@ test('reloadForChunkError: sessionStorage が無い／壊れていても落ち�
 
 test('App.jsx: TermPane の動的 import は retryImport を通す', () => {
   assert.match(appSrc, /import \{[^}]*retryImport[^}]*\} from '\.\/lib\/lazyRetry\.js'/)
-  assert.match(appSrc, /const TermPane = lazy\(\(\) =>\s*retryImport\(\(\) => import\('\.\/features\/TermPane\.jsx'\)\)/)
+  assert.match(appSrc, /const TermPane = lazy\(\(\) =>\s*retryImport\(\(\) => import\('\.\/features\/TermPane\.jsx'\),\s*\{\s*expect:/)
 })
 
 test('App.jsx: vite:preloadError を監視して単発リロードに寄せる', () => {
