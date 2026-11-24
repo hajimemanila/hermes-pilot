@@ -10,7 +10,13 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 
-import { createPtyGate, ptyUnavailableLine, PTMX_PATH } from '../src/server/ptyGate.js'
+import {
+  createPtyGate,
+  ptyUnavailableLine,
+  PTMX_PATH,
+  reclaimDarwinSpawnLeak,
+  reserveDarwinSpawnSlots,
+} from '../src/server/ptyGate.js'
 import { createWsHandlers } from '../src/server/ws-handlers.js'
 
 /** 開けない /dev/ptmx。 */
@@ -144,4 +150,24 @@ test('ptyUnavailableLine: 枯渇と spawn 失敗で次の一手が変わる（�
   // 実行時出力に CJK を混ぜない（SPEC-EN-ZERO-LEAK D71）
   const CJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff01-\uff60]/
   assert.equal(CJK.test(exhausted + spawnFailed), false)
+})
+
+test('reserveDarwinSpawnSlots / reclaimDarwinSpawnLeak: darwin のみ 3 スロットを観測し master 一致時に low_fds[0] と slave を閉じる', () => {
+  assert.equal(reserveDarwinSpawnSlots({ platform: 'linux' }), null)
+  const opened = [13, 17, 18]
+  const closed = []
+  const slots = reserveDarwinSpawnSlots({
+    platform: 'darwin',
+    openImpl: () => opened.shift(),
+    closeImpl: (fd) => closed.push(fd),
+  })
+  assert.deepEqual(slots, [13, 17, 18])
+  assert.deepEqual(closed, [18, 17, 13])
+
+  const reclaimed = []
+  assert.deepEqual(reclaimDarwinSpawnLeak(slots, 99, { closeImpl: (fd) => reclaimed.push(fd) }), { reclaimed: 0 })
+  assert.deepEqual(reclaimed, [])
+
+  assert.deepEqual(reclaimDarwinSpawnLeak(slots, 17, { closeImpl: (fd) => reclaimed.push(fd) }), { reclaimed: 2 })
+  assert.deepEqual(reclaimed, [13, 18])
 })

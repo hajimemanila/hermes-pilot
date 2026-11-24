@@ -13,7 +13,7 @@ export const CLOSED_STATUSES = new Set(['done', 'archived'])
  * バックティック・角括弧・`Mode:` 前置・大小文字をすべて許容する。
  */
 export const EXECUTION_MODE_RE =
-  /^[-*]?\s*\*\*\s*(?:Execution\s*Mode|実行モード)\s*\*\*\s*[:：]\s*[`\s]*\[?\s*(?:Mode\s*[:：]\s*)?(Zero-Stop|Fast-Track\s*Review|Visual\s*Gate)/im
+  /^[-*]?\s*\*\*\s*(?:Execution\s*Mode|実行モード)\s*\*\*\s*[:：]\s*[`\s]*\[?\s*(?:Mode\s*[:：]\s*)?(Zero[\s-]*Stop|Fast[\s-]*Track[\s-]*Review|Visual[\s-]*Gate)/im
 
 /**
  * 実行モード表記を正規化する（未知の値・未宣言は `null`）。
@@ -156,6 +156,7 @@ export function buildExecutionContract(mode, { recommendedRole = null } = {}) {
     ...(key ? [`Mode: ${key}`, ''] : []),
     'This task was filed by the Hermes Pilot Spec Launchpad. The contract below overrides any habit of asking first.',
     ...rules,
+    '- Do not file follow-up or spin-off kanban tasks (`hermes kanban create`) to defer failing verification gates; fix the issue within this task or block with `needs_input` (D55).',
     ...delegation,
     '- Finish with a short report: what changed, the verification command and its exit code, and what is still unverified.',
   ].join('\n')

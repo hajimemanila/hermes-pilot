@@ -3,7 +3,7 @@
  * アップグレードの可否判定と `wss` の生成は `server.js` 側に残す。
  */
 import { WebSocket } from 'ws'
-import { createPtyGate, ptyUnavailableLine } from './ptyGate.js'
+import { createPtyGate, ptyUnavailableLine, reclaimDarwinSpawnLeak, reserveDarwinSpawnSlots } from './ptyGate.js'
 
 /** 端末側 WebSocket の半開き（VPN/回線切替）を検知して切断する keepalive。 */
 export function attachClientKeepalive(ws, { intervalMs = 25_000, timeoutMs = 60_000 } = {}) {
@@ -207,6 +207,7 @@ function openTerm(ws) {
     return
   }
   const shell = process.env.SHELL || '/bin/zsh'
+  const slots = reserveDarwinSpawnSlots()
   /** @type {any} */
   let proc
   try {
@@ -225,6 +226,7 @@ function openTerm(ws) {
     ws.close(1011)
     return
   }
+  reclaimDarwinSpawnLeak(slots, proc?._fd)
   ptyGate.ok()
   auth.audit({ kind: 'term.open', pid: proc.pid, shell })
   const stopClientKa = attachClientKeepalive(ws)

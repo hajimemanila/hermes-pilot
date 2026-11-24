@@ -67,6 +67,7 @@ export const A2B_RULES = [
   '- If the task body carries `Mode: zero-stop` / `fast-track-review` / `visual-gate`, follow that contract.',
   `  \`zero-stop\` self-repairs until ${VERIFY_COMMAND_NOUN} passes, then marks the task \`done\`.`,
   '  The command and the screen sizes come from the target repository, never from a plugin-wide default.',
+  '- Do not file follow-up or spin-off kanban tasks (`hermes kanban create`) from inside a running kanban task to defer failing verification gates; fix the issue within the current task or block with `needs_input` (D55).',
   '- Keep completion reports to four points: what changed / verification command and exit code / unverified / next step.',
 ].join('\n')
 

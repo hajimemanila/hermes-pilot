@@ -178,6 +178,8 @@ button.t-pill:active {
 }
 
 .t-pill.run {
+  flex: 0 1 auto;
+  min-width: 0;
   color: var(--rec-fg);
   background: var(--rec-bg);
   border-color: var(--accent);
@@ -185,8 +187,8 @@ button.t-pill:active {
 
 .t-tool {
   /* ツール名は 1 行固定の計器盤では最も伸縮してよい部分（省略して詰める）。
-     26vw のままだと 390px で実行中ピルが 151px まで伸び、4 枚目が画面外へ出る。 */
-  max-width: 22vw;
+     4 ピル同時表示でも 390px 幅で右端の 💎 ピルが切れないよう run ピルごと縮める。 */
+  max-width: 18vw;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

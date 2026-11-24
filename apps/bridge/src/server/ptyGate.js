@@ -98,3 +98,62 @@ export function ptyUnavailableLine(verdict) {
   }
   return `PTY unavailable: the last spawn failed (${detail || 'unknown'}). Retrying shortly.`
 }
+
+/**
+ * node-pty 1.1.0 の darwin `pty_posix_spawn` は 1 回の spawn で最小の空き fd を 3 つ順に消費する:
+ *   1. `low_fds[0] = posix_openpt(O_RDWR)`（`>=3` で即 break するため `count=0` のまま閉じられない）
+ *   2. `*master = posix_openpt(O_RDWR)`（`proc._fd`）
+ *   3. `slave = open(slave_pty_name, ...)`（親プロセス側で閉じられない）
+ * spawn 直前に最小の空き fd 3 つ（`[f0, f1, f2]`）を観測して閉じ、spawn 直後に
+ * `proc._fd === f1` が一致したときだけ `f0`（未使用 master）と `f2`（親側 slave）を回収して
+ * セッションあたりの ptmx リークを 0 本にする。
+ *
+ * @param {{platform?: string, openImpl?: (p: string) => number, closeImpl?: (fd: number) => void}} [opts]
+ * @returns {[number, number, number]|null}
+ */
+export function reserveDarwinSpawnSlots({ platform = process.platform, openImpl, closeImpl } = {}) {
+  if (platform !== 'darwin') return null
+  const open = openImpl ?? ((p) => fs.openSync(p, fs.constants.O_RDONLY))
+  const close = closeImpl ?? ((fd) => fs.closeSync(fd))
+  const fds = []
+  try {
+    for (let i = 0; i < 3; i += 1) fds.push(open('/dev/null'))
+    return [fds[0], fds[1], fds[2]]
+  } catch {
+    return null
+  } finally {
+    for (let i = fds.length - 1; i >= 0; i -= 1) {
+      try {
+        close(fds[i])
+      } catch {
+        /* noop */
+      }
+    }
+  }
+}
+
+/**
+ * `reserveDarwinSpawnSlots` で観測した 3 スロットと実 `masterFd`（`proc._fd`）を照合し、
+ * 一致したときだけ漏れた `low_fds[0]` と親側 `slave` を閉じる。
+ *
+ * @param {[number, number, number]|null} slots 事前観測した 3 つの空き fd
+ * @param {unknown} masterFd `proc._fd`
+ * @param {{closeImpl?: (fd: number) => void}} [opts]
+ * @returns {{reclaimed: number}}
+ */
+export function reclaimDarwinSpawnLeak(slots, masterFd, { closeImpl } = {}) {
+  if (!Array.isArray(slots) || slots.length !== 3) return { reclaimed: 0 }
+  const [lowFd, expectedMaster, slaveFd] = slots
+  if (typeof masterFd !== 'number' || masterFd !== expectedMaster) return { reclaimed: 0 }
+  const close = closeImpl ?? ((fd) => fs.closeSync(fd))
+  let reclaimed = 0
+  for (const fd of [lowFd, slaveFd]) {
+    try {
+      close(fd)
+      reclaimed += 1
+    } catch {
+      /* noop */
+    }
+  }
+  return { reclaimed }
+}

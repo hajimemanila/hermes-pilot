@@ -489,6 +489,7 @@ test('A2B_RULES は英語（機械向け指示）で、CJK を含まない', () 
     'ONLY when working on a Hermes Pilot kanban task',
     'reply normally in chat without filing kanban tasks',
     'does not define a role table',
+    'Do not file follow-up or spin-off kanban tasks',
   ]) {
     assert.ok(A2B_RULES.includes(token), `必要な規則・機械トークンが欠けている: ${token}`)
   }
