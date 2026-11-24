@@ -1,15 +1,23 @@
-# カタログ SHA bump PR の手順（`v0.2.0` ピン → `0.2.4`）
+# カタログ SHA bump PR の手順（`v0.2.0` ピン → `0.2.4` → `0.2.5`）
 
 カタログ掲載は済んでいる（`plugin-catalog/hermes-pilot.yaml`、pin `5c82ba62` = v0.2.0）。
 差分の公開は **SHA bump PR**（規則 4: 旧→新の upstream 差分が再レビュー対象）で行う。
 エントリの payload は `docs/catalog/hermes-pilot.yaml` に置いてある。
 
-## 現在の状態（2026-11-23 実施済み）
+## 現在の状態（2026-11-25 実施済み / PR 継続）
 
-- 本家: `main` を `69fef2b` まで push、tag `v0.2.4`（annotated `18d45e82`）を公開済み
+- 本家: `main` を `8db9cc9`（`chore(release): bump version to 0.2.5`）まで push、tag `v0.2.5`（annotated `b390bba`）を公開済み
 - PR: https://github.com/NousResearch/hermes-agent/pull/159092
-  （branch `catalog/hermes-pilot-0.2.4` → fork `hajimemanila/hermes-agent`、1 file +6 −3）
-- payload の `sha` は `69fef2bf5cd3eb937fb8b5c8862e03d30ba0df54` を記入済み
+  （branch `catalog/hermes-pilot-0.2.4` → fork `hajimemanila/hermes-agent`。**同一 PR で再 pin**。
+  規則 4 の「新しい PR」から外れるが、レビュアーの指示が
+  「Push the fix, re-pin `sha:` here and comment when it's in」なので継続した）
+- payload の `sha` は `8db9cc93e322a314315e181ceddd9e9aafaf33d9`（= v0.2.5）を記入済み
+- 初回レビュー（`teknium1`, CHANGES_REQUESTED 2026-11-24）の3点:
+  1. repo checker を無断実行する → `apps/bridge/src/coherence/allowlist.js`（repo パス + checker の SHA-256 で
+     承認、既定 OFF）＋ `minimalCheckerEnv()`（`PATH`/`HOME`/`LANG` のみ）で解消
+  2. Pilot プロファイルを手作業 mkdir で作る → `hermes profile create <name> --clone --no-alias` 経由に変更
+  3. disclosure に `SOUL.md` マーカーブロック書き込みとプロファイル作成を明記 → `description` に反映済み
+- 0.2.4 の pin `69fef2b` はレビュー指摘により未マージ
 
 
 ## 0. 前提（外部送信なので明示指示があるときだけ）
