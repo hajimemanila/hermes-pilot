@@ -35,8 +35,6 @@ import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
 import { HM_STORAGE } from '../contracts/storage.js'
 import { useWakeSync } from '../lib/useWakeSync.js'
 
-export { parsePastedReply }
-
 /**
  * 挿絵の拡大用データ。キャプションは「Q2 A. 塗りのボタン」＋問いの文。
  * ラベルだけだと何の話か分からない（注釈 review-empty-01: この文言はなんですか？）。
