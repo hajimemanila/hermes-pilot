@@ -62,7 +62,7 @@ def _load_logic() -> Any:
 
 logic = _load_logic()
 
-VERSION = "0.2.4"
+VERSION = "0.2.5"
 router = APIRouter()
 
 
