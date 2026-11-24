@@ -538,7 +538,7 @@ test('transport-owner: offlineSince and the backoff formula only live in lib/tra
   )
 })
 
-test('transition-owner: direct runKanban unblock / complete calls in the review modules are hard fails', async () => {
+test('transition-owner: direct runKanban unblock / complete / request-changes calls in the review modules are hard fails', async () => {
   const DIRECT = [
     'export async function answer(id, ops) {',
     "  return runKanban(['unblock', id, '--reason', ops.answered])",
@@ -547,6 +547,9 @@ test('transition-owner: direct runKanban unblock / complete calls in the review 
     "  const done = await runKanban(['complete', id, '--result', 'ok'])",
     '  if (!done.ok) return runKanban(["unblock", id, "--reason", "fallback"])',
     '  return done',
+    '}',
+    'export async function reopen(id, reason) {',
+    "  return runKanban(['request-changes', id, reason])",
     '}',
     '',
   ].join('\n')
@@ -557,21 +560,35 @@ test('transition-owner: direct runKanban unblock / complete calls in the review 
     'export async function approve(id, ops) {',
     "  return transitions.apply('approve', { id, reason: ops.approved })",
     '}',
+    'export async function reopen(id, ops) {',
+    "  return transitions.apply('reopen', { id, reason: ops.defaultReason })",
+    '}',
     '',
   ].join('\n')
 
   const problems = transitionOwnerProblems('apps/bridge/src/review.js', DIRECT)
-  assert.equal(problems.length, 3)
+  assert.equal(problems.length, 4)
   assert.equal(problems.filter((problem) => /unblock/.test(problem.reason)).length, 2)
+  assert.equal(problems.filter((problem) => /request-changes/.test(problem.reason)).length, 1)
   assert.deepEqual(transitionOwnerProblems('apps/bridge/src/review.js', VIA_TABLE), [])
   // A comment that names the verb is not a call site.
   assert.deepEqual(transitionOwnerProblems('apps/bridge/src/review/media.js', "// runKanban(['unblock', id]\n"), [])
+  assert.deepEqual(transitionOwnerProblems('apps/bridge/src/review/media.js', "// runKanban(['request-changes', id]\n"), [])
 
   const bad = await analyzeRepo(ruleFixture({ 'apps/bridge/src/review.js': DIRECT }))
   const issue = bad.hardFails.find((entry) => entry.rule === 'transition-owner')
   assert.ok(issue, 'the bypassing transition must be reported')
   assert.equal(issue.files[0].file, 'apps/bridge/src/review.js')
-  assert.equal(issue.value, 3)
+  assert.equal(issue.value, 4)
+
+  // 対照実験（D109）: request-changes の 1 行だけでも RED になる（verb を 4 語へ広げた証拠）
+  const control = await analyzeRepo(
+    ruleFixture({ 'apps/bridge/src/review.js': "export async function reopen(id) {\n  return runKanban(['request-changes', id, 'x'])\n}\n" }),
+  )
+  const controlIssue = control.hardFails.find((entry) => entry.rule === 'transition-owner')
+  assert.ok(controlIssue, 'request-changes の直叩きが RED にならない')
+  assert.equal(controlIssue.value, 1)
+  assert.match(controlIssue.files[0].reason, /request-changes/)
 
   const good = await analyzeRepo(ruleFixture({ 'apps/bridge/src/review/media.js': VIA_TABLE }))
   assert.deepEqual(

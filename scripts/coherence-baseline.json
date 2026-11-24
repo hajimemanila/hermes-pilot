@@ -7,7 +7,7 @@
     "apps/web/src/demo/mockApi.js": 96,
     "apps/web/src/features/TasksPane.jsx": 1966,
     "apps/dashboard/index.js": 1991,
-    "apps/bridge/src/review.js": 733,
+    "apps/bridge/src/review.js": 742,
     "apps/bridge/src/server.js": 792,
     "apps/web/src/features/ReviewPane.jsx": 749,
     "apps/bridge/test/review.test.js": 1467,

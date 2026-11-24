@@ -518,6 +518,12 @@ export function createReview(cfg, opts = {}) {
 
   /**
    * 反映が違うとき review に戻す。
+   *
+   * 遷移の実行は `review/transitions.js` の `reopen`（`kind: 'request-changes'`）が担う（D109）。
+   * ここは**互換シム**: 既定理由を言語別に決めて `apply()` へ渡し、戻り値は従来の
+   * `{ ok, status, output }` へ写す（呼び出し側は変えない）。`archived` のタスクは
+   * `apply()` が `skipped: 'noop'` を返して CLI を 1 回も呼ばない。
+   *
    * @param {string} id タスク ID
    * @param {string} [reason] 変更要求の理由（省略時は言語別の既定文）
    * @param {'ja'|'en'} [lang] 既定理由の言語（既定 en・SPEC-EN-ZERO-LEAK D73）
@@ -526,8 +532,11 @@ export function createReview(cfg, opts = {}) {
   async function reopen(id, reason, lang = 'en') {
     const b = bodyOf(id)
     if (!b) return { ok: false, code: 'NOT_FOUND' }
-    const out = await runKanban(['request-changes', id, String(reason || reopenTextOf(lang).defaultReason)])
-    return { ok: out.code === 0, status: b.status, output: outputOf(out).slice(0, 800) }
+    const moved = await transitions.apply('reopen', {
+      id,
+      reason: String(reason || reopenTextOf(lang).defaultReason),
+    })
+    return { ok: moved.code === 0, status: b.status, output: moved.out.slice(0, 800) }
   }
 
   /**

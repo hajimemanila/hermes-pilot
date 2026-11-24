@@ -186,7 +186,7 @@ blocked からの遷移判断が 5 か所に散っていた。正本を作って
 
 - `sync-owner` — `apps/web/src/**` の `setInterval(`（例外は間隔 `1000` かつ `Date.now()` を読む壁時計だけ）
 - `transport-owner` — `apps/web/src/lib/transport.js` 以外の `offlineSince` と `1000 * 2 **`
-- `transition-owner` — `review.js` / `review/media.js` の `runKanban(['unblock'`・`runKanban(['complete'`
+- `transition-owner` — `review.js` / `review/media.js` の `runKanban(['unblock'`・`runKanban(['complete'`・`runKanban(['request-changes'`・`runKanban(['archive'`
 
 `checkerPending` に入っている間はソフト信号（`fatal`）で、`--strict` で回すと落ちる。
 

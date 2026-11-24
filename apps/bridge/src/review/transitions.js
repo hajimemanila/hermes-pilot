@@ -12,7 +12,10 @@
  *  4. `kind: 'complete'` → `complete` を 1 回だけ。
  *  5. `kind: 'complete-then-unblock'` → `complete` を試し、失敗したときだけ `unblock` を 1 回。
  *  6. `kind: 'comment-then-archive'` → コメントがあれば先に付け（失敗しても継続）、`archive` を 1 回。
- *  7. 戻り値は `{ code, out, status, moved, skipped? }`（`moved` は `'done'` / `'ready'` / `'archived'` / `null`）。
+ *  7. `kind: 'request-changes'` → `request-changes` を 1 回だけ（成功で `review` へ戻る）。
+ *  8. 戻り値は `{ code, out, status, moved, skipped? }`（`moved` は `'done'` / `'ready'` / `'review'` / `'archived'` / `null`）。
+ *
+ * 状態を問わず動く遷移（`reopen`）は `from: '*'` で受ける。狭めると既存フローが静かに止まる（D109）。
  */
 
 import { outcomeOf, outputOf } from '../lib/cli.js'
@@ -31,7 +34,13 @@ export const TRANSITION_TABLE = {
   },
   'close.cancel': { from: '*', noop: ['archived'], kind: 'comment-then-archive' },
   unblock: { from: ['blocked'], noop: ['ready', 'running'], kind: 'unblock' },
+  // 反映が違うとき review へ戻す（`review.js` の `reopen()` が唯一の呼び出し元・D109）。
+  // 状態を問わず動く（現行挙動の保存）。archived だけは CLI を呼ばない。
+  reopen: { from: '*', noop: ['archived'], kind: 'request-changes' },
 }
+
+/** `request-changes` に載せる理由の最後の砦（言語別の既定は `review.js` が渡す）。 */
+export const REOPEN_FALLBACK_REASON = 'Please re-check and update the implementation'
 
 /** `complete` に載せる metadata の既定値（検収の証跡）。 */
 export const APPROVE_METADATA = { closed_from: 'review', approved_by: 'mobile' }
@@ -119,6 +128,13 @@ export function createReviewTransitions(ctx = {}) {
       const arch = await cli(['archive', id])
       const ok = arch.code === 0
       return { code: arch.code === null ? 1 : arch.code, out: outputOf(arch), status: ok ? 'archived' : status, moved: ok ? 'archived' : null }
+    }
+
+    if (spec.kind === 'request-changes') {
+      const text = String(options.reason ?? '').trim() || spec.result || REOPEN_FALLBACK_REASON
+      const back = await cli(['request-changes', id, text])
+      const ok = back.code === 0
+      return { code: back.code === null ? 1 : back.code, out: outputOf(back), status: ok ? 'review' : status, moved: ok ? 'review' : null }
     }
 
     if (spec.kind !== 'complete-then-unblock') throw new RangeError(`unknown kind: ${spec.kind}`)

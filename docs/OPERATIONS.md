@@ -113,9 +113,10 @@ Layer 1 は Node / npm / このリポジトリの語彙を一切仮定しない�
   `detail` がオブジェクトのイベントは全件 `required` を宣言し（SPEC D108）、送信側の実リテラルと
   `contracts.test.js` が全件突き合わせる（足りないキーは `file:line` で落ちる）。
   送信名は条件式で組み立てない（静的走査に映らず「宣言だけある」状態になる）
-- **タスク遷移**: `apps/bridge/src/review/transitions.js` の遷移表 + `apply()` が唯一の実行者。
-  `review.js` / `review/media.js` から `runKanban(['unblock'` `runKanban(['complete'` を直接呼ばない
-  （ルール `transition-owner`）
+- **タスク遷移**: `apps/bridge/src/review/transitions.js` の遷移表（9 遷移・`reopen` を含む）+ `apply()` が唯一の実行者。
+  `review.js` / `review/media.js` から `runKanban(['unblock'` `runKanban(['complete'` `runKanban(['request-changes'`
+  `runKanban(['archive'` を直接呼ばない（ルール `transition-owner`）。
+  `reopen` は状態を問わず動き、`archived` だけは CLI を呼ばず `skipped: 'noop'` を返す。
 
 正本を持つバッチがまだ動いている間だけ `.hermes-coherence.json` の `checkerPending` にバッチ id を入れる
 （ソフト信号 `fatal` として出続け、`--strict` では落ちる）。**準拠したらその行を消す**。

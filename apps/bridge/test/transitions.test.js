@@ -21,6 +21,7 @@ function fake(cfg = {}) {
       calls.push(args)
       if (args[0] === 'complete') return cfg.complete ?? { code: 0, out: 'Completed' }
       if (args[0] === 'unblock') return cfg.unblock ?? { code: 0, out: 'Unblocked' }
+      if (args[0] === 'request-changes') return cfg.requestChanges ?? { code: 0, out: 'Changes requested' }
       return { code: 0, out: 'ok' }
     },
     bodyOf: () => (state.status === null ? null : { status: state.status }),
@@ -31,7 +32,7 @@ function fake(cfg = {}) {
 
 const kinds = (calls) => calls.map((c) => c[0])
 
-test('遷移表: 8 経路の単一正本を持ち、approve だけが complete-then-unblock を使う', () => {
+test('遷移表: 9 経路の単一正本を持ち、approve だけが complete-then-unblock を使う', () => {
   assert.deepEqual(Object.keys(TRANSITION_TABLE).sort(), [
     'annotation.again',
     'annotation.fresh',
@@ -40,11 +41,12 @@ test('遷移表: 8 経路の単一正本を持ち、approve だけが complete-t
     'approve',
     'close.cancel',
     'close.done',
+    'reopen',
     'unblock',
   ])
   for (const [name, spec] of Object.entries(TRANSITION_TABLE)) {
     assert.ok(
-      ['unblock', 'complete', 'complete-then-unblock', 'comment-then-archive'].includes(spec.kind),
+      ['unblock', 'complete', 'complete-then-unblock', 'comment-then-archive', 'request-changes'].includes(spec.kind),
       `${name} の kind`,
     )
   }
@@ -56,6 +58,10 @@ test('遷移表: 8 経路の単一正本を持ち、approve だけが complete-t
   assert.deepEqual(TRANSITION_TABLE['close.done'].noop, ['done'])
   assert.deepEqual(TRANSITION_TABLE['close.cancel'].noop, ['archived'])
   assert.deepEqual(TRANSITION_TABLE.unblock.noop, ['ready', 'running'])
+  // D109: reopen は状態を問わず動き、archived だけは CLI を呼ばない（from を狭めない）
+  assert.equal(TRANSITION_TABLE.reopen.from, '*')
+  assert.deepEqual(TRANSITION_TABLE.reopen.noop, ['archived'])
+  assert.equal(TRANSITION_TABLE.reopen.kind, 'request-changes')
 })
 
 test('① blocked + approve で complete 成功 → moved:done、unblock は 0 回', async () => {
@@ -282,4 +288,59 @@ test('D104: TRANSITION_OWNER_FILES に inbox.js が含まれ、直接 CLI 配列
   const problems = transitionOwnerProblems('apps/bridge/src/inbox.js', directComplete)
   assert.equal(problems.length, 1)
   assert.match(problems[0].reason, /complete/)
+})
+
+test('D109: reopen は request-changes を 1 回だけ・archived は CLI 0 回・done は review へ戻る', async () => {
+  // done → review（request-changes は 1 回だけ・理由はそのまま載る）
+  const done = fake({ status: 'done' })
+  const r = await done.transitions.apply('reopen', { id: 't_r1', reason: 'Please fix the header spacing' })
+  assert.deepEqual(kinds(done.calls), ['request-changes'], 'CLI は 1 回だけ')
+  assert.deepEqual(done.calls[0], ['request-changes', 't_r1', 'Please fix the header spacing'])
+  assert.equal(r.code, 0)
+  assert.equal(r.moved, 'review')
+  assert.equal(r.status, 'review')
+
+  // from='*': blocked / running / ready / review のどれからでも review へ戻る（現行挙動の保存）
+  for (const status of ['blocked', 'running', 'ready', 'review']) {
+    const any = fake({ status })
+    const out = await any.transitions.apply('reopen', { id: `t_r_${status}`, reason: 'x' })
+    assert.deepEqual(kinds(any.calls), ['request-changes'], `${status} から 1 回だけ`)
+    assert.equal(out.moved, 'review')
+    assert.equal(any.transitions.canApply('reopen', status), true)
+  }
+
+  // archived は no-op（CLI を 1 回も呼ばない）
+  const archived = fake({ status: 'archived' })
+  assert.equal(archived.transitions.isNoop('reopen', 'archived'), true)
+  assert.equal(archived.transitions.canApply('reopen', 'archived'), false)
+  const skip = await archived.transitions.apply('reopen', { id: 't_r2', reason: 'x' })
+  assert.deepEqual(archived.calls, [], 'archived は CLI 0 回')
+  assert.equal(skip.skipped, 'noop')
+  assert.equal(skip.moved, null)
+  assert.equal(skip.status, 'archived')
+
+  // 失敗したら status は元のまま・moved:null・code は失敗側
+  const bad = fake({ status: 'done', requestChanges: { code: 1, out: 'task is running' } })
+  const failed = await bad.transitions.apply('reopen', { id: 't_r3', reason: 'x' })
+  assert.equal(failed.code, 1)
+  assert.equal(failed.status, 'done')
+  assert.equal(failed.moved, null)
+  assert.match(failed.out, /task is running/)
+
+  // 理由が空でも CLI には理由を載せる（request-changes は理由必須）
+  const empty = fake({ status: 'done' })
+  await empty.transitions.apply('reopen', { id: 't_r4' })
+  assert.ok(empty.calls[0][2].length > 0, '理由なしで CLI を呼ばない')
+})
+
+test("D109: review.js の reopen() は transitions.apply('reopen') を 1 回だけ呼び、request-changes を直叩きしない", async () => {
+  const { readFileSync } = await import('node:fs')
+  const src = readFileSync(new URL('../src/review.js', import.meta.url), 'utf8')
+  const start = src.indexOf('async function reopen(')
+  assert.ok(start > 0, 'review.js に reopen() がある')
+  const body = src.slice(start, src.indexOf('\n  /**', start))
+  assert.equal(body.match(/transitions\.apply\('reopen'/g)?.length, 1, "apply('reopen') は 1 回だけ")
+  assert.equal(body.includes("runKanban(['request-changes'"), false, 'request-changes を直叩きしない')
+  // 互換形（{ ok, status, output }）を返す — 呼び出し側は変えない
+  assert.match(body, /return \{ ok: .*status: b\.status, output:/)
 })

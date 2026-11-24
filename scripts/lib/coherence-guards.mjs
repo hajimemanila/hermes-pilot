@@ -21,7 +21,7 @@ export const TRANSITION_OWNER_FILES = Object.freeze([
 ])
 
 /** Kanban verbs that only `apps/bridge/src/review/transitions.js` may run. */
-const TRANSITION_VERBS = Object.freeze(['unblock', 'complete'])
+const TRANSITION_VERBS = Object.freeze(['unblock', 'complete', 'request-changes', 'archive'])
 
 /** The only `setInterval` period a component may keep for a wall clock (D107). */
 export const CLOCK_INTERVAL_MS = 1000
@@ -298,10 +298,12 @@ export function silentServerProblems(text) {
 }
 
 /**
- * (11) Direct kanban status transition calls bypassing `review/transitions.js` (D99 / D104).
+ * (11) Direct kanban status transition calls bypassing `review/transitions.js` (D99 / D104 / D109).
  *
- * Checks `runKanban(['unblock' | 'complete', ...])` as well as raw
- * `['kanban', ..., 'unblock' | 'complete' | 'archive', ...]` argument lists.
+ * Checks `runKanban(['unblock' | 'complete' | 'request-changes' | 'archive', ...])` as well as raw
+ * `['kanban', ..., 'unblock' | 'complete' | 'request-changes' | 'archive', ...]` argument lists.
+ * The verb list lives in one place (`TRANSITION_VERBS`), so adding a transition to the table and
+ * forgetting the guard cannot happen silently.
  *
  * @param {string} rel repository relative path (used in the reason only)
  * @param {string} text file source
@@ -319,7 +321,7 @@ export function transitionOwnerProblems(rel, text) {
       })
     }
   }
-  const directRe = /\[\s*['"`]kanban['"`][^\]]*['"`](unblock|complete|archive)['"`]/g
+  const directRe = new RegExp(`\\[\\s*['"\`]kanban['"\`][^\\]]*['"\`](${TRANSITION_VERBS.join('|')})['"\`]`, 'g')
   for (const m of src.matchAll(directRe)) {
     problems.push({
       line: lineOf(src, m.index),
