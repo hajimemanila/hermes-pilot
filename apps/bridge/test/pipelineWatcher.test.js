@@ -27,6 +27,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { createBoardTick } from '../src/board-tick.js'
 import {
   buildNextSteps,
   buildPipelineReport,
@@ -112,20 +113,33 @@ function readJsonl(file) {
   }
 }
 
-/** 固定クロックのウォッチャー（`opts.now` をテストから進める）。 */
+/**
+ * 固定クロックのウォッチャー（`opts.now` をテストから進める）。
+ *
+ * ウォッチャーは自分で `kanban.db` を開かない（D110）。盤面ティックを 1 本作り、
+ * その走査結果を `snapshot` として注入する（本番と同じ 1 回読み・2 購読者）。
+ */
 function makeWatcher(env, opts = {}) {
   const clock = { ms: CLOCK }
+  const bt = createBoardTick(
+    { kanbanRoot: env.kanbanRoot },
+    {
+      dbPaths: [{ board: BOARD, path: env.dbPath }],
+      now: () => clock.ms,
+      logger: { warn: () => {} },
+    },
+  )
   const w = createPipelineWatcher(
     { kanbanRoot: env.kanbanRoot, reviewDir: env.reviewDir, stateDb: env.stateDb, hermesHome: env.root },
     {
-      intervalMs: 10_000,
+      snapshot: () => bt.tick(),
       now: () => clock.ms,
       logger: { warn: () => {} },
       stateDbs: [env.stateDb],
       ...opts,
     },
   )
-  return { w, clock }
+  return { w, clock, boardTick: bt }
 }
 
 /** Git 情報のダミー（実リポジトリに依存しない）。 */

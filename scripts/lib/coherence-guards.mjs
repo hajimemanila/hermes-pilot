@@ -353,3 +353,81 @@ export function swallowOwnerProblems(rel, text) {
   }
   return problems
 }
+
+/** The only module allowed to open the kanban databases and own the board timer (D110). */
+export const BOARD_TICK_OWNER_FILE = 'apps/bridge/src/board-tick.js'
+
+/** The board scan period. One timer in the bridge, and it lives in the owner module. */
+export const BOARD_SCAN_MS = 10_000
+
+/**
+ * A module that listens to the board instead of reading it (`*-watcher.js`).
+ *
+ * @param {string} rel repository relative path
+ * @returns {boolean} true when the module must subscribe to `board-tick.js`
+ */
+export function isBoardWatcherFile(rel) {
+  return /^apps\/bridge\/src\/(?:.+\/)?[^/]+-watcher\.js$/.test(String(rel ?? ''))
+}
+
+/**
+ * (15) One tick owns the board scan (D110).
+ *
+ * The drift this rule exists for is two watchers opening the same `kanban.db` on two
+ * 10 second timers and interpreting the same transition twice. Three checks:
+ *
+ *  - a `*-watcher.js` module must not open a database (`new DatabaseSync(`), must not
+ *    keep a timer (`setInterval(`), and must not own a board path list (`dbPaths`);
+ *  - `board-tick.js` must open every handle with `{ readOnly: true }` (D55: the board
+ *    is never written from a scan);
+ *  - no other bridge module may hard code the 10 second board scan period.
+ *
+ * @param {string} rel repository relative path (used in the reason only)
+ * @param {string} text file source
+ * @returns {{line: number, reason: string}[]} problems
+ */
+export function boardTickOwnerProblems(rel, text) {
+  const src = stripComments(String(text ?? ''))
+  const problems = []
+  if (isBoardWatcherFile(rel)) {
+    for (const m of src.matchAll(/\bnew\s+DatabaseSync\s*\(/g)) {
+      problems.push({
+        line: lineOf(src, m.index),
+        reason: `${rel} opens a board database directly; subscribe to ${BOARD_TICK_OWNER_FILE} instead`,
+      })
+    }
+    for (const m of src.matchAll(/\bsetInterval\s*\(/g)) {
+      problems.push({
+        line: lineOf(src, m.index),
+        reason: `${rel} keeps its own timer; ${BOARD_TICK_OWNER_FILE} owns the single board scan`,
+      })
+    }
+    for (const m of src.matchAll(/\bdbPaths\b/g)) {
+      problems.push({
+        line: lineOf(src, m.index),
+        reason: `${rel} resolves the board path list; that belongs to ${BOARD_TICK_OWNER_FILE}`,
+      })
+    }
+    return problems
+  }
+  if (rel === BOARD_TICK_OWNER_FILE) {
+    for (const call of callSpans(src, ['DatabaseSync'])) {
+      if (!/\breadOnly\s*:/.test(call.body)) {
+        problems.push({
+          line: lineOf(src, call.index),
+          reason: `${BOARD_TICK_OWNER_FILE} must open the board with { readOnly: true } (D55)`,
+        })
+      }
+    }
+    return problems
+  }
+  for (const call of callSpans(src, ['setInterval'])) {
+    const args = splitTopLevelArgs(call.body)
+    if (intervalMsOf(args[1] ?? '') !== BOARD_SCAN_MS) continue
+    problems.push({
+      line: lineOf(src, call.index),
+      reason: `a second ${BOARD_SCAN_MS}ms board scan timer in ${rel}; only ${BOARD_TICK_OWNER_FILE} may own it`,
+    })
+  }
+  return problems
+}

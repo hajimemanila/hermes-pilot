@@ -182,17 +182,36 @@ Light の漏れと誤判定した）。機械走査の前に `*{transition:none!
 もう片方が**そのまま残る**。実測では接続状態が 4 系統、定期同期が 7 本の独立タイマー、
 blocked からの遷移判断が 5 か所に散っていた。正本を作っても、呼び出し側の実装を消さなければ戻る。
 
-**検出**: `npm run check:coherence` の 3 ルール。
+**検出**: `npm run check:coherence` の 4 ルール。
 
 - `sync-owner` — `apps/web/src/**` の `setInterval(`（例外は間隔 `1000` かつ `Date.now()` を読む壁時計だけ）
 - `transport-owner` — `apps/web/src/lib/transport.js` 以外の `offlineSince` と `1000 * 2 **`
 - `transition-owner` — `review.js` / `review/media.js` の `runKanban(['unblock'`・`runKanban(['complete'`・`runKanban(['request-changes'`・`runKanban(['archive'`
+- `board-tick-owner` — `apps/bridge/src/**/*-watcher.js` の `new DatabaseSync(`・`setInterval(`・`dbPaths`、および `board-tick.js` 以外の 10 秒走査タイマー
 
 `checkerPending` に入っている間はソフト信号（`fatal`）で、`--strict` で回すと落ちる。
 
 **対策**: 直すときは**呼び出し側の実装を消して正本を呼ぶ**（別名で包む・再エクスポートは可）。
 新機能は正本の表に 1 行足すだけで済ませ、`setInterval`・独自バックオフ・独自の `unblock` 分岐を増やさない。
 正本の場所は [OPERATIONS.md の「整合性の正本」](./OPERATIONS.md#整合性の正本このリポジトリの-4-つ)。
+
+## P10. 盤面（kanban.db）を 2 本が別々に走査している
+
+**症状**: 同じタスクの `running → blocked` で、レビューの `⏸` とパイプラインの完了判定が
+食い違う（片方だけ通知が出る・片方だけ「収束していない」と見る）。レビュー完了報告と
+完走報告が、同じ遷移を別々の根拠で判断しているため、原因を 1 か所で追えない。
+
+**原因**: `review-watcher` と `pipeline-watcher` が **それぞれ** `new DatabaseSync(..., { readOnly: true })`
+を 10 秒タイマーで回し、読む列も LIMIT も別々だった（実測: 1 つの `kanban.db` を 10 秒ごとに 2 回）。
+
+**検出**: `npm run check:coherence` の `board-tick-owner`。`apps/bridge/src/**/*-watcher.js` に
+`new DatabaseSync(` / `setInterval(` / `dbPaths` が戻ると RED、`board-tick.js` 以外に 10 秒の
+走査タイマーを足しても RED。対照実験（watcher に 1 行 `setInterval(` を足す → `FAIL [board-tick-owner]`）。
+
+**対策**: 盤面は `apps/bridge/src/board-tick.js` が **1 本**で読み、スナップショット
+（`BOARD_ROW_COLUMNS` の全列 ＋ 前回との `changes`）を購読者へ配る。ウォッチャーは
+`boardTick.subscribe` で受け取り、遷移の判断は `changes` を使う（自分の状態で差分を取り直さない）。
+`state.db`（セッション）は対象外で `lib/session-db.js` が読む。`server.js` の `boardTick.start()` は 1 回だけ。
 
 ---
 

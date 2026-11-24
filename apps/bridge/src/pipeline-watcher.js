@@ -1,20 +1,22 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { DatabaseSync } from 'node:sqlite'
 import { readRuns, runsPathFor, writeRuns } from './specs.js'
 import { summarizeTasks } from './telemetry.js'
 import { analyzeCoherence, coherenceAlertFrom } from './coherence.js'
 import { VERIFY_CONTRACT, VERIFY_CONTRACT_JA } from './contracts/verify.js'
 import { writeJsonAtomic } from './lib/atomic.js'
 import { safeList } from './lib/safe.js'
+import { latestSessionForCwd } from './lib/session-db.js'
 import { LEGACY_REVIEW_TAG } from './review/legacy-tags.js'
 
 /**
- * パイプライン完走ウォッチャー（SPEC §3.2 / D20 / D21）。
+ * パイプライン完走ウォッチャー（SPEC §3.2 / D20 / D21 / D110）。
  *
- * カンバン DB を**読み取り専用**で 10 秒ごとに見て、次の 2 種類の「波」が収束した瞬間に
- * 統合 Markdown レポートを 1 回だけ合成し、起票元チャットへ届ける。
+ * 盤面（`kanban.db`）の走査は `board-tick.js` が 10 秒ごとに 1 回だけ行い、
+ * スナップショット（行＋差分）を購読者へ配る。ここはそのスナップショットを受け取り、
+ * 次の 2 種類の「波」が収束した瞬間に統合 Markdown レポートを 1 回だけ合成して
+ * 起票元チャットへ届ける。
  *
  *  - **A. Spec ラン単位**: 本文の `Spec: <rel>` 行（または `pipeline-runs.json` の `taskIds`）で
  *    同じ `(board, spec)` に属するタスク群
@@ -22,19 +24,21 @@ import { LEGACY_REVIEW_TAG } from './review/legacy-tags.js'
  *    `[review]`（と移行前の旧タグ）は個別レビュー報告と重複するので除外する
  *
  * 大事な性質（review-watcher と同じ設計方針）:
+ *  - **遷移の根拠は同じスナップショット**（review の完了報告と同じ `rows` / `changes` を見る）
  *  - **初回起動はベースライン確立のみ**（過去分を遡って通知しない。スパム防止）
  *  - **取りこぼし防止**: ティック間に起票→完了したタスクも `completed_at >= startedAtSec` で拾う
  *  - **重複通知なし**: `reportedKeys` に状態キー（Spec は最新完了時刻、ウェーブはタスク ID のハッシュ）
  *  - **`review/feed.jsonl` には書かない**（Review タブの通知を汚さない）。書く先は
  *    `review/chat-reports.jsonl`（`kind: 'pipeline'`）と `review/pipeline-reports.jsonl`
  *  - **アトミック**: 状態は `lib/atomic.js`（tmp → rename）。JSONL は 1 行完結の append
+ *  - **`state.db` の走査は非対象**: 宛先解決の `latestSessionForCwd` は `lib/session-db.js`
  *
  * @param {object} cfg ブリッジ設定（kanbanRoot / reviewDir / stateDb / hermesHome）
  * @param {{
- *   intervalMs?: number,
+ *   snapshot?: () => object|null,
+ *   boardTick?: { subscribe: Function, latest: Function },
  *   now?: () => number,
  *   logger?: object,
- *   dbPaths?: Array<{board: string|null, path: string}>,
  *   stateDbs?: string[],
  *   boardWorkdir?: (board: string) => string|null,
  *   gitinfo?: {forTask: Function, diffSummary: Function},
@@ -62,9 +66,6 @@ const ISSUE_LIMIT = 8
 /** 保持する状態キーの上限（育ちすぎないようにする）。 */
 const REPORTED_KEYS_MAX = 200
 
-/** 1 DB から読むタスク数（直近 300 件。古いタスクは完了検知の対象外）。 */
-const TASKS_PER_DB = 300
-
 /** `Spec:` 行。 */
 const SPEC_LINE_RE = /^Spec:\s*(.+?)\s*$/m
 
@@ -73,17 +74,6 @@ const CHAT_LINE_RE = /^Chat:\s*(.+?)\s*$/m
 
 /** チャット ID の書式（`specs.js` の `SPEC_CHAT_RE` と同じ規則）。 */
 const CHAT_ID_RE = /^[A-Za-z0-9_.:-]{1,128}$/
-
-/**
- * パス比較用に正規化する（末尾の `/` を落とし、絶対パス化する）。
- * @param {unknown} p パス
- * @returns {string} 正規化後（空なら空文字）
- */
-export function normalizePath(p) {
-  const s = String(p ?? '').trim()
-  if (!s) return ''
-  return path.resolve(s).replace(/[\\/]+$/, '') || '/'
-}
 
 /**
  * 本文から `Spec: <rel>` を読む。
@@ -691,7 +681,6 @@ export function appendChatReport(cfg = {}, row = {}) {
 }
 
 export function createPipelineWatcher(cfg = {}, opts = {}) {
-  const intervalMs = Math.max(1000, Number(opts.intervalMs) || 10_000)
   const now = typeof opts.now === 'function' ? opts.now : () => Date.now()
   const log = opts.logger ?? console
   const reviewRoot = reviewRootFor(cfg)
@@ -703,7 +692,7 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
   const readRunsFn = opts.readRuns ?? readRuns
   const writeRunsFn = opts.writeRuns ?? writeRuns
 
-  let timer = null
+  let detach = null
   let running = false
   let ticks = 0
   let lastError = null
@@ -732,55 +721,25 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
     writeJsonAtomic(statePath, state)
   }
 
-  /** 監視対象の DB（ボードごとの `kanban.db` ＋ ルート `kanban.db`）。 */
-  function dbPaths() {
-    if (Array.isArray(opts.dbPaths)) return opts.dbPaths
-    const out = []
-    const boardsDir = path.join(cfg.kanbanRoot, 'boards')
-    try {
-      for (const e of fs.readdirSync(boardsDir, { withFileTypes: true })) {
-        if (!e.isDirectory()) continue
-        const p = path.join(boardsDir, e.name, 'kanban.db')
-        if (fs.existsSync(p)) out.push({ board: e.name, path: p })
-      }
-    } catch {
-      /* boards が無い環境では何もしない */
-    }
-    const rootDb = path.join(cfg.kanbanRoot, 'kanban.db')
-    if (fs.existsSync(rootDb)) out.push({ board: null, path: rootDb })
-    return out
-  }
+  /**
+   * スナップショットの取得元（`boardTick.latest()` / テストは `opts.snapshot`）。
+   *
+   * 盤面の走査はここではしない（`board-tick.js` が 1 本・D110）。
+   */
+  const takeSnapshot =
+    typeof opts.snapshot === 'function'
+      ? opts.snapshot
+      : opts.boardTick && typeof opts.boardTick.latest === 'function'
+        ? () => opts.boardTick.latest()
+        : null
 
-  /** 1 つの DB から非アーカイブタスクを読む（読み取り専用・失敗は warn + 空）。 */
-  function readTasks(dbPath) {
-    const db = safeList('pipelineWatcher.openDb', () => new DatabaseSync(dbPath, { readOnly: true, timeout: 3000 }), null)
-    if (!db) return []
-    try {
-      const hasTasks = safeList('pipelineWatcher.hasTasks', () => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks'").get()), false)
-      if (!hasTasks) return []
-      return safeList('pipelineWatcher.readTasks', () =>
-        db.prepare(`SELECT id, title, body, status, result, created_at, started_at, completed_at, session_id
-                      FROM tasks WHERE COALESCE(status, '') != 'archived'
-                     ORDER BY COALESCE(completed_at, created_at) DESC LIMIT ${TASKS_PER_DB}`).all(),
-      )
-    } finally {
-      try { db.close() } catch { /* noop */ }
-    }
-  }
-
-  /** 全 DB のタスクを 1 本の配列にする（同じ ID は最初の 1 件）。 */
-  function readAllTasks() {
-    const out = []
-    const seen = new Set()
-    for (const { board, path: dbPath } of dbPaths()) {
-      for (const t of readTasks(dbPath)) {
-        const id = String(t.id ?? '')
-        if (!id || seen.has(id)) continue
-        seen.add(id)
-        out.push({ ...t, id, board: board ?? 'default' })
-      }
-    }
-    return out
+  /** スナップショットの行をタスク配列にする（アーカイブ済みは集計しない）。 */
+  function readAllTasks(snapshot) {
+    const rows = Array.isArray(snapshot?.rows) ? snapshot.rows : []
+    return rows
+      .filter((t) => t && String(t.status ?? '') !== 'archived')
+      .map((t) => ({ ...t, id: String(t.id ?? ''), board: t.board ?? 'default' }))
+      .filter((t) => t.id)
   }
 
   /** ボードの表示名（`board.json` の name。無ければ slug）。 */
@@ -824,43 +783,6 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
       /* profiles が無い環境では既定だけ */
     }
     return out
-  }
-
-  /** `state.db` から cwd 一致の最新通常セッション `{ id, at }` を 1 件返す。 */
-  function latestSessionForCwd(dbPath, workdir) {
-    let db
-    try {
-      db = new DatabaseSync(dbPath, { readOnly: true, timeout: 3000 })
-    } catch {
-      return null
-    }
-    const want = normalizePath(workdir)
-    try {
-      const sql = (order) =>
-        `SELECT id, cwd, ${order} AS ts FROM sessions
-          WHERE cwd IS NOT NULL AND id NOT LIKE 'local-%'
-          ORDER BY ${order} DESC LIMIT 300`
-      let rows = []
-      try {
-        rows = db.prepare(sql('COALESCE(last_activity_at, started_at)')).all()
-      } catch {
-        rows = db.prepare(sql('started_at')).all()
-      }
-      for (const r of rows) {
-        if (normalizePath(r.cwd) === want) {
-          return { id: String(r.id), at: Number(r.ts) || 0 }
-        }
-      }
-      return null
-    } catch {
-      return null
-    } finally {
-      try {
-        db.close()
-      } catch {
-        /* noop */
-      }
-    }
   }
 
   /**
@@ -1047,8 +969,12 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
     }
   }
 
-  /** 1 ティック分の走査。テストから直接 await できる。 */
-  async function tick() {
+  /**
+   * 1 ティック分の処理。テストから直接 await できる。
+   *
+   * @param {object|null} [snapshot] 盤面スナップショット（省略時は取得元から）
+   */
+  async function tick(snapshot) {
     ticks += 1
     const stored = readState()
     const baseline = stored === null
@@ -1057,7 +983,12 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
       stored ?? { version: 1, startedAtSec: 0, knownTaskIds: {}, activeGroups: {}, reportedKeys: [], updatedAt: null }
     let dirty = baseline
 
-    const rows = readAllTasks()
+    const snap = snapshot ?? (takeSnapshot ? takeSnapshot() : null)
+    if (!snap) {
+      // 盤面ティックが来ていない（購読先が無い）ときは何もしない
+      return { baseline, groups: 0, reported: [], statePath, skipped: 'no-snapshot' }
+    }
+    const rows = readAllTasks(snap)
     const runs = readRunsFn(runsFile)
     const groups = groupTasks(rows, runs)
 
@@ -1203,12 +1134,12 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
     return { baseline: false, groups: groups.length, reported, statePath }
   }
 
-  /** 例外でプロセスを落とさないティック（定期実行用）。 */
-  async function safeTick() {
+  /** 例外でプロセスを落とさないティック（購読用・テストからも呼べる）。 */
+  async function safeTick(snapshot) {
     if (running) return null
     running = true
     try {
-      const r = await tick()
+      const r = await tick(snapshot)
       lastError = null
       return r
     } catch (err) {
@@ -1220,23 +1151,37 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
     }
   }
 
-  /** 監視を始める（初回は即ティック＝ベースライン確立）。 */
+  /**
+   * 盤面ティックへ購読する（自前のタイマーは持たない・D110）。
+   *
+   * `opts.boardTick` があれば構築時に購読する。`start()` は互換のための入口で、
+   * 購読が無いときだけ購読する（二重購読しない）。
+   */
+  function attach() {
+    if (detach) return
+    const bt = opts.boardTick
+    if (!bt || typeof bt.subscribe !== 'function') return
+    detach = bt.subscribe((snapshot) => safeTick(snapshot))
+  }
+
   function start() {
-    if (timer) return
-    safeTick()
-    timer = setInterval(safeTick, intervalMs)
-    // ブリッジの停止を妨げない（テストや CLI が終われなくなるため）
-    if (typeof timer.unref === 'function') timer.unref()
+    attach()
+    // 購読先が無いテスト環境でも、スナップショット取得元があれば 1 回走らせる
+    if (!detach && takeSnapshot) {
+      void safeTick()
+    }
   }
 
   function stop() {
-    if (!timer) return
-    clearInterval(timer)
-    timer = null
+    if (!detach) return
+    detach()
+    detach = null
   }
 
+  // 構築時に購読する（`server.js` は `boardTick.start()` を 1 回呼ぶだけ）
+  attach()
+
   return {
-    intervalMs,
     statePath,
     chatReportsPath,
     reportsPath,
@@ -1246,6 +1191,6 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
     start,
     stop,
     reports: (o = {}) => readPipelineReports(reviewRoot, o),
-    status: () => ({ running: Boolean(timer), ticks, lastError, statePath }),
+    status: () => ({ running: Boolean(detach), ticks, lastError, statePath }),
   }
 }

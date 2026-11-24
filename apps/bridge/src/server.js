@@ -10,6 +10,7 @@ import { createKanban } from './kanban.js'
 import { createReview, injectReviewBridge, reviewSheetHeaders, reviewViewHeaders, reviewViewHtml } from './review.js'
 import { createReviewWatcher } from './review-watcher.js'
 import { createPipelineWatcher, readPipelineReports } from './pipeline-watcher.js'
+import { createBoardTick } from './board-tick.js'
 import { createOps } from './ops.js'
 import {
   CUSTOM_MAX,
@@ -98,20 +99,25 @@ const architect = createArchitect(
   },
 )
 const review = createReview(cfg, { targets: () => repos.targets(), assignee: getPilotProfile })
+/*
+ * 盤面ティック（D110）。`kanban.db` を 10 秒ごとに **1 回だけ**読み、
+ * スナップショット（行＋差分）を両ウォッチャーへ配る。タイマーはここ 1 本。
+ */
+const boardTick = createBoardTick(cfg)
 // 完了・ブロックの記録はブリッジ内蔵（D7）。外部 cron は要らない。
-const reviewWatcher = createReviewWatcher(cfg, { review })
+const reviewWatcher = createReviewWatcher(cfg, { review, boardTick })
 const ops = createOps(cfg, hermes, auth, { kanban, nudge: () => nudgeWatchers() })
 const gitinfo = createGitInfo(cfg, { kanban })
 // 使用量（コスト・トークン・API コール）はテレメトリとパイプライン報告の双方が使う（V7-2）。
 const usage = createUsage(cfg)
 // パイプライン完走レポート（D20 / D21）。Spec ラン／ボードウェーブの収束を監視する。
 // `usage` を渡すと報告に Spec スコープの API コール数・トークン数が入る。
-const pipelineWatcher = createPipelineWatcher(cfg, { gitinfo, usage })
+const pipelineWatcher = createPipelineWatcher(cfg, { gitinfo, usage, boardTick })
 /*
  * 補助関数（ウォッチャー同期・プロファイル探索・スニペット保存・コヒーレンス解決・sendOutcome）は
  * `server/helpers.js` へ分割した。ここで 1 回だけ束ねて受け取る。
  */
-const helpers = createServerHelpers({ cfg, hermes, kanban, repos, capabilities, reviewWatcher, pipelineWatcher, sendJson })
+const helpers = createServerHelpers({ cfg, hermes, kanban, repos, capabilities, boardTick, sendJson })
 const {
   ensureWatchersFresh,
   tailscaleStatusJson,
@@ -182,6 +188,7 @@ const apiCtx = {
   ops,
   gitinfo,
   usage,
+  boardTick,
   pipelineWatcher,
   readPipelineReports,
   capabilities,
@@ -772,16 +779,11 @@ server.listen(cfg.port, cfg.host, async () => {
   console.log(`[bridge] Token file: ${cfg.tokenPath}`)
   console.log(`[bridge] Auth page: http://${cfg.host}:${cfg.port}/auth`)
   // 内蔵ウォッチャー（D7）。初回はベースライン確立のみで過去分は通知しない。
+  // 盤面の走査は 1 本（`boardTick`）で、review / pipeline の 2 ウォッチャーは購読者（D110）。
   try {
-    reviewWatcher.start()
+    boardTick.start()
   } catch (err) {
-    console.warn(`[bridge] Failed to start reviewWatcher: ${err?.message}`)
-  }
-  // パイプライン完走レポート（D20 / D21）。初回はベースライン確立のみ。
-  try {
-    pipelineWatcher.start()
-  } catch (err) {
-    console.warn(`[bridge] Failed to start pipelineWatcher: ${err?.message}`)
+    console.warn(`[bridge] Failed to start boardTick: ${err?.message}`)
   }
   try {
     await hermes.ensureToken()

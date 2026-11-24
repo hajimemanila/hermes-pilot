@@ -36,11 +36,15 @@ import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { bundleServerSource } from './lib/source-bundle.mjs'
 import {
+  BOARD_SCAN_MS,
+  BOARD_TICK_OWNER_FILE,
   CLOCK_INTERVAL_MS,
   SAFE_OWNER_FILE,
   TRANSITION_OWNER_FILES,
   WRITE_ROUTES,
+  boardTickOwnerProblems,
   callSpans,
+  isBoardWatcherFile,
   lineOf,
   routeBlocks,
   silentServerProblems,
@@ -52,11 +56,15 @@ import {
 } from './lib/coherence-guards.mjs'
 
 export {
+  BOARD_SCAN_MS,
+  BOARD_TICK_OWNER_FILE,
   CLOCK_INTERVAL_MS,
   SAFE_OWNER_FILE,
   TRANSITION_OWNER_FILES,
   WRITE_ROUTES,
+  boardTickOwnerProblems,
   callSpans,
+  isBoardWatcherFile,
   routeBlocks,
   silentServerProblems,
   splitTopLevelArgs,
@@ -116,6 +124,7 @@ export const RULES = Object.freeze([
   'write-owner',
   'cli-owner',
   'swallow-owner',
+  'board-tick-owner',
 ])
 
 /* ------------------------------------------------------------------ */
@@ -1261,6 +1270,39 @@ async function ruleSwallowOwner(root, findings) {
   }
 }
 
+/**
+ * (15) Recurrence guard: one tick owns the board scan (D110).
+ *
+ * Scans every bridge module so the coverage count proves the rule looked at the
+ * watcher files, not at an empty list.
+ */
+async function ruleBoardTickOwner(root, findings) {
+  const rule = 'board-tick-owner'
+  const scanned = walkCode(root, LAYOUT.bridgeSrc)
+  const hits = []
+  const watchers = []
+  for (const file of scanned) {
+    const text = readText(file.abs)
+    if (text === null) continue
+    if (isBoardWatcherFile(file.rel)) watchers.push(file.rel)
+    for (const problem of boardTickOwnerProblems(file.rel, text)) {
+      hits.push({ file: file.rel, line: problem.line, reason: problem.reason })
+    }
+  }
+  findings.note(
+    rule,
+    `${scanned.length} file(s) scanned in ${LAYOUT.bridgeSrc} (${watchers.length} watcher module(s) must subscribe to ${BOARD_TICK_OWNER_FILE})`,
+    { value: scanned.length, watchers: [...watchers], owner: BOARD_TICK_OWNER_FILE, scanMs: BOARD_SCAN_MS },
+  )
+  if (hits.length) {
+    findings.violation(rule, `${hits.length} board scan call site(s) outside ${BOARD_TICK_OWNER_FILE}`, {
+      value: hits.length,
+      scanned: scanned.length,
+      files: hits.slice(0, 10),
+    })
+  }
+}
+
 /* --- ratchet + legacy-name soft signals --- */
 
 /** Resolve the baseline path from the coherence config. */
@@ -1425,6 +1467,7 @@ export async function analyzeRepo(root = DEFAULT_ROOT, options = {}) {
     ruleWriteOwner,
     ruleCliOwner,
     ruleSwallowOwner,
+    ruleBoardTickOwner,
   ]) {
     try {
       await rule(absRoot, findings)

@@ -11,15 +11,18 @@ import { TERM_BUILTIN_IDS, allTermSnippets } from '../term-snippets.js'
 import { tailscaleCommandCandidates } from '../qr.js'
 
 export function createServerHelpers(ctx = {}) {
-  const { cfg, hermes, kanban, repos, capabilities, reviewWatcher, pipelineWatcher, sendJson } = ctx
+  const { cfg, hermes, kanban, repos, capabilities, boardTick, sendJson } = ctx
 
 
 let watcherRefreshAt = 0
 let watcherInFlight = null
 
 /**
- * レビュー／パイプラインの両ウォッチャーを即時走査する（連打と並行実行を束ねる）。
- * 状態変更直後の「最大 10〜25 秒の通知ラグ」を消すための補助同期。
+ * 盤面ティックを即時回転させる（連打と並行実行を束ねる）。
+ *
+ * 走査は 1 本（`boardTick`）なので、1 回走らせれば review / pipeline の 2 ウォッチャーが
+ * 同じスナップショットを受け取る（D110）。状態変更直後の「最大 10〜25 秒の通知ラグ」を消す。
+ *
  * @param {number} [minIntervalMs] 前回走査からの最小経過時間
  * @returns {Promise<void>}
  */
@@ -31,12 +34,7 @@ function ensureWatchersFresh(minIntervalMs = 2000) {
     try {
       watcherRefreshAt = Date.now()
       try {
-        reviewWatcher.tick()
-      } catch {
-        /* 補助同期の失敗で本線を止めない */
-      }
-      try {
-        await pipelineWatcher.tick()
+        await boardTick.run()
       } catch {
         /* 補助同期の失敗で本線を止めない */
       }

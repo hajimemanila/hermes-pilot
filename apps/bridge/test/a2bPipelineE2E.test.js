@@ -20,6 +20,7 @@ import { createKanban } from '../src/kanban.js'
 import { createReview } from '../src/review.js'
 import { createReviewWatcher } from '../src/review-watcher.js'
 import { createPipelineWatcher } from '../src/pipeline-watcher.js'
+import { createBoardTick } from '../src/board-tick.js'
 
 function createKanbanDb(kanbanRoot, slug, { workdir = null, empty = false } = {}) {
   const bdir = path.join(kanbanRoot, 'boards', slug)
@@ -352,9 +353,10 @@ test('tasks テーブルの無い空 SQLite DB でも reviewWatcher / pipelineWa
     const { db, dbPath } = createKanbanDb(kanbanRoot, 'empty-board', { empty: true })
     db.close()
 
-    const rw = createReviewWatcher({ kanbanRoot, pluginDataDir }, { dbPaths: [{ board: 'empty-board', path: dbPath }] })
-    await rw.tick()
-    const pw = createPipelineWatcher({ kanbanRoot, pluginDataDir }, { dbPaths: [{ board: 'empty-board', path: dbPath }] })
+    const rw = createBoardTick({ kanbanRoot }, { dbPaths: [{ board: 'empty-board', path: dbPath }] })
+    const rvw = createReviewWatcher({ kanbanRoot, pluginDataDir }, { snapshot: () => rw.tick() })
+    await rvw.tick()
+    const pw = createPipelineWatcher({ kanbanRoot, pluginDataDir }, { snapshot: () => rw.tick() })
     await pw.tick()
 
     assert.deepEqual(warns, [])

@@ -28,12 +28,15 @@ import {
   runRepoChecker,
 } from '../src/coherence.js'
 import {
+  BOARD_TICK_OWNER_FILE,
   RULES,
   analyzeRepo,
   baselineRatchet,
+  boardTickOwnerProblems,
   cliInvocationProblems,
   containsCJK,
   createParityProblems,
+  isBoardWatcherFile,
   namespaceMatches,
   normalizeApiPath,
   pathMatches,
@@ -633,8 +636,84 @@ test('write-owner: fs.writeFileSync outside lib/atomic.js is a hard fail', async
   )
 })
 
+test('board-tick-owner: a watcher that opens the board or keeps a timer is a hard fail', async () => {
+  const WATCHER_TIMER = [
+    "import { DatabaseSync } from 'node:sqlite'",
+    'export function createThingWatcher() {',
+    '  const db = new DatabaseSync(cfg.kanbanRoot, { readOnly: true })',
+    '  const timer = setInterval(() => db.prepare("SELECT 1").all(), 10_000)',
+    '  return { timer, dbPaths: () => [] }',
+    '}',
+    '',
+  ].join('\n')
+  const WATCHER_SUBSCRIBER = [
+    'export function createThingWatcher(cfg, opts = {}) {',
+    '  const detach = opts.boardTick.subscribe((snapshot) => snapshot.changes)',
+    '  return { stop: detach }',
+    '}',
+    '',
+  ].join('\n')
+  const OWNER = [
+    "import { DatabaseSync } from 'node:sqlite'",
+    'export function read(dbPath) {',
+    '  return new DatabaseSync(dbPath, { readOnly: true, timeout: 3000 })',
+    '}',
+    'export function start() { return setInterval(() => read("x"), 10_000) }',
+    '',
+  ].join('\n')
+
+  assert.equal(isBoardWatcherFile('apps/bridge/src/review-watcher.js'), true)
+  assert.equal(isBoardWatcherFile('apps/bridge/src/lib/board-watcher.js'), true)
+  assert.equal(isBoardWatcherFile('apps/bridge/src/board-tick.js'), false)
+
+  const bad = boardTickOwnerProblems('apps/bridge/src/thing-watcher.js', WATCHER_TIMER)
+  assert.equal(bad.length, 3, 'DB 1 件 + タイマー 1 件 + dbPaths 1 件')
+  assert.match(bad[0].reason, /opens a board database directly/)
+  assert.match(bad[1].reason, /keeps its own timer/)
+  assert.match(bad[2].reason, /board path list/)
+  assert.deepEqual(boardTickOwnerProblems('apps/bridge/src/thing-watcher.js', WATCHER_SUBSCRIBER), [])
+
+  // A second 10s scan timer outside the owner module is the drift itself.
+  const copy = boardTickOwnerProblems('apps/bridge/src/server.js', 'const t = setInterval(run, 10_000)\n')
+  assert.equal(copy.length, 1)
+  assert.match(copy[0].reason, /only apps\/bridge\/src\/board-tick\.js/)
+  // Other periods (websocket keepalive) are not board scans.
+  assert.deepEqual(boardTickOwnerProblems('apps/bridge/src/server/ws-handlers.js', 'setInterval(ping, 30_000)\n'), [])
+
+  // The owner must keep readOnly on every handle.
+  const writable = boardTickOwnerProblems(BOARD_TICK_OWNER_FILE, "new DatabaseSync(p, { timeout: 3000 })\n")
+  assert.equal(writable.length, 1)
+  assert.match(writable[0].reason, /readOnly/)
+
+  // Control experiment: the rule is registered and reddens on a watcher timer only if the
+  // source drifts -- the same commit's real tree stays clean.
+  const red = await analyzeRepo(
+    ruleFixture({
+      'apps/bridge/src/thing-watcher.js': WATCHER_TIMER,
+      [BOARD_TICK_OWNER_FILE]: OWNER,
+    }),
+  )
+  const issue = red.hardFails.find((entry) => entry.rule === 'board-tick-owner')
+  assert.ok(issue, 'the watcher timer must be reported')
+  assert.equal(issue.files[0].file, 'apps/bridge/src/thing-watcher.js')
+
+  const green = await analyzeRepo(
+    ruleFixture({
+      'apps/bridge/src/thing-watcher.js': WATCHER_SUBSCRIBER,
+      [BOARD_TICK_OWNER_FILE]: OWNER,
+    }),
+  )
+  assert.deepEqual(
+    hardRules(green).filter((rule) => rule === 'board-tick-owner'),
+    [],
+  )
+  const note = green.notices.find((entry) => entry.rule === 'board-tick-owner')
+  assert.equal(note.value, 2, 'coverage counts the files the rule read')
+  assert.deepEqual(note.watchers, ['apps/bridge/src/thing-watcher.js'])
+})
+
 test('the recurrence guards are registered rules and stay ASCII', () => {
-  assert.equal(RULES.length, 14)
+  assert.equal(RULES.length, 15)
   for (const rule of [
     'cli-invocation-guard',
     'silent-failure-guard',
@@ -645,6 +724,7 @@ test('the recurrence guards are registered rules and stay ASCII', () => {
     'write-owner',
     'cli-owner',
     'swallow-owner',
+    'board-tick-owner',
   ]) {
     assert.ok(RULES.includes(rule), `${rule} must be registered`)
     assert.equal(containsCJK(rule), false)

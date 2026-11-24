@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { createReviewWatcher } from '../src/review-watcher.js'
+import { createBoardTick } from '../src/board-tick.js'
 
 /**
  * 一時環境（home/kanban/boards/mobile/kanban.db + review ディレクトリ）を作る。
@@ -62,14 +63,40 @@ function readJsonl(file) {
   }
 }
 
+/**
+ * 盤面ティック（テスト用）。DB は一時環境の 1 本だけを見る。
+ *
+ * ウォッチャーは自分で DB を開かない（D110）。テストも `snapshot` を注入し、
+ * 本番と同じ「1 回の走査を購読者が受け取る」形で走らせる。
+ */
+function makeTick(env, opts = {}) {
+  const now =
+    typeof opts.now === 'function' ? opts.now : opts.now !== undefined ? () => opts.now : undefined
+  return createBoardTick(
+    { kanbanRoot: env.kanbanRoot },
+    {
+      dbPaths: opts.dbPaths ?? [{ board: 'mobile', path: env.dbPath }],
+      now,
+      logger: { warn: () => {} },
+    },
+  )
+}
+
+/** `snapshot` 注入のウォッチャー（`tick()` のたびに 1 回走査する）。 */
+function makeWatcher(env, opts = {}) {
+  const bt = opts.boardTick ?? makeTick(env, opts)
+  const now =
+    typeof opts.now === 'function' ? opts.now : opts.now !== undefined ? () => opts.now : undefined
+  return createReviewWatcher(
+    { kanbanRoot: env.kanbanRoot, reviewDir: env.reviewDir },
+    { snapshot: () => bt.tick(), now, logger: { warn: () => {} } },
+  )
+}
+
 test('初回起動はベースライン確立のみ（過去の done を通知しない）', () => {
   const env = tempEnv()
   addTask(env.dbPath, { id: 't_old1', title: '昔の完了', status: 'done' })
-  const state = { now: () => Date.parse('2026-11-13T22:00:00+08:00') }
-  const w = createReviewWatcher(
-    { kanbanRoot: env.kanbanRoot, reviewDir: env.reviewDir },
-    { ...state, intervalMs: 10_000 },
-  )
+  const w = makeWatcher(env, { now: Date.parse('2026-11-13T22:00:00+08:00') })
 
   const r = w.tick()
   assert.equal(r.baseline, true, 'state ファイルが無ければ初回 = ベースライン')
@@ -92,10 +119,7 @@ test('done 遷移で feed と chat-reports に 1 行ずつ追記し、2 回目�
     body: '[review] label=strip-01 round=1 mode=sheet sheet=sheets/strip-01-1.html chat=20260101_120000_cafebabe',
     status: 'running',
   })
-  const w = createReviewWatcher(
-    { kanbanRoot: env.kanbanRoot, reviewDir: env.reviewDir },
-    { intervalMs: 10_000, now: () => Date.parse('2026-11-13T22:10:00+08:00') },
-  )
+  const w = makeWatcher(env, { now: Date.parse('2026-11-13T22:10:00+08:00') })
   w.tick() // ベースライン（running）
 
   setStatus(env.dbPath, 't_done1', 'done')
@@ -126,7 +150,7 @@ test('done 遷移で feed と chat-reports に 1 行ずつ追記し、2 回目�
 test('result があれば完了報告の本文にする（無ければタイトル）', () => {
   const env = tempEnv()
   addTask(env.dbPath, { id: 't_r1', title: 'タイトル', status: 'running', body: '[review] label=r-01 chat=chat-r' })
-  const w = createReviewWatcher({ kanbanRoot: env.kanbanRoot, reviewDir: env.reviewDir }, { intervalMs: 10_000 })
+  const w = makeWatcher(env)
   w.tick()
   setStatus(env.dbPath, 't_r1', 'done')
   const db = new DatabaseSync(env.dbPath)
@@ -141,7 +165,7 @@ test('result があれば完了報告の本文にする（無ければタイト�
 test('running → blocked の遷移は kind=blocked で 1 行（会話報告は書かない）', () => {
   const env = tempEnv()
   addTask(env.dbPath, { id: 't_b1', title: '2 巡目', status: 'running', body: '[review] label=r2-01 round=2 chat=chat-b' })
-  const w = createReviewWatcher({ kanbanRoot: env.kanbanRoot, reviewDir: env.reviewDir }, { intervalMs: 10_000 })
+  const w = makeWatcher(env)
   w.tick()
 
   setStatus(env.dbPath, 't_b1', 'blocked')
@@ -158,7 +182,7 @@ test('running → blocked の遷移は kind=blocked で 1 行（会話報告は�
 test('blocked へ別の状態から入っても通知しない（spec は running → blocked のみ）', () => {
   const env = tempEnv()
   addTask(env.dbPath, { id: 't_b2', title: '待機', status: 'ready', body: '[review] label=x-02' })
-  const w = createReviewWatcher({ kanbanRoot: env.kanbanRoot, reviewDir: env.reviewDir }, { intervalMs: 10_000 })
+  const w = makeWatcher(env)
   w.tick()
   setStatus(env.dbPath, 't_b2', 'blocked')
   const r = w.tick()
@@ -170,7 +194,7 @@ test('レビュー行を持たないタスクは監視しない（[review] の�
   const env = tempEnv()
   addTask(env.dbPath, { id: 't_plain', title: '普通のタスク', body: 'ふつうの本文', status: 'done' })
   addTask(env.dbPath, { id: 't_mention', title: '言及だけ', body: 'レビューは [review] タグで起票する', status: 'done' })
-  const w = createReviewWatcher({ kanbanRoot: env.kanbanRoot, reviewDir: env.reviewDir }, { intervalMs: 10_000 })
+  const w = makeWatcher(env)
   const r = w.tick()
   assert.equal(r.seen, 0, '機械可読行が先頭に無いものはレビューではない')
 })
@@ -178,7 +202,7 @@ test('レビュー行を持たないタスクは監視しない（[review] の�
 test('移行前の [akapen] タスクも監視する（移行前でもレビューが消えない）', () => {
   const env = tempEnv()
   addTask(env.dbPath, { id: 't_legacy', title: '旧タグ', status: 'running', body: '[akapen] label=old-01' })
-  const w = createReviewWatcher({ kanbanRoot: env.kanbanRoot, reviewDir: env.reviewDir }, { intervalMs: 10_000 })
+  const w = makeWatcher(env)
   w.tick()
   setStatus(env.dbPath, 't_legacy', 'done')
   w.tick()
@@ -187,15 +211,31 @@ test('移行前の [akapen] タスクも監視する（移行前でもレビュ�
   assert.equal(feed[0].kind, 'done')
 })
 
-test('start / stop はタイマーを持ち、tick はテストから直接呼べる', () => {
+test('自前のタイマーも DB も持たない: 1 回の走査を購読で受ける（D110）', () => {
   const env = tempEnv()
+  addTask(env.dbPath, { id: 't_sub1', title: '購読', status: 'running', body: '[review] label=sub-01' })
+  const bt = makeTick(env)
   const w = createReviewWatcher(
     { kanbanRoot: env.kanbanRoot, reviewDir: env.reviewDir },
-    { intervalMs: 60_000 },
+    { boardTick: bt, logger: { warn: () => {} } },
   )
-  w.start()
+  assert.equal(bt.status().subscribers, 1, '構築時に購読する')
   assert.equal(w.status().running, true)
-  assert.equal(w.status().ticks, 1, 'start は即 1 ティック（ベースライン）')
+  assert.equal(w.status().ticks, 0, '走査が来るまで動かない')
+
+  bt.tick() // 1 回の走査
+  assert.equal(w.status().ticks, 1, '1 回の走査が 1 ティックになる')
+  bt.tick()
+  assert.equal(w.status().ticks, 2)
+
   w.stop()
   assert.equal(w.status().running, false)
+  assert.equal(bt.status().subscribers, 0)
+  bt.tick()
+  assert.equal(w.status().ticks, 2, '解除後は走査を受け取らない')
+
+  // ソースに独自タイマー・DB が戻っていない（`board-tick-owner` と同じ条件）
+  const src = fs.readFileSync(new URL('../src/review-watcher.js', import.meta.url), 'utf8')
+  assert.equal((src.match(/setInterval\(/g) ?? []).length, 0)
+  assert.equal((src.match(/new DatabaseSync\(/g) ?? []).length, 0)
 })
