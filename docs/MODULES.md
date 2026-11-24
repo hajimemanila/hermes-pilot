@@ -56,3 +56,38 @@
   - `skills.js`: 同梱スキルのファイル配置と適用状況（`installSkill` / `optimizeAgentSkills` / `getOptimizeStatus`）。
 - `optimizeAntigravitySkills`（現行名 `optimizeAgentSkills`）は `pipeline/skills.js` が定義元なので、
   `scripts/check-coherence.mjs` の `LEGACY_SYMBOLS` の allow にこのパスが入っている（消すと hard fail）。
+
+## Bridge の旧レビュータグ（読み取り専用の互換）
+
+- `apps/bridge/src/review/legacy-tags.js`: 移行前データの `[akapen]` を**読むだけ**受ける唯一の置き場所
+  （`LEGACY_REVIEW_TAG` / `LEGACY_REVIEW_NAME` / `LEGACY_REVIEW_LIKE`）。書き込み側は常に `[review]`。
+- リテラルを増やさない: SQL はテンプレート文字列、正規表現は `new RegExp` で組み立てる
+  （マッチ挙動は変えない）。この 1 ファイルだけが `check-coherence` の旧名 allow に入っている。
+- 旧ボードの履歴は `[akapen]` のまま残す（移行スクリプトは body を書き換えない仕様）。
+
+## 分割後の地図
+
+```text
+apps/bridge/src/
+  pipeline-optimizer.js      ← バレル（23 export を再エクスポート・60 行未満）
+  pipeline/
+    paths.js                 ← REPO_ROOT / BUNDLED_SKILLS / DEFAULT_SKILLS_SRC（葉）
+    soul.js                  ← A2B_* / backupStamp / mergeSoul / nextBackupPath /
+                               applySoulFile† / inspectSoulFile† / profileSoulState† / optimizeHermesSoul
+    profile.js               ← DEFAULT_PILOT_PROFILE / PROFILE_NAME_RE† / PROFILE_SOUL_CREATE_IF_MISSING /
+                               sanitizePilotProfile / pilotProfileSkillsDir / listProfileNames /
+                               ensurePilotProfile / optimizeProfileSouls
+    skills.js                ← SKILL_TARGET_CANDIDATES / installSkill / optimizeAntigravitySkills /
+                               optimizeAgentSkills / getOptimizeStatus
+  review/legacy-tags.js      ← LEGACY_REVIEW_TAG（[akapen] の唯一の定義）
+
+apps/web/src/features/
+  ReviewPane.jsx             ← TABS / ItemRow / WorkerFeed / ReviewPane（約 748 行）
+  review/Chip.jsx            ← Chip（ReviewPane と AnnotationCreate が共有）
+  review/ReviewForms.jsx     ← toZoom / StandardForm / IframeForm / SheetLink
+  review/ReviewDetail.jsx    ← ReadOnlyDetail
+  review/AnnotationCreate.jsx← downscaleFile / prefetchAnnotationData / findTarget / NewAnnotationSheet
+```
+
+† は「分割前は private だったが、モジュール境界を越えるので export する」もの。`pipeline/` 内の
+内部共有であることをコメントで明示する（公開契約には数えない）。
