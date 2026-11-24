@@ -932,7 +932,7 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
   // >=680px は 2 ペイン（詳細をシートではなく右ペインに出す。SPEC-i18n-resp §2 B3）
   // 境界は lib/layout.js の 1 箇所だけ（CSS の @media と一致させる）
   const { split } = useSplitLayout()
-  const [state, setState] = useState({ loading: true, items: [], error: null })
+  const [state, setState] = useState({ loading: true, items: [], board: null, error: null })
   const [tab, setTab] = useState('waiting')
   const [open, setOpen] = useState(null)
   const [showNew, setShowNew] = useState(false)
@@ -958,7 +958,7 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
       const r = await api('/api/review')
       const items = r.items || []
       lastLoadOkRef.current = true
-      setState({ loading: false, items, error: null })
+      setState({ loading: false, items, board: r.board || null, error: null })
       // 下部ナビの丸バッジ（注釈 1377.jpg の赤）を、この一覧と同じデータで同期する
       try {
         emitHmEvent(HM_EVENTS.REVIEW_ITEMS, { items })
@@ -970,7 +970,7 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
       return items
     } catch (e) {
       lastLoadOkRef.current = false
-      setState((prev) => ({ loading: false, items: prev.items, error: e?.message || t('review.loadFailed') }))
+      setState((prev) => ({ loading: false, items: prev.items, board: prev.board, error: e?.message || t('review.loadFailed') }))
       return []
     }
   }, [])
@@ -1250,7 +1250,7 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
               placeholder={t('review.closeReasonPlaceholder')}
             />
             <CloseActions
-              board={open.board || 'mobile'}
+              board={open.board || state.board || 'mobile'}
               taskId={open.id}
               note={closeNote}
               notify={notify}
@@ -1433,7 +1433,7 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
             // 記憶した対象を state にも反映（この画面は再マウントされない）
             setNewTarget(readReviewRepo())
             await load()
-            setOpen({ id: r.taskId, title: r.label, status: 'blocked', review: { mode: 'annotation', label: r.label } })
+            setOpen({ id: r.taskId, board: r.board || state.board || null, title: r.label, status: 'blocked', review: { mode: 'annotation', label: r.label } })
           }}
         />
       ) : null}
@@ -1441,7 +1441,7 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
       {/* 1 ペイン（< 820px）は従来どおり全画面被せ。2 ペインなら右ペインに常設する */}
       {!split && isAnnoOpen ? (
         <AnnotationEditor
-          item={open}
+          item={open} defaultBoard={state.board}
           notify={notify}
           onClose={() => setOpen(null)}
           onSubmitted={(r) => handleSubmitted(open.id, r)}
@@ -1460,7 +1460,7 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
           {open ? (
             isAnnoOpen ? (
               <AnnotationEditor
-                item={open}
+                item={open} defaultBoard={state.board}
                 notify={notify}
                 onClose={() => setOpen(null)}
                 onSubmitted={(r) => handleSubmitted(open.id, r)}

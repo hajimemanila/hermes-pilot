@@ -69,8 +69,8 @@ export function buildArchitectTaskBody({
     'Round 1: write the Quick Review JSON sheet under review/sheets/',
     '(spec-<slug>-1.json, "mode": "standard", 2-5 decisions) and file it as a blocked `[review]` task',
     'whose machine line is `mode=standard sheet=sheets/spec-<slug>-1.json`. Do not wait in chat.',
-    'Round 1 speed: locate only the relevant symbols (rg/grep), skip running npm test / npm run verify / browser_exec during Round 1, write the JSON sheet and block immediately.',
-    'Round 1 speed: skip bespoke HTML sheets and browser mockups (browser_exec screenshots) unless',
+    'Round 1 speed: locate only the relevant symbols (rg/grep), skip running full test/verification suites or a headless browser during Round 1, write the JSON sheet and block immediately.',
+    'Round 1 speed: skip bespoke HTML sheets and headless browser screenshots unless',
     'the question itself is a visual UI layout comparison; the JSON alone renders the native form.',
     `Round 2: after the answers arrive, write \`docs/SPEC-<SLUG>.md\` with \`### Batch ${prefix}-<n>: <Title>\` sections`,
     round2Headings(lang).inline,
@@ -142,18 +142,19 @@ export function reviewSheetReady(reviewDir, sheetRel) {
  * 条件: ① `job.taskId`（または `job.reviewTaskId`）と一致する、または `startedAt - 猶予` 以降に作成。
  * ② `[review]` の印を持ち、状態が `statuses` に含まれる。
  * ③ `[ARCH]` 自身のプロンプト文中の `[review]` 語には反応しない。
- * ④ `sheet=` 付き（annotation 以外）は、`reviewBoard` 一致と `reviewSheetReady` を満たすときだけ採用する。
+ * ④ `sheet=` 付き（annotation 以外）は、`reviewSheetReady`（`reviewDir` または `job.repoPath/review`）を満たすときだけ採用する。
  *
- * @param {{taskId?: string|null, reviewTaskId?: string|null, startedAt: number}} job ジョブ
+ * @param {{taskId?: string|null, reviewTaskId?: string|null, startedAt: number, repoPath?: string|null}} job ジョブ
  * @param {Array<object>} tasks ボードのタスク
  * @param {Set<string>} statuses 対象ステータス集合
  * @param {{slackMs?: number, reviewDir?: string|null, boardSlug?: string|null, reviewBoard?: string|null, checkSheet?: boolean}} [opts] 制約
  * @returns {{taskId: string, title: string, status: string}|null} 一致タスク（無ければ null）
  */
-function matchJobReviewTask(job, tasks, statuses, { slackMs = SPEC_MTIME_SLACK_MS, reviewDir = null, boardSlug = null, reviewBoard = null, checkSheet = false } = {}) {
+function matchJobReviewTask(job, tasks, statuses, { slackMs = SPEC_MTIME_SLACK_MS, reviewDir = null, checkSheet = false } = {}) {
   const since = Number(job?.startedAt ?? 0) - slackMs
   const ownId = job?.taskId ? String(job.taskId) : ''
   const revId = job?.reviewTaskId ? String(job.reviewTaskId) : ''
+  const reviewDirs = [...new Set([reviewDir, job?.repoPath ? path.join(String(job.repoPath), 'review') : null].filter(Boolean))]
   const list = Array.isArray(tasks) ? tasks : []
   for (const task of list) {
     if (!task || !task.id) continue
@@ -167,8 +168,7 @@ function matchJobReviewTask(job, tasks, statuses, { slackMs = SPEC_MTIME_SLACK_M
     const status = String(task.status ?? '').trim().toLowerCase()
     if (!statuses.has(status)) continue
     if (checkSheet && ak?.sheet && ak.mode !== 'annotation') {
-      if (reviewBoard && boardSlug && boardSlug !== reviewBoard) continue
-      if (reviewDir && !reviewSheetReady(reviewDir, ak.sheet)) continue
+      if (reviewDir && !reviewDirs.some((d) => reviewSheetReady(d, ak.sheet))) continue
     }
     return { taskId: id, title: String(task.title ?? ''), status }
   }
@@ -239,7 +239,7 @@ export function taskSpecPath(task) {
  */
 export function syncJobFromKanban(job, { tasksOf, reviewDir, revBoard = DEFAULT_REVIEW_BOARD, at = Date.now() }) {
   if (!['running', 'awaiting_spec', 'awaiting_review'].includes(job.status)) return false
-  const scanBoards = [revBoard, ...reviewBoardsFor(job.board).filter((s) => s !== revBoard)]
+  const scanBoards = [...new Set([job.board, ...reviewBoardsFor(job.board), revBoard].filter(Boolean))]
   const tasks = tasksOf(job.board)
   const self = job.taskId ? tasks.find((t) => t && String(t.id) === String(job.taskId)) ?? null : null
   job.taskStatus = self?.status ? String(self.status) : null
@@ -248,7 +248,7 @@ export function syncJobFromKanban(job, { tasksOf, reviewDir, revBoard = DEFAULT_
 
   let review = null
   for (const slug of scanBoards) {
-    const found = findJobReviewTask(job, tasksOf(slug), { reviewDir, boardSlug: slug, reviewBoard: revBoard })
+    const found = findJobReviewTask(job, tasksOf(slug), { reviewDir })
     if (found) {
       review = { ...found, board: slug }
       break

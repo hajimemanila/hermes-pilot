@@ -7,6 +7,7 @@
  */
 
 import { HM_STORAGE } from '../contracts/storage.js'
+import { HM_EVENTS, onHmEvent } from '../contracts/events.js'
 
 /** 既定プロファイル（"mobile" を主プロファイルにした）。 */
 export const DEFAULT_PROFILE = 'mobile'
@@ -36,5 +37,30 @@ export function applyDefaultProfile(storage = globalThis.localStorage) {
   } catch {
     // ストレージが無い / 拒否された / 容量超過。起動は止めない
     return false
+  }
+}
+
+/**
+ * ブリッジ設定の `pilotProfile` を取得し、`HM_EVENTS.PILOT_PROFILE` で即時追従する。
+ * @param {() => Promise<{pilotProfile?: string}>} fetchStatus `/api/pipeline/status` 呼び出し
+ * @param {(profile: string, meta: {source: 'status'|'event'}) => void} onUpdate 更新通知
+ * @returns {() => void} 購読解除関数
+ */
+export function subscribePilotProfile(fetchStatus, onUpdate) {
+  let active = true
+  Promise.resolve()
+    .then(() => fetchStatus?.())
+    .then((s) => {
+      const next = typeof s?.pilotProfile === 'string' && s.pilotProfile.trim() ? s.pilotProfile.trim() : null
+      if (active && next) onUpdate?.(next, { source: 'status' })
+    })
+    .catch(() => {})
+  const off = onHmEvent(HM_EVENTS.PILOT_PROFILE, (e) => {
+    const next = typeof e?.detail?.profile === 'string' && e.detail.profile.trim() ? e.detail.profile.trim() : null
+    if (active && next) onUpdate?.(next, { source: 'event' })
+  })
+  return () => {
+    active = false
+    off()
   }
 }

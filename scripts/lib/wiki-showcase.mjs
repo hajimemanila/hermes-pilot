@@ -123,7 +123,7 @@ export const SC_STATE = Object.freeze({
         questions:3,
         title:'Q1–Q3: FocusFlow ポモドーロタイマーの設計方針',
         sheet:'sheets/spec-focusflow-1.json',
-        target:'/Users/hajimenakagawa/projects/hermes-mobile-pwa'
+        target:'~/Projects/focusflow'
       }
     };
     const ffData={
@@ -239,7 +239,7 @@ export const SC_STATE = Object.freeze({
         hasCompare:false,
         title:'FocusFlow — 残り時間の大きさとスタートボタンの位置',
         shot:'shots/focusflow-ui-1.png',
-        target:'/Users/hajimenakagawa/projects/hermes-mobile-pwa'
+        target:'~/Projects/focusflow'
       }
     };
     const beforeUrl=await __drawFocusFlow(false);
@@ -305,7 +305,7 @@ export const SC_STATE = Object.freeze({
         title:'FocusFlow — 残り時間の大きさとスタートボタンの位置',
         shot:'shots/focusflow-ui-2.png',
         prevShot:'shots/focusflow-ui-1.png',
-        target:'/Users/hajimenakagawa/projects/hermes-mobile-pwa'
+        target:'~/Projects/focusflow'
       }
     };
     const afterUrl=await __drawFocusFlow(true);

@@ -172,7 +172,7 @@ test('buildSeedPrompt は推奨スラッグ・既存 SPEC 一覧・Round 1 高�
   assert.match(text, /Suggested slug: 0001/, 'ASCII が無い種は jobId 末尾を推奨にする')
   assert.match(text, /Existing specs: docs\/SPEC-PILOT-V10\.md, docs\/SPEC-PILOT-V11\.md/)
   assert.match(text, /Round 1 speed rule/)
-  assert.match(text, /do NOT run npm test \/ npm run verify/)
+  assert.match(text, /do NOT run full test or verification suites/)
   assert.match(text, /write the sheet and block immediately/)
 
   // 既存 SPEC が無いときは「無い」と明示する（探索させない）

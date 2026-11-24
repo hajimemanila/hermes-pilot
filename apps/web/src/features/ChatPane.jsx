@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useChatSocket } from '../lib/useChatSocket.js'
 import { useChatSessions } from './chat/useChatSessions.js'
 import { useChatReports } from './chat/useChatReports.js'
-import { DEFAULT_PROFILE, STORED_PROFILE_KEY, applyDefaultProfile } from '../lib/profile.js'
+import { DEFAULT_PROFILE, STORED_PROFILE_KEY, applyDefaultProfile, subscribePilotProfile } from '../lib/profile.js'
 import { boardSummary, defaultBoard, matchRepoByCwd, pinnedRepos, readLastRepo, readPendingRepo, readRecent, rememberRepo, repoLabel, writePendingRepo } from '../lib/repoPicker.js'
 import { pickResumeTarget, recentSessions } from '../lib/chatResume.js'
 import { useSplitLayout } from '../lib/useSplitLayout.js'
@@ -93,15 +93,14 @@ export function ChatPane({
   const [specJobClosed, setSpecJobClosed] = useState([])
   // resume できない会話（カンバン作業ログ等）は読み取り専用で表示する
   const [readonly, setReadonly] = useState(null)
-  // いま話しているプロファイル（SPEC-PROFILE-CHAT）。既定は DEFAULT_PROFILE（mobile）
+  // いま話しているプロファイル（既定はブリッジの pilotProfile 設定、フォールバック mobile）
+  const [pilotDefault, setPilotDefault] = useState(DEFAULT_PROFILE)
   const [profile, setProfile] = useState(DEFAULT_PROFILE)
-  // 直近の会話のプロファイル（起動時の復元に使う）
-  const [storedProfile, setStoredProfile] = useState(DEFAULT_PROFILE)
+  const [storedProfile, setStoredProfile] = useState(DEFAULT_PROFILE) // 直近の会話の復元用
   const [profileSheet, setProfileSheet] = useState(false)
-  // 新しい会話のリポジトリ（＝作業ディレクトリ）。決定は sheets/repo-picker-01-1 の 4 問すべて A
   const [repos, setRepos] = useState([])
-  const [repo, setRepo] = useState(null) // この会話で選んだもの
-  const [repoPick, setRepoPick] = useState(DEFAULT_PROFILE) // シートで選択中のプロファイル
+  const [repo, setRepo] = useState(null)
+  const [repoPick, setRepoPick] = useState(DEFAULT_PROFILE)
   const [repoStep, setRepoStep] = useState(null) // {kind:'board'|'create'|'all', repo}
   const [repoBusy, setRepoBusy] = useState(false)
   const [loadingChat, setLoadingChat] = useState(false)
@@ -590,16 +589,13 @@ export function ChatPane({
   connRef.current = connState
   useEffect(() => { if (showBanner) notifiedOffline.current = true }, [showBanner])
 
-  // 直近の会話を端末に覚える（プロファイルもセットで。他プロファイルの resume に要る）
   useEffect(() => {
     try {
-      // 既定を mobile に上げた移行（1回だけ）: 端末に残った前の選択を捨てる
       applyDefaultProfile()
       const saved = localStorage.getItem(HM_STORAGE.STORED_SID)
       if (saved && !storedRef.current) setStoredSid(saved)
       const savedProfile = localStorage.getItem(STORED_PROFILE_KEY)
       if (savedProfile) setStoredProfile(savedProfile)
-      // 未送信でリポジトリを選んでいた場合、リロード後もヘッダー札と cwd を復元する
       const pendingRepo = !saved ? readPendingRepo() : null
       if (pendingRepo) {
         if (pendingRepo.profile) {
@@ -612,6 +608,15 @@ export function ChatPane({
           if (hit) setRepo(hit)
         })
       }
+      return subscribePilotProfile(() => api('/api/pipeline/status'), (next, { source }) => {
+        setPilotDefault(next)
+        if ((source === 'event' || (!saved && !pendingRepo?.profile)) && !sidRef.current && !storedRef.current) {
+          setProfile(next)
+          setStoredProfile(next)
+          storedProfileRef.current = next
+          setRepoPick(next)
+        }
+      })
     } catch {
       /* noop */
     }
@@ -624,11 +629,11 @@ export function ChatPane({
       } else {
         localStorage.removeItem(HM_STORAGE.STORED_SID)
       }
-      localStorage.setItem(STORED_PROFILE_KEY, storedProfile || DEFAULT_PROFILE)
+      localStorage.setItem(STORED_PROFILE_KEY, storedProfile || pilotDefault)
     } catch {
       /* noop */
     }
-  }, [storedSid, storedProfile])
+  }, [storedSid, storedProfile, pilotDefault])
 
   /*
    * 実際に画面へ出している会話の ID は上（フック呼び出しの直前）で導出済み。
@@ -1150,7 +1155,7 @@ export function ChatPane({
         })
         target = r?.result?.session_id
         setStoredSid(r?.result?.stored_session_id ?? target ?? null)
-        setStoredProfile(profile || DEFAULT_PROFILE)
+        setStoredProfile(profile || pilotDefault)
         if (!target) return failed(t('chat.sessionCreateFailed'))
         writePendingRepo(globalThis.localStorage, null)
         setSid(target)
@@ -1198,7 +1203,7 @@ export function ChatPane({
       haptic('action')
       celebrate('send', { sfx: t('fx.sfx.send') })
     },
-    [text, attached, streaming, sid, rpc, notify, stageAttachments, resumeInto, profile],
+    [text, attached, streaming, sid, rpc, notify, stageAttachments, resumeInto, profile, pilotDefault],
   )
 
   const send = useCallback(() => sendText(), [sendText])
@@ -1211,20 +1216,10 @@ export function ChatPane({
     notify(t('chat.interrupted'))
   }, [sid, rpc, notify])
 
-  /**
-   * 新しい会話を始める（プロファイル + リポジトリ + ボード）。
-   *
-   * リポジトリは `session.create` の `cwd` として渡す（＝この会話の作業ディレクトリが
-   * その repo になる。起票・worker・パスの解決がそこで揃う）。板は端末の `hm.board` に
-   * 書く＝タスクタブとクイック起票の既定ボードがその repo の板に切り替わる。
-   *
-   * @param {string} prof プロファイル
-   * @param {object|null} pick 選んだリポジトリ（`/api/repos` の 1 件）
-   * @param {{slug: string, name?: string}|null} board 選んだボード
-   */
+  /** 新しい会話を始める（プロファイル + リポジトリ + ボード）。 */
   const startSession = useCallback(
-    (prof = DEFAULT_PROFILE, pick = null, board = null) => {
-      const next = prof || DEFAULT_PROFILE
+    (prof = pilotDefault, pick = null, board = null) => {
+      const next = prof || pilotDefault
       const chosen = pick?.path ? pick : null
       const boardSlug = board?.slug ?? ''
       setSid(null)
@@ -1248,7 +1243,7 @@ export function ChatPane({
         writePendingRepo(globalThis.localStorage, null)
       }
     },
-    [notify],
+    [notify, pilotDefault],
   )
 
   /** resume できない会話を読み取り専用で開く（カンバン作業ログなど）。 */
@@ -1375,12 +1370,12 @@ export function ChatPane({
     const run = async () => {
       if (target && target !== LATEST_REPORT_ID) {
         const found = sessionsRef.current.find((s) => String(s.id) === target)
-        openSessionSafe(target, null, found?.profile || profile || DEFAULT_PROFILE)
+        openSessionSafe(target, null, found?.profile || profile || pilotDefault)
       } else {
         const matched = await findRepoByPath(discussRequest.repoPath)
         if (!alive) return
         startSession(
-          profile || DEFAULT_PROFILE,
+          profile || pilotDefault,
           matched ?? null,
           discussRequest.board ? { slug: discussRequest.board } : null,
         )
@@ -1400,6 +1395,7 @@ export function ChatPane({
     prefillComposer,
     onConsumedDiscuss,
     profile,
+    pilotDefault,
     findRepoByPath,
   ])
 
@@ -1460,23 +1456,23 @@ export function ChatPane({
     }
     const target = storedRef.current ?? sidRef.current
     if (target) {
-      const r = await resumeInto(rpcFn, target, profile || DEFAULT_PROFILE)
+      const r = await resumeInto(rpcFn, target, profile || pilotDefault)
       if (!r?.ok) {
         notify(r?.error?.message ? t('chat.updateFailed', { message: r.error.message }) : t('chat.updateChatFailed'))
         return false
       }
     }
     return true
-  }, [loadSessions, streaming, readonly, loadTranscript, resumeInto, profile, notify])
+  }, [loadSessions, streaming, readonly, loadTranscript, resumeInto, profile, pilotDefault, notify])
 
   const openProfileSheet = useCallback(() => {
     setDrawer(false)
     setProfileSheet(true)
     setRepoStep(null)
-    setRepoPick(profile || DEFAULT_PROFILE)
+    setRepoPick(profile || pilotDefault)
     // 開くたびに最新リポ一覧を再取得（裏で git init したリポも即反映）
     ensureRepos({ force: true })
-  }, [profile, ensureRepos])
+  }, [profile, pilotDefault, ensureRepos])
 
   /**
    * リポジトリを選んだ（Q2=A）。板が無ければ確認、複数なら次の段、1 つならそのまま開始。
@@ -1531,7 +1527,7 @@ export function ChatPane({
    * 並び順は (1) DEFAULT_PROFILE (2) 'default' (3) 直近利用順 (4) 名前順（SPEC §5.3）。
    * 直近利用順はセッション一覧の最終活動時刻から作る（プロファイル名の決め打ちはしない）。
    */
-  const orderedProfiles = useMemo(() => orderProfiles(profiles, sessions, DEFAULT_PROFILE), [profiles, sessions])
+  const orderedProfiles = useMemo(() => orderProfiles(profiles, sessions, pilotDefault), [profiles, sessions, pilotDefault])
 
   /** 前回選んだリポジトリ（Q4=A: 次回の初期値。シートを開くたびに読み直す）。 */
   const lastRepo = useMemo(() => readLastRepo(), [profileSheet])
@@ -1555,7 +1551,7 @@ export function ChatPane({
   const chipsNode = (
     <>
       <span
-        className={`prof-chip${profile !== DEFAULT_PROFILE ? ' on' : ''}`}
+        className={`prof-chip${profile !== pilotDefault ? ' on' : ''}`}
         title={t('chat.profileTitle', { profile })}
       >
         {profile}
@@ -1667,12 +1663,12 @@ export function ChatPane({
                 }
                 markReportsSeen(LATEST_REPORT_ID)
                 findRepoByPath(u.repoPath).then((matched) => {
-                  startSession(profile || DEFAULT_PROFILE, matched ?? null, u.board ? { slug: u.board } : null)
+                  startSession(profile || pilotDefault, matched ?? null, u.board ? { slug: u.board } : null)
                 })
                 return
               }
               const found = sessions.find((s) => String(s.id) === u.sessionId)
-              openSessionSafe(u.sessionId, null, found?.profile || profile || DEFAULT_PROFILE)
+              openSessionSafe(u.sessionId, null, found?.profile || profile || pilotDefault)
             }}
           >
             {t('chat.open')}
@@ -2506,13 +2502,13 @@ export function ChatPane({
                   <span className="row-main">
                     <span className="row-title">
                       {p}
-                      {p === DEFAULT_PROFILE ? <span className="prof-chip">{t('chat.defaultChip')}</span> : null}
+                      {p === pilotDefault ? <span className="prof-chip">{t('chat.defaultChip')}</span> : null}
                       {repoPick === p ? <span className="prof-chip on">{t('chat.selectedChip')}</span> : null}
                     </span>
                     <span className="row-sub">
                       {p === 'default'
                         ? t('chat.usualWork')
-                        : p === DEFAULT_PROFILE
+                        : p === pilotDefault
                           ? t('chat.thisDeviceDefault')
                           : t('chat.profileSuffix', { p })}
                     </span>

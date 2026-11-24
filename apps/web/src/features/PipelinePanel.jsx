@@ -4,6 +4,7 @@ import { useI18n } from '../i18n/index.js'
 import { haptic } from '../lib/haptic.js'
 import { isOfflineError } from '../lib/netRecovery.js'
 import { useWakeSync } from '../lib/useWakeSync.js'
+import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
 
 /**
  * 設定タブ「パイプライン＆Architect」（SPEC V5 §3.2・§3.3 / D25・D26①・
@@ -91,6 +92,7 @@ export function PipelinePanel({ notify, board = '' }) {
         const r = await api('/api/pipeline/profile', { method: 'POST', body: { profile } })
         if (r?.ok) {
           setStatus(r.status ?? status)
+          emitHmEvent(HM_EVENTS.PILOT_PROFILE, { profile: r.pilotProfile || profile })
           notify?.(t('settings.pipelineProfileSaved', { profile: r.pilotProfile || profile }))
         } else {
           setError(r?.error ?? t('settings.pipelineUnavailable'))

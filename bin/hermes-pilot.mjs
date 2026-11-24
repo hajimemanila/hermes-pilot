@@ -27,7 +27,7 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { collectPairing, qrPng, qrSvg, qrTerminal, tailscaleCommandCandidates } from '../apps/bridge/src/qr.js'
 import { createPairCodes } from '../apps/bridge/src/pair-codes.js'
-import { DEFAULT_PILOT_PROFILE, ensurePilotProfile, pilotProfileSkillsDir, sanitizePilotProfile } from '../apps/bridge/src/pipeline-optimizer.js'
+import { DEFAULT_PILOT_PROFILE, ensurePilotProfile, optimizeAgentSkills, pilotProfileSkillsDir, sanitizePilotProfile } from '../apps/bridge/src/pipeline-optimizer.js'
 
 /** リポジトリのルート（このファイルは `bin/` の下）。 */
 export const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
@@ -652,42 +652,16 @@ export async function runInit(
     )
   }
 
-  const installed = []
-  for (const name of BUNDLED_SKILLS) {
-    const src = path.join(ROOT, 'skills', name)
-    const dest = path.join(p.skillsDir, name)
-    if (!fs.existsSync(src)) continue
-    try {
-      fs.cpSync(src, dest, { recursive: true, force: false, preserveTimestamps: true })
-      installed.push(dest)
-    } catch (err) {
-      out(`  ! skill ${name}: ${err?.message ?? err}`)
-    }
-  }
   const profileCfg = readConfig(p.configPath)
   const profileResult = ensurePilotProfile({ hermesHome: p.hermesHome, profile: profileCfg.pilotProfile })
-  /*
-   * プロファイル別の最適化: PWA の既定プロファイルは `mobile`（`apps/web/src/lib/profile.js`）。
-   * 同梱 3 スキルを `<hermesHome>/skills` にだけ置くと、Pilot のセッションから
-   * `quick-review` / `annotation` / `spec-architect` の契約を一度も読めない。
-   * 既存の実ディレクトリは上書きしない（`force: false`）。プロファイルが無ければ何もしない。
-   */
+  // 同梱スキルは <hermesHome>/skills と Pilot プロファイルの両方へ link 優先・copy フォールバックで配置する。
+  const skillsSrcDir = path.join(ROOT, 'skills')
+  const skillRes = optimizeAgentSkills({ home: p.home, hermesHome: p.hermesHome, skillsSrcDir, pilotProfile: profileCfg.pilotProfile })
   const profileSkillsDir = pilotProfileSkillsDir({ hermesHome: p.hermesHome, pilotProfile: profileCfg.pilotProfile })
-  const installedProfile = []
-  if (profileSkillsDir) {
-    for (const name of BUNDLED_SKILLS) {
-      const src = path.join(ROOT, 'skills', name)
-      const dest = path.join(profileSkillsDir, name)
-      if (!fs.existsSync(src)) continue
-      try {
-        fs.cpSync(src, dest, { recursive: true, force: false, preserveTimestamps: true })
-        installedProfile.push(dest)
-      } catch (err) {
-        out(`  ! profile skill ${name}: ${err?.message ?? err}`)
-      }
-    }
-  }
-  // 標準ダッシュボードのタブ（冪等）。`--force` で既存ファイルも上書きする。
+  const hermesTarget = skillRes.targets.find((t) => t.id === 'hermes')
+  const profileTarget = skillRes.targets.find((t) => t.id.startsWith('profile:'))
+  const installed = (hermesTarget?.installed ?? []).map((s) => path.join(p.skillsDir, s.split(':')[0]))
+  const installedProfile = (profileTarget?.installed ?? []).map((s) => path.join(profileTarget.path, s.split(':')[0]))
   const dashboard = installDashboardPlugin(p, { force, targetDir })
   out(
     '',

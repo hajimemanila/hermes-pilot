@@ -21,15 +21,15 @@ ask in long chat messages. Put the options and one recommendation on a single sh
 answer with one tap. The answer comes back as a kanban `comment` + `unblock`, and the worker
 resumes on its own.
 
-This skill ships with the **`hermes-pilot` plugin**. Data lives in
+This skill ships with the **`hermes-pilot` plugin**. `hermes-pilot init` installs it into both
+`~/.hermes/skills/quick-review/` and `~/.hermes/profiles/<pilot>/skills/quick-review/`. Data lives in
 `~/.hermes/plugin-data/hermes-pilot/review/` (override with `HP_DATA_DIR`).
 
 ## Language
 
 Write user-facing prose in the run's UI language — sheet title/topic/question/option text, SPEC prose, and the comments and summaries you post.
 Keep machine tokens ASCII and unchanged: `label=`, `sheet=`, `mode=`, `round=`, `target=`, task ids, file paths, and the SPEC keys **Execution Mode** / **Objective** / **Files** / **Verify**.
-This is `LANGUAGE_RULE_MARKER` / `LANGUAGE_RULE_EN` in `apps/bridge/src/language-rule.js`; `apps/bridge/test/languageRule.test.js` keeps this section and the bridge prompt identical.
-When the run's language is Japanese, only the prose switches to Japanese (JA variant in the same module); the machine line and paths stay ASCII.
+This matches the bridge prompt language rule: when the run's language is Japanese, only the prose switches to Japanese; the machine line and paths stay ASCII.
 The rule covers the sheet you write and every prose line you post to the board, including the 1-line `complete --summary`.
 
 ## When to use it / when not to
@@ -54,7 +54,7 @@ profile (profile memory / the assignment table in `SOUL.md`).
   Cutting the decision into 3±1 questions, 2–3 options each, with the reason to recommend (gain / cost).
 - `role:planner` — extracting options and comparing trade-offs for complex design forks.
 - `role:visual-reviewer` — judging comparison thumbnails (`thumbs/*.png`). Only when a picture is attached.
-- `role:builder` — applying the answer and running `npm run verify`.
+- `role:builder` — applying the answer and running the verification command the target repository declares.
 
 ### Native delegation and fallback
 
@@ -69,8 +69,8 @@ profile (profile memory / the assignment table in `SOUL.md`).
 ### Hard boundary: no external AI CLIs
 
 Do not spawn external AI CLIs such as the `gemini` CLI (`gemini -p`, …) or `agy -p` to draft
-questions or thumbnails (this covers `spawn` / `execFile` / `exec`). Delegation means the Hermes
-native API provider plus `delegate_task` only. Runtime code is machine-checked by `npm run check:oauth`.
+questions or thumbnails (this covers `spawn` / `execFile` / `exec`). Use the Hermes native
+API provider plus `delegate_task` only.
 
 ## Procedure
 
@@ -86,7 +86,7 @@ Only when **the comparison itself** is the question (look, placement, informatio
 both options. If you are changing an existing screen, first capture a faithful shot of the current UI
 (never a mock that drifts from the real thing). Do not attach pictures to non-visual questions
 (naming, storage format, API, logic) — skipping them is faster and keeps the decision stable.
-Use a headless browser (`browser_exec`) only when a screenshot is required.
+Use a headless browser only when a screenshot is required.
 
 ### 3. Build the sheet (JSON first, HTML optional)
 
@@ -156,7 +156,7 @@ The **machine-readable line** in the body (this single line is the bridge's only
 ```
 
 ```bash
-hermes kanban create "Q1-Q3: <title>" --body "$(cat <<'BODY'
+hermes kanban --board <board> create "Q1-Q3: <title>" --body "$(cat <<'BODY'
 <Human-facing summary: what unblocks the work, what is stuck right now>
 
 [review] label=cockpit-03 round=1 mode=standard sheet=sheets/cockpit-03-1.json target=~/Projects/your-repo chat=<session_id>
@@ -205,7 +205,7 @@ Apply the answers above and continue. Items left unselected are settled by the r
 - Prefer the machine line **`mode=standard sheet=sheets/<label>-<round>.json`**
   (only when you also use `.html`, write `mode=sheet sheet=sheets/x-1.html`). Writing `.html` in
   `image=` is rescued as a `sheet`, but write `sheet=` correctly
-- **Do not hand-write `.html` or shoot with `browser_exec` when the question is not visual.**
+- **Do not hand-write `.html` or shoot with a headless browser when the question is not visual.**
   Attaching pictures to a question a single JSON settles costs minutes per sheet and delays the answer
 - Re-sending the same answer is idempotent (decided by `sha256` in `.answer.json`). No double `comment`
 - Answers are accepted **only while `blocked`**. Sending to `ready` / `running` / `done` returns 409 `NOT_WAITING`

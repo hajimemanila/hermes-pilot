@@ -106,6 +106,16 @@ export function isSupportedRunner(value) {
  * @param {unknown} value 入力
  * @returns {string} 表示名
  */
+/**
+ * `config.json` 等の `pilotProfile` 解決ヘルパ（未設定・空文字は `'mobile'`）。
+ * @param {object} [cfg] 設定（`pilotProfile` は文字列または関数）
+ * @returns {string} 担当プロファイル名
+ */
+export function pilotAssigneeOf(cfg = {}) {
+  const raw = typeof cfg?.pilotProfile === 'function' ? cfg.pilotProfile() : cfg?.pilotProfile
+  return String(raw ?? '').trim() || 'mobile'
+}
+
 export function runnerLabel(value) {
   return RUNNER_LABELS[sanitizeRunner(value)]
 }

@@ -724,3 +724,63 @@ print(json.dumps({
   assert.equal(out.optimizeAction, 'optimize')
   assert.deepEqual(out.offline, ['offline', true, 'hermes'], 'ブリッジ停止でもカードは描ける（既定 hermes）')
 })
+
+test('pilot_dashboard.py: write_config_atomic が pilotProfile を保持し、build_pipeline / setProfile がプロファイルを扱う', () => {
+  const script = `
+import importlib.util, json, sys, tempfile
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location("pd_prof", ${JSON.stringify(path.join(DASH, 'pilot_dashboard.py'))})
+m = importlib.util.module_from_spec(spec); sys.modules["pd_prof"] = m; spec.loader.exec_module(m)
+
+tmp = Path(tempfile.mkdtemp())
+cfg_path = tmp / "config.json"
+cfg_path.write_text(json.dumps({"lang": "ja", "scanDirs": ["~/Projects"], "servicePort": 4097, "pilotProfile": "custom-p"}))
+m.write_config_atomic(cfg_path, {"lang": "en", "scanDirs": ["~/Projects"], "servicePort": 4098})
+after_cfg = json.loads(cfg_path.read_text())
+
+(tmp / "token").write_text("tok")
+paths = {"home": tmp, "hermesHome": tmp / ".hermes", "dataDir": tmp, "configPath": cfg_path, "tokenPath": tmp / "token"}
+calls = []
+def fake(base, path, tok, *, method="GET", body=None, timeout=4.0):
+    calls.append((path, method, body))
+    if path == "/api/architect/config":
+        return {"ok": True, "runner": "hermes"}
+    if path == "/api/pipeline/status":
+        return {
+            "ok": True,
+            "pilotProfile": "custom-p",
+            "availableProfiles": ["mobile", "custom-p", "default"],
+            "profileSkills": {"profile": "custom-p", "present": ["quick-review"], "missing": []},
+            "hermes": {"present": ["quick-review"], "missing": []},
+            "soul": {"applied": True},
+        }
+    if path.startswith("/api/architect/jobs"):
+        return {"ok": True, "jobs": [], "pending": [], "specReady": []}
+    if path == "/api/pipeline/profile":
+        return {"ok": True, "pilotProfile": (body or {}).get("profile")}
+    raise AssertionError(path)
+
+pip = m.build_pipeline(paths, request=fake)
+set_prof = m.pipeline_action(paths, {"action": "setProfile", "profile": "alt-prof"}, request=fake)
+print(json.dumps({
+    "preservedProfile": after_cfg.get("pilotProfile"),
+    "langUpdated": after_cfg.get("lang"),
+    "fwdProfile": (pip.get("pipeline") or {}).get("pilotProfile"),
+    "fwdAvail": (pip.get("pipeline") or {}).get("availableProfiles"),
+    "fwdSkills": ((pip.get("pipeline") or {}).get("profileSkills") or {}).get("profile"),
+    "setProfOk": set_prof.get("ok"),
+    "setProfValue": set_prof.get("pilotProfile"),
+    "profCall": [c for c in calls if c[0] == "/api/pipeline/profile"],
+}))`
+  const out = runPython(script)
+  assert.equal(out.preservedProfile, 'custom-p')
+  assert.equal(out.langUpdated, 'en')
+  assert.equal(out.fwdProfile, 'custom-p')
+  assert.deepEqual(out.fwdAvail, ['mobile', 'custom-p', 'default'])
+  assert.equal(out.fwdSkills, 'custom-p')
+  assert.equal(out.setProfOk, true)
+  assert.equal(out.setProfValue, 'alt-prof')
+  assert.equal(out.profCall.length, 1)
+  assert.equal(out.profCall[0][1], 'POST')
+})

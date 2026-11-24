@@ -546,18 +546,28 @@ export function installSkill({ name, srcDir, destDir }) {
 
   if (stat) {
     // 既存の配置は原則さわらない。自分のリンク（＝同じ供給元を指す）だけは「配置済み」とみなす。
+    // リンク切れ（遷移前の配置先移動など）は張り直す。
     if (stat.isSymbolicLink()) {
-      let target = ''
-      try {
-        target = fs.readlinkSync(dest)
-      } catch {
-        target = ''
+      if (!fs.existsSync(dest)) {
+        try {
+          fs.unlinkSync(dest)
+        } catch {
+          return { name, status: 'skipped', reason: 'dangling-link' }
+        }
+      } else {
+        let target = ''
+        try {
+          target = fs.readlinkSync(dest)
+        } catch {
+          target = ''
+        }
+        const resolved = target ? path.resolve(path.dirname(dest), target) : ''
+        if (resolved === path.resolve(src)) return { name, status: 'skipped', reason: 'exists' }
+        return { name, status: 'skipped', reason: 'foreign-link' }
       }
-      const resolved = target ? path.resolve(path.dirname(dest), target) : ''
-      if (resolved === path.resolve(src)) return { name, status: 'skipped', reason: 'exists' }
-      return { name, status: 'skipped', reason: 'foreign-link' }
+    } else {
+      return { name, status: 'skipped', reason: 'exists' }
     }
-    return { name, status: 'skipped', reason: 'exists' }
   }
 
   try {
@@ -664,8 +674,9 @@ export function getOptimizeStatus({
     const missing = []
     for (const name of BUNDLED_SKILLS) {
       try {
-        fs.lstatSync(path.join(dir, name))
-        present.push(name)
+        // symlink を辿って SKILL.md の実在まで確かめる（リンク切れや空ディレクトリを誤認しない）
+        if (fs.statSync(path.join(dir, name, 'SKILL.md')).isFile()) present.push(name)
+        else missing.push(name)
       } catch {
         missing.push(name)
       }

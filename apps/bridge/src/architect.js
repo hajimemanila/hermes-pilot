@@ -66,6 +66,7 @@ import {
   TERMINAL_TASK_STATUSES,
   isSupportedRunner,
   normalizeExecutionPolicy,
+  pilotAssigneeOf,
   sanitizeRunner,
 } from './architect/labels.js'
 import {
@@ -109,6 +110,7 @@ export {
   executionPolicyLines,
   isSupportedRunner,
   normalizeExecutionPolicy,
+  pilotAssigneeOf,
   runnerLabel,
   sanitizeRunner,
 } from './architect/labels.js'
@@ -172,9 +174,7 @@ export function createCliRunner(cfg = {}) {
       usedBatchPrefixes,
       lang,
     })
-    const rawAssignee = typeof cfg?.pilotProfile === 'function' ? cfg.pilotProfile() : cfg?.pilotProfile
-    const assignee = String(rawAssignee ?? '').trim() || 'mobile'
-    const args = buildKanbanCreateArgs({ board, title, body, assignee })
+    const args = buildKanbanCreateArgs({ board, title, body, assignee: pilotAssigneeOf(cfg) })
     // `bin` / `args` は新形（`lib/cli.js` の統一形）から取る。
     return runHermes(args, { bin: cfg.hermesBin, cwd: repoPath, timeoutMs, maxBuffer: 4_000_000 })
   }
@@ -603,8 +603,8 @@ export function createArchitect(cfg = {}, deps = {}) {
           board: job.board,
           specRelPath: job.spec,
           batchIds: pending[0].pending,
-          chat: job.chat ?? undefined,
-          lang: job.lang,
+          assignee: pilotAssigneeOf(cfg),
+          chat: job.chat ?? undefined, lang: job.lang,
         })
         job.status = 'launched'
         job.launched = {

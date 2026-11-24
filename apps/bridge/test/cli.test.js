@@ -336,3 +336,18 @@ test('--help / qr / service status / init の出力に日本語が出ない（D7
     fs.rmSync(home, { recursive: true, force: true })
   }
 })
+
+test('init を 2 回実行すると同梱スキルを already installed として報告する', () => {
+  const home = tempHome()
+  try {
+    const first = runCli(['init'], home)
+    assert.equal(first.status, 0, first.out)
+    assert.match(first.out, /skills\s*:/)
+
+    const second = runCli(['init'], home)
+    assert.equal(second.status, 0, second.out)
+    assert.match(second.out, /already installed/)
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+  }
+})

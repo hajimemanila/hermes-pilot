@@ -132,7 +132,7 @@ test('buildArchitectTaskBody は Round 1 を JSON ファーストにし、既定
   assert.match(body, /mode=standard sheet=sheets\/spec-<slug>-1\.json/)
   // 手書き HTML・ヘッドレスブラウザ撮影は視覚比較が主題のときだけ
   assert.match(body, /bespoke HTML/)
-  assert.match(body, /browser_exec/)
+  assert.match(body, /headless browser/)
   assert.match(body, /visual UI layout comparison/)
   // 既存契約は維持される
   assert.match(body, /Round 2/)

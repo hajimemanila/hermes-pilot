@@ -125,10 +125,10 @@ delegation never leaves a task stopped.
 roles. The mapping (which role uses which model, in what fallback order) belongs to the operator and lives in
 the Hermes profile — `~/.hermes/SOUL.md` for the short always-read contract, the profile's own `SOUL.md` and
 memory for the concrete assignment table. That split is what keeps the plugin installable for anyone.
-`POST /api/pipeline/optimize` writes the marker block into `~/.hermes/SOUL.md` and the Pilot profile
-(`~/.hermes/profiles/mobile/SOUL.md`, created when missing). Other profiles are touched **only where the
-marker already exists** — a profile that has never used Pilot keeps its `SOUL.md` byte-for-byte, and
-appending to another profile requires naming it explicitly. Writes stay inside the markers, happen only
+`POST /api/pipeline/optimize` writes the marker block into the active Pilot profile
+(`~/.hermes/profiles/mobile/SOUL.md`, created when missing; when `pilotProfile = default`, it updates
+`~/.hermes/SOUL.md`). Root `~/.hermes/SOUL.md` and other profiles are touched **only where the
+marker already exists** — an unrelated profile keeps its `SOUL.md` byte-for-byte. Writes stay inside the markers, happen only
 when the content changes, and take a `.bak-<stamp>` backup first; `GET /api/pipeline/status` reports which
 profiles are applied without returning any file content.
 
@@ -184,14 +184,14 @@ Every one of them is reachable from the phone and from the standard dashboard.
   keys can each be collapsed. The choice is per band and remembered, so a small phone keeps the composer and
   the keyboard from fighting for the same 390 px.
 - **1-tap environment optimisation** — *Settings → Optimise this Hermes* (`POST /api/pipeline/optimize`)
-  adds the A2B discipline section (English; prose language stays with your profile) to `~/.hermes/SOUL.md`
-  and to the Pilot profile `~/.hermes/profiles/mobile/SOUL.md`. Other profiles are updated only if they
-  already carry the marker, so an unrelated profile's `SOUL.md` is never edited (idempotent — an existing
-  section is never duplicated, and a `.bak-<stamp>` backup is taken first). It then places the three
+  adds the A2B discipline section (English; prose language stays with your profile) to the Pilot profile
+  `~/.hermes/profiles/<pilot>/SOUL.md` (creating `config.yaml` and `SOUL.md` if missing; root
+  `~/.hermes/SOUL.md` and other profiles are updated only if they already carry the marker, unless
+  `pilotProfile = default`), with idempotent marker updates and a `.bak-<stamp>` backup first. It then places the three
   bundled skills into `~/.hermes/skills/` **and into the pilot profile's `skills/`** (`profiles/<pilot>/`),
   because the PWA's default profile is `mobile` — without the second copy a pilot session cannot load
   `quick-review` / `annotation` / `spec-architect` at all. Existing real directories are never overwritten,
-  the profile is never created by this step, and `pilotProfile = default` places nothing twice.
+  and `pilotProfile = default` places nothing twice.
   `GET /api/pipeline/status` reports what is already applied, per profile, without returning any `SOUL.md`
   content.
 - **Legacy cron cleanup** — `migrate` (and `init`) removes the old `mobile-akapen-watch` /

@@ -18,6 +18,7 @@ export function createSpecsApi(ctx = {}) {
     DEFAULT_SKILLS_SRC,
     getOptimizeStatus,
     optimizeAgentSkills,
+    invalidateProfilesCache,
     sendJson,
     sendError,
     sendFailure,
@@ -242,21 +243,31 @@ export function createSpecsApi(ctx = {}) {
       const body = await readJson(req)
       const pilotProfile = writePilotProfile(cfg.configPath, body?.profile)
       let ensured = null
+      let skills = null
       if (body?.optimize !== false) {
         ensured = ensurePilotProfile({ hermesHome: cfg.hermesHome, profile: pilotProfile })
+        skills = optimizeAgentSkills({
+          home: cfg.home,
+          hermesHome: cfg.hermesHome,
+          skillsSrcDir: DEFAULT_SKILLS_SRC,
+          pilotProfile,
+        })
       }
-      const ok = ensured ? ensured.ok : true
+      invalidateProfilesCache?.()
+      const ok = (ensured ? ensured.ok : true) && (skills ? skills.ok : true)
       auth.audit({
         kind: 'pipeline.profile',
         profile: pilotProfile,
         copiedConfig: Boolean(ensured?.copiedConfig),
         soulMode: ensured?.soul?.mode ?? null,
+        skillTargets: skills?.targets?.length ?? 0,
         ok,
       })
       return sendJson(res, ok ? 200 : 500, {
         ok,
         pilotProfile,
         ...(ensured ? { soul: ensured.soul, copiedConfig: ensured.copiedConfig } : {}),
+        ...(skills ? { skills } : {}),
         status: getOptimizeStatus({
           hermesHome: cfg.hermesHome,
           home: cfg.home,
@@ -279,6 +290,7 @@ export function createSpecsApi(ctx = {}) {
       const doSkills = body?.skills !== false
       // 既定の専用プロファイル（`mobile`）のみに書き込み、普段使いの default SOUL は汚さない。
       const ensured = doSoul ? ensurePilotProfile({ hermesHome: cfg.hermesHome, profile: pilotProfile }) : null
+      if (doSoul) invalidateProfilesCache?.()
       const soul = ensured ? ensured.soul : null
       const profiles = ensured ? { ok: ensured.ok, profiles: ensured.profiles } : null
       const skills = doSkills

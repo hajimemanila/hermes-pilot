@@ -80,12 +80,26 @@ export function readPairingConfig(configPath) {
 }
 
 /**
+ * `HERMES_HOME` の補正（`bin/hermes-pilot.mjs` の同名関数と同じ規則）。
+ * worker / cron からは `HERMES_HOME` がプロファイルディレクトリ（`~/.hermes/profiles/<name>`）を
+ * 指すことがあるため、その時は 2 つ上を Hermes ホームとして扱う。
+ * @param {string} raw 生のパス
+ * @param {string} [home] ホームディレクトリ
+ * @returns {string} 正規化した Hermes ホーム
+ */
+export function resolveHermesHome(raw, home = os.homedir()) {
+  const abs = path.resolve(String(raw).replace(/^~/, home))
+  if (path.basename(path.dirname(abs)) === 'profiles') return path.dirname(path.dirname(abs))
+  return abs
+}
+
+/**
  * ブリッジの設定。既存の Hermes ダッシュボード（9119）は変更しない前提。
  * @returns {object} 設定
  */
 export function loadConfig() {
   const home = process.env.HOME ?? os.homedir()
-  const hermesHome = process.env.HERMES_HOME ?? path.join(home, '.hermes')
+  const hermesHome = resolveHermesHome(process.env.HERMES_HOME ?? path.join(home, '.hermes'), home)
   // 公開プラグインのデータ先（D1 / §3.2）。token・audit・snippets・repos.json はここへ一本化する。
   const pluginDataDir =
     process.env.HP_DATA_DIR ?? path.join(hermesHome, 'plugin-data', 'hermes-pilot')

@@ -28,6 +28,7 @@ import {
   listProfileNames,
   mergeSoul,
   nextBackupPath,
+  optimizeAgentSkills,
   optimizeAntigravitySkills,
   optimizeHermesSoul,
   optimizeProfileSouls,
@@ -591,5 +592,37 @@ test('Pilot 未使用プロファイルの SOUL には追記せず、明示指�
     assert.equal(countBlocks(fs.readFileSync(workSoul, 'utf8')), 1)
   } finally {
     fs.rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('スキル配下の切れた symlink は missing として検知され、optimizeAgentSkills で張り直される', () => {
+  const root = tempHome('hm-opt-dangle-')
+  try {
+    const hermesHome = path.join(root, '.hermes')
+    const skillsSrc = path.join(root, 'bundled-skills')
+    const profDir = path.join(hermesHome, 'profiles', 'mobile')
+    const profSkills = path.join(profDir, 'skills')
+    fs.mkdirSync(path.join(hermesHome, 'skills'), { recursive: true })
+    fs.mkdirSync(profSkills, { recursive: true })
+    for (const name of BUNDLED_SKILLS) {
+      fs.mkdirSync(path.join(skillsSrc, name), { recursive: true })
+      fs.writeFileSync(path.join(skillsSrc, name, 'SKILL.md'), `---\nname: ${name}\n---\n`)
+    }
+    // quick-review に存在しない参照先へ向く symlink を置く
+    const broken = path.join(profSkills, 'quick-review')
+    fs.symlinkSync(path.join(root, 'removed-dir', 'quick-review'), broken, 'dir')
+
+    const before = getOptimizeStatus({ home: root, hermesHome, skillsSrcDir: skillsSrc, pilotProfile: 'mobile' })
+    assert.ok(before.profileSkills.missing.includes('quick-review'), 'リンク切れが missing になる')
+
+    const res = optimizeAgentSkills({ home: root, hermesHome, skillsSrcDir: skillsSrc, pilotProfile: 'mobile' })
+    assert.equal(res.ok, true)
+    assert.equal(fs.realpathSync(broken), fs.realpathSync(path.join(skillsSrc, 'quick-review')))
+
+    const after = getOptimizeStatus({ home: root, hermesHome, skillsSrcDir: skillsSrc, pilotProfile: 'mobile' })
+    assert.deepEqual(after.profileSkills.missing, [])
+    assert.deepEqual(after.profileSkills.present.sort(), [...BUNDLED_SKILLS].sort())
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
   }
 })

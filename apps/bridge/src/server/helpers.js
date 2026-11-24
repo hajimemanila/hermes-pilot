@@ -58,6 +58,9 @@ function nudgeWatchers() {
  * チャット一覧をプロジェクト横断にするために使う。
  */
 let profilesCache = { at: 0, list: [] }
+function invalidateProfilesCache() {
+  profilesCache = { at: 0, list: [] }
+}
 async function listProfiles() {
   if (Date.now() - profilesCache.at < 30_000 && profilesCache.list.length) return profilesCache.list
   const r = await hermes.call('/api/profiles', { timeoutMs: 8000 })
@@ -260,6 +263,7 @@ function sendOutcome(res, out, okStatus = 200, failCode = 'CLI_FAILED') {
     ensureWatchersFresh,
     tailscaleStatusJson,
     nudgeWatchers,
+    invalidateProfilesCache,
     listProfiles,
     stateDbFor,
     listStateDbs,

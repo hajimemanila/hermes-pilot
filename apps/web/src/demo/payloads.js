@@ -48,6 +48,8 @@ export function demoPipelineStatus() {
   const optimized = Boolean(state.pipeline?.optimized)
   const pilotProfile = String(state.pipeline?.profile || 'mobile')
   const bundled = ['quick-review', 'annotation', 'spec-architect']
+  const present = optimized ? bundled.slice() : ['quick-review', 'annotation']
+  const missing = optimized ? [] : ['spec-architect']
   return {
     ok: true,
     pilotProfile,
@@ -57,7 +59,16 @@ export function demoPipelineStatus() {
       profile: pilotProfile,
       path: pilotProfile === 'default' ? '~/.hermes/SOUL.md' : `~/.hermes/profiles/${pilotProfile}/SOUL.md`,
     },
-    hermes: { present: optimized ? bundled.slice() : ['quick-review', 'annotation'] },
+    hermes: { present, missing },
+    profileSkills:
+      pilotProfile === 'default'
+        ? null
+        : {
+            profile: pilotProfile,
+            path: `~/.hermes/profiles/${pilotProfile}/skills`,
+            present: present.slice(),
+            missing: missing.slice(),
+          },
     bundled: { names: bundled },
     demo: true,
   }

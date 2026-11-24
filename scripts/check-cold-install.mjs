@@ -215,9 +215,13 @@ const tokenPath = path.join(home, 'plugin-data', 'hermes-pilot', 'token')
 if (!fs.existsSync(tokenPath)) fail(`init did not write a token at ${tokenPath}`)
 const mode = (fs.statSync(tokenPath).mode & 0o777).toString(8)
 if (mode !== '600') fail(`token file mode is ${mode}, expected 600`)
+const profileSoul = path.join(home, 'profiles', 'mobile', 'SOUL.md')
+if (!fs.existsSync(profileSoul)) fail(`init did not create pilot profile SOUL at ${profileSoul}`)
 for (const name of SKILLS) {
   const md = path.join(home, 'skills', name, 'SKILL.md')
   if (!fs.existsSync(md)) fail(`bundled skill ${name} was not installed at ${md}`)
+  const profileMd = path.join(home, 'profiles', 'mobile', 'skills', name, 'SKILL.md')
+  if (!fs.existsSync(profileMd)) fail(`bundled skill ${name} was not installed in pilot profile at ${profileMd}`)
 }
 step('init + skills')
 

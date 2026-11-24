@@ -36,6 +36,9 @@ function makeHarness({ throwCoherence = false } = {}) {
   const audits = []
   const launchCalls = []
   const seedCalls = []
+  const profileEnsureCalls = []
+  const skillOptCalls = []
+  let profileCacheInvalidations = 0
 
   const targetRepo = {
     repo: 'demo',
@@ -89,10 +92,19 @@ function makeHarness({ throwCoherence = false } = {}) {
       pilotProfile = String(p || 'mobile')
       return pilotProfile
     },
-    ensurePilotProfile: ({ profile }) => ({ ok: true, copiedConfig: false, soul: { mode: 'pilot', changed: false }, profiles: [{ name: profile, changed: false }] }),
+    ensurePilotProfile: (opts) => {
+      profileEnsureCalls.push(opts)
+      return { ok: true, copiedConfig: false, soul: { mode: 'pilot', changed: false }, profiles: [{ name: opts.profile, changed: false }] }
+    },
     DEFAULT_SKILLS_SRC: '/tmp/skills',
     getOptimizeStatus: ({ pilotProfile: p }) => ({ ok: true, pilotProfile: p, skillsReady: true }),
-    optimizeAgentSkills: () => ({ ok: true, targets: ['/tmp/.hermes/skills'] }),
+    optimizeAgentSkills: (opts) => {
+      skillOptCalls.push(opts)
+      return { ok: true, targets: ['/tmp/.hermes/skills'] }
+    },
+    invalidateProfilesCache: () => {
+      profileCacheInvalidations += 1
+    },
     sendJson,
     sendError,
     sendFailure,
@@ -141,6 +153,11 @@ function makeHarness({ throwCoherence = false } = {}) {
     audits,
     launchCalls,
     seedCalls,
+    profileEnsureCalls,
+    skillOptCalls,
+    get profileCacheInvalidations() {
+      return profileCacheInvalidations
+    },
   }
 }
 
@@ -241,4 +258,23 @@ test('handlePipeline と handleArchitect の全ルートが応答する', async 
   assert.equal((await invoke(h.api.handleArchitect, 'POST', '/api/architect/jobs/j_1/dismiss')).status, 200)
   assert.equal((await invoke(h.api.handleArchitect, 'POST', '/api/architect/jobs/missing/dismiss')).status, 404)
   assert.equal((await invoke(h.api.handleArchitect, 'GET', '/api/architect/unknown')).status, 404)
+})
+
+test('POST /api/pipeline/profile は ensurePilotProfile / optimizeAgentSkills / invalidateProfilesCache を呼ぶ', async () => {
+  const h = makeHarness()
+
+  const on = await invoke(h.api.handlePipeline, 'POST', '/api/pipeline/profile', { profile: 'pilot-alt' })
+  assert.equal(on.status, 200)
+  assert.equal(on.json().pilotProfile, 'pilot-alt')
+  assert.equal(h.profileEnsureCalls.length, 1)
+  assert.equal(h.profileEnsureCalls[0].profile, 'pilot-alt')
+  assert.equal(h.skillOptCalls.length, 1)
+  assert.equal(h.skillOptCalls[0].pilotProfile, 'pilot-alt')
+  assert.equal(h.profileCacheInvalidations, 1)
+
+  const off = await invoke(h.api.handlePipeline, 'POST', '/api/pipeline/profile', { profile: 'mobile', optimize: false })
+  assert.equal(off.status, 200)
+  assert.equal(h.profileEnsureCalls.length, 1, 'optimize: false ならプロファイル準備とスキル配置を飛ばす')
+  assert.equal(h.skillOptCalls.length, 1)
+  assert.equal(h.profileCacheInvalidations, 2, 'optimize: false でもキャッシュは無効化する')
 })

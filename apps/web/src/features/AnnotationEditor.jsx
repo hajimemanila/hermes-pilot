@@ -42,7 +42,7 @@ const AMBER_INK = '#231603'
 /** これ以上の幅なら「画像｜操作列」の横並びにする（タブレット横・2 ペインの詳細）。 */
 const WIDE_MIN = 560
 
-export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
+export function AnnotationEditor({ item, defaultBoard = null, onClose, onSubmitted, notify }) {
   const { t } = useI18n()
   const canvasRef = useRef(null)
   const imgRef = useRef(null)
@@ -311,7 +311,7 @@ export function AnnotationEditor({ item, onClose, onSubmitted, notify }) {
     setClosing(true)
     setError(null)
     try {
-      const board = item.board || 'mobile'
+      const board = item.board || defaultBoard || 'mobile'
       const r = await api(`/api/boards/${encodeURIComponent(board)}/tasks/${encodeURIComponent(item.id)}/close`, {
         method: 'POST',
         body: { action: 'cancel', note: String(note ?? '').slice(0, 400) },

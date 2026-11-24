@@ -361,18 +361,17 @@ export function isSafeBoardSlug(slug) {
 }
 
 /**
- * `state.db` の直近セッション `cwd` を読む（読取専用・失敗しても空）。
- * @param {object} cfg 設定（`stateDb` / `kanbanRoot`）
- * @returns {string[]} cwd の新しい順
+ * 1 つの `state.db` からセッションの `(cwd, MAX(last_activity_at))` を読む（読取専用・失敗しても空）。
+ * @param {string} dbPath SQLite DB パス
+ * @returns {Array<{cwd: string, t: number}>} 行
  */
-export function readSessionCwds(cfg = {}) {
-  const dbPath = String(cfg.stateDb ?? '')
+function readSessionRowsFromDb(dbPath) {
   if (!dbPath || !fs.existsSync(dbPath)) return []
   let db
   try {
     return safeList('repos.readSessionCwds', () => {
       db = new DatabaseSync(dbPath, { readOnly: true })
-      const rows = db
+      return db
         .prepare(
           `SELECT cwd, MAX(last_activity_at) AS t
              FROM sessions
@@ -382,18 +381,7 @@ export function readSessionCwds(cfg = {}) {
             LIMIT 64`,
         )
         .all()
-      const kanbanRoot = String(cfg.kanbanRoot ?? '')
-      const out = []
-      for (const r of rows) {
-        const cwd = String(r.cwd ?? '').trim()
-        if (!cwd || !path.isAbsolute(cwd)) continue
-        // ワーカーの workspace（worktree）は同じリポジトリの重複なので候補にしない
-        if (kanbanRoot && cwd.startsWith(kanbanRoot)) continue
-        if (!isGitRepo(cwd)) continue
-        out.push(cwd)
-        if (out.length >= SESSION_LIMIT) break
-      }
-      return out
+        .map((r) => ({ cwd: String(r.cwd ?? '').trim(), t: Number(r.t ?? 0) }))
     })
   } finally {
     try {
@@ -402,6 +390,45 @@ export function readSessionCwds(cfg = {}) {
       /* noop */
     }
   }
+}
+
+/**
+ * `state.db`（ルート + `profiles/<name>/state.db`）の直近セッション `cwd` を読む（読取専用・失敗しても空）。
+ * @param {object} cfg 設定（`stateDb` / `hermesHome` / `kanbanRoot`）
+ * @returns {string[]} cwd の新しい順
+ */
+export function readSessionCwds(cfg = {}) {
+  const candidates = []
+  if (cfg.stateDb) candidates.push(String(cfg.stateDb))
+  const profilesDir = cfg.hermesHome ? path.join(String(cfg.hermesHome), 'profiles') : ''
+  if (profilesDir && fs.existsSync(profilesDir)) {
+    for (const ent of safeList('repos.profileDbs', () => fs.readdirSync(profilesDir, { withFileTypes: true }))) {
+      if (ent?.isDirectory?.()) candidates.push(path.join(profilesDir, ent.name, 'state.db'))
+    }
+  }
+  const dbPaths = [...new Set(candidates.map((p) => path.resolve(p)))].filter((p) => p && fs.existsSync(p))
+  if (!dbPaths.length) return []
+
+  const best = new Map()
+  for (const dbPath of dbPaths) {
+    for (const r of readSessionRowsFromDb(dbPath)) {
+      if (!r.cwd) continue
+      const prev = best.get(r.cwd)
+      if (prev == null || r.t > prev) best.set(r.cwd, r.t)
+    }
+  }
+
+  const kanbanRoot = String(cfg.kanbanRoot ?? '')
+  const out = []
+  for (const [cwd] of [...best.entries()].sort((a, b) => b[1] - a[1])) {
+    if (!cwd || !path.isAbsolute(cwd)) continue
+    // ワーカーの workspace（worktree）は同じリポジトリの重複なので候補にしない
+    if (kanbanRoot && cwd.startsWith(kanbanRoot)) continue
+    if (!isGitRepo(cwd)) continue
+    out.push(cwd)
+    if (out.length >= SESSION_LIMIT) break
+  }
+  return out
 }
 
 /**

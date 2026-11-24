@@ -20,15 +20,14 @@ The Architect's job is not "writing a spec"; it is **producing, in two rounds, a
 Builder (the autonomous kanban worker) can finish without asking anything extra**. Do not line up
 long questions in chat. Put decisions on a question sheet so a human answers with one tap.
 
-This skill ships with the **`hermes-pilot` plugin**. `hermes-pilot init` installs it into
-`~/.hermes/skills/spec-architect/`.
+This skill ships with the **`hermes-pilot` plugin**. `hermes-pilot init` installs it into both
+`~/.hermes/skills/spec-architect/` and `~/.hermes/profiles/<pilot>/skills/spec-architect/`.
 
 ## Language
 
 Write user-facing prose in the run's UI language — sheet title/topic/question/option text, SPEC prose, and the comments and summaries you post.
 Keep machine tokens ASCII and unchanged: `label=`, `sheet=`, `mode=`, `round=`, `target=`, task ids, file paths, and the SPEC keys **Execution Mode** / **Objective** / **Files** / **Verify**.
-This is `LANGUAGE_RULE_MARKER` / `LANGUAGE_RULE_EN` in `apps/bridge/src/language-rule.js`; `apps/bridge/test/languageRule.test.js` keeps this section and the bridge prompt identical.
-When the run's language is Japanese, only the prose switches to Japanese (JA variant in the same module); the machine line and paths stay ASCII.
+This matches the bridge prompt language rule: when the run's language is Japanese, only the prose switches to Japanese; the machine line and paths stay ASCII.
 The rule covers the sheet you write and every prose line you post to the board, including the 1-line `complete --summary`.
 
 ## When to use it
@@ -39,7 +38,7 @@ Use it:
 - The human can say "what to build" but has not decided "how to build it"
 
 Do not use it:
-- The change is one file with a unique answer (implement it and pass `npm run verify`)
+- The change is one file with a unique answer (implement it and run the verification command declared by the target repository)
 - `docs/SPEC-*.md` already exists and you only need to file it through the hermes-pilot spec launcher
 
 ## Two-round protocol
@@ -54,13 +53,13 @@ captures are an optional extension for "the visual comparison itself is the ques
    command output) in the body and leave only the decision to the human. Evidence needs only a
    **minimal check of the relevant spot** (do not build out the whole repo or mock things up; file the
    sheet as soon as it is decided).
-   **Do not run `npm test` / `npm run verify` in Round 1.** Explore with `rg` / `grep` for the specific
+   **Do not run full test or verification suites in Round 1.** Explore with `rg` / `grep` for the specific
    symbols; do not spend time checking every dependency or building. Tests and builds belong in
    Round 2, written into the SPEC (each batch's Verify). Once the sheet is written, **block immediately**.
 2. Two or three options per question, one `recommended: true`. Always give the reason (gain / cost).
 3. Draw both options **only** for visual questions (placement, information density, colour comparison).
    Everything else (spec, logic, wording, API, data design) is filed as `.json` alone and blocked
-   immediately — no `browser_exec` capture and no 300-line HTML. When a picture is needed for an
+   immediately — no headless-browser capture and no 300-line HTML. When a picture is needed for an
    existing screen, first capture a faithful shot of the current UI.
 4. Same location and format as the `quick-review` skill. **The primary artefact is `.json`:**
 
@@ -72,7 +71,7 @@ captures are an optional extension for "the visual comparison itself is the ques
 5. File it on kanban and set it **blocked** (do not implement until the answer arrives):
 
 ```bash
-hermes kanban create "Q1-Q3: design direction for <project>" --assignee <profile> --body "$(cat <<'BODY'
+hermes kanban --board <board> create "Q1-Q3: design direction for <project>" --assignee <profile> --body "$(cat <<'BODY'
 <What unblocks writing the spec. What is stuck right now.>
 
 [review] label=spec-<slug> round=1 mode=standard sheet=sheets/spec-<slug>-1.json target=<repo_path> chat=<session_id>
@@ -91,7 +90,7 @@ While waiting, work on other tasks. **Never invent answers.**
 Read the answers (`.answer.json` / `.answer.txt` / the `[Review Answer]` comment) and write
 `docs/SPEC-<SLUG>.md`. `(unselected = take recommended)` may be settled with the recommendation.
 
-Required format (`apps/bridge/src/specs.js` parses it mechanically. **Do not change the shape**):
+Required format (the Hermes Pilot spec parser reads it mechanically. **Do not change the shape**):
 
 ```markdown
 # SPEC: <project name> (`SPEC-<SLUG>`)
@@ -129,7 +128,7 @@ Targets: <file>, <file>
   - Changed: `<path>`
 - **Verify**:
   - <observable condition, down to test file names>
-  - `npm run verify` passes for everything.
+  - The verification command the target repository declares (its profile memory, `AGENTS.md`, or **Verify**) passes.
 
 ---
 ```
@@ -151,9 +150,9 @@ Targets: <file>, <file>
 
 | Mode | When | Contract injected into the worker |
 |---|---|---|
-| `Zero-Stop` | The answer is unique (tests, build, mechanical refactor) | No questions; self-repair until `npm run verify` passes, then `done` |
+| `Zero-Stop` | The answer is unique (tests, build, mechanical refactor) | No questions; self-repair until the target repository's verification command passes, then `done` |
 | `Fast-Track Review` | The approach is not settled and may branch mid-way | On a branch, file a `quick-review` sheet before implementing and wait for one-tap approval |
-| `Visual Gate` | The look changes (UI, CSS, wording, layout) | `npm run deploy` → check and capture 390×844 / 820×1180 → `annotation` review when needed |
+| `Visual Gate` | The look changes (UI, CSS, wording, layout) | Rebuild/deploy the target app → check and capture the declared screen sizes → `annotation` review when needed |
 
 When in doubt use `Visual Gate`. If you cannot claim the look is unchanged, insert a visual check.
 
@@ -169,9 +168,9 @@ skills deal in abstract role names only.
 - `role:planner` — heavy reasoning, design, spec authoring, complex root-causing. Round 1 question
   design; Round 2 impact analysis and batch breakdown.
 - `role:builder` — routine implementation, test fixes, builds, mechanical work. Implementing the SPEC
-  and repairing `npm test` / `npm run verify`.
+  and repairing tests / the target repository's verification command.
 - `role:visual-reviewer` — reading screenshot diffs and redlined images (`.annotated.png`), visual
-  sign-off at `390x844` / `820x1180`. **Only when the visual comparison is the question.**
+  sign-off at the screen sizes the target repository declares (its SPEC **Verify** section or design rules). **Only when the visual comparison is the question.**
 - `role:decision-framer` — question design and trade-off framing: cutting to 3±1 questions and
   composing options with the reason to recommend.
 
@@ -189,7 +188,7 @@ How to apply them:
 Use only Hermes Agent's standard **`delegate_task`** for delegation.
 
 1. The parent cuts a sub-task that matches a role and delegates once, naming the role in `goal` / `context`.
-2. Children are **read-only advisers**. File edits, commits, installs and `npm run verify` are the parent's.
+2. Children are **read-only advisers**. File edits, commits, installs and running the verification command are the parent's.
 3. If delegation fails (error / rate limit / timeout / unsupported model / no delegation tool),
    **do not stop**. Switch to the fallback order in the profile assignment table (next choice → main model)
    and finish on your own.
@@ -200,12 +199,11 @@ Use only Hermes Agent's standard **`delegate_task`** for delegation.
 
 **Do not spawn external AI CLIs such as the `gemini` CLI (`gemini -p`, …) or `agy -p` to do the
 reasoning.** Launching them through `spawn` / `execFile` / `exec`, or piping from a shell, is also
-covered. Runtime code is machine-checked by `npm run check:oauth`. Delegation means the Hermes native
-API provider plus `delegate_task` only.
+covered. Use the Hermes native API provider plus `delegate_task` only.
 
 ## Sizing the batches
 
-- One batch = a change **that closes within a single `npm run verify`** (roughly 200-600 lines).
+- One batch = a change **that closes within a single verification pass** (roughly 200-600 lines).
 - Dependencies run one way, front to back. If `V5-2` uses an API from `V5-1`, put `V5-1` first.
 - Order it "foundation → features → polish → end-to-end verification", and make the last batch the
   integration check plus a real-screen audit.
@@ -225,7 +223,7 @@ If the request was tagged `autoStart=true`, file the unfiled batches **exactly o
 
 ## Pitfalls
 
-- **Do not hand-write HTML or shoot with `browser_exec` in Round 1.** Unless the visual comparison is
+- **Do not hand-write HTML or shoot with a headless browser in Round 1.** Unless the visual comparison is
   the question, file one `.json` and block immediately (HTML and mock images burn minutes without
   changing the decision). Pictures are only for placement / density / colour comparisons.
 - **`docs/SPEC-*.md` file names start with uppercase `SPEC`.** `spec-*.md` is not scanned.

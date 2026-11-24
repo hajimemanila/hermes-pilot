@@ -101,7 +101,7 @@ const review = createReview(cfg, { targets: () => repos.targets(), assignee: get
 // 完了・ブロックの記録はブリッジ内蔵（D7）。外部 cron は要らない。
 const reviewWatcher = createReviewWatcher(cfg, { review })
 const ops = createOps(cfg, hermes, auth, { kanban, nudge: () => nudgeWatchers() })
-const gitinfo = createGitInfo(cfg)
+const gitinfo = createGitInfo(cfg, { kanban })
 // 使用量（コスト・トークン・API コール）はテレメトリとパイプライン報告の双方が使う（V7-2）。
 const usage = createUsage(cfg)
 // パイプライン完走レポート（D20 / D21）。Spec ラン／ボードウェーブの収束を監視する。
@@ -116,6 +116,7 @@ const {
   ensureWatchersFresh,
   tailscaleStatusJson,
   nudgeWatchers,
+  invalidateProfilesCache,
   listProfiles,
   stateDbFor,
   listStateDbs,
@@ -136,8 +137,6 @@ const {
 const discord = createDiscord(cfg)
 const search = createSearch(cfg)
 const transcript = createTranscript(cfg)
-
-
 
 /**
  * 実行ワーカーのトランスクリプトを読む（レビュー詳細とタスク詳細で共通）。
@@ -203,6 +202,7 @@ const apiCtx = {
   readWorkerFeed,
   stateDbFor,
   listProfiles,
+  invalidateProfilesCache,
   listStateDbs,
   loadSnippetStore,
   saveSnippetStore,

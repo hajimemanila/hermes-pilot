@@ -17,14 +17,21 @@ import { writeFileAtomic, writeJsonAtomic } from '../lib/atomic.js'
 export function createReviewMedia(ctx = {}) {
   const {
     opts,
+    cfg,
+    board,
+    explicitBoard,
+    reviewRoot,
     workdir,
     resolveInside,
+    writeRootFor,
     readJsonIfExists,
     bodyOf,
     siblingIndex,
     compareRelOf,
     rememberTaskChat,
-    openDb,
+    reviewAssignee,
+    queryReviewBodies,
+    listBoardDbs,
     runKanban,
     transitions,
   } = ctx
@@ -48,18 +55,19 @@ export function createReviewMedia(ctx = {}) {
     if (!b) return { ok: false, code: 'NOT_FOUND' }
     const ak = parseReviewLine(b.body)
     if (!ak?.image) return { ok: false, code: 'NO_IMAGE' }
+    const extras = b.workdir ? [b.workdir] : []
     let rel = ak.image
     if (opts?.compare) {
       // 比較（Before）: 前回の赤入れ／前ラウンドの画像。無ければ 404 で UI がトグルを隠す
-      const cmp = compareRelOf(id, ak, siblingIndex())
+      const cmp = compareRelOf(id, ak, siblingIndex(), extras)
       if (!cmp) return { ok: false, code: 'NO_COMPARE' }
       rel = cmp
     } else if (opts?.annotated) {
-      const jsonAbs = resolveInside(ak.image.replace(/\.(png|jpe?g)$/i, '.annotation.json'))
+      const jsonAbs = resolveInside(ak.image.replace(/\.(png|jpe?g)$/i, '.annotation.json'), extras)
       const data = jsonAbs ? readJsonIfExists(jsonAbs) : null
       if (data?.annotated_image) rel = data.annotated_image
     }
-    const abs = resolveInside(rel)
+    const abs = resolveInside(rel, extras)
     if (!abs) return { ok: false, code: 'IMAGE_MISSING' }
     const ext = path.extname(abs).toLowerCase()
     const type = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
@@ -73,7 +81,7 @@ export function createReviewMedia(ctx = {}) {
     const ak = parseReviewLine(b.body)
     if (!ak?.image) return { ok: false, code: 'NO_IMAGE' }
     const rel = ak.image.replace(/\.(png|jpe?g)$/i, '.annotation.json')
-    const abs = resolveInside(rel)
+    const abs = resolveInside(rel, b.workdir ? [b.workdir] : [])
     const data = abs ? readJsonIfExists(abs) : null
     if (!data) return { ok: false, code: 'NO_ANNOTATION' }
     return { ok: true, data, status: b.status }
@@ -105,15 +113,17 @@ export function createReviewMedia(ctx = {}) {
     const MAX = 12 * 1024 * 1024
     if (buf.length > MAX) return { ok: false, code: 'TOO_LARGE' }
 
-    const baseAbs = resolveInside(ak.image)
+    const extras = b.workdir ? [b.workdir] : []
+    const baseAbs = resolveInside(ak.image, extras)
     if (!baseAbs) return { ok: false, code: 'IMAGE_MISSING' }
     const sha = crypto.createHash('sha256').update(buf).digest('hex')
     const baseSha = crypto.createHash('sha256').update(fs.readFileSync(baseAbs)).digest('hex')
     const ext = m[1] === 'image/png' ? '.png' : '.jpg'
     const relAnnotated = ak.image.replace(/\.(png|jpe?g)$/i, `.annotated${ext}`)
     const relJson = ak.image.replace(/\.(png|jpe?g)$/i, '.annotation.json')
-    const annotatedAbs = path.join(path.resolve(workdir(), relAnnotated))
-    const jsonAbs = path.join(path.resolve(workdir(), relJson))
+    const targetRoot = writeRootFor(ak.image, b)
+    const annotatedAbs = path.resolve(targetRoot, relAnnotated)
+    const jsonAbs = path.resolve(targetRoot, relJson)
 
     const existing = readJsonIfExists(jsonAbs)
     if (existing && existing.image_sha256 === sha) {
@@ -147,15 +157,28 @@ export function createReviewMedia(ctx = {}) {
     const comment = await runKanban(['comment', id, summary, '--author', String(payload?.by ?? 'mobile')])
     const moved = await transitions.apply('annotation.fresh', { id, reason: ops.annotationReceived })
     const status = moved.code === 0 ? moved.status || b.status : b.status
+    let assigned = null
+    let out = moved.out
+    if (status === 'ready' && !String(b.assignee ?? '').trim() && typeof reviewAssignee === 'function') {
+      const who = String(reviewAssignee() ?? '').trim()
+      if (who) {
+        const r = await runKanban(['assign', id, who])
+        if (r.code === 0) {
+          assigned = who
+          out = `${out}\n${outputOf(r)}`.trim()
+        }
+      }
+    }
     return {
       ok: comment.code === 0 && moved.code === 0,
       duplicate: false,
+      assigned,
       sha256: sha,
       files: { annotated: relAnnotated, json: relJson },
       marks: marks.length,
       status,
       moved: status,
-      output: `${outputOf(comment)}\n${moved.out}`.trim().slice(0, 600),
+      output: `${outputOf(comment)}\n${out}`.trim().slice(0, 600),
     }
   }
 
@@ -219,20 +242,7 @@ export function createReviewMedia(ctx = {}) {
   function imageRepos() {
     const byImage = new Map()
     const byLabel = new Map()
-    let db
-    try {
-      db = openDb()
-    } catch {
-      return { byImage, labels: [] }
-    }
-    let rs = []
-    try {
-      rs = db.prepare("SELECT body FROM tasks WHERE body LIKE '%[review]%' OR body LIKE '%[akapen]%'").all()
-    } catch {
-      rs = []
-    } finally {
-      db.close()
-    }
+    const rs = typeof queryReviewBodies === 'function' ? queryReviewBodies(cfg.kanbanRoot, board, explicitBoard) : []
     for (const r of rs) {
       const ak = parseReviewLine(r.body)
       if (!ak?.target) continue
@@ -276,11 +286,17 @@ export function createReviewMedia(ctx = {}) {
 
   /** 注釈の下地にできる画像（library/** と shots/*.png|jpg、注釈済みは除く）。 */
   function library(limit = 60) {
-    const root = workdir()
+    const roots = [opts.root ? path.resolve(opts.root) : null, reviewRoot(), workdir()].filter(Boolean)
+    if (typeof listBoardDbs === 'function') {
+      for (const e of listBoardDbs(cfg.kanbanRoot, board, explicitBoard)) {
+        if (e.workdir && !fs.existsSync(path.join(e.workdir, '.git'))) roots.push(e.workdir)
+      }
+    }
     const items = []
+    const seen = new Set()
     const { byImage, labels } = imageRepos()
     const exts = new Set(['.png', '.jpg', '.jpeg', '.webp'])
-    const walk = (dir, source) => {
+    const walk = (root, dir, source) => {
       let ents = []
       try {
         ents = fs.readdirSync(dir, { withFileTypes: true })
@@ -290,7 +306,7 @@ export function createReviewMedia(ctx = {}) {
       for (const e of ents) {
         const abs = path.join(dir, e.name)
         if (e.isDirectory()) {
-          walk(abs, source || e.name)
+          walk(root, abs, source || e.name)
           continue
         }
         const ext = path.extname(e.name).toLowerCase()
@@ -301,23 +317,29 @@ export function createReviewMedia(ctx = {}) {
         } catch {
           continue
         }
-        const rel = path.relative(root, abs)
+        const rel = path.relative(root, abs).split(path.sep).join('/')
+        if (seen.has(rel)) continue
+        seen.add(rel)
         const target = byImage.get(rel) || labelTarget(e.name, labels)
         items.push({
           path: rel,
           source: source || (rel.startsWith('shots') ? 'capture' : 'library'),
           name: e.name,
           bytes: st.size,
-          // 取得日時: 一覧の並びもこれ。library への取り込みは copy2 なので
-          // 元画像の撮影時刻が残る（実測: chat の取り込み 1746 のファイルが 16:42）
           mtime: Math.round(st.mtimeMs),
-          repo: repoForTarget(target), // 分からなければ null（UI は '—'）
+          repo: repoForTarget(target),
           target: target || null,
         })
       }
     }
-    walk(path.join(root, 'library'), '')
-    walk(path.join(root, 'shots'), 'capture')
+    const seenRoots = new Set()
+    for (const r of roots) {
+      const root = path.resolve(r)
+      if (seenRoots.has(root)) continue
+      seenRoots.add(root)
+      walk(root, path.join(root, 'library'), '')
+      walk(root, path.join(root, 'shots'), 'capture')
+    }
     items.sort((a, b) => b.mtime - a.mtime)
     return items.slice(0, limit)
   }

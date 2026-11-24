@@ -64,13 +64,16 @@ export function createBoardsApi(ctx = {}) {
       // `archivedCount` は一覧の LIMIT と独立に数える（「アーカイブ済み (N)」の N。D92）。
       const list = kanban.tasks(b, { limit: Number(url.searchParams.get('limit') ?? 60), withBody: false })
       const archivedCount = kanban.statusCounts(b).archivedCount
-      // 履歴（kanban-sop）に記録があるタスクだけ git / Discord を添える
+      // Git 記録（履歴または Kanban ネイティブ解決）と Discord アンカーを添える
+      const boardWorkdir =
+        typeof kanban.boards === 'function' ? kanban.boards().find((x) => x && x.slug === b)?.workdir ?? null : null
       const enriched = await Promise.all(
         list.map(async (t) => {
           const entry = gitinfo.entryFor(t.id)
-          if (!entry) return t
-          const [g, dc] = await Promise.all([gitinfo.forTask(t.id), Promise.resolve(discord.forAnchor(entry.anchor))])
-          return { ...t, git: g, discord: dc }
+          const g = await gitinfo.forTask(t.id, { board: b, task: t, boardWorkdir })
+          const dc = entry?.anchor ? discord.forAnchor(entry.anchor) : null
+          if (!g && !dc) return t
+          return { ...t, ...(g ? { git: g } : {}), ...(dc ? { discord: dc } : {}) }
         }),
       )
       return sendJson(res, 200, { tasks: enriched, archivedCount })
@@ -143,10 +146,10 @@ export function createBoardsApi(ctx = {}) {
     if (b && c === 'tasks' && d && e === 'diff' && req.method === 'GET') {
       const file = url.searchParams.get('file')
       if (file) {
-        const patch = await gitinfo.filePatch(d, String(file).slice(0, 400))
+        const patch = await gitinfo.filePatch(d, String(file).slice(0, 400), { board: b })
         return sendJson(res, patch.ok ? 200 : 404, patch)
       }
-      const summary = await gitinfo.diffSummary(d)
+      const summary = await gitinfo.diffSummary(d, { board: b })
       return sendJson(res, summary.ok ? 200 : 404, summary)
     }
     if (b && c === 'tasks' && d && e === 'comment' && req.method === 'POST') {
@@ -219,10 +222,9 @@ export function createBoardsApi(ctx = {}) {
     if (b && c === 'tasks' && d) {
       const detail = kanban.task(b, d)
       const entry = gitinfo.entryFor(d)
-      if (entry) {
-        detail.git = await gitinfo.forTask(d)
-        detail.discord = discord.forAnchor(entry.anchor)
-      }
+      const g = await gitinfo.forTask(d, { board: b, task: detail })
+      if (g) detail.git = g
+      if (entry?.anchor) detail.discord = discord.forAnchor(entry.anchor)
       return sendJson(res, 200, detail)
     }
     return sendError(res, 404, 'UNKNOWN_ENDPOINT', { path: url.pathname })

@@ -6,7 +6,10 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { createArchitect, makeJobId, seedHashOf } from '../src/architect.js'
+import { resolveHermesHome } from '../src/config.js'
+import { readSessionCwds } from '../src/repos.js'
 import { SPEC_TEXT, makeRepo, seedInput, settle, writeSpec } from './helpers/architectFixtures.js'
 
 const FIVE_BATCH_SPEC = [
@@ -34,7 +37,7 @@ const FIVE_BATCH_SPEC = [
   '',
 ].join('\n')
 
-test('問題②: sheet= の [review] タスクでも実シート JSON 不在や非 mobile ボードでは awaiting_review にしない', async () => {
+test('問題②: sheet= の [review] タスクでも実シート JSON 不在では awaiting_review にしないが、任意ボード＋実シートがあれば拾う', async () => {
   const repo = makeRepo()
   const reviewDir = path.join(repo, 'review')
   const sheetsDir = path.join(reviewDir, 'sheets')
@@ -64,34 +67,27 @@ test('問題②: sheet= の [review] タスクでも実シート JSON 不在や�
         createdAt: clock,
       },
       {
-        id: 't_rev_wrong_board',
-        title: '[review] Wrong board',
-        body: '[review] label=demo-01 round=1 mode=standard sheet=sheets/demo-01-1.html',
-        status: 'blocked',
-        createdAt: clock + 1000,
-      },
-    ],
-    mobile: [
-      {
-        id: 't_rev_premature',
+        id: 't_rev_demo_premature',
         title: '[review] Early blocked',
         body: '[review] label=demo-01 round=1 mode=standard sheet=sheets/demo-01-1.html',
         status: 'blocked',
         createdAt: clock + 1000,
       },
     ],
+    mobile: [],
   }
   let snap = await arch.jobs({ board: 'demo' })
   assert.equal(snap.jobs[0].status, 'awaiting_spec', '実シート未生成の間は awaiting_review に進めない')
 
-  // 実シート JSON を書き出すと mobile ボード上の [review] が awaiting_review になる
+  // 実シート JSON を書き出すと mobile ボードが空でも demo ボードの [review] が awaiting_review になる
   fs.writeFileSync(
     path.join(sheetsDir, 'demo-01-1.json'),
     JSON.stringify({ title: 'Q', questions: [{ id: 'q1', text: '?', options: [{ id: 'A', label: 'A' }] }] }),
   )
   snap = await arch.jobs({ board: 'demo' })
   assert.equal(snap.jobs[0].status, 'awaiting_review')
-  assert.equal(snap.jobs[0].reviewTaskId, 't_rev_premature')
+  assert.equal(snap.jobs[0].reviewTaskId, 't_rev_demo_premature')
+  assert.equal(snap.jobs[0].reviewBoard, 'demo')
 })
 
 test('問題⑤: Round 2 執筆中（[ARCH] または [review] ワーカー稼働中）は途中保存 SPEC を spec_ready/pending に出さない', async () => {
@@ -215,5 +211,60 @@ test('D105: makeJobId の seedHash 埋め込みと Retry を殺さない永続 d
   } finally {
     fs.rmSync(dataDir, { recursive: true, force: true })
     fs.rmSync(repo, { recursive: true, force: true })
+  }
+})
+
+test('autoStart は cfg.pilotProfile() の assignee を launchSpec へ渡す', async () => {
+  const repo = makeRepo()
+  const clock = 1_700_000_000_000
+  const launchCalls = []
+  const arch = createArchitect(
+    { reviewDir: path.join(repo, 'review'), pilotProfile: () => 'pilot-custom' },
+    {
+      now: () => clock,
+      runner: async () => ({ code: 0, stdout: '{"id":"t_arch_as"}', stderr: '' }),
+      readTasks: () => [{ id: 't_arch_as', title: '[ARCH] Test', status: 'done', createdAt: clock }],
+      launchSpec: async (opts) => {
+        launchCalls.push(opts)
+        return { ok: true, created: [{ id: 't_b1' }], skipped: [], failed: [] }
+      },
+    },
+  )
+  await arch.seed(seedInput(repo, { autoStart: true }))
+  await settle()
+  writeSpec(repo, 'SPEC-autostart.md', SPEC_TEXT, clock + 2000)
+
+  await arch.jobs({ board: 'demo' })
+  await settle()
+  assert.equal(launchCalls.length, 1)
+  assert.equal(launchCalls[0].assignee, 'pilot-custom')
+  fs.rmSync(repo, { recursive: true, force: true })
+})
+
+test('config.resolveHermesHome と repos.readSessionCwds のプロファイル対応', () => {
+  assert.equal(resolveHermesHome('/Users/x/.hermes/profiles/mobile', '/Users/x'), '/Users/x/.hermes')
+  assert.equal(resolveHermesHome('/Users/x/.hermes', '/Users/x'), '/Users/x/.hermes')
+  assert.equal(resolveHermesHome('~/.hermes/profiles/alt', '/Users/x'), '/Users/x/.hermes')
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-prof-cwd-'))
+  try {
+    const hermesHome = path.join(root, '.hermes')
+    const profDbPath = path.join(hermesHome, 'profiles', 'mobile', 'state.db')
+    const repoA = path.join(root, 'repo-alpha')
+    fs.mkdirSync(path.dirname(profDbPath), { recursive: true })
+    fs.mkdirSync(path.join(repoA, '.git'), { recursive: true })
+
+    const db = new DatabaseSync(profDbPath)
+    try {
+      db.exec('CREATE TABLE sessions (id TEXT PRIMARY KEY, cwd TEXT, last_activity_at REAL)')
+      db.prepare('INSERT INTO sessions (id, cwd, last_activity_at) VALUES (?, ?, ?)').run('s1', repoA, 1_700_000_500)
+    } finally {
+      db.close()
+    }
+
+    const cwds = readSessionCwds({ stateDb: path.join(hermesHome, 'missing-state.db'), hermesHome, kanbanRoot: path.join(hermesHome, 'kanban') })
+    assert.deepEqual(cwds, [repoA])
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
   }
 })

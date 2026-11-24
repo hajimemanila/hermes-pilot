@@ -12,7 +12,8 @@ import path from 'node:path'
  * タスク → セッション → リンクの順で解決する。
  */
 export function createDiscord(cfg) {
-  const sessionsPath = cfg.sessionsFile ?? path.join(cfg.home, '.hermes', 'sessions', 'sessions.json')
+  const sessionsPath =
+    cfg.sessionsFile ?? path.join(cfg.hermesHome ?? path.join(cfg.home, '.hermes'), 'sessions', 'sessions.json')
 
   /** @type {{mtimeMs: number, bySession: Map<string, {url: string, threadId: string, guildId: string, chatName: string, messageId: string|null}>}} */
   let cache = { mtimeMs: -1, bySession: new Map() }

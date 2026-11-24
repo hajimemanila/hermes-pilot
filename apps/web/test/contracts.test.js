@@ -2,7 +2,7 @@
  * Frontend 契約モジュールのテスト（SPEC-COHERENCE Batch COH-1 / D81）。
  *
  * 固定すること:
- *  1. `HM_EVENTS`（25 種）と `HM_STORAGE`（23 種）が一意で、全件 prefix が揃っている
+ *  1. `HM_EVENTS`（26 種）と `HM_STORAGE`（23 種）が一意で、全件 prefix が揃っている
  *  2. `HM_EVENT_META` が全イベントの payload を持つ（契約の抜けを作らない）
  *  3. 既存の定数名（`VIBE_EVENT` / `SNIPPET_BARS_EVENT` / `THEME_KEY` など）が
  *     **同じ値の再エクスポート**として生きている（後方互換）
@@ -117,10 +117,10 @@ function missingDetailKeys(bodies, keys) {
   return missing
 }
 
-test('HM_EVENTS は 25 種で、値がすべて一意な hm: 名', () => {
+test('HM_EVENTS は 26 種で、値がすべて一意な hm: 名', () => {
   const values = Object.values(HM_EVENTS)
-  assert.equal(values.length, 25)
-  assert.equal(new Set(values).size, 25, '同じイベント名が 2 回定義されている')
+  assert.equal(values.length, 26)
+  assert.equal(new Set(values).size, 26, '同じイベント名が 2 回定義されている')
   for (const name of values) assert.match(name, /^hm:[a-z][a-z-]*$/)
   assert.ok(Object.isFrozen(HM_EVENTS))
 })
@@ -128,7 +128,7 @@ test('HM_EVENTS は 25 種で、値がすべて一意な hm: 名', () => {
 test('HM_EVENT_META は全イベントの payload を宣言している', () => {
   const names = new Set(Object.values(HM_EVENTS))
   const declared = new Set(Object.keys(HM_EVENT_META))
-  assert.equal(declared.size, 25)
+  assert.equal(declared.size, 26)
   assert.deepEqual([...declared].sort(), [...names].sort())
   for (const [name, meta] of Object.entries(HM_EVENT_META)) {
     assert.ok(name.startsWith('hm:'), `${name} は hm: 名前空間の外`)

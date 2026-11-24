@@ -130,7 +130,9 @@
       pipelineHermesFixed:
         "Fixed to Hermes Native — specs come from docs/SPEC-*.md files, so no external AI CLI is ever spawned.",
       pipelineSoul: "SOUL.md",
+      pipelineProfile: "Pilot profile",
       pipelineSkills: "Skills",
+      pipelineProfileSkills: "Skills ({profile})",
       pipelineApplied: "applied",
       pipelineMissing: "not applied",
       pipelineJobs: "Architect jobs",
@@ -263,7 +265,9 @@
       pipelineHermesFixed:
         "Hermes Native に固定 — 仕様書は docs/SPEC-*.md のファイル経由で受け取るため、外部 AI CLI は起動しません。",
       pipelineSoul: "SOUL.md",
+      pipelineProfile: "専用プロファイル",
       pipelineSkills: "スキル",
+      pipelineProfileSkills: "スキル ({profile})",
       pipelineApplied: "適用済み",
       pipelineMissing: "未適用",
       pipelineJobs: "Architect ジョブ",
@@ -615,8 +619,13 @@
     }
 
     var pipeline = data && data.pipeline;
+    var pilotProfile = (pipeline && pipeline.pilotProfile) || "mobile";
+    var availProfiles = (pipeline && Array.isArray(pipeline.availableProfiles) && pipeline.availableProfiles) || [];
     var soulApplied = Boolean(pipeline && pipeline.soul && pipeline.soul.applied);
     var skillsPresent = pipeline && pipeline.hermes && Array.isArray(pipeline.hermes.present) ? pipeline.hermes.present.length : 0;
+    var profSkills = pipeline && pipeline.profileSkills;
+    var profPresent = profSkills && Array.isArray(profSkills.present) ? profSkills.present.length : 0;
+    var profTotal = profSkills ? profPresent + ((Array.isArray(profSkills.missing) && profSkills.missing.length) || 0) : 0;
     var jobs = (data && data.jobs) || [];
     var pending = (data && data.pending) || [];
 
@@ -628,59 +637,27 @@
       data && data.notice ? h("p", { className: "hp-hint" }, data.notice) : null,
       h(Chip, { label: t.pipelineRunner, value: t.pipelineHermes }),
       h("p", { className: "hp-hint" }, t.pipelineHermesFixed),
-      h(
-        "div",
-        { className: "hp-kv" },
-        h("span", null, t.pipelineSoul),
-        h("strong", null, soulApplied ? t.pipelineApplied : t.pipelineMissing)
-      ),
+      availProfiles.length ? h("div", { className: "hp-kv" }, h("span", null, t.pipelineProfile),
+        h("div", { className: "hp-actions", style: { marginTop: 0 } }, availProfiles.map(function (name) {
+          var on = name === pilotProfile;
+          return h("button", { key: name, type: "button", className: "hp-btn hp-btn-sm" + (on ? " hp-btn-primary" : ""),
+            disabled: busy || !data || data.source === "offline" || on,
+            onClick: function () { act({ action: "setProfile", profile: name }); } }, name);
+        }))) : null,
+      h("div", { className: "hp-kv" }, h("span", null, t.pipelineSoul), h("strong", null, soulApplied ? t.pipelineApplied : t.pipelineMissing)),
       h("div", { className: "hp-kv" }, h("span", null, t.pipelineSkills), h("strong", null, String(skillsPresent))),
+      profTotal ? h("div", { className: "hp-kv" }, h("span", null, t.pipelineProfileSkills.replace("{profile}", pilotProfile)), h("strong", null, profPresent + "/" + profTotal)) : null,
       h("div", { className: "hp-kv" }, h("span", null, t.pipelineJobs), h("strong", null, String(jobs.length))),
       h("div", { className: "hp-kv" }, h("span", null, t.pipelinePending), h("strong", null, String(pending.length))),
-      pending.length
-        ? h(
-            "ul",
-            { className: "hp-list" },
-            pending.map(function (row) {
-              return h(
-                "li",
-                { key: "pending-" + row.path },
-                h("span", null, row.title || row.path),
-                " ",
-                h("span", { className: "hp-hint" }, t.pipelineBatches.replace("{n}", String(row.pendingCount || 0)))
-              );
-            })
-          )
-        : null,
+      pending.length ? h("ul", { className: "hp-list" }, pending.map(function (row) {
+        return h("li", { key: "pending-" + row.path }, h("span", null, row.title || row.path), " ",
+          h("span", { className: "hp-hint" }, t.pipelineBatches.replace("{n}", String(row.pendingCount || 0))));
+      })) : null,
       !jobs.length ? h("p", { className: "hp-hint" }, t.pipelineEmpty) : null,
-      h(
-        "div",
-        { className: "hp-actions" },
-        h(
-          "button",
-          {
-            type: "button",
-            className: "hp-btn hp-btn-primary",
-            disabled: busy || !data || data.source === "offline",
-            onClick: function () {
-              act({ action: "optimize" });
-            }
-          },
-          busy ? t.pipelineOptimizing : t.pipelineOptimize
-        ),
-        h(
-          "button",
-          {
-            type: "button",
-            className: "hp-btn hp-btn-sm",
-            disabled: busy,
-            onClick: function () {
-              load();
-            }
-          },
-          t.refresh
-        )
-      )
+      h("div", { className: "hp-actions" },
+        h("button", { type: "button", className: "hp-btn hp-btn-primary", disabled: busy || !data || data.source === "offline",
+          onClick: function () { act({ action: "optimize" }); } }, busy ? t.pipelineOptimizing : t.pipelineOptimize),
+        h("button", { type: "button", className: "hp-btn hp-btn-sm", disabled: busy, onClick: function () { load(); } }, t.refresh))
     );
   }
 

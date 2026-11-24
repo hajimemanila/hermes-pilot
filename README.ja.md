@@ -122,10 +122,10 @@ curl -s -H "x-client: mobile" \
 **モデル名を書かない場所。** リポジトリと同梱 3 スキルは抽象ロールしか語りません。「どのロールをどの
 モデルに割り当て、失敗時にどこへ落とすか」の対応表は運用者のもので、Hermes プロファイル側（毎ターン読む
 短い契約は `~/.hermes/SOUL.md`、具体的な割当表はプロファイル自身の `SOUL.md` とメモリ）に置きます。この
-分離が、誰の環境にも入るプラグインでいるための条件です。`POST /api/pipeline/optimize` はマーカーブロックを
-`~/.hermes/SOUL.md` と Pilot 用プロファイル `~/.hermes/profiles/mobile/SOUL.md` へ冪等に書き込み（それ以外の
-プロファイルは**マーカーが既にある SOUL だけ**を同期し、Pilot 未使用のプロファイルには触りません。実行前に
-`.bak-<stamp>` を退避）、`GET /api/pipeline/status` はファイルの中身を返さずにプロファイルごとの適用状況
+分離が、誰の環境にも入るプラグインでいるための条件です。`POST /api/pipeline/optimize` はマーカーブロックを Pilot 用プロファイル
+`~/.hermes/profiles/<pilot>/SOUL.md`（既定 `mobile`、未作成なら生成）へ冪等に書き込みます。ルートの
+`~/.hermes/SOUL.md` と他のプロファイルは**マーカーが既にある SOUL だけ**を同期し（`pilotProfile = default` の場合のみルートへ追記）、
+Pilot 未使用の環境には触りません（実行前に `.bak-<stamp>` を退避）。`GET /api/pipeline/status` はファイルの中身を返さずにプロファイルごとの適用状況
 だけを返します。
 
 ## 意思決定コックピット（v2）
@@ -176,8 +176,9 @@ curl -s -H "x-client: mobile" \
 - **スニペット帯トグル** — チャット入力欄の上、注釈ツールバー、端末キーのチップ帯はそれぞれ折りたためます。
   選択は帯ごとに記憶され、390px の画面で入力欄とキーボードが場所を取り合いません。
 - **1 タップ環境最適化** — *設定 → この Hermes を最適化*（`POST /api/pipeline/optimize`）が
-  `~/.hermes/SOUL.md` と各プロファイルの `~/.hermes/profiles/<name>/SOUL.md` へ A2B の規律節を**冪等に**
-  追記し（既存節は重複させず、実行前に `.bak-<stamp>` を退避）、同梱 3 スキルを `~/.hermes/skills/` へ
+  Pilot 用プロファイル `~/.hermes/profiles/<pilot>/SOUL.md`（既定 `mobile`）へ A2B の規律節を**冪等に**
+  適用し（ルートの `~/.hermes/SOUL.md` と他プロファイルはマーカー既存時のみ同期、実行前に `.bak-<stamp>` を退避）、
+  同梱 3 スキルを `~/.hermes/skills/` と Pilot プロファイルの `profiles/<pilot>/skills/` へ
   配置します。`GET /api/pipeline/status` はプロファイルごとの適用済み状況だけを返し、`SOUL.md` の中身は
   返しません。
 - **旧 cron の自動片付け** — `migrate`（と `init`）は旧 `mobile-akapen-watch` / `mobile-review-watch` の
@@ -288,7 +289,7 @@ node bin/hermes-pilot.mjs init
 2. **256-bit hex のアプリトークン**を `token` に `0600` で生成（既にあれば作り直さない）
 3. 旧 `~/Projects/akapen` / `~/.hermes/plugin-data/akapen` / `~/.hermes/mobile-pwa` があれば移行
    （**コピー**のみ・`mtime` 保持・カンバンの `[akapen]` タグを `[review]` に書換）
-4. 同梱スキル `quick-review` / `annotation` / `spec-architect` を `~/.hermes/skills/` へ配置
+4. 同梱スキル `quick-review` / `annotation` / `spec-architect` を `~/.hermes/skills/` と Pilot プロファイルの `profiles/<pilot>/skills/` へ配置
 5. 到達可能なアドレス（Tailscale の MagicDNS 名、無ければ LAN IP）を検出して、
    **ペアリング URL とターミナル QR** を表示
 

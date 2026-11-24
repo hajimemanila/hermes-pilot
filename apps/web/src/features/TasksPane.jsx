@@ -1038,7 +1038,6 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
           board,
           specRelPath: currentSpec.path,
           batchIds: specSel,
-          assignee: 'mobile',
           // 直近に操作していた会話へ紐づける（完走レポートの宛先・§3.2 ② / §3.3 ③）
           chat: readActiveChatId(globalThis.localStorage) || undefined,
         },

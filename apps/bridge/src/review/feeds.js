@@ -15,6 +15,10 @@ import { safeList } from '../lib/safe.js'
 
 export function createReviewFeeds(ctx = {}) {
   const {
+    cfg,
+    opts,
+    board,
+    explicitBoard,
     reviewRoot,
     workdir,
     resolveInside,
@@ -23,7 +27,10 @@ export function createReviewFeeds(ctx = {}) {
     rememberTaskChat,
     sanitizeChatId,
     reviewAssignee,
-    runKanban,
+    runKanbanOn,
+    resolveCreateBoard,
+    shotWriteRoot,
+    readBoardMeta,
     targets,
     resolveTarget,
   } = ctx
@@ -198,16 +205,6 @@ export function createReviewFeeds(ctx = {}) {
       ext = e === '.jpg' || e === '.jpeg' ? '.jpg' : e === '.webp' ? '.webp' : '.png'
     }
 
-    const stamp = new Date()
-      .toISOString()
-      .slice(0, 16)
-      .replace(/[-:T]/g, '')
-      .slice(0, 12)
-    const label = `${slugOf(payload?.slug || title)}-${stamp}`
-    const relShot = `shots/${label}-1${ext}`
-    const shotAbs = path.join(path.resolve(workdir(), relShot))
-    writeFileAtomic(shotAbs, buf)
-
     // 注釈の反映先は登録済みリポジトリから選ぶ（自由入力は受けない）
     const picked = resolveTarget(payload?.target)
     if (!picked) {
@@ -218,6 +215,26 @@ export function createReviewFeeds(ctx = {}) {
       }
     }
     const target = picked.path
+    const targetBoard =
+      payload?.board ||
+      resolveCreateBoard({ kanbanRoot: cfg.kanbanRoot, targetPath: target, preferredBoard: board, onlyBoard: explicitBoard })
+    const metaWd = readBoardMeta(path.join(String(cfg.kanbanRoot ?? ''), 'boards', targetBoard)).workdir
+    const writeRoot = shotWriteRoot({
+      preferredRoot: opts?.root,
+      boardWorkdir: metaWd ?? (targetBoard === board ? workdir() : null),
+      reviewRoot: reviewRoot(),
+    })
+
+    const stamp = new Date()
+      .toISOString()
+      .slice(0, 16)
+      .replace(/[-:T]/g, '')
+      .slice(0, 12)
+    const label = `${slugOf(payload?.slug || title)}-${stamp}`
+    const relShot = `shots/${label}-1${ext}`
+    const shotAbs = path.resolve(writeRoot, relShot)
+    writeFileAtomic(shotAbs, buf)
+
     // 起票した会話へ完了報告を返す宛先（レビュー chat-badge-01 q1=A の「紐づけ」）。
     // 注釈タスクは bridge が本文を組み立てるので、端末が渡さないと `chat=` が付かず
     // 完了が会話に戻らない（従来の宛先つきはレビューシート経由だけだった）。
@@ -225,7 +242,7 @@ export function createReviewFeeds(ctx = {}) {
     const body =
       `[review] label=${label} round=1 mode=annotation image=${relShot} target=${target}` + (chat ? ` chat=${chat}` : '')
     // assignee が無いと dispatcher が拾わない（実測: ready のまま止まる）
-    const created = await runKanban(['create', title, '--body', body, '--assignee', reviewAssignee()])
+    const created = await runKanbanOn(targetBoard, ['create', title, '--body', body, '--assignee', reviewAssignee()])
     // ID 抽出は stdout を優先する（`stderr` は失敗本文用・D102）。
     const m = /t_[0-9a-f]{8}/.exec(created.stdout || created.stderr || '')
     if (created.code !== 0 || !m) {
@@ -233,9 +250,10 @@ export function createReviewFeeds(ctx = {}) {
     }
     const taskId = m[0]
     if (chat) rememberTaskChat(taskId, chat)
-    const blocked = await runKanban(['block', taskId, ops.annotationWaiting, '--kind', 'needs_input'])
+    const blocked = await runKanbanOn(targetBoard, ['block', taskId, ops.annotationWaiting, '--kind', 'needs_input'])
     return {
       ok: blocked.code === 0,
+      board: targetBoard,
       taskId,
       image: relShot,
       label,

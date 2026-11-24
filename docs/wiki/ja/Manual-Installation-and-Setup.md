@@ -50,7 +50,7 @@ node bin/hermes-pilot.mjs init
 1. `~/.hermes/plugin-data/hermes-pilot/`（と `review/{sheets,shots,library}`）を作成
 2. **256-bit hex のアプリトークン**を `token` に `0600` で生成（既にあれば作り直さない）
 3. 旧 `~/Projects/akapen` / `~/.hermes/plugin-data/akapen` / `~/.hermes/mobile-pwa` があれば移行（コピーのみ・`mtime` 保持）
-4. 同梱スキル `quick-review` / `annotation` / `spec-architect` を `~/.hermes/skills/` へ配置
+4. 同梱スキル `quick-review` / `annotation` / `spec-architect` を `~/.hermes/skills/` と Pilot プロファイルの `profiles/<pilot>/skills/` へ配置
 5. 到達可能なアドレス（Tailscale の MagicDNS 名、無ければ LAN IP）を検出して、**ペアリング URL とターミナル QR** を表示
 
 ### 常駐化と起動確認
@@ -114,7 +114,7 @@ Settings は「外観・操作 → ペアリング → スニペット → パ�
 
 SPEC のバッチに `- **Recommended Role**: role:planner` と書けば、ブリッジがそれを抽出して起票タスクの実行契約にロール指針を注入します。書かない SPEC は従来どおりに動きます。
 
-**SOUL.md とスキルを今すぐ最適化** を押すと、マーカーブロックが `~/.hermes/SOUL.md` と Pilot 用プロファイル `~/.hermes/profiles/mobile/SOUL.md` へ冪等に書き込まれます（実行前に `.bak-<stamp>` を退避。他のプロファイルはマーカーが既にある SOUL だけを同期し、Pilot 未使用のプロファイルには触りません）。状態 API はファイルの中身ではなく、プロファイルごとの適用状況だけを返します。
+**SOUL.md とスキルを今すぐ最適化** を押すと、マーカーブロックが Pilot 用プロファイル `~/.hermes/profiles/<pilot>/SOUL.md`（既定 `mobile`）へ冪等に書き込まれます（実行前に `.bak-<stamp>` を退避。ルートの `~/.hermes/SOUL.md` と他のプロファイルはマーカーが既にある SOUL だけを同期し、`pilotProfile = default` の場合のみルートへ追記します。また同梱 3 スキルも `~/.hermes/skills/` と `profiles/<pilot>/skills/` の両方に配置されます）。状態 API はファイルの中身ではなく、プロファイルごとの適用状況だけを返します。
 
 委譲はネイティブ（Hermes 自身の委譲機構）だけで、外部 AI CLI の子プロセスは起動しません。しかも **止まりません**: 委譲先がエラー・レート制限・タイムアウト・未設定のいずれでも、親はプロファイルが宣言したフォールバック順で自分のモデルのまま続行し、バッチは最後まで完走します。
 

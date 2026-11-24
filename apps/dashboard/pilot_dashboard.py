@@ -333,10 +333,17 @@ def validate_config(
 
 
 def write_config_atomic(config_path: Path | str, value: Mapping[str, Any]) -> dict[str, Any]:
-    """Write ``config.json`` via tmp → rename, mode 0600 (SPEC §8.1)."""
+    """Write ``config.json`` via tmp → rename, mode 0600 (SPEC §8.1), keeping extra keys (e.g. ``pilotProfile``)."""
     target = Path(config_path)
     target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    payload = {key: value.get(key) for key in CONFIG_FIELDS if key in value}
+    extra: dict[str, Any] = {}
+    try:
+        prev = json.loads(target.read_text(encoding="utf-8"))
+        if isinstance(prev, dict):
+            extra = {k: v for k, v in prev.items() if k not in CONFIG_FIELDS}
+    except (OSError, ValueError):
+        extra = {}
+    payload = {**extra, **{key: value.get(key) for key in CONFIG_FIELDS if key in value}}
     body = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
     fd, tmp_name = tempfile.mkstemp(dir=str(target.parent), prefix=".config-", suffix=".json")
     try:
@@ -1118,13 +1125,12 @@ def build_pipeline(
         status = request(base, "/api/pipeline/status", token, method="GET")
         if isinstance(status, Mapping) and status.get("ok"):
             payload["pipeline"] = {
+                "pilotProfile": status.get("pilotProfile"),
+                "availableProfiles": status.get("availableProfiles") or [],
                 "soul": status.get("soul"),
                 "hermes": status.get("hermes"),
-                "antigravity": [
-                    {"id": t.get("id"), "available": bool(t.get("available")), "present": t.get("present") or [], "missing": t.get("missing") or []}
-                    for t in (status.get("antigravity") or [])
-                    if isinstance(t, Mapping)
-                ],
+                "profileSkills": status.get("profileSkills"),
+                "antigravity": [{"id": t.get("id"), "available": bool(t.get("available")), "present": t.get("present") or [], "missing": t.get("missing") or []} for t in (status.get("antigravity") or []) if isinstance(t, Mapping)],
             }
     except BridgeUnavailable:
         pass
@@ -1132,29 +1138,11 @@ def build_pipeline(
     try:
         jobs = request(base, "/api/architect/jobs" + query, token, method="GET")
         if isinstance(jobs, Mapping) and jobs.get("ok"):
-            payload["jobs"] = [
-                {
-                    "id": j.get("id"),
-                    "status": j.get("status"),
-                    "runner": j.get("runner"),
-                    "autoStart": bool(j.get("autoStart")),
-                    "spec": j.get("spec"),
-                    "createdAt": j.get("createdAt"),
-                }
-                for j in (jobs.get("jobs") or [])[:6]
-                if isinstance(j, Mapping)
-            ]
-            payload["jobCount"] = len(jobs.get("jobs") or [])
-            payload["pending"] = [
-                {"path": p.get("path"), "title": p.get("title"), "pendingCount": p.get("pendingCount")}
-                for p in (jobs.get("pending") or [])[:6]
-                if isinstance(p, Mapping)
-            ]
-            payload["specReady"] = [
-                {"spec": s.get("spec"), "title": s.get("title"), "batchCount": s.get("batchCount"), "launched": bool(s.get("launched"))}
-                for s in (jobs.get("specReady") or [])[:6]
-                if isinstance(s, Mapping)
-            ]
+            raw_jobs = jobs.get("jobs") or []
+            payload["jobs"] = [{"id": j.get("id"), "status": j.get("status"), "runner": j.get("runner"), "autoStart": bool(j.get("autoStart")), "spec": j.get("spec"), "createdAt": j.get("createdAt")} for j in raw_jobs[:6] if isinstance(j, Mapping)]
+            payload["jobCount"] = len(raw_jobs)
+            payload["pending"] = [{"path": p.get("path"), "title": p.get("title"), "pendingCount": p.get("pendingCount")} for p in (jobs.get("pending") or [])[:6] if isinstance(p, Mapping)]
+            payload["specReady"] = [{"spec": s.get("spec"), "title": s.get("title"), "batchCount": s.get("batchCount"), "launched": bool(s.get("launched"))} for s in (jobs.get("specReady") or [])[:6] if isinstance(s, Mapping)]
     except BridgeUnavailable:
         pass
 
@@ -1167,18 +1155,10 @@ def pipeline_action(
     *,
     request: Optional[Callable[..., Any]] = None,
 ) -> dict[str, Any]:
-    """``POST /pipeline`` — ``{action: "optimize"} | {action: "setRunner", runner}``.
-
-    Both run **on the bridge**, so the audit trail records them. The runner is
-    fixed to ``hermes`` (Hermes Native); anything else is rejected here and by
-    the bridge, and passed back verbatim — the tab never invents success.
-    """
-    paths = paths or resolve_paths()
-    request = request or bridge_request
+    """``POST /pipeline`` — ``optimize | setProfile | setRunner``. Runner is fixed to ``hermes``."""
+    paths, request = paths or resolve_paths(), request or bridge_request
     body: Mapping[str, Any] = payload if isinstance(payload, Mapping) else {}
-    action = str(body.get("action") or "").strip()
-    token = read_token(paths)
-    base = bridge_base(paths)
+    action, token, base = str(body.get("action") or "").strip(), read_token(paths), bridge_base(paths)
 
     if action == "optimize":
         try:
@@ -1189,6 +1169,18 @@ def pipeline_action(
         out["action"] = "optimize"
         return redact(out, token)
 
+    if action == "setProfile":
+        profile = str(body.get("profile") or "").strip()
+        if not profile:
+            return {"ok": False, "code": "invalid_profile", "error": "profile is required"}
+        try:
+            answer = request(base, "/api/pipeline/profile", token, method="POST", body={"profile": profile})
+        except BridgeUnavailable as exc:
+            return {"ok": False, "code": "bridge_unreachable", "error": str(exc)}
+        out = dict(answer) if isinstance(answer, Mapping) else {"ok": False}
+        out["action"] = "setProfile"
+        return redact(out, token)
+
     if action == "setRunner":
         runner = str(body.get("runner") or "").strip()
         if runner != "hermes":
@@ -1197,11 +1189,11 @@ def pipeline_action(
             answer = request(base, "/api/architect/config", token, method="PUT", body={"runner": runner})
         except BridgeUnavailable as exc:
             return {"ok": False, "code": "bridge_unreachable", "error": str(exc)}
-        out: dict[str, Any] = dict(answer) if isinstance(answer, Mapping) else {"ok": False}
+        out = dict(answer) if isinstance(answer, Mapping) else {"ok": False}
         out["action"] = "setRunner"
         return redact(out, token)
 
-    return {"ok": False, "code": "invalid_action", "error": "action must be one of optimize, setRunner"}
+    return {"ok": False, "code": "invalid_action", "error": "action must be one of optimize, setProfile, setRunner"}
 
 
 # ----------------------------------------------------------------- snippets

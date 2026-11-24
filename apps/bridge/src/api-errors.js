@@ -107,7 +107,7 @@ export const ERROR_MESSAGES = {
   MEMO_NOT_FOUND: 'Note not found',
 
   // --- git / usage / search / live / transcript（PWA の各シート・差分表示） ---
-  NO_GIT_RECORD: 'This task has no Git record (it may not have gone through kanban-sop)',
+  NO_GIT_RECORD: 'This task has no Git record yet',
   NO_COMMITS: 'No commits yet',
   GIT_REPO_MISSING: 'The Git repository directory was not found',
   GIT_SHOW_FAILED: 'git show failed',

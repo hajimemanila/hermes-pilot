@@ -42,6 +42,19 @@ import {
 import { createReviewMedia } from './review/media.js'
 import { createReviewFeeds } from './review/feeds.js'
 import { createReviewTransitions } from './review/transitions.js'
+import {
+  expandHome,
+  findTaskBoard,
+  listBoardDbs,
+  queryLastEvents,
+  queryReviewBodies,
+  queryReviewRows,
+  querySessionId,
+  querySiblingIndex,
+  readBoardMeta,
+  resolveCreateBoard,
+  shotWriteRoot,
+} from './review/boards.js'
 
 /*
  * 分割したモジュールの再エクスポート。`./review.js` からの import 契約は 1 つも変えない。
@@ -71,9 +84,11 @@ export {
 export { opsText, reopenTextOf, replyTextOf } from './review/text.js'
 
 export function createReview(cfg, opts = {}) {
-  const board = opts.board || process.env.REVIEW_BOARD || 'mobile'
+  const explicitBoard = opts.board || process.env.REVIEW_BOARD || null
+  const board = explicitBoard || 'mobile'
   const boardDir = path.join(cfg.kanbanRoot, 'boards', board)
   const dbPath = path.join(boardDir, 'kanban.db')
+  const taskBoardCache = new Map()
 
   function homeDir() {
     return path.dirname(cfg.kanbanRoot || path.join(os.homedir(), '.hermes', 'kanban'))
@@ -133,15 +148,11 @@ export function createReview(cfg, opts = {}) {
     }
   }
 
-  /** ボードの default_workdir（シート置き場のルート）。未設定なら review ワークスペース。 */
+  /** 既定のワークスペース（opts.root → 非 Git の default_workdir → reviewRoot）。 */
   function workdir() {
-    if (opts.root) return path.resolve(opts.root.replace(/^~/, os.homedir()))
-    try {
-      const meta = JSON.parse(fs.readFileSync(path.join(boardDir, 'board.json'), 'utf8'))
-      if (meta.default_workdir) return path.resolve(String(meta.default_workdir).replace(/^~/, os.homedir()))
-    } catch {
-      /* fall through */
-    }
+    if (opts.root) return path.resolve(expandHome(opts.root))
+    const meta = readBoardMeta(boardDir)
+    if (meta.workdir && !fs.existsSync(path.join(meta.workdir, '.git'))) return meta.workdir
     return reviewRoot()
   }
 
@@ -150,182 +161,93 @@ export function createReview(cfg, opts = {}) {
   }
 
   function rows(limit = 80) {
-    const db = safeList('review.rows.openDb', () => openDb(), null)
-    if (!db) return []
-    try {
-      return safeList('review.rows.query', () =>
-        db
-          .prepare(
-            `SELECT id, title, body, status, assignee, priority,
-                    created_at, started_at, completed_at, result, last_heartbeat_at
-               FROM tasks
-              WHERE status IN ('review','ready','running','blocked','done')
-              ORDER BY CASE status WHEN 'review' THEN 0 WHEN 'ready' THEN 1 WHEN 'running' THEN 2
-                                   WHEN 'blocked' THEN 3 ELSE 4 END,
-                       COALESCE(completed_at, started_at, created_at) DESC
-              LIMIT ?`,
-          )
-          .all(limit),
-      )
-    } finally {
-      db.close()
-    }
+    return queryReviewRows(cfg.kanbanRoot, board, explicitBoard, limit)
   }
 
-  /** 各タスクの最新イベント（進行が見えるように）。 */
   function lastEvents(ids) {
-    if (!ids.length) return {}
-    let db
-    try {
-      db = openDb()
-    } catch {
-      return {}
-    }
-    try {
-      const placeholders = ids.map(() => '?').join(',')
-      const rs = db
-        .prepare(
-          `SELECT task_id, kind, created_at FROM task_events
-            WHERE id IN (SELECT MAX(id) FROM task_events WHERE task_id IN (${placeholders}) GROUP BY task_id)`,
-        )
-        .all(...ids)
-      const out = {}
-      for (const r of rs) out[r.task_id] = { kind: r.kind, at: Number(r.created_at ?? 0) * 1000 }
-      return out
-    } catch {
-      return {}
-    } finally {
-      db.close()
-    }
+    return queryLastEvents(cfg.kanbanRoot, board, explicitBoard, ids)
   }
 
   function bodyOf(id) {
-    let db
-    try {
-      db = openDb()
-    } catch {
-      return null
-    }
-    try {
-      // assignee も取る（回答後に担当を付けるかの判定に使う・§3.1）
-      return db.prepare('SELECT body, status, title, assignee FROM tasks WHERE id = ?').get(id) || null
-    } catch {
-      return null
-    } finally {
-      db.close()
-    }
+    const hit = findTaskBoard(cfg.kanbanRoot, id, board, explicitBoard)
+    if (!hit) return null
+    taskBoardCache.set(id, { board: hit.board, workdir: hit.workdir })
+    return { ...hit.row, board: hit.board, workdir: hit.workdir }
   }
 
-  /**
-   * 同一 label の他タスク（前ラウンド）を 1 回のクエリで索引にする（比較画像の解決用）。
-   *
-   * 前ラウンドのタスクは `archived` のことが多い（実測: `1379.jpg-…` の前回は archived）ので
-   * status では絞らない。キーは `[review]` 行の label、値は新しい順の `{id, image, round, createdAt}`。
-   *
-   * @returns {Map<string, Array<{id: string, image: string, round: number, createdAt: number}>>}
-   */
+  function boardOf(id) {
+    if (!id) return board
+    if (taskBoardCache.has(id)) return taskBoardCache.get(id).board
+    const hit = findTaskBoard(cfg.kanbanRoot, id, board, explicitBoard)
+    if (hit) {
+      taskBoardCache.set(id, { board: hit.board, workdir: hit.workdir })
+      return hit.board
+    }
+    return board
+  }
+
   function siblingIndex() {
-    const byLabel = new Map()
-    let db
-    try {
-      db = openDb()
-    } catch {
-      return byLabel
-    }
-    try {
-      const rs = db.prepare("SELECT id, body, created_at FROM tasks WHERE body LIKE '%[review]%'").all()
-      for (const r of rs) {
-        const ak = parseReviewLine(r.body)
-        if (!ak?.image || !ak.label) continue
-        const list = byLabel.get(ak.label) || []
-        list.push({
-          id: r.id,
-          image: ak.image,
-          round: Number(ak.round ?? 1),
-          createdAt: Number(r.created_at ?? 0) * 1000,
-        })
-        byLabel.set(ak.label, list)
-      }
-    } catch {
-      /* 索引は補助情報。壊れた DB でも一覧は返す */
-    } finally {
-      db.close()
-    }
-    for (const list of byLabel.values()) list.sort((a, b) => b.createdAt - a.createdAt)
-    return byLabel
+    return querySiblingIndex(cfg.kanbanRoot, board, explicitBoard, parseReviewLine)
   }
 
-  /**
-   * 比較用（Before）画像の実在する相対パス（無ければ null）。
-   *
-   * @param {string} id タスク ID（自分自身を候補から外す）
-   * @param {object} ak `[review]` 行
-   * @param {Map} [index] `siblingIndex()` の結果（一覧では 1 回だけ作って渡す）
-   */
-  function compareRelOf(id, ak, index) {
+  function compareRelOf(id, ak, index, extraRoots = []) {
     if (!ak?.image) return null
     const others = (index?.get(ak.label) || []).filter((o) => o.id !== id)
     const cands = compareCandidates({ image: ak.image, round: Number(ak.round ?? 1), others })
     for (const rel of cands) {
-      if (resolveInside(rel)) return rel
+      if (resolveInside(rel, extraRoots)) return rel
     }
     return null
   }
 
-  /**
-   * このタスクを実行している worker のセッション ID（無ければ null）。
-   *
-   * `session_id` がタスク行にあっても `db`（どのプロファイルの state.db か）は
-   * イベントにしか残らないので、必ず `task_events` も読んで補完する。
-   */
   function sessionId(id) {
-    let db
-    try {
-      db = openDb()
-    } catch {
-      return null
-    }
-    try {
-      const r = db.prepare('SELECT session_id, status FROM tasks WHERE id = ?').get(id)
-      const fromRow = r?.session_id ? String(r.session_id) : null
-      const evs = db
-        .prepare(
-          "SELECT payload FROM task_events WHERE task_id = ? AND kind IN ('owner_admitted','worker_bound','spawned') ORDER BY id DESC LIMIT 6",
-        )
-        .all(id)
-      let sid = fromRow
-      let evDb = null
-      for (const ev of evs) {
-        try {
-          const p = JSON.parse(ev.payload || '{}')
-          if (!sid && p.session_id) sid = String(p.session_id)
-          if (!evDb && p.db) evDb = String(p.db)
-          if (sid && evDb) break
-        } catch {
-          /* 壊れた payload は無視 */
-        }
-      }
-      if (!sid) return null
-      return { sessionId: sid, status: r?.status ?? null, db: evDb }
-    } catch {
-      return null
-    } finally {
-      db.close()
-    }
+    return querySessionId(cfg.kanbanRoot, board, explicitBoard, id)
   }
 
-  /** workdir 配下に収まることを realpath で確かめて絶対パスを返す。 */
-  function resolveInside(rel) {
+  /** 相対パスが許可ルート配下に実在することを realpath で確かめ、`{ abs, root }` を返す。 */
+  function resolveInsideWithRoot(rel, extraRoots = []) {
     if (!isSafeRel(rel)) return null
-    const root = workdir()
-    const abs = path.resolve(root, rel)
-    const relToRoot = path.relative(root, abs)
-    if (relToRoot.startsWith('..') || path.isAbsolute(relToRoot)) return null
-    try {
-      return fs.realpathSync(abs)
-    } catch {
-      return null
+    const cands = [opts.root ? path.resolve(expandHome(opts.root)) : null, reviewRoot()]
+    for (const r of extraRoots) {
+      if (!r) continue
+      const absR = path.resolve(expandHome(r))
+      cands.push(absR, path.join(absR, 'review'))
     }
+    cands.push(workdir())
+    for (const e of listBoardDbs(cfg.kanbanRoot, board, explicitBoard)) {
+      if (e.workdir) cands.push(e.workdir, path.join(e.workdir, 'review'))
+    }
+    const seen = new Set()
+    for (const root of cands) {
+      if (!root) continue
+      const normRoot = path.resolve(root)
+      if (seen.has(normRoot)) continue
+      seen.add(normRoot)
+      const abs = path.resolve(normRoot, rel)
+      const relToRoot = path.relative(normRoot, abs)
+      if (relToRoot.startsWith('..') || path.isAbsolute(relToRoot)) continue
+      try {
+        const realRoot = fs.realpathSync(normRoot)
+        const realAbs = fs.realpathSync(abs)
+        const relReal = path.relative(realRoot, realAbs)
+        if (relReal.startsWith('..') || path.isAbsolute(relReal)) continue
+        return { abs: realAbs, root: normRoot }
+      } catch {
+        /* try next root */
+      }
+    }
+    return null
+  }
+
+  function resolveInside(rel, extraRoots = []) {
+    return resolveInsideWithRoot(rel, extraRoots)?.abs ?? null
+  }
+
+  function writeRootFor(rel, row) {
+    const extras = row?.workdir ? [row.workdir] : []
+    const hit = rel ? resolveInsideWithRoot(rel, extras) : null
+    if (hit) return hit.root
+    return shotWriteRoot({ preferredRoot: opts.root, boardWorkdir: row?.workdir ?? workdir(), reviewRoot: reviewRoot() })
   }
 
   function readJsonIfExists(abs) {
@@ -346,15 +268,16 @@ export function createReview(cfg, opts = {}) {
     for (const r of base) {
       const ak = parseReviewLine(r.body)
       if (!ak) continue
-      const sheetAbs = ak.sheet ? resolveInside(ak.sheet) : null
+      const extras = r._workdir ? [r._workdir] : []
+      const res = (p) => resolveInside(p, extras)
+      const sheetAbs = ak.sheet ? res(ak.sheet) : null
       const paths = ak.sheet ? sheetPaths(ak.sheet) : null
-      const dataRel = paths ? paths.dataRel : null
-      const dataAbs = dataRel ? resolveInside(dataRel) : null
+      const dataAbs = paths?.dataRel ? res(paths.dataRel) : null
       const sheet = dataAbs ? readJsonIfExists(dataAbs) : null
-      const answeredAt = answeredAtForReview(ak, resolveInside, readJsonIfExists, r.id)
+      const answeredAt = answeredAtForReview(ak, res, readJsonIfExists, r.id)
       out.push({
         id: r.id,
-        board,
+        board: r._board || board,
         title: r.title,
         status: r.status,
         assignee: r.assignee,
@@ -371,7 +294,7 @@ export function createReview(cfg, opts = {}) {
           label: ak.label ?? null,
           image: ak.image ?? null,
           // 比較用（Before=前回の赤入れ）画像があるか。UI はこれでトグルを出す
-          hasCompare: Boolean(compareRelOf(r.id, ak, siblings)),
+          hasCompare: Boolean(compareRelOf(r.id, ak, siblings, extras)),
           target: ak.target ?? null,
           repo: repoForTarget(ak.target),
           chat: sanitizeChatId(ak.chat) || taskChats[r.id] || null,
@@ -404,10 +327,11 @@ export function createReview(cfg, opts = {}) {
     if (!b) return { ok: false, code: 'NOT_FOUND' }
     const ak = parseReviewLine(b.body)
     if (!ak?.sheet) return { ok: false, code: 'NO_SHEET' }
-    const abs = resolveInside(ak.sheet)
+    const extras = b.workdir ? [b.workdir] : []
+    const abs = resolveInside(ak.sheet, extras)
     const isJson = Boolean(abs && /\.json$/i.test(abs))
     if (abs && !isJson) return { ok: true, html: fs.readFileSync(abs, 'utf8'), path: abs }
-    const dataAbs = isJson ? abs : resolveInside(sheetPaths(ak.sheet).dataRel)
+    const dataAbs = isJson ? abs : resolveInside(sheetPaths(ak.sheet).dataRel, extras)
     const data = dataAbs ? readJsonIfExists(dataAbs) : null
     if (!data) return { ok: false, code: 'SHEET_MISSING' }
     return { ok: true, html: renderSheetHtmlFromData(data, ak, lang), path: dataAbs, generated: true }
@@ -419,12 +343,13 @@ export function createReview(cfg, opts = {}) {
     if (!b) return { ok: false, code: 'NOT_FOUND' }
     const ak = parseReviewLine(b.body)
     if (!ak?.sheet) return { ok: false, code: 'NO_SHEET' }
-    const abs = resolveInside(sheetPaths(ak.sheet).dataRel)
+    const extras = b.workdir ? [b.workdir] : []
+    const abs = resolveInside(sheetPaths(ak.sheet).dataRel, extras)
     const data = abs ? readJsonIfExists(abs) : null
     if (!data) return { ok: false, code: 'DATA_MISSING' }
     // 回答の履歴（完了した項目を「なぜこの設計か」まで辿れるようにする）。
     // 回答は無いことがある（回答前に片付けた等）ので、無ければ null。
-    const answer = readJsonIfExists(resolveInside(sheetPaths(ak.sheet).answerRel) || '\0')
+    const answer = readJsonIfExists(resolveInside(sheetPaths(ak.sheet).answerRel, extras) || '\0')
     return { ok: true, data, answer: answer || null, taskId: id, status: b.status }
   }
 
@@ -438,14 +363,23 @@ export function createReview(cfg, opts = {}) {
     return String(process.env.HP_REVIEW_ASSIGNEE ?? rawOpt ?? '').trim() || 'mobile'
   }
 
-  /** テストから差し替えられるように注入可能にしておく（戻り値は `lib/cli.js` の統一形へ揃える）。 */
-  const runKanbanCli = (args) =>
-    runHermes(['kanban', '--board', board, ...args], {
-      bin: opts.hermesBin,
-      timeoutMs: 30_000,
-      maxBuffer: 1_000_000,
-    })
-  const runKanban = async (args) => outcomeOf(await (opts.runKanban ?? runKanbanCli)(args))
+  /** 指定ボードに対して CLI（またはテスト差し替え）を呼ぶ。 */
+  const runKanbanOn = async (targetBoard, args) => {
+    const b = targetBoard || board
+    const raw = opts.runKanban
+      ? await opts.runKanban(args, b)
+      : await runHermes(['kanban', '--board', b, ...args], {
+          bin: opts.hermesBin,
+          timeoutMs: 30_000,
+          maxBuffer: 1_000_000,
+        })
+    return outcomeOf(raw)
+  }
+  const idVerbs = new Set(['comment', 'block', 'unblock', 'complete', 'assign', 'archive'])
+  const runKanban = (args) => {
+    const id = idVerbs.has(args?.[0]) ? String(args?.[1] ?? '') : ''
+    return runKanbanOn(id ? boardOf(id) : board, args)
+  }
 
   /**
    * blocked からの遷移の正本（D99 / `review/transitions.js`）。
@@ -473,8 +407,9 @@ export function createReview(cfg, opts = {}) {
     const ak = parseReviewLine(b.body)
     if (!ak?.sheet) return { ok: false, code: 'NO_SHEET' }
 
-    const sheetAbs = resolveInside(ak.sheet)
-    const dataAbs = resolveInside(ak.sheet.replace(/\.html$/, '.json'))
+    const { dataRel, answerRel } = sheetPaths(ak.sheet)
+    const extras = b.workdir ? [b.workdir] : []
+    const dataAbs = resolveInside(dataRel, extras)
     const data = dataAbs ? readJsonIfExists(dataAbs) : null
     const questions = Array.isArray(data?.questions) ? data.questions : []
 
@@ -488,9 +423,8 @@ export function createReview(cfg, opts = {}) {
     const annotations = Array.isArray(payload?.annotations) ? payload.annotations : []
     const hash = answerHash({ answers, global, annotations })
 
-    const answerRel = sheetPaths(ak.sheet).answerRel
-    const answerDir = path.dirname(path.resolve(workdir(), answerRel))
-    const answerFile = path.join(answerDir, path.basename(answerRel))
+    const targetRoot = writeRootFor(dataAbs ? dataRel : ak.sheet, b)
+    const answerFile = path.resolve(targetRoot, answerRel)
     const textFile = answerFile.replace(/\.answer\.json$/, '.answer.txt')
 
     if (payload?.chat) rememberTaskChat(id, payload.chat)
@@ -549,7 +483,7 @@ export function createReview(cfg, opts = {}) {
       questions.length || answers.length,
       answers.filter((a) => a?.choice).length,
       answers.filter((a) => !a?.choice).length,
-      path.relative(workdir(), answerFile),
+      answerRel,
     )
     const comment = await runKanban(['comment', id, summary, '--author', String(payload?.by ?? 'mobile')])
     const moved = await transitions.apply('answer.fresh', { id, reason: ops.answered })
@@ -575,7 +509,7 @@ export function createReview(cfg, opts = {}) {
       duplicate: false,
       assigned,
       sha256: hash,
-      files: { answer: path.relative(workdir(), answerFile), text: path.relative(workdir(), textFile) },
+      files: { answer: answerRel, text: path.relative(targetRoot, textFile) },
       status,
       moved: status,
       output: `${outputOf(comment)}\n${out}`.trim().slice(0, 800),
@@ -640,7 +574,7 @@ export function createReview(cfg, opts = {}) {
     const note = String(payload?.note ?? '').slice(0, 400)
     const by = String(payload?.by ?? 'mobile').slice(0, 40)
     const rel = ak.image.replace(/\.(png|jpe?g|webp)$/i, '.approval.json')
-    const abs = path.join(path.resolve(workdir(), rel))
+    const abs = path.resolve(writeRootFor(ak.image, b), rel)
     const reason = ops.approved(note, false)
 
     const existing = readJsonIfExists(abs)
@@ -715,6 +649,7 @@ export function createReview(cfg, opts = {}) {
     cfg,
     opts,
     board,
+    explicitBoard,
     boardDir,
     dbPath,
     homeDir,
@@ -722,6 +657,7 @@ export function createReview(cfg, opts = {}) {
     reviewRoot,
     workdir,
     resolveInside,
+    writeRootFor,
     readJsonIfExists,
     list,
     rows,
@@ -744,6 +680,12 @@ export function createReview(cfg, opts = {}) {
     openDb,
     reviewAssignee,
     runKanban,
+    runKanbanOn,
+    resolveCreateBoard,
+    shotWriteRoot,
+    readBoardMeta,
+    queryReviewBodies,
+    listBoardDbs,
   }
   const media = createReviewMedia(surfaceCtx)
   const { thumb, image, annotation, saveAnnotation, targets, resolveTarget, repoForTarget, imageRepos, labelTarget, library } =

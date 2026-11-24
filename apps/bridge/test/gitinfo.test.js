@@ -104,3 +104,72 @@ test('filePatch はパストラバーサルを拒否する', async () => {
     assert.equal(r.ok, false, bad)
   }
 })
+
+test('Kanban ネイティブ解決: branch / grep=<taskId> / 明示 SHA で解決し、無関係 HEAD は推測しない', async () => {
+  const { root, repo } = fixture()
+  try {
+    const run = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' })
+    // t_branch 用ブランチにコミットを作る
+    run('checkout', '-q', '-b', 'feat/t-branch')
+    fs.writeFileSync(path.join(repo, 'c.txt'), 'branch-work\n')
+    run('add', '-A')
+    run('commit', '-q', '-m', 'feat: branch commit')
+    const branchHead = run('rev-parse', '--short', 'HEAD').trim()
+
+    // t_grep123 用コミットをメッセージに ID 付きで作る
+    run('checkout', '-q', 'main')
+    fs.writeFileSync(path.join(repo, 'd.txt'), 'grep-work\n')
+    run('add', '-A')
+    run('commit', '-q', '-m', 'fix(t_grep123): resolve by task id grep')
+    const grepHead = run('rev-parse', '--short', 'HEAD').trim()
+
+    // main 上に別コミットを作り result 中の明示 SHA で参照できるようにする
+    fs.writeFileSync(path.join(repo, 'e.txt'), 'sha-work\n')
+    run('add', '-A')
+    run('commit', '-q', '-m', 'chore: explicit sha commit')
+    const shaHead = run('rev-parse', '--short', 'HEAD').trim()
+
+    const tasks = {
+      t_branch: { id: 't_branch', status: 'done', branch: 'feat/t-branch', workspace: repo },
+      t_grep123: { id: 't_grep123', status: 'done', branch: '', result: 'done', workspace: '' },
+      t_sha: { id: 't_sha', status: 'done', branch: '', result: `Committed at commit ${shaHead}`, workspace: repo },
+      t_miss: { id: 't_miss', status: 'done', branch: '', result: 'unrelated text without commit', workspace: repo },
+    }
+    const gi = createGitInfo(
+      { home: root, sopHistory: path.join(root, 'missing-history.jsonl') },
+      {
+        kanban: {
+          boards: () => [{ slug: 'my-app', archived: false, workdir: repo }],
+          task: (_board, id) => {
+            if (!tasks[id]) throw new Error('TASK_NOT_FOUND')
+            return tasks[id]
+          },
+        },
+      },
+    )
+
+    const bInfo = await gi.forTask('t_branch', { board: 'my-app' })
+    assert.equal(bInfo.head, branchHead)
+    assert.equal(bInfo.branch, 'feat/t-branch')
+
+    const gInfo = await gi.forTask('t_grep123')
+    assert.equal(gInfo.head, grepHead)
+    assert.match(gInfo.subject, /t_grep123/)
+
+    const sInfo = await gi.forTask('t_sha', { board: 'my-app' })
+    assert.equal(sInfo.head, shaHead)
+    const sDiff = await gi.diffSummary('t_sha', { board: 'my-app' })
+    assert.equal(sDiff.ok, true)
+    assert.ok(sDiff.files.some((f) => f.path === 'e.txt'))
+
+    // 無関係なタスクには HEAD を当てない
+    assert.equal(await gi.forTask('t_miss', { board: 'my-app' }), null)
+    const missDiff = await gi.diffSummary('t_miss', { board: 'my-app' })
+    assert.equal(missDiff.ok, false)
+    assert.equal(missDiff.code, 'NO_GIT_RECORD')
+    assert.equal(CJK.test(missDiff.reason), false)
+    assert.equal(/kanban-sop/i.test(missDiff.reason), false)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})

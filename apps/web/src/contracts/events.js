@@ -65,6 +65,8 @@ export const HM_EVENTS = Object.freeze({
   FX_BURST: 'hm:fx-burst',
   /** スニペット帯の表示切り替え。 */
   SNIPPET_BARS: 'hm:snippet-bars',
+  /** Pilot 専用プロファイル（既定プロファイル）の切り替え。 */
+  PILOT_PROFILE: 'hm:pilot-profile',
 })
 
 /**
@@ -106,6 +108,7 @@ export const HM_EVENT_META = Object.freeze({
   [HM_EVENTS.SOUND]: { detail: '{ enabled }', from: 'SettingsPane / demo frame', to: 'lib/soundFx.js' },
   [HM_EVENTS.FX_BURST]: { detail: '{ kind, ... }', from: 'lib/vibe.js', to: 'FxLayer' },
   [HM_EVENTS.SNIPPET_BARS]: { detail: null, from: 'SettingsPane', to: 'snippet-bar consumers' },
+  [HM_EVENTS.PILOT_PROFILE]: { detail: '{ profile }', from: 'PipelinePanel', to: 'ChatPane' },
 })
 
 /**
