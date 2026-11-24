@@ -754,10 +754,10 @@ test('toReplyText は en 指定で英語見出しになり、parseReplyText と�
   assert.match(ja, /全体へのレビュー: ok/)
 })
 
-test('injectReviewBridge は window.__reviewSubmit と互換エイリアス __akapenSubmit の両方を定義する', () => {
+test('injectReviewBridge は window.__reviewSubmit だけを定義する（旧エイリアスは持たない）', () => {
   const html = injectReviewBridge('<html><body><div id="akForm"></div></body></html>', 't_1')
   assert.ok(html.includes('window.__reviewSubmit = submit;'))
-  assert.ok(html.includes('window.__akapenSubmit = submit;'))
+  assert.equal(html.includes('__akapenSubmit'), false, '移行前のエイリアスは残さない')
   assert.ok(html.includes("type: 'review:reply'"))
   // 旧シートが吐く【赤ペン回答】でも送信できる（判定は両対応。CJK は \u エスケープで埋める）
   assert.ok(html.includes('u3010'), '旧マーカーの正規表現が入っている')
@@ -822,7 +822,7 @@ test('/api/review/:id/view ラッパーは sandbox iframe を埋め、回答を�
   // 内側の iframe はブラウザが直接 GET するので、言語はクエリで渡す（§3.1）
   assert.match(html, /<iframe[^>]+src="\/api\/review\/t_test1\/sheet\?lang=en"[^>]*sandbox="allow-scripts allow-forms"/)
   assert.ok(html.includes("window.addEventListener('message'"))
-  assert.ok(html.includes("d.type !== 'review:reply' && d.type !== 'akapen:reply'"))
+  assert.ok(html.includes("d.type !== 'review:reply'") && !html.includes('akapen:reply'), '現行のメッセージ型だけを受ける')
   assert.ok(html.includes("'/api/review/' + encodeURIComponent(TASK) + '/answer'"))
   assert.ok(html.includes("credentials: 'same-origin'"), '回答は same-origin で POST する')
   assert.ok(html.includes("JSON.stringify({ text: text, by: 'web' })"))

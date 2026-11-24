@@ -4,11 +4,12 @@ import { DatabaseSync } from 'node:sqlite'
 import { parseReviewLine } from './review.js'
 import { writeJsonAtomic } from './lib/atomic.js'
 import { safeList } from './lib/safe.js'
+import { LEGACY_REVIEW_LIKE } from './review/legacy-tags.js'
 
 /**
  * ブリッジ内蔵のレビュー完了ウォッチャー（D7 / SPEC §4.3）。
  *
- * 旧 `mobile-akapen-watch`（外部 cron）を置き換える。カンバン DB を **読み取り専用**で
+ * 旧名の外部 cron ウォッチャーを置き換える。カンバン DB を **読み取り専用**で
  * 10 秒ごとに見て、`[review]` タスクの `done` 遷移と `running → blocked` 遷移を
  * `review/feed.jsonl` と `review/chat-reports.jsonl` に 1 行ずつ追記する。
  *
@@ -110,7 +111,7 @@ export function createReviewWatcher(cfg, opts = {}) {
           .prepare(
             `SELECT id, title, body, status, result, completed_at, session_id
                FROM tasks
-              WHERE COALESCE(body, '') LIKE '%[review]%' OR COALESCE(body, '') LIKE '%[akapen]%'
+              WHERE COALESCE(body, '') LIKE '%[review]%' OR COALESCE(body, '') LIKE '${LEGACY_REVIEW_LIKE}'
               ORDER BY COALESCE(completed_at, created_at) DESC
               LIMIT 500`,
           )

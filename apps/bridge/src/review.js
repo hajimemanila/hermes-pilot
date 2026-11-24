@@ -96,7 +96,7 @@ export function createReview(cfg, opts = {}) {
 
   /**
    * データの根（D1 / §3.2）。`~/.hermes/plugin-data/hermes-pilot/` に一本化する。
-   * 旧 `plugin-data/akapen` や `~/Projects/akapen` は参照しない（移行スクリプトが物理コピーする）。
+   * 旧名のデータ根（`plugin-data/<旧名>` と `~/Projects/<旧名>`）は参照しない（移行スクリプトが物理コピーする）。
    */
   function dataRoot() {
     if (cfg.pluginDataDir) return cfg.pluginDataDir

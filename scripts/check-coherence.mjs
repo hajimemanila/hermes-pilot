@@ -768,7 +768,7 @@ async function ruleDocsScriptsParity(root, findings) {
 export const LEGACY_SYMBOLS = Object.freeze([
   {
     name: 'optimizeAntigravitySkills',
-    allow: ['apps/bridge/src/pipeline-optimizer.js'],
+    allow: ['apps/bridge/src/pipeline-optimizer.js', 'apps/bridge/src/pipeline/skills.js'],
     note: 'file placement helper only; no process spawn',
   },
   {
@@ -1307,9 +1307,7 @@ async function ruleSwallowOwner(root, findings) {
   }
 }
 
-/* ------------------------------------------------------------------ */
-/* ratchet + akapen soft signals                                        */
-/* ------------------------------------------------------------------ */
+/* --- ratchet + legacy-name soft signals --- */
 
 /** Resolve the baseline path from the coherence config. */
 export function baselinePath(root, cfg = {}) {
@@ -1371,6 +1369,8 @@ function ratchetSignals(root, cfg, findings) {
 
 /** Where the legacy product name may still appear (migration compatibility). */
 const AKAPEN_ALLOWED = [
+  // the only place allowed to read the pre-migration review tag (compatibility literal)
+  'apps/bridge/src/review/legacy-tags.js',
   'bin/**',
   'scripts/migrate-to-hermes-pilot.mjs',
   'scripts/postinstall.mjs',

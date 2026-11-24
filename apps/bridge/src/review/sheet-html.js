@@ -331,8 +331,7 @@ html,body{margin:0;height:100%;background:#f6f4ef;color:#1b1a17;font-family:-app
   window.addEventListener('message', function (ev) {
     var d = ev.data;
     if (!d) return;
-    // Accept the legacy sheet message (akapen:reply) as well; new sheets send review:reply.
-    if (d.type !== 'review:reply' && d.type !== 'akapen:reply') return;
+    if (d.type !== 'review:reply') return;
     if (String(d.taskId) !== TASK) return;
     var text = String(d.text || '');
     if (!text) return;
@@ -447,8 +446,6 @@ export function injectReviewBridge(html, taskId, lang = 'en') {
     if (t && (t.id === 'genBtn' || (t.closest && t.closest('#genBtn')))) setTimeout(submit, 80);
   }, true);
   window.__reviewSubmit = submit;
-  // Compatibility alias: pre-migration sheet assets call this directly (SPEC §4.1)
-  window.__akapenSubmit = submit;
 })();
 </script>
 `

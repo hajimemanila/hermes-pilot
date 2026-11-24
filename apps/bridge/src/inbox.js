@@ -5,6 +5,7 @@ import { ApiError } from './api-errors.js'
 import { outcomeOf, outputOf, runHermes as runHermesCli } from './lib/cli.js'
 import { safeList } from './lib/safe.js'
 import { createReviewTransitions } from './review/transitions.js'
+import { LEGACY_REVIEW_LIKE } from './review/legacy-tags.js'
 
 /**
  * 承認待ちインボックス。
@@ -99,7 +100,7 @@ export function createInbox(cfg, kanban) {
              FROM tasks
             WHERE status = 'blocked'
               AND COALESCE(body, '') NOT LIKE '%[review]%'
-              AND COALESCE(body, '') NOT LIKE '%[akapen]%'
+              AND COALESCE(body, '') NOT LIKE '${LEGACY_REVIEW_LIKE}'
             ORDER BY COALESCE(completed_at, started_at, created_at) DESC
             LIMIT 30`,
         )

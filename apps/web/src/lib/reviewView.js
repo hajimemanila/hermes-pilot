@@ -1,7 +1,7 @@
 /**
  * レビュータブの表示ロジック（React に依存しない純関数）。
  *
- * 仕様は `docs/AKAPEN-VIEW.md`。2026-11-12 のレビュー（`~/Projects/review/sheets/review-view-01-1`）
+ * 仕様は `docs/REVIEW-VIEW.md`。2026-11-12 のレビュー（`~/Projects/review/sheets/review-view-01-1`）
  * で決まった 3 点をここに固定する:
  *  1. 既定表示は「判断待ちだけ」— 上部チップで 判断待ち / 進行中 / 完了 を切り替える
  *  2. 送信後は閉じず「次の判断待ち」を開き、最後の 1 件でだけ閉じる
@@ -407,7 +407,7 @@ export function shouldShowModeChip(mode) {
 /**
  * 推奨の印。`recommended: true` のほか、**ラベルに推奨の語を含む選択肢**も推奨として扱う。
  *
- * シートを作る側（akapen スキル）は `recommended: true` を付けるが、既存の資産には
+ * シートを作る側（シート生成スキル）は `recommended: true` を付けるが、既存の資産には
  * ラベルに「推奨」と書いただけのものがある。日本語は `\u` エスケープで持つ
  * （`apps/web/test/noHardcodedJapanese.test.js` がソース中の生の日本語を弾く）。
  */

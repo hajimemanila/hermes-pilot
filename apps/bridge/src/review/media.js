@@ -347,7 +347,7 @@ export function createReviewMedia(ctx = {}) {
   /**
    * 作業フィード（内蔵 reviewWatcher が書く 1 行ログ）。
    *
-   * 旧来は外部 cron（`mobile-akapen-watch`）が Discord と `plugin-data/akapen/feed.jsonl` を
+   * 旧来は外部 cron（旧名のウォッチャー）が Discord と旧 `plugin-data/<旧名>/feed.jsonl` を
    * 書いていた。D7 でブリッジ内蔵の `reviewWatcher` に移し、`review/feed.jsonl` をここから読む。
    *
    * @param {number} [limit] 末尾から何行読むか（1..200）

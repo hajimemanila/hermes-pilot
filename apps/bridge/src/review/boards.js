@@ -10,6 +10,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { DatabaseSync } from 'node:sqlite'
 import { safeList } from '../lib/safe.js'
+import { LEGACY_REVIEW_LIKE } from './legacy-tags.js'
 
 /** `~` / `~/` をホームディレクトリへ展開する。 */
 export function expandHome(p, home = os.homedir()) {
@@ -261,7 +262,7 @@ export function querySessionId(kanbanRoot, preferredBoard = 'mobile', onlyBoard 
   return null
 }
 
-/** media.imageRepos() 用: 全ボードから `[review]` / `[akapen]` の `body` 文字列を集める。 */
+/** media.imageRepos() 用: 全ボードから `[review]` と移行前の旧タグの `body` 文字列を集める。 */
 export function queryReviewBodies(kanbanRoot, preferredBoard = 'mobile', onlyBoard = null) {
   const out = []
   for (const entry of listBoardDbs(kanbanRoot, preferredBoard, onlyBoard)) {
@@ -269,7 +270,7 @@ export function queryReviewBodies(kanbanRoot, preferredBoard = 'mobile', onlyBoa
     if (!db) continue
     try {
       const rs = safeList('review.media.query', () =>
-        db.prepare("SELECT body FROM tasks WHERE body LIKE '%[review]%' OR body LIKE '%[akapen]%'").all(),
+        db.prepare(`SELECT body FROM tasks WHERE body LIKE '%[review]%' OR body LIKE '${LEGACY_REVIEW_LIKE}'`).all(),
       )
       out.push(...rs)
     } finally {

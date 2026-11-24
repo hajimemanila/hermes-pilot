@@ -3,13 +3,15 @@
  * 公開契約は `review.js` の再エクスポートで維持する。
  */
 
+import { LEGACY_REVIEW_NAME } from './legacy-tags.js'
+
 /**
  * タスク本文の機械可読行（SPEC §4.1）。
  *
- * 正は `[review]`。移行前のボード（`kanban.db` の `[akapen]` 置換が済んでいない）でも
+ * 正は `[review]`。移行前のボード（`kanban.db` の旧タグ置換が済んでいない）でも
  * レビューが消えないよう、旧タグも読むだけ受ける（書き込み側は常に `[review]`）。
  */
-export const LINE_RE = /^\[(?:review|akapen)\]\s+(.+)$/m
+export const LINE_RE = new RegExp(`^\\[(?:review|${LEGACY_REVIEW_NAME})\\]\\s+(.+)$`, 'm')
 export const LABEL_RE = /^[a-z0-9][a-z0-9._-]{0,40}$/i
 
 /** 旧名（`【赤ペン回答】` / `全体への赤ペン:`）も移行前のシート資産のために受ける。 */

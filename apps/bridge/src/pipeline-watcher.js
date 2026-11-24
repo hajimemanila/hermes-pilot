@@ -8,6 +8,7 @@ import { analyzeCoherence, coherenceAlertFrom } from './coherence.js'
 import { VERIFY_CONTRACT, VERIFY_CONTRACT_JA } from './contracts/verify.js'
 import { writeJsonAtomic } from './lib/atomic.js'
 import { safeList } from './lib/safe.js'
+import { LEGACY_REVIEW_TAG } from './review/legacy-tags.js'
 
 /**
  * パイプライン完走ウォッチャー（SPEC §3.2 / D20 / D21）。
@@ -18,7 +19,7 @@ import { safeList } from './lib/safe.js'
  *  - **A. Spec ラン単位**: 本文の `Spec: <rel>` 行（または `pipeline-runs.json` の `taskIds`）で
  *    同じ `(board, spec)` に属するタスク群
  *  - **B. ボードウェーブ単位**: `Spec:` を持たない通常タスク（チャット起票など）で、
- *    `[review]` / `[akapen]` は個別レビュー報告と重複するので除外する
+ *    `[review]`（と移行前の旧タグ）は個別レビュー報告と重複するので除外する
  *
  * 大事な性質（review-watcher と同じ設計方針）:
  *  - **初回起動はベースライン確立のみ**（過去分を遡って通知しない。スパム防止）
@@ -50,7 +51,7 @@ export const PIPELINE_KIND = 'pipeline'
 const OPEN_STATUSES = new Set(['running', 'ready', 'todo'])
 
 /** 個別レビュー報告と重複するタグ（ウェーブ集計から除外する）。 */
-const REVIEW_TAGS = ['[review]', '[akapen]']
+const REVIEW_TAGS = ['[review]', LEGACY_REVIEW_TAG]
 
 /** 未実施・残課題として拾う語（英語・日本語の両方を 1 つの正規表現で）。 */
 const NOISE_RE = /(TODO|FIXME|未実施|残課題|スキップ|blocked|skipped|failed|remaining|warning|⚠)/i
@@ -107,7 +108,7 @@ export function chatFromBody(body) {
 }
 
 /**
- * 個別レビュー報告の対象タスクか（`[review]` / `[akapen]` を含む）。
+ * 個別レビュー報告の対象タスクか（`[review]` か移行前の旧タグを含む）。
  * @param {unknown} body タスク本文
  * @returns {boolean} レビュータスクなら true
  */
