@@ -313,27 +313,25 @@ export function ChatPane({
   /**
    * 進行バーの「🔍 進捗詳細」（SPEC-PILOT-V9 §3.3 ③ / D43 後半）。
    *
-   * チャットにはタスク詳細も `LiveSheet` も無いので、`App` が受け取るイベントで振る:
+   * チャットにはタスク詳細も `LiveSheet` も無いので、`App` が受け取るイベントで振り分ける:
    * - `taskId` あり … `hm:open-task`（タスクタブへ切り替えてそのタスク詳細／WorkerFeed）
    * - `taskId` なし … `hm:open-live`（カンバンタスクを持たない Agy Opt-in の全体監視）
+   *
+   * 送信名は条件式で組み立てず、契約ごとにリテラルで書く（`contracts.test.js` が
+   * `required` と送信リテラルを突き合わせるため・SPEC D108）。
    */
   const inspectArchitectJob = useCallback((job) => {
     if (!job) return
     haptic('tap')
-    try {
-      const event = job.taskId ? HM_EVENTS.OPEN_TASK : HM_EVENTS.OPEN_LIVE
-      window.dispatchEvent(
-        new CustomEvent(event, {
-          detail: {
-            taskId: job.taskId ?? null,
-            board: job.board ?? seedBoard ?? null,
-            jobId: job.id ?? null,
-          },
-        }),
-      )
-    } catch {
-      /* 遷移できなくても画面は壊さない */
+    if (job.taskId) {
+      emitHmEvent(HM_EVENTS.OPEN_TASK, {
+        taskId: job.taskId,
+        board: job.board ?? seedBoard ?? null,
+        jobId: job.id ?? null,
+      })
+      return
     }
+    emitHmEvent(HM_EVENTS.OPEN_LIVE, { jobId: job.id ?? null })
   }, [seedBoard])
 
   /** 出すカードは 1 枚だけ（完成 SPEC 優先・× で閉じたものは再表示しない）。 */

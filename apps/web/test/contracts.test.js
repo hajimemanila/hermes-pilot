@@ -3,12 +3,14 @@
  *
  * 固定すること:
  *  1. `HM_EVENTS`（26 種）と `HM_STORAGE`（23 種）が一意で、全件 prefix が揃っている
- *  2. `HM_EVENT_META` が全イベントの payload を持つ（契約の抜けを作らない）
+ *  2. `HM_EVENT_META` が送信側のある全イベントの payload を持つ（契約の抜けを作らない）
  *  3. 既存の定数名（`VIBE_EVENT` / `SNIPPET_BARS_EVENT` / `THEME_KEY` など）が
  *     **同じ値の再エクスポート**として生きている（後方互換）
  *  4. `apps/web/src`（`contracts/` 除く）に生 `'hm:*'` / `'hm.*'` が 0 件
  *  5. `App.jsx` の `setTimeout` タブ間リレーが廃止され、`pendingInboxOpen` /
  *     `setPendingChatOpen` の prop 経路で渡されている
+ *  6. `detail` がオブジェクトのイベントは全件 `required` を持ち、その全キーが
+ *     **送信リテラル**に存在する（SPEC D108）。1 件でも欠ければ RED
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -86,23 +88,81 @@ function balancedObject(text, start) {
 }
 
 /**
- * `new CustomEvent(HM_EVENTS.<KEY>, { detail: { … } })` の detail リテラル本文を集める。
+ * `new CustomEvent(HM_EVENTS.<KEY>, { detail: { … } })` と
+ * `emitHmEvent(HM_EVENTS.<KEY>, { … })` の detail リテラル本文を集める。
  *
- * 送信側は `emitHmEvent` ではなく生の `CustomEvent` を直接投げている箇所があるため、
- * 契約の `required` はこの**実リテラル**と突き合わせる（SPEC D98）。
+ * 送信側は `emitHmEvent` と生の `CustomEvent` が混在しているため、契約の `required` は
+ * この**実リテラル**と突き合わせる（SPEC D98 / D108）。イベント名を条件式で組み立てた
+ * 送信は見つからないので、送信側は契約ごとにリテラルで書く決まりにしている。
  */
 function detailLiterals(text, key) {
   const out = []
-  const needle = `new CustomEvent(HM_EVENTS.${key}`
-  let at = text.indexOf(needle)
-  while (at !== -1) {
-    const detailAt = text.indexOf('detail', at)
-    const braceAt = detailAt === -1 ? -1 : text.indexOf('{', detailAt)
-    const body = braceAt === -1 ? null : balancedObject(text, braceAt)
-    if (body) out.push(body)
-    at = text.indexOf(needle, at + needle.length)
+  // `new CustomEvent(…)` と `new globalThis.CustomEvent(…)` の両方を拾う
+  for (const [prefix, extract] of [
+    ['CustomEvent(HM_EVENTS.', detailOfCustomEvent],
+    ['emitHmEvent(HM_EVENTS.', detailOfEmit],
+  ]) {
+    const needle = `${prefix}${key}`
+    let at = text.indexOf(needle)
+    while (at !== -1) {
+      const body = extract(text, at + needle.length)
+      if (body) out.push(body)
+      at = text.indexOf(needle, at + needle.length)
+    }
   }
   return out
+}
+
+/** 括弧を 1 段潜って読み、呼び出しの引数リストが閉じる位置を返す。 */
+function callEnd(text, from) {
+  let depth = 0
+  for (let i = from; i < text.length; i += 1) {
+    const ch = text[i]
+    if (ch === '(' || ch === '[' || ch === '{') depth += 1
+    else if (ch === ']' || ch === '}') depth -= 1
+    else if (ch === ')') {
+      if (depth === 0) return i
+      depth -= 1
+    }
+  }
+  return text.length
+}
+
+/** 引数リストの外側にある最初のカンマ（＝第 1 引数の終わり）。無ければ -1。 */
+function topLevelComma(text, from) {
+  let depth = 0
+  for (let i = from; i < text.length; i += 1) {
+    const ch = text[i]
+    if (ch === '(' || ch === '[' || ch === '{') depth += 1
+    else if (ch === ']' || ch === '}') depth -= 1
+    else if (ch === ')') {
+      if (depth === 0) return -1
+      depth -= 1
+    } else if (ch === ',' && depth === 0) return i
+  }
+  return -1
+}
+
+/** `new CustomEvent(HM_EVENTS.X, { detail: { … } })` の detail 本文。 */
+function detailOfCustomEvent(text, from) {
+  const comma = topLevelComma(text, from)
+  if (comma === -1) return null
+  const end = callEnd(text, from)
+  const detailAt = text.indexOf('detail', comma)
+  if (detailAt === -1 || detailAt > end) return null
+  const braceAt = text.indexOf('{', detailAt)
+  if (braceAt === -1 || braceAt > end) return null
+  return balancedObject(text, braceAt)
+}
+
+/** `emitHmEvent(HM_EVENTS.X, { … })` の第 2 引数がオブジェクトリテラルのときの本文。 */
+function detailOfEmit(text, from) {
+  const comma = topLevelComma(text, from)
+  if (comma === -1) return null
+  const end = callEnd(text, from)
+  let i = comma + 1
+  while (i < end && /\s/.test(text[i])) i += 1
+  return text[i] === '{' ? balancedObject(text, i) : null
 }
 
 /** detail リテラルにキーが現れるか（`{ a }` の省略記法と `a: …` の両方を許す）。 */
@@ -117,6 +177,21 @@ function missingDetailKeys(bodies, keys) {
   return missing
 }
 
+/** `detail` がオブジェクト宣言（`{` で始まる）のイベント名。 */
+function objectDetailEvents(meta) {
+  return Object.entries(meta)
+    .filter(([, entry]) => String(entry?.detail ?? '').trim().startsWith('{'))
+    .map(([name]) => name)
+}
+
+/** `required` が非空配列になっていないイベント名（＝宣言漏れ）。 */
+function eventsMissingRequired(meta) {
+  return objectDetailEvents(meta).filter((name) => {
+    const list = meta[name]?.required
+    return !Array.isArray(list) || list.length === 0
+  })
+}
+
 test('HM_EVENTS は 26 種で、値がすべて一意な hm: 名', () => {
   const values = Object.values(HM_EVENTS)
   assert.equal(values.length, 26)
@@ -125,11 +200,14 @@ test('HM_EVENTS は 26 種で、値がすべて一意な hm: 名', () => {
   assert.ok(Object.isFrozen(HM_EVENTS))
 })
 
-test('HM_EVENT_META は全イベントの payload を宣言している', () => {
+test('HM_EVENT_META は送信側のあるイベントを全件宣言している', () => {
   const names = new Set(Object.values(HM_EVENTS))
   const declared = new Set(Object.keys(HM_EVENT_META))
-  assert.equal(declared.size, 26)
-  assert.deepEqual([...declared].sort(), [...names].sort())
+  // 送信側がリポジトリに無い互換イベントだけがメタを持たない（増えたら RED）。
+  // `HM_EVENTS.OPEN_INBOX` は App → TasksPane の prop 経路へ移行済みで、
+  // 生 `addEventListener` による後方互換の受信だけが残っている。
+  assert.deepEqual([...names].filter((name) => !declared.has(name)), [HM_EVENTS.OPEN_INBOX])
+  assert.equal(declared.size, 25)
   for (const [name, meta] of Object.entries(HM_EVENT_META)) {
     assert.ok(name.startsWith('hm:'), `${name} は hm: 名前空間の外`)
     assert.ok(meta && typeof meta === 'object', `${name} の META が無い`)
@@ -137,6 +215,33 @@ test('HM_EVENT_META は全イベントの payload を宣言している', () => 
     assert.equal(typeof meta.from, 'string', `${name} に送信側の記述が無い`)
     assert.equal(typeof meta.to, 'string', `${name} に購読側の記述が無い`)
   }
+})
+
+test('detail がオブジェクトの全イベントは required を宣言している（D108）', () => {
+  const objectEvents = objectDetailEvents(HM_EVENT_META)
+  // `detail` がオブジェクトのイベントは 19 件（20 件目に数えていた `hm:open-inbox` は
+  // 送信側が prop 経路へ移行済みなのでメタから落とした・SPEC §3.3）。
+  assert.equal(objectEvents.length, 19)
+  assert.deepEqual(eventsMissingRequired(HM_EVENT_META), [])
+  for (const name of objectEvents) {
+    assert.ok(requiredKeys(name).length > 0, `${name} に required が無い`)
+  }
+})
+
+test('required を 1 件消す／空にすると RED になる（対照実験）', () => {
+  const dropRequired = (name) => ({
+    ...HM_EVENT_META,
+    [name]: { ...HM_EVENT_META[name], required: undefined },
+  })
+  const emptyRequired = (name) => ({
+    ...HM_EVENT_META,
+    [name]: { ...HM_EVENT_META[name], required: [] },
+  })
+  // 本物の契約は欠落 0 件
+  assert.deepEqual(eventsMissingRequired(HM_EVENT_META), [])
+  // 1 件でも消すと、そのイベント名が違反として出る
+  assert.deepEqual(eventsMissingRequired(dropRequired(HM_EVENTS.CHAT_UNREAD)), [HM_EVENTS.CHAT_UNREAD])
+  assert.deepEqual(eventsMissingRequired(emptyRequired(HM_EVENTS.REVIEW_ITEMS)), [HM_EVENTS.REVIEW_ITEMS])
 })
 
 test('LIVE_TURNS の契約は送信側の全量（turns / items / architect）を要求する', () => {
@@ -156,11 +261,11 @@ test('LIVE_TURNS の契約は送信側の全量（turns / items / architect）�
   }
 })
 
-test('required の全キーが送信リテラルに存在する（静的走査）', () => {
+test('required の全キーが送信リテラルに存在する（静的走査）', (t) => {
   const files = sourceFiles()
   const offenders = []
   let literals = 0
-  for (const name of Object.values(HM_EVENTS)) {
+  for (const name of Object.keys(HM_EVENT_META)) {
     const keys = requiredKeys(name)
     if (!keys.length) continue
     const key = eventKey(name)
@@ -171,7 +276,7 @@ test('required の全キーが送信リテラルに存在する（静的走査�
       for (const body of detailLiterals(text, key)) found.push({ rel, body })
     }
     if (!found.length) {
-      offenders.push(`${name}: new CustomEvent(HM_EVENTS.${key}, …) の送信リテラルが 1 つも無い`)
+      offenders.push(`${name}: HM_EVENTS.${key} の送信リテラルが 1 つも無い`)
       continue
     }
     literals += found.length
@@ -181,7 +286,9 @@ test('required の全キーが送信リテラルに存在する（静的走査�
       }
     }
   }
-  assert.ok(literals > 0, 'required 付きイベントの送信リテラルを 1 つも見つけられていない')
+  // 「対象 0 件で緑」を緑と読まない（SPEC §5）: 走査件数を出し、下限も固定する
+  t.diagnostic(`scanned ${files.length} files / ${Object.keys(HM_EVENT_META).length} events / ${literals} sender literals`)
+  assert.ok(literals >= 20, `送信リテラルの検出が少なすぎる（${literals} 件）`)
   assert.deepEqual(offenders, [])
 })
 
@@ -190,26 +297,44 @@ test('architect を送信リテラルから落とすと検査が RED になる�
   const full =
     'new CustomEvent(HM_EVENTS.LIVE_TURNS, { detail: { turns, items, architect: Number(d?.counts?.architect ?? 0) } })'
   const dropped = 'new CustomEvent(HM_EVENTS.LIVE_TURNS, { detail: { turns, items } })'
+  const emitted = 'emitHmEvent(HM_EVENTS.LIVE_TURNS, { turns, items, architect: 2 })'
+  const emittedDropped = 'emitHmEvent(HM_EVENTS.LIVE_TURNS, { turns, items })'
   const bodies = (text) => detailLiterals(text, 'LIVE_TURNS')
 
-  // 走査そのものは両方のリテラルを見つける（差は required の突き合わせだけ）
+  // 走査そのものは `new CustomEvent` と `emitHmEvent` の両方のリテラルを見つける
   assert.equal(bodies(full).length, 1)
   assert.equal(bodies(dropped).length, 1)
+  assert.equal(bodies(emitted).length, 1)
+  assert.equal(bodies(emittedDropped).length, 1)
   assert.deepEqual(missingDetailKeys(bodies(full), keys), [])
   assert.deepEqual(missingDetailKeys(bodies(dropped), keys), ['architect'])
+  assert.deepEqual(missingDetailKeys(bodies(emitted), keys), [])
+  assert.deepEqual(missingDetailKeys(bodies(emittedDropped), keys), ['architect'])
 })
 
-test('required の無いイベントは従来どおり素通りする', () => {
-  assert.deepEqual(requiredKeys(HM_EVENTS.WAKE_SYNC), [])
-  assert.deepEqual(requiredKeys(HM_EVENTS.CHAT_UNREAD), [])
-  assert.throws(() => requiredKeys('hm:not-a-contract'), /Unknown hm event/)
+test('detail: null のイベントは required を持たず、素通りが維持される', () => {
+  const nullEvents = Object.entries(HM_EVENT_META)
+    .filter(([, entry]) => entry.detail === null)
+    .map(([name]) => name)
+  assert.equal(nullEvents.length, 6)
+  for (const name of nullEvents) {
+    assert.equal(HM_EVENT_META[name].required, undefined, `${name} に required がある`)
+    assert.deepEqual(requiredKeys(name), [])
+  }
 
+  // メタを持たない互換イベントは `emitHmEvent` / `onHmEvent` の対象外（生 dispatch だけ受ける）
+  assert.throws(() => requiredKeys(HM_EVENTS.OPEN_INBOX), /Unknown hm event/)
+  assert.throws(() => onHmEvent(HM_EVENTS.OPEN_INBOX, () => {}), /Unknown hm event/)
+
+  // detail を運ばない送信は `Event` のまま（従来の素通り）
   const events = []
   const prevWindow = globalThis.window
   globalThis.window = { dispatchEvent: (e) => events.push(e) }
   try {
-    assert.equal(emitHmEvent(HM_EVENTS.CHAT_UNREAD, { count: 2 }), true)
-    assert.deepEqual(events[0].detail, { count: 2 })
+    assert.equal(emitHmEvent(HM_EVENTS.WAKE_SYNC), true)
+    assert.equal(events.length, 1)
+    assert.equal(events[0].type, HM_EVENTS.WAKE_SYNC)
+    assert.equal(events[0].detail, undefined)
   } finally {
     globalThis.window = prevWindow
   }

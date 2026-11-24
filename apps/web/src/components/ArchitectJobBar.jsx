@@ -15,7 +15,7 @@ import {
   jobTitleKey,
   shouldOfferHermesRetry,
 } from '../lib/specSeed.js'
-import { HM_EVENTS } from '../contracts/events.js'
+import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
 
 /**
  * Architect の進行バー（SPEC-PILOT-V6 §3.3 ② / D28・V7 §3.3 ③ / D33・
@@ -136,16 +136,17 @@ export function ArchitectJobBar({
       onInspect(job)
       return
     }
-    try {
-      const event = job.taskId ? HM_EVENTS.OPEN_TASK : HM_EVENTS.OPEN_LIVE
-      window.dispatchEvent(
-        new CustomEvent(event, {
-          detail: { taskId: job.taskId ?? null, board: job.board ?? board ?? null, jobId: job.id ?? null },
-        }),
-      )
-    } catch {
-      /* 開けなくても画面は壊さない */
+    // 送信名は条件式で組み立てず、契約ごとにリテラルで書く（`contracts.test.js` が
+    // `required` と送信リテラルを突き合わせるため・SPEC D108）。
+    if (job.taskId) {
+      emitHmEvent(HM_EVENTS.OPEN_TASK, {
+        taskId: job.taskId,
+        board: job.board ?? board ?? null,
+        jobId: job.id ?? null,
+      })
+      return
     }
+    emitHmEvent(HM_EVENTS.OPEN_LIVE, { jobId: job.id ?? null })
   }, [job, board, onInspect])
 
   /**

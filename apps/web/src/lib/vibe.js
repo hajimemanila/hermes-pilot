@@ -223,7 +223,9 @@ export function setVibe(mode, storage = safeStorage(), doc, win) {
   const w = safeWin(win)
   try {
     if (typeof w?.dispatchEvent === 'function' && typeof globalThis.CustomEvent === 'function') {
-      w.dispatchEvent(new globalThis.CustomEvent(VIBE_EVENT, { detail: { vibe: next } }))
+      // イベント名は契約（`HM_EVENTS`）のリテラルで書く（`contracts.test.js` が
+      // `required` と送信リテラルを突き合わせるため・SPEC D108）。
+      w.dispatchEvent(new globalThis.CustomEvent(HM_EVENTS.VIBE, { detail: { vibe: next } }))
     }
   } catch {
     /* イベント失敗は無視 */
@@ -369,16 +371,21 @@ export function dispatchFx(detail) {
   const w = safeWin(detail?.target)
   try {
     if (typeof w?.dispatchEvent !== 'function' || typeof globalThis.CustomEvent !== 'function') return false
-    const fxDetail = {
-      kind: detail.kind,
-      combo: Number(detail.combo) || 0,
-      x: Number.isFinite(detail.x) ? detail.x : null,
-      y: Number.isFinite(detail.y) ? detail.y : null,
-    }
-    if (Number.isFinite(detail.width)) fxDetail.width = detail.width
-    if (Number.isFinite(detail.height)) fxDetail.height = detail.height
-    if (typeof detail.sfx === 'string' && detail.sfx) fxDetail.sfx = detail.sfx
-    w.dispatchEvent(new globalThis.CustomEvent(FX_EVENT, { detail: fxDetail }))
+    // detail は送信リテラルで書く（`contracts.test.js` が `required` と突き合わせる・SPEC D108）。
+    // 広さ・効果音名は任意キーなので、値があるときだけ足す。
+    w.dispatchEvent(
+      new globalThis.CustomEvent(HM_EVENTS.FX_BURST, {
+        detail: {
+          kind: detail.kind,
+          combo: Number(detail.combo) || 0,
+          x: Number.isFinite(detail.x) ? detail.x : null,
+          y: Number.isFinite(detail.y) ? detail.y : null,
+          ...(Number.isFinite(detail.width) ? { width: detail.width } : {}),
+          ...(Number.isFinite(detail.height) ? { height: detail.height } : {}),
+          ...(typeof detail.sfx === 'string' && detail.sfx ? { sfx: detail.sfx } : {}),
+        },
+      }),
+    )
     return true
   } catch {
     return false
