@@ -71,7 +71,7 @@ captures are an optional extension for "the visual comparison itself is the ques
 5. File it on kanban and set it **blocked** (do not implement until the answer arrives):
 
 ```bash
-hermes kanban --board <board> create "Q1-Q3: design direction for <project>" --assignee <profile> --body "$(cat <<'BODY'
+hermes kanban --board <board> create "Q1-Q3: design direction for <project>" --assignee <profile> --idempotency-key "review:spec-<slug>:round-1" --body "$(cat <<'BODY'
 <What unblocks writing the spec. What is stuck right now.>
 
 [review] label=spec-<slug> round=1 mode=standard sheet=sheets/spec-<slug>-1.json target=<repo_path> chat=<session_id>

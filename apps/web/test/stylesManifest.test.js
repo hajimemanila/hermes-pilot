@@ -58,3 +58,10 @@ test('テーマトークンは 1 か所（tokens.css）だけに置く', () => {
   )
   assert.deepEqual(withRoot, [imports[0]], `:root を持つファイル: ${withRoot.join(', ')}`)
 })
+
+test('review.css の設問・選択肢は長大な無空白文字列でも横にはみ出さない', () => {
+  const css = fs.readFileSync(path.resolve(SRC, 'styles/review.css'), 'utf8')
+  assert.match(css, /\.ak-q-no\s*\{[^}]*flex-shrink:\s*0/)
+  assert.match(css, /\.ak-q-text\s*\{[^}]*min-width:\s*0[^}]*overflow-wrap:\s*anywhere/)
+  assert.match(css, /\.ak-opt-detail\s*\{[^}]*overflow-wrap:\s*anywhere/)
+})

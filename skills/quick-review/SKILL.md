@@ -156,7 +156,7 @@ The **machine-readable line** in the body (this single line is the bridge's only
 ```
 
 ```bash
-hermes kanban --board <board> create "Q1-Q3: <title>" --body "$(cat <<'BODY'
+hermes kanban --board <board> create "Q1-Q3: <title>" --idempotency-key "review:<label>:round-<round>" --body "$(cat <<'BODY'
 <Human-facing summary: what unblocks the work, what is stuck right now>
 
 [review] label=cockpit-03 round=1 mode=standard sheet=sheets/cockpit-03-1.json target=~/Projects/your-repo chat=<session_id>

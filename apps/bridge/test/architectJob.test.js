@@ -129,6 +129,7 @@ test('buildArchitectTaskBody は Round 1 を JSON ファーストにし、既定
   assert.match(body, /review\/sheets\//)
   assert.match(body, /spec-<slug>-1\.json/)
   assert.match(body, /"mode": "standard"/)
+  assert.match(body, /--idempotency-key\s+review:spec-<slug>:round-1/)
   assert.match(body, /mode=standard sheet=sheets\/spec-<slug>-1\.json/)
   // 手書き HTML・ヘッドレスブラウザ撮影は視覚比較が主題のときだけ
   assert.match(body, /bespoke HTML/)

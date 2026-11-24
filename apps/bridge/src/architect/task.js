@@ -68,6 +68,7 @@ export function buildArchitectTaskBody({
     usedLine,
     'Round 1: write the Quick Review JSON sheet under review/sheets/',
     '(spec-<slug>-1.json, "mode": "standard", 2-5 decisions) and file it as a blocked `[review]` task',
+    'with `--idempotency-key review:spec-<slug>:round-1` (so a retry never creates a duplicate review card)',
     'whose machine line is `mode=standard sheet=sheets/spec-<slug>-1.json`. Do not wait in chat.',
     'Round 1 speed: locate only the relevant symbols (rg/grep), skip running full test/verification suites or a headless browser during Round 1, write the JSON sheet and block immediately.',
     'Round 1 speed: skip bespoke HTML sheets and headless browser screenshots unless',
