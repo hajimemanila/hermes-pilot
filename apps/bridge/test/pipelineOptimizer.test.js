@@ -31,6 +31,7 @@ import {
   optimizeAntigravitySkills,
   optimizeHermesSoul,
   optimizeProfileSouls,
+  pilotProfileSkillsDir,
   sanitizePilotProfile,
 } from '../src/pipeline-optimizer.js'
 import { readPilotProfile, writePilotProfile } from '../src/config.js'
@@ -222,6 +223,97 @@ test('optimizeAntigravitySkills は Hermes の skills に配置し、外部エ�
     assert.equal(third.targets[0].path, custom)
     assert.equal(third.targets[0].installed.length, 1)
     assert.ok(fs.existsSync(path.join(custom, 'quick-review', 'SKILL.md')))
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('optimizeAntigravitySkills は Pilot プロファイルにも同梱スキルを置く（プロファイルは作らない）', () => {
+  const home = tempHome()
+  try {
+    const srcDir = path.join(home, 'skills-src')
+    for (const name of BUNDLED_SKILLS) {
+      fs.mkdirSync(path.join(srcDir, name), { recursive: true })
+      fs.writeFileSync(path.join(srcDir, name, 'SKILL.md'), `# ${name}\n`, 'utf8')
+    }
+    const hermesHome = path.join(home, '.hermes')
+    const profileDir = path.join(hermesHome, 'profiles', DEFAULT_PILOT_PROFILE)
+
+    // プロファイルが無い → `<hermesHome>/skills` だけ（プロファイルを勝手に作らない）
+    const noProfile = optimizeAntigravitySkills({ home, skillsSrcDir: srcDir, pilotProfile: DEFAULT_PILOT_PROFILE })
+    assert.deepEqual(noProfile.targets.map((t) => t.id), ['hermes'])
+    assert.equal(pilotProfileSkillsDir({ hermesHome, pilotProfile: DEFAULT_PILOT_PROFILE }), null)
+    assert.equal(fs.existsSync(profileDir), false, 'プロファイルを勝手に作っている')
+
+    // プロファイルがある → 置き場は 2 つ（default と Pilot プロファイル）
+    fs.mkdirSync(profileDir, { recursive: true })
+    assert.equal(
+      pilotProfileSkillsDir({ hermesHome, pilotProfile: DEFAULT_PILOT_PROFILE }),
+      path.join(profileDir, 'skills'),
+    )
+    const first = optimizeAntigravitySkills({ home, skillsSrcDir: srcDir, pilotProfile: DEFAULT_PILOT_PROFILE })
+    assert.deepEqual(first.targets.map((t) => t.id), ['hermes', `profile:${DEFAULT_PILOT_PROFILE}`])
+    // `hermes` 側は直前の noProfile 呼び出しで配置済みなので、プロファイル側の 3 件を見る
+    const byId = Object.fromEntries(first.targets.map((t) => [t.id, t]))
+    assert.equal(byId[`profile:${DEFAULT_PILOT_PROFILE}`].installed.length, BUNDLED_SKILLS.length)
+    for (const name of BUNDLED_SKILLS) {
+      assert.ok(
+        fs.existsSync(path.join(profileDir, 'skills', name, 'SKILL.md')),
+        `${name} がプロファイル側に無い`,
+      )
+    }
+
+    // 冪等（2 回目は何も置かず、既存としてスキップ）
+    const second = optimizeAntigravitySkills({ home, skillsSrcDir: srcDir, pilotProfile: DEFAULT_PILOT_PROFILE })
+    for (const t of second.targets) {
+      assert.deepEqual(t.installed, [], '2 回目で再配置している')
+      assert.ok(t.skipped.every((s) => s.reason === 'exists'))
+    }
+
+    // `default` は `<hermesHome>/skills` と同じ場所なので二重に置かない
+    assert.equal(pilotProfileSkillsDir({ hermesHome, pilotProfile: 'default' }), null)
+    const def = optimizeAntigravitySkills({ home, skillsSrcDir: srcDir, pilotProfile: 'default' })
+    assert.deepEqual(def.targets.map((t) => t.id), ['hermes'])
+
+    // 人の手で置いた実ディレクトリは上書きしない
+    const handmade = path.join(profileDir, 'skills', 'annotation')
+    fs.rmSync(handmade, { recursive: true, force: true })
+    fs.mkdirSync(handmade, { recursive: true })
+    fs.writeFileSync(path.join(handmade, 'SKILL.md'), 'handmade\n', 'utf8')
+    optimizeAntigravitySkills({ home, skillsSrcDir: srcDir, pilotProfile: DEFAULT_PILOT_PROFILE })
+    assert.equal(fs.readFileSync(path.join(handmade, 'SKILL.md'), 'utf8'), 'handmade\n')
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('getOptimizeStatus はプロファイル側のスキル配置も件数だけで返す', () => {
+  const home = tempHome()
+  try {
+    const hermesHome = path.join(home, '.hermes')
+    const profileSkills = path.join(hermesHome, 'profiles', DEFAULT_PILOT_PROFILE, 'skills')
+    fs.mkdirSync(profileSkills, { recursive: true })
+
+    const status = getOptimizeStatus({
+      hermesHome,
+      home,
+      skillsSrcDir: path.join(home, 'none'),
+      pilotProfile: DEFAULT_PILOT_PROFILE,
+    })
+    assert.equal(status.profileSkills.profile, DEFAULT_PILOT_PROFILE)
+    assert.equal(status.profileSkills.path, profileSkills)
+    assert.deepEqual(status.profileSkills.present, [])
+    assert.deepEqual(status.profileSkills.missing, BUNDLED_SKILLS)
+
+    fs.mkdirSync(path.join(profileSkills, 'annotation'), { recursive: true })
+    fs.writeFileSync(path.join(profileSkills, 'annotation', 'SKILL.md'), `# secret body ${'x'.repeat(20)}\n`, 'utf8')
+    const after = getOptimizeStatus({ hermesHome, home, skillsSrcDir: path.join(home, 'none'), pilotProfile: DEFAULT_PILOT_PROFILE })
+    assert.deepEqual(after.profileSkills.present, ['annotation'])
+    assert.equal(JSON.stringify(after).includes('secret body'), false, 'スキルの中身を返している')
+
+    // プロファイルが無ければ null（勝手に作らない）
+    const noProfile = getOptimizeStatus({ hermesHome: path.join(home, 'other'), home, skillsSrcDir: path.join(home, 'none') })
+    assert.equal(noProfile.profileSkills, null)
   } finally {
     fs.rmSync(home, { recursive: true, force: true })
   }

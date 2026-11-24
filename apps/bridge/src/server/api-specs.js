@@ -282,7 +282,12 @@ export function createSpecsApi(ctx = {}) {
       const soul = ensured ? ensured.soul : null
       const profiles = ensured ? { ok: ensured.ok, profiles: ensured.profiles } : null
       const skills = doSkills
-        ? optimizeAgentSkills({ home: cfg.home, hermesHome: cfg.hermesHome, skillsSrcDir: DEFAULT_SKILLS_SRC })
+        ? optimizeAgentSkills({
+            home: cfg.home,
+            hermesHome: cfg.hermesHome,
+            skillsSrcDir: DEFAULT_SKILLS_SRC,
+            pilotProfile,
+          })
         : null
       const ok = (soul?.ok ?? true) && (profiles?.ok ?? true) && (skills?.ok ?? true)
       auth.audit({

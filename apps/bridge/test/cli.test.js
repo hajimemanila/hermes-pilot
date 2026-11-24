@@ -120,6 +120,10 @@ test('init: データ先・0600 の 256-bit hex トークン・同梱スキル�
     )
     for (const skill of BUNDLED_SKILLS) {
       assert.ok(fs.existsSync(path.join(home, '.hermes', 'skills', skill, 'SKILL.md')), `${skill} が配置されていない`)
+      assert.ok(
+        fs.existsSync(path.join(home, '.hermes', 'profiles', 'mobile', 'skills', skill, 'SKILL.md')),
+        `${skill} が専用プロファイル mobile 側に配置されていない`,
+      )
     }
     // 2 回目はトークンを変えない（冪等）
     const again = runCli(['init'], home)

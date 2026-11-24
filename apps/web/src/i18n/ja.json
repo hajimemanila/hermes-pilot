@@ -1048,6 +1048,7 @@
   "settings.pipelineUnavailable": "このブリッジではパイプライン API が使えません",
   "settings.pipelineSoul": "SOUL.md の行動規範",
   "settings.pipelineSkills": "スキル",
+  "settings.pipelineProfileSkills": "スキル（{profile}）",
   "settings.pipelineApplied": "適用済み",
   "settings.pipelineMissing": "未適用",
   "settings.pipelineJobs": "Architect ジョブ",

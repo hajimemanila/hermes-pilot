@@ -113,6 +113,8 @@ export function PipelinePanel({ notify, board = '' }) {
   const soulApplied = Boolean(status?.soul?.applied)
   const skillNames = Array.isArray(status?.hermes?.present) ? status.hermes.present.length : 0
   const skillTotal = Array.isArray(status?.bundled?.names) ? status.bundled.names.length : 0
+  const profileSkillNames = Array.isArray(status?.profileSkills?.present) ? status.profileSkills.present.length : 0
+  const profileSkillTotal = status?.profileSkills && Array.isArray(status?.bundled?.names) ? status.bundled.names.length : 0
 
   return (
     <>
@@ -167,6 +169,14 @@ export function PipelinePanel({ notify, board = '' }) {
           <span>{t('settings.pipelineSkills')}</span>
           <b>
             {skillNames}/{skillTotal}
+          </b>
+        </div>
+      ) : null}
+      {profileSkillTotal ? (
+        <div className="kv">
+          <span>{t('settings.pipelineProfileSkills', { profile: pilotProfile })}</span>
+          <b>
+            {profileSkillNames}/{profileSkillTotal}
           </b>
         </div>
       ) : null}

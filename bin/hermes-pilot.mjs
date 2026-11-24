@@ -27,7 +27,7 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { collectPairing, qrPng, qrSvg, qrTerminal, tailscaleCommandCandidates } from '../apps/bridge/src/qr.js'
 import { createPairCodes } from '../apps/bridge/src/pair-codes.js'
-import { DEFAULT_PILOT_PROFILE, ensurePilotProfile, sanitizePilotProfile } from '../apps/bridge/src/pipeline-optimizer.js'
+import { DEFAULT_PILOT_PROFILE, ensurePilotProfile, pilotProfileSkillsDir, sanitizePilotProfile } from '../apps/bridge/src/pipeline-optimizer.js'
 
 /** リポジトリのルート（このファイルは `bin/` の下）。 */
 export const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
@@ -666,6 +666,27 @@ export async function runInit(
   }
   const profileCfg = readConfig(p.configPath)
   const profileResult = ensurePilotProfile({ hermesHome: p.hermesHome, profile: profileCfg.pilotProfile })
+  /*
+   * プロファイル別の最適化: PWA の既定プロファイルは `mobile`（`apps/web/src/lib/profile.js`）。
+   * 同梱 3 スキルを `<hermesHome>/skills` にだけ置くと、Pilot のセッションから
+   * `quick-review` / `annotation` / `spec-architect` の契約を一度も読めない。
+   * 既存の実ディレクトリは上書きしない（`force: false`）。プロファイルが無ければ何もしない。
+   */
+  const profileSkillsDir = pilotProfileSkillsDir({ hermesHome: p.hermesHome, pilotProfile: profileCfg.pilotProfile })
+  const installedProfile = []
+  if (profileSkillsDir) {
+    for (const name of BUNDLED_SKILLS) {
+      const src = path.join(ROOT, 'skills', name)
+      const dest = path.join(profileSkillsDir, name)
+      if (!fs.existsSync(src)) continue
+      try {
+        fs.cpSync(src, dest, { recursive: true, force: false, preserveTimestamps: true })
+        installedProfile.push(dest)
+      } catch (err) {
+        out(`  ! profile skill ${name}: ${err?.message ?? err}`)
+      }
+    }
+  }
   // 標準ダッシュボードのタブ（冪等）。`--force` で既存ファイルも上書きする。
   const dashboard = installDashboardPlugin(p, { force, targetDir })
   out(
@@ -675,6 +696,7 @@ export async function runInit(
     `  token  : ${p.tokenPath}${created ? ' (created, 0600)' : ' (existing)'}`,
     `  profile: ${profileCfg.pilotProfile} (${profileResult?.soul?.mode ?? 'ready'})`,
     `  skills : ${installed.length ? installed.join(', ') : '(already installed)'}`,
+    `  profile skills: ${profileSkillsDir ? (installedProfile.length ? `${installedProfile.length} placed in ${profileSkillsDir}` : `already installed in ${profileSkillsDir}`) : '(no pilot profile yet)'}`,
     `  migrate: ${migrated ? 'done' : migration === 'manual' ? 'not run (use the migrate subcommand)' : 'not needed'}`,
   )
   if (dashboard.selfHosted) {
@@ -693,7 +715,7 @@ export async function runInit(
     )
   }
   printPairing({ token: mintPairCode(p.dataDir), port, tlsPort, pngPath: path.join(p.dataDir, 'pair-qr.png') })
-  return { created, migrated, migration, skills: installed, dashboard }
+  return { created, migrated, migration, skills: installed, profileSkills: installedProfile, dashboard }
 }
 
 // migrate モジュールは CLI 実行時にだけ遅延ロードする（テストの import を軽くする）

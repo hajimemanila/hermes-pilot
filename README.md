@@ -188,7 +188,10 @@ Every one of them is reachable from the phone and from the standard dashboard.
   and to the Pilot profile `~/.hermes/profiles/mobile/SOUL.md`. Other profiles are updated only if they
   already carry the marker, so an unrelated profile's `SOUL.md` is never edited (idempotent — an existing
   section is never duplicated, and a `.bak-<stamp>` backup is taken first). It then places the three
-  bundled skills into `~/.hermes/skills/`.
+  bundled skills into `~/.hermes/skills/` **and into the pilot profile's `skills/`** (`profiles/<pilot>/`),
+  because the PWA's default profile is `mobile` — without the second copy a pilot session cannot load
+  `quick-review` / `annotation` / `spec-architect` at all. Existing real directories are never overwritten,
+  the profile is never created by this step, and `pilotProfile = default` places nothing twice.
   `GET /api/pipeline/status` reports what is already applied, per profile, without returning any `SOUL.md`
   content.
 - **Legacy cron cleanup** — `migrate` (and `init`) removes the old `mobile-akapen-watch` /
@@ -306,7 +309,10 @@ directory is that repository / plugin directory; with route **A** use `hermes-pi
 2. generates a **256-bit hex app token** in `token` with mode `0600` (an existing token is never replaced),
 3. if a legacy `~/Projects/akapen`, `~/.hermes/plugin-data/akapen` or `~/.hermes/mobile-pwa` exists, migrates
    it (files are **copied**, `mtime` preserved, kanban `[akapen]` tags rewritten to `[review]`),
-4. copies the bundled skills `quick-review`, `annotation` and `spec-architect` into `~/.hermes/skills/`,
+4. copies the bundled skills `quick-review`, `annotation` and `spec-architect` into `~/.hermes/skills/`
+   and into the pilot profile's `profiles/<pilot>/skills/` (the PWA defaults to the `mobile` profile;
+   idempotent, existing directories untouched, the profile itself is created in step 4b by
+   `ensurePilotProfile`, never by the skill copy),
 5. detects your reachable address (Tailscale MagicDNS name, otherwise the LAN IP) and prints the
    **pairing URL plus a QR code in the terminal**.
 

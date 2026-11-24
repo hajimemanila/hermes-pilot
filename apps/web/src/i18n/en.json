@@ -1048,6 +1048,7 @@
   "settings.pipelineUnavailable": "The pipeline API is unavailable on this bridge",
   "settings.pipelineSoul": "SOUL.md",
   "settings.pipelineSkills": "Skills",
+  "settings.pipelineProfileSkills": "Skills ({profile})",
   "settings.pipelineApplied": "applied",
   "settings.pipelineMissing": "not applied",
   "settings.pipelineJobs": "Architect jobs",

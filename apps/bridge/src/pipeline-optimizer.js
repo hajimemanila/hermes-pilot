@@ -250,6 +250,33 @@ export function sanitizePilotProfile(value) {
 export const PROFILE_SOUL_CREATE_IF_MISSING = [DEFAULT_PILOT_PROFILE]
 
 /**
+ * Pilot 専用プロファイルのスキル置き場（`profiles/<pilot>/skills`）。
+ *
+ * **プロファイルのディレクトリが既にあるときだけ**パスを返す（プロファイルを勝手に作らない）。
+ * `pilotProfile` が `default` のときは `<hermesHome>/skills` と同じ場所なので `null`（二重配置しない）。
+ *
+ * 背景（プロファイル別の最適化）: 同梱スキルは `hermes-pilot init` が `<hermesHome>/skills`
+ * （= default プロファイル）にも置くが、PWA の既定プロファイルは `mobile`。プロファイル側にも
+ * 置かないと、Pilot から `quick-review` / `annotation` / `spec-architect` の契約を一度も読めない。
+ *
+ * @param {{hermesHome?: string, pilotProfile?: string|null}} [opts] 入力
+ * @returns {string|null} 配置先（無ければ null）
+ */
+export function pilotProfileSkillsDir({ hermesHome, pilotProfile = null } = {}) {
+  const hh = String(hermesHome ?? process.env.HERMES_HOME ?? path.join(os.homedir(), '.hermes'))
+  const name = sanitizePilotProfile(pilotProfile)
+  if (name === 'default') return null
+  const profileDir = path.join(hh, 'profiles', name)
+  try {
+    if (!fs.statSync(profileDir).isDirectory()) return null
+  } catch {
+    return null
+  }
+  const dir = path.join(profileDir, 'skills')
+  return path.resolve(dir) === path.resolve(path.join(hh, 'skills')) ? null : dir
+}
+
+/**
  * `<hermesHome>/profiles` 配下のプロファイル名（ディレクトリのみ・隠しディレクトリ除外）。
  *
  * @param {string} hermesHome Hermes のホーム
@@ -552,7 +579,7 @@ export function installSkill({ name, srcDir, destDir }) {
  * **プロセスは起動しない**（`fs.linkSync` / `fs.cpSync` だけ）。外部 AI CLI を
  * ラップ起動しないという SPEC V11 D50 の境界はここでも守る。
  *
- * @param {{home?: string, skillsSrcDir?: string, targets?: string[], names?: string[]}} [opts] 入力
+ * @param {{home?: string, skillsSrcDir?: string, targets?: string[], names?: string[], pilotProfile?: string|null}} [opts] 入力
  * @returns {{ok: boolean, targets: Array<{id: string, path: string, installed: string[], skipped: Array<object>, error?: string}>}} 結果
  */
 export function optimizeAntigravitySkills({
@@ -561,6 +588,7 @@ export function optimizeAntigravitySkills({
   skillsSrcDir = DEFAULT_SKILLS_SRC,
   targets = null,
   names = BUNDLED_SKILLS,
+  pilotProfile = null,
 } = {}) {
   const base = String(home || os.homedir())
   const hh = String(hermesHome || path.join(base, '.hermes'))
@@ -576,6 +604,15 @@ export function optimizeAntigravitySkills({
         return false
       }
     })
+    /*
+     * Pilot 専用プロファイル（既定 `mobile`）にも置く。PWA の既定プロファイルは `mobile` なので、
+     * ここを抜かすと Pilot 側から `annotation` / `quick-review` の契約を一度も読めない。
+     * プロファイルのディレクトリが無いときは何もしない（勝手に作らない）。
+     */
+    const profileDir = pilotProfileSkillsDir({ hermesHome: hh, pilotProfile })
+    if (profileDir) {
+      list = [...list, { id: `profile:${sanitizePilotProfile(pilotProfile)}`, dir: () => profileDir }]
+    }
   }
 
   const out = []
@@ -648,6 +685,12 @@ export function getOptimizeStatus({
 
   const availableProfiles = [...new Set([DEFAULT_PILOT_PROFILE, ...listProfileNames(hh), 'default'])]
 
+  // Pilot プロファイル側の配置状態（SOUL と同じプロファイルを対象にする。無ければ null）。
+  const profileSkillsDir = pilotProfileSkillsDir({ hermesHome: hh, pilotProfile })
+  const profileSkills = profileSkillsDir
+    ? { profile: sanitizePilotProfile(pilotProfile), ...skillState(profileSkillsDir) }
+    : null
+
   return {
     ok: true,
     pilotProfile: activeProfile ?? DEFAULT_PILOT_PROFILE,
@@ -657,6 +700,7 @@ export function getOptimizeStatus({
     // プロファイル配下（`profiles/<name>/SOUL.md`）も「適用済みか」だけを返す（中身は返さない）。
     profiles: listProfileNames(hh).map((name) => profileSoulState(hh, name)),
     hermes: skillState(path.join(hh, 'skills')),
+    profileSkills,
     bundled: { source: skillsSrcDir, names: BUNDLED_SKILLS },
     antigravity,
   }
