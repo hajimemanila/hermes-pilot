@@ -18,6 +18,9 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { SC_STATE, SHOWCASE_SEEDS } from './lib/wiki-showcase.mjs'
+
+export { SC_STATE, SHOWCASE_SEEDS }
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const ASSETS_ROOT = path.join(ROOT, 'docs', 'wiki', 'assets')
@@ -38,174 +41,6 @@ const CHROME_CANDIDATES = [
 export const VIEWPORT_MAP = Object.freeze({
   390: { width: 390, height: 844 },
   1180: { width: 1180, height: 820 },
-})
-
-export const SHOWCASE_SEEDS = Object.freeze({
-  ja: {
-    seed: 'シンプルなポモドーロタイマーを作って。25分集中＋5分休憩の切替、今日の完了トマト数の記録、スマホで見やすい大きな残り時間表示',
-    annotation: '① 残り時間のフォントを1.5倍大きくして中央寄せに / ② スタート・一時停止ボタンを親指が届く下部エリアに配置',
-    memo: 'ポモドーロ完了時にどのタスクに何分使ったか選べるようにしたい。あと夜間作業用にダークテーマ切替が欲しい',
-    brainstorm: 'タスク別の集中時間サマリバーとダークモード切替ボタンを追加',
-  },
-  en: {
-    seed: "Build a minimal Pomodoro timer with 25m focus / 5m break toggle, today's completed tomato counter, and a large mobile-friendly countdown display",
-    annotation: '1. Make the countdown timer font 1.5x larger and centered / 2. Move the Start/Pause button to the bottom thumb zone',
-    memo: 'Track which task each completed Pomodoro belonged to, and add a dark theme toggle for late-night focus sessions',
-    brainstorm: 'Add a per-task focus duration summary bar and a dark mode toggle button',
-  },
-})
-
-/**
- * ショーケース（`SC01`〜`SC09`）の「撮影する画面の作り方」。
- *
- * 値は **言語を受け取ってページ内で評価する式を返す関数**。`--eval` を渡したときは
- * そちらが優先される。対象（どのレビュー項目・どの実行中タスク）はスクリプトに
- * 焼き込まず、撮影のたびに `/api/*` を引いて選ぶ — 実データが入れ替わっても同じ手順で
- * 同じ絵になる（撮影は「いまの盤面」の写しであって、固定フィクスチャではない）。
- */
-const SC_PRELUDE = [
-  'const __t=(ms)=>new Promise(r=>setTimeout(r,ms));',
-  'const __q=(s,ms=10000)=>new Promise(res=>{const end=Date.now()+ms;(function f(){const e=document.querySelector(s);if(e)return res(e);if(Date.now()>end)return res(null);setTimeout(f,120)})()});',
-  "const __api=async(p)=>(await fetch(p,{headers:{'x-client':'mobile'},credentials:'same-origin'})).json();",
-  'const __tab=(i)=>{const n=document.querySelectorAll(\'nav .nav-item\')[i];if(n)n.click();return !!n};',
-  'const __click=(s)=>{const e=document.querySelector(s);if(e)e.click();return !!e};',
-].join('\n')
-
-export const SC_STATE = Object.freeze({
-  /** 起点: `📝 Spec Seed` シートに 1 行を入れ、実行方針を Visual-gate にする。 */
-  SC01: (lang) => `(async()=>{${SC_PRELUDE}
-    const chip=document.querySelectorAll('.snippet-chip.trigger')[0];
-    if(!chip) throw new Error('Spec Seed chip not found'); chip.click();
-    const ta=await __q('textarea.seed-input'); await __t(350);
-    if(!ta) throw new Error('seed textarea not found');
-    const set=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set;
-    set.call(ta, ${JSON.stringify(SHOWCASE_SEEDS[lang === 'en' ? 'en' : 'ja'].seed)});
-    ta.dispatchEvent(new Event('input',{bubbles:true}));
-    const vis=[...document.querySelectorAll('.seed-seg-btn')].find((b)=>/Visual/i.test(b.textContent));
-    if(vis){vis.click(); await __t(250);}
-    ta.scrollIntoView({block:'center'}); await __t(300);
-    return true})()`,
-
-  /** 設計面接: 3 問の Quick Review シートを開き、回答履歴まで広げる。 */
-  SC02: () => `(async()=>{${SC_PRELUDE}
-    const list=await __api('/api/review');
-    const items=list.items||[];
-    const item=items.find((it)=>it.review&&it.review.questions===3&&it.review.mode!=='annotation')
-      || items.find((it)=>it.review&&it.review.sheet);
-    if(!item) throw new Error('no review sheet in /api/review');
-    window.dispatchEvent(new CustomEvent('hm:open-review',{detail:{taskId:item.id}}));
-    const det=await __q('details.ak-answers'); await __t(500);
-    if(det) det.open=true; await __t(400);
-    return true})()`,
-
-  /** 起票: Spec Launchpad のバッチを 1 つ開き、Execution Mode / Recommended Role を見せる。 */
-  SC03: () => `(async()=>{${SC_PRELUDE}
-    if(!__click('.spec-bar')) throw new Error('spec bar not found');
-    const body=await __q('.sheet .sheet-body'); await __t(700);
-    const batches=[...document.querySelectorAll('.spec-batch')];
-    if(!batches.length) throw new Error('no batch in the launchpad');
-    const batch=batches.find((b)=>b.querySelector('.spec-mode'))||batches[0];
-    const tog=batch.querySelector('.spec-batch-toggle');
-    if(tog&&tog.getAttribute('aria-expanded')!=='true'){tog.click(); await __t(500);}
-    body.scrollTop=Math.max(0,(batch.getBoundingClientRect().top-body.getBoundingClientRect().top)+body.scrollTop-8);
-    await __t(300); return true})()`,
-
-  /** 自走: 実行中タスクの詳細（ArchitectJobBar + WorkerFeed）を開く。 */
-  SC04: () => `(async()=>{${SC_PRELUDE}
-    const boards=await __api('/api/boards');
-    const board=((boards.boards||[]).find((b)=>b.current)||(boards.boards||[])[0]||{}).slug;
-    if(!board) throw new Error('no board');
-    const list=await __api('/api/boards/'+encodeURIComponent(board)+'/tasks?limit=40');
-    const run=(list.tasks||[]).find((t)=>t.status==='running');
-    if(!run) throw new Error('no running task on '+board);
-    window.dispatchEvent(new CustomEvent('hm:open-task',{detail:{board,taskId:run.id}}));
-    const body=await __q('.sheet .sheet-body, .split-detail-body'); await __t(1800);
-    // 「worker の進行」の見出しを、その祖先のスクロール領域（シート本文／2 ペインの右側）で
-    // 上から 56px の位置へ寄せる。390 と 1180 で器が違うので祖先をたどって探す。
-    const head=[...document.querySelectorAll('.sheet *, .split-detail-body *')]
-      .filter((e)=>e.children.length<=1&&/^(worker|ワーカー)/i.test((e.textContent||'').trim()))[0];
-    if(head){
-      let p=head.parentElement;
-      while(p&&p!==document.body){
-        const st=getComputedStyle(p);
-        if(/(auto|scroll)/.test(st.overflowY)&&p.scrollHeight>p.clientHeight+40){
-          p.scrollTop=Math.max(0,p.scrollTop+(head.getBoundingClientRect().top-p.getBoundingClientRect().top)-56);
-          break;
-        }
-        p=p.parentElement;
-      }
-    } else if(body){ body.scrollTop=body.scrollHeight; }
-    await __t(400); return true})()`,
-
-  /** 赤入れ: 注釈エディタで矩形と矢印を描き、ひとことを添える。 */
-  SC05: (lang) => `(async()=>{${SC_PRELUDE}
-    const list=await __api('/api/review');
-    const item=(list.items||[]).find((it)=>it.review&&it.review.mode==='annotation'&&/FocusFlow/i.test(it.title||''));
-    if(!item) throw new Error('FocusFlow annotation item not found in /api/review');
-    window.dispatchEvent(new CustomEvent('hm:open-review',{detail:{taskId:item.id}}));
-    let canvas=null;
-    for(let i=0;i<80;i++){canvas=document.querySelector('canvas.ak-anno-canvas');if(canvas&&canvas.width>=400)break;await __t(150);}
-    if(!canvas||canvas.width<400) throw new Error('annotation canvas never sized');
-    await __t(500);
-    // 再試行しても同じ絵になるよう、先に既存のストロークを消してから描く（冪等）
-    for(let i=0;i<6;i++){const u=[...document.querySelectorAll('.ak-anno-tool')].find((x)=>x.getAttribute('aria-label')==='↩ 戻す');if(u)u.click();await __t(80);}
-    const pick=(label)=>{const b=[...document.querySelectorAll('.ak-anno-tool')].find((x)=>x.getAttribute('aria-label')===label);if(b)b.click();return !!b};
-    const stroke=async(pts)=>{
-      const c=document.querySelector('canvas.ak-anno-canvas'); const r=c.getBoundingClientRect();
-      const fire=(type,fx,fy)=>c.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,clientX:r.left+fx*r.width,clientY:r.top+fy*r.height,pointerId:1,pointerType:'pen',isPrimary:true}));
-      fire('pointerdown',pts[0][0],pts[0][1]);
-      for(let i=1;i<pts.length;i++){await __t(16);fire('pointermove',pts[i][0],pts[i][1]);}
-      const last=pts[pts.length-1]; await __t(16); fire('pointerup',last[0],last[1]); await __t(140);
-    };
-    if(!pick('矩形')) throw new Error('rect tool not found'); await __t(400);
-    await stroke([[0.22,0.11],[0.5,0.115],[0.78,0.12],[0.78,0.245]]);
-    if(!pick('矢印')) throw new Error('arrow tool not found'); await __t(400);
-    await stroke([[0.5,0.26],[0.5,0.42],[0.5,0.62],[0.5,0.80]]);
-    const note=[...document.querySelectorAll('input,textarea')].find((e)=>/ひとこと|optional|note/i.test(e.placeholder||''));
-    if(note){
-      const proto=note.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;
-      Object.getOwnPropertyDescriptor(proto,'value').set.call(note, ${JSON.stringify(SHOWCASE_SEEDS.ja.annotation)});
-      note.dispatchEvent(new Event('input',{bubbles:true}));
-    }
-    await __t(350); return true})()`,
-
-  /** 検収: 同じ注釈を Before ↔ After に切り替えた状態（✅ 完了 が並ぶ）。 */
-  SC06: () => `(async()=>{${SC_PRELUDE}
-    const list=await __api('/api/review');
-    const item=(list.items||[]).find((it)=>it.review&&it.review.mode==='annotation'&&/FocusFlow/i.test(it.title||''));
-    if(!item) throw new Error('FocusFlow annotation item not found in /api/review');
-    window.dispatchEvent(new CustomEvent('hm:open-review',{detail:{taskId:item.id}}));
-    for(let i=0;i<80;i++){const c=document.querySelector('canvas.ak-anno-canvas');if(c&&c.width>=400)break;await __t(150);}
-    const pill=await __q('.ak-compare-pill'); await __t(400);
-    if(pill&&pill.getAttribute('aria-pressed')!=='true'){pill.click(); await __t(900);}
-    return true})()`,
-
-  /** 完走: 完了レシート（1200×630 のカード＋シェア導線）。 */
-  SC07: () => `(async()=>{${SC_PRELUDE}
-    const btn=[...document.querySelectorAll('.report-card-btn')].find((b)=>/完了レシート|receipt/i.test(b.textContent));
-    if(!btn) throw new Error('completion receipt button not found'); btn.click();
-    const body=await __q('.sheet .sheet-body'); await __t(3000);
-    if(body) body.scrollTop=0; await __t(400);
-    return true})()`,
-
-  /** 拡張: Memos のカードからブレインストームを開く（メモの文面が入った状態）。 */
-  SC08: () => `(async()=>{${SC_PRELUDE}
-    __tab(3); await __t(1600);
-    const memos=await __api('/api/memos');
-    const target=(memos.memos||[]).find((m)=>String(m.title||'').trim()&&String(m.body||'').trim());
-    const buttons=[...document.querySelectorAll('button')].filter((b)=>/ブレスト|brainstorm/i.test(b.textContent||''));
-    if(!buttons.length) throw new Error('no brainstorm button in Memos');
-    const btn=(target&&buttons.find((b)=>{const card=b.closest('.memo-card');return card&&card.innerText.includes(String(target.title).trim());}))||buttons[buttons.length-1];
-    btn.click();
-    await __q('.sheet textarea'); await __t(1600);
-    return true})()`,
-
-  /** 保守: Refactor シートのライブ診断帯と推奨スイープ。 */
-  SC09: () => `(async()=>{${SC_PRELUDE}
-    const chip=[...document.querySelectorAll('.snippet-chip.trigger')].find((b)=>/リファクタリング|Refactor/i.test(b.textContent));
-    if(!chip) throw new Error('refactor chip not found'); chip.click();
-    await __q('.sheet'); await __t(2600);
-    return true})()`,
 })
 
 export const WIKI_SHOTS = Object.freeze([
@@ -640,6 +475,7 @@ async function runCapture(args) {
           await waitReady(`document.readyState === 'complete'`)
           await evalInPage([
             `localStorage.setItem('hm.lang', ${JSON.stringify(args.lang)})`,
+            entry.id === 'MN10' ? `localStorage.setItem('hm.memosView', ${JSON.stringify(sizeKey === '390' ? 'one' : 'two')})` : '',
             theme ? `localStorage.setItem('hm.theme', ${JSON.stringify(theme)}); document.documentElement.dataset.theme = ${JSON.stringify(theme)}` : '',
             vibe ? `localStorage.setItem('hm.vibe', ${JSON.stringify(vibe)}); document.documentElement.dataset.vibe = ${JSON.stringify(vibe)}` : '',
             resumeSid
@@ -685,7 +521,7 @@ async function runCapture(args) {
           // 状態づくりは冪等に書いてあるので、`true` が返るまで 2 回まで試す。
           let ran = null
           for (let attempt = 0; attempt < 2; attempt += 1) {
-            ran = await evalInPage(`(async () => { return await (${shotEval}) })()`, true)
+            ran = await evalInPage(`(async () => { try { return await (${shotEval}) } catch (e) { return { error: String(e?.message || e) } } })()`, true)
             if (ran === true || !entryEval) break
             await sleep(700)
           }
