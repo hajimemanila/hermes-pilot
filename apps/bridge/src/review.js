@@ -157,7 +157,7 @@ export function createReview(cfg, opts = {}) {
   }
 
   function openDb() {
-    return new DatabaseSync(dbPath, { readOnly: true })
+    return new DatabaseSync(dbPath, { readOnly: true, timeout: 3000 })
   }
 
   function rows(limit = 80) {

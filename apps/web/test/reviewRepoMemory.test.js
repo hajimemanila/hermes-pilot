@@ -117,3 +117,7 @@ test('対象の照合は id と path の両方（小文字比較）を 1 箇所�
 test('対象が確定したら rememberReviewRepo に書く', () => {
   assert.match(pane, /rememberReviewRepo\(globalThis\.localStorage, chosen\.id\)/)
 })
+
+test('IframeForm へ notify prop を渡す（postMessage 受信時の通知が落ちない）', () => {
+  assert.match(pane, /<IframeForm\s+item=\{open\}[^\n]*\bnotify=\{notify\}/)
+})

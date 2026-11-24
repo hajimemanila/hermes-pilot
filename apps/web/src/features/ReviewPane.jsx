@@ -447,7 +447,7 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
             ) : dataLoading ? (
               <Loader label={t('common.loading')} />
             ) : (
-              <IframeForm item={open} onSubmitted={(r) => handleSubmitted(open.id, r)} />
+              <IframeForm item={open} onSubmitted={(r) => handleSubmitted(open.id, r)} notify={notify} />
             )}
           </>
         ) : dataLoading && !data ? (

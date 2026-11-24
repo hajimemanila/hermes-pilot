@@ -96,7 +96,7 @@ export function listBoardDbs(kanbanRoot, preferredBoard = 'mobile', onlyBoard = 
 
 /** 読み取り専用で SQLite を開く（失敗時は null）。 */
 function openReadOnly(dbPath, label) {
-  return safeList(label, () => new DatabaseSync(dbPath, { readOnly: true }), null)
+  return safeList(label, () => new DatabaseSync(dbPath, { readOnly: true, timeout: 3000 }), null)
 }
 
 const STATUS_RANK = { review: 0, ready: 1, running: 2, blocked: 3 }

@@ -370,7 +370,7 @@ function readSessionRowsFromDb(dbPath) {
   let db
   try {
     return safeList('repos.readSessionCwds', () => {
-      db = new DatabaseSync(dbPath, { readOnly: true })
+      db = new DatabaseSync(dbPath, { readOnly: true, timeout: 3000 })
       return db
         .prepare(
           `SELECT cwd, MAX(last_activity_at) AS t

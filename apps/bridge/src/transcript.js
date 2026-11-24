@@ -159,7 +159,7 @@ export function createTranscript(cfg) {
 
     let db
     try {
-      db = new DatabaseSync(effectivePath, { readOnly: true })
+      db = new DatabaseSync(effectivePath, { readOnly: true, timeout: 3000 })
       let title = ''
       try {
         const t = db.prepare('SELECT title, display_name FROM sessions WHERE id = ?').get(id)

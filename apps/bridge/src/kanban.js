@@ -102,7 +102,7 @@ export function createKanban(cfg, deps = {}) {
   function countsFor(dbPath) {
     let db
     try {
-      db = new DatabaseSync(dbPath, { readOnly: true })
+      db = new DatabaseSync(dbPath, { readOnly: true, timeout: 3000 })
       const rows = db.prepare('SELECT status, COUNT(*) AS n FROM tasks GROUP BY status').all()
       /** @type {Record<string, number>} */
       const counts = {}
@@ -156,7 +156,7 @@ export function createKanban(cfg, deps = {}) {
     const archivedLimit = Math.min(Number(opts.archivedLimit ?? 40), 200)
     const includeArchived = opts.includeArchived !== false && archivedLimit > 0
     const withBody = opts.withBody !== false
-    const db = new DatabaseSync(dbFor(slug), { readOnly: true })
+    const db = new DatabaseSync(dbFor(slug), { readOnly: true, timeout: 3000 })
     try {
       // 古い板の `tasks` に `body` 列が無くても落とさない（無ければ空文字）
       const bodyCol = hasColumn(db, 'tasks', 'body') ? 'body' : "'' AS body"
@@ -263,7 +263,7 @@ export function createKanban(cfg, deps = {}) {
   function taskSession(slug, id) {
     let db
     try {
-      db = new DatabaseSync(dbFor(slug), { readOnly: true })
+      db = new DatabaseSync(dbFor(slug), { readOnly: true, timeout: 3000 })
     } catch {
       return null
     }
@@ -281,7 +281,7 @@ export function createKanban(cfg, deps = {}) {
    * @returns {object} 詳細
    */
   function task(slug, id) {
-    const db = new DatabaseSync(dbFor(slug), { readOnly: true })
+    const db = new DatabaseSync(dbFor(slug), { readOnly: true, timeout: 3000 })
     try {
       const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id)
       if (!row) throw new ApiError('TASK_NOT_FOUND', { id }, 404)
@@ -296,7 +296,7 @@ export function createKanban(cfg, deps = {}) {
       }))
       const runs = safeAll(
         db,
-        `SELECT id, status, started_at, ended_at, exit_code FROM task_runs WHERE task_id = ? ORDER BY id DESC LIMIT 10`,
+        `SELECT id, status, started_at, ended_at FROM task_runs WHERE task_id = ? ORDER BY id DESC LIMIT 10`,
         id,
       ).map((r) => ({
         id: r.id,

@@ -72,7 +72,7 @@ export function createSearch(cfg) {
   function searchOne(target, q, since, limit) {
     let db
     try {
-      db = new DatabaseSync(target.path, { readOnly: true })
+      db = new DatabaseSync(target.path, { readOnly: true, timeout: 3000 })
       const rows = useTrigram(q)
         ? db
             .prepare(

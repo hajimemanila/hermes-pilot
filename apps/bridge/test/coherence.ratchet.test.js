@@ -187,8 +187,23 @@ test('gitHotspots は COHERENCE/ スイープコミットを境界に過去チ�
   const afterDrift = await gitHotspots(root, { days: 14 })
   assert.deepEqual(afterDrift, [{ file: 'src/hot.js', touches: 5 }])
 
+  // `docs(coherence):` のような SPEC ドラフトではリセットしない
+  write(root, 'docs/SPEC-draft.md', '# Draft\n')
+  git(['add', 'docs/SPEC-draft.md'])
+  const docsIso = new Date((baseSec + 280) * 1000).toISOString()
+  git(['commit', '-q', '-m', 'docs(coherence): draft split spec'], { GIT_AUTHOR_DATE: docsIso, GIT_COMMITTER_DATE: docsIso })
+  const afterDocsCommit = await gitHotspots(root, { days: 14 })
+  assert.deepEqual(afterDocsCommit, [{ file: 'src/hot.js', touches: 5 }])
+
   // `refactor(coherence):` / `chore(coherence):` も同じくスイープ完了境界として扱う
   commitAt(300, 'refactor(coherence): extract module after drift', 'export const n = 300\n')
   const afterScopeSweep = await gitHotspots(root, { days: 14 })
   assert.deepEqual(afterScopeSweep, [])
+
+  for (let i = 1; i <= 5; i += 1) {
+    commitAt(310 + i * 10, `fix: drift2 ${i}`, `export const n = ${310 + i}\n`)
+  }
+  assert.deepEqual(await gitHotspots(root, { days: 14 }), [{ file: 'src/hot.js', touches: 5 }])
+  commitAt(400, 'chore(coherence): finalize sweep', 'export const n = 400\n')
+  assert.deepEqual(await gitHotspots(root, { days: 14 }), [])
 })

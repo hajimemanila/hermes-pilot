@@ -105,7 +105,7 @@ export function createLive(cfg, kanban, deps = {}) {
   function turnsFrom(target, at) {
     let db
     try {
-      db = new DatabaseSync(target.path, { readOnly: true })
+      db = new DatabaseSync(target.path, { readOnly: true, timeout: 3000 })
       const rows = db
         .prepare(
           `SELECT l.conversation_id, l.holder, l.acquired_at, l.expires_at,

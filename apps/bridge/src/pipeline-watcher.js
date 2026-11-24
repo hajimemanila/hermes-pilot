@@ -753,7 +753,7 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
 
   /** 1 つの DB から非アーカイブタスクを読む（読み取り専用・失敗は warn + 空）。 */
   function readTasks(dbPath) {
-    const db = safeList('pipelineWatcher.openDb', () => new DatabaseSync(dbPath, { readOnly: true }), null)
+    const db = safeList('pipelineWatcher.openDb', () => new DatabaseSync(dbPath, { readOnly: true, timeout: 3000 }), null)
     if (!db) return []
     try {
       const hasTasks = safeList('pipelineWatcher.hasTasks', () => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks'").get()), false)
@@ -830,7 +830,7 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
   function latestSessionForCwd(dbPath, workdir) {
     let db
     try {
-      db = new DatabaseSync(dbPath, { readOnly: true })
+      db = new DatabaseSync(dbPath, { readOnly: true, timeout: 3000 })
     } catch {
       return null
     }

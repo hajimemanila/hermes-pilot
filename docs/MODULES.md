@@ -74,7 +74,7 @@ apps/bridge/src/
     paths.js                 ← REPO_ROOT / BUNDLED_SKILLS / DEFAULT_SKILLS_SRC（葉）
     soul.js                  ← A2B_* / backupStamp / mergeSoul / nextBackupPath /
                                applySoulFile† / inspectSoulFile† / profileSoulState† / optimizeHermesSoul
-    profile.js               ← DEFAULT_PILOT_PROFILE / PROFILE_NAME_RE† / PROFILE_SOUL_CREATE_IF_MISSING /
+    profile.js               ← DEFAULT_PILOT_PROFILE / PROFILE_SOUL_CREATE_IF_MISSING /
                                sanitizePilotProfile / pilotProfileSkillsDir / listProfileNames /
                                ensurePilotProfile / optimizeProfileSouls
     skills.js                ← SKILL_TARGET_CANDIDATES / installSkill / optimizeAntigravitySkills /
@@ -83,7 +83,7 @@ apps/bridge/src/
 
 apps/web/src/features/
   ReviewPane.jsx             ← TABS / ItemRow / WorkerFeed / ReviewPane（約 748 行）
-  review/Chip.jsx            ← Chip（ReviewPane と AnnotationCreate が共有）
+  review/Chip.jsx            ← Chip（ReviewPane / ReviewForms / ReviewDetail が共有）
   review/ReviewForms.jsx     ← toZoom / StandardForm / IframeForm / SheetLink
   review/ReviewDetail.jsx    ← ReadOnlyDetail
   review/AnnotationCreate.jsx← downscaleFile / prefetchAnnotationData / findTarget / NewAnnotationSheet

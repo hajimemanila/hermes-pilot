@@ -174,3 +174,75 @@ test('attachClientKeepalive: 無応答なら terminate し、pong/message で延
   assert.equal(alive.terminated, 0)
   assert.ok(alive.pings >= 1)
 })
+
+test('proxyChat: client が wsUrl 解決前に閉じたら上流 WS を作らず安全終了する', async () => {
+  let resolveUrl
+  let ctorCalls = 0
+  class CountingWs extends EventEmitter {
+    static CONNECTING = 0
+    static OPEN = 1
+    constructor() {
+      super()
+      ctorCalls += 1
+    }
+  }
+  const handlers = createWsHandlers({
+    cfg: { hermesBase: 'http://127.0.0.1:8642' },
+    hermes: { wsUrl: () => new Promise((r) => { resolveUrl = r }) },
+    auth: { audit: () => {} },
+    pty: null,
+    listProfiles: async () => [],
+    checkFrame: (t) => ({ ok: true, text: t }),
+    rejectionFrame: () => '',
+    WebSocket: CountingWs,
+  })
+
+  const client = mockSocket()
+  const running = handlers.proxyChat(client)
+  client.close()
+  resolveUrl('ws://127.0.0.1:8642/api/ws')
+  await running
+  assert.equal(ctorCalls, 0, '既に閉じたクライアントのために上流 WS を作らない')
+})
+
+test('proxyChat: 上流が CONNECTING 中に client が閉じても Unhandled error で落ちない', async () => {
+  let upstreamRef = null
+  let terminated = 0
+  class ConnectingRaceWs extends EventEmitter {
+    static CONNECTING = 0
+    static OPEN = 1
+    constructor() {
+      super()
+      this.readyState = 0
+      upstreamRef = this
+    }
+    terminate() {
+      terminated += 1
+      this.readyState = 3
+      process.nextTick(() => this.emit('error', new Error('WebSocket was closed before the connection was established')))
+    }
+    close() {
+      this.terminate()
+    }
+  }
+  const handlers = createWsHandlers({
+    cfg: { hermesBase: 'http://127.0.0.1:8642' },
+    hermes: { wsUrl: async () => 'ws://127.0.0.1:8642/api/ws' },
+    auth: { audit: () => {} },
+    pty: null,
+    listProfiles: async () => [],
+    checkFrame: (t) => ({ ok: true, text: t }),
+    rejectionFrame: () => '',
+    WebSocket: ConnectingRaceWs,
+  })
+
+  const client = mockSocket()
+  await handlers.proxyChat(client)
+  assert.ok(upstreamRef)
+  assert.ok(upstreamRef.listenerCount('error') >= 1, 'CONNECTING 中から同期で error リスナーが登録されている')
+
+  // CONNECTING 中に client が閉じる（ws の terminate() は次 tick で error を emit する）
+  client.close()
+  await new Promise((r) => setImmediate(r))
+  assert.equal(terminated, 1)
+})

@@ -1,6 +1,7 @@
 # SPEC: 整合性スイープの分割バッチ（MRG-1〜MRG-5）
 
-- 状態: **ドラフト（赤ペン回答済み・バッチ未起票）**
+- **Status**: archived
+- 状態: **完了・アーカイブ済み（MRG-1〜MRG-5 全件完了 @ `14de068`）**
 - 対象: `~/projects/hermes-mobile-pwa` @ `fbb9d59`（2026-11-24 実測。`npm run verify` は緑）
 - 入力: `sheets/spec-coherence-split-batches-1.json` の Q1〜Q4
 - 回答: **Q1〜Q4 すべて A**（`spec-coherence-split-batches-1.answer.json`）

@@ -468,16 +468,10 @@ export function createSpecs(cfg = {}, deps = {}) {
 
   /**
    * バッチをカンバンへ一括起票する。
+   * 既定で同一 SPEC 内の先行バッチを `--parent` に繋いで直列化し、同じ作業ツリーへの同時競合を防ぐ。
    *
-   * @param {{
-   *   repoPath: string,
-   *   board: string,
-   *   specRelPath: string,
-   *   batchIds?: string[],
-   *   assignee?: string,
-   *   dryRun?: boolean,
-   *   limit?: number,
-   * }} input 入力
+   * @param {{repoPath: string, board: string, specRelPath: string, batchIds?: string[],
+   *   assignee?: string, dryRun?: boolean, serial?: boolean, limit?: number}} input 入力
    * @returns {Promise<{ok: boolean, created: Array<object>, skipped: Array<object>, failed: Array<object>, spec?: string, board?: string, error?: string}>} 結果
    */
   async function launchSpec(input = {}) {
@@ -535,6 +529,9 @@ export function createSpecs(cfg = {}, deps = {}) {
       existing = []
     }
 
+    // 既定で先行バッチを `--parent` に繋ぎ、同一 working tree での並列競合を防ぐ（`serial: false` で解除）。
+    const chain = input.serial !== false
+    let prevTaskId = null
     const created = []
     const skipped = []
     const failed = []
@@ -542,6 +539,7 @@ export function createSpecs(cfg = {}, deps = {}) {
       const open = findOpenBatchTask(existing, batch.id, specRelPath, { specMtime })
       if (open) {
         skipped.push({ id: batch.id, title: batch.title, reason: 'exists', taskId: open.id, status: open.status })
+        if (chain && open.id) prevTaskId = open.id
         continue
       }
       const title = buildTaskTitle(batch)
@@ -552,6 +550,7 @@ export function createSpecs(cfg = {}, deps = {}) {
       }
       const args = ['kanban', '--board', board, 'create', title, '--json', '--body', body]
       if (assignee) args.push('--assignee', assignee)
+      if (chain && prevTaskId) args.push('--parent', prevTaskId)
       const res = await run(args)
       if (res.code !== 0) {
         failed.push({
@@ -568,6 +567,7 @@ export function createSpecs(cfg = {}, deps = {}) {
         continue
       }
       created.push({ id: batch.id, title, taskId: task.id, status: task.status ?? 'ready' })
+      if (chain) prevTaskId = task.id
       // 同じバッチを 2 回起票しないよう、今回作った分も既存扱いにする
       existing = [...existing, { id: task.id, title, status: task.status ?? 'ready' }]
     }

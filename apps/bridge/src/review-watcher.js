@@ -101,7 +101,7 @@ export function createReviewWatcher(cfg, opts = {}) {
 
   /** 1 つの DB からレビュータスクを読む（読み取り専用・失敗は warn + 空）。 */
   function readTasks(dbPath) {
-    const db = safeList('reviewWatcher.openDb', () => new DatabaseSync(dbPath, { readOnly: true }), null)
+    const db = safeList('reviewWatcher.openDb', () => new DatabaseSync(dbPath, { readOnly: true, timeout: 3000 }), null)
     if (!db) return []
     try {
       const hasTasks = safeList('reviewWatcher.hasTasks', () => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks'").get()), false)

@@ -70,8 +70,7 @@ function createKanbanDb(kanbanRoot, slug, { workdir = null, empty = false } = {}
         task_id TEXT,
         status TEXT,
         started_at INTEGER,
-        ended_at INTEGER,
-        exit_code INTEGER
+        ended_at INTEGER
       );
     `)
   }
@@ -279,6 +278,8 @@ test('E2E: 親 [ARCH] が blocked 残置でも子 [review] で Round 2 実行 �
     assert.equal(launch.ok, true)
     assert.equal(launch.created.length, 2)
     assert.ok(launchedCalls.every((a) => a.includes('--assignee') && a.includes('pilot-e2e')))
+    assert.equal(launchedCalls[0].includes('--parent'), false)
+    assert.equal(launchedCalls[1][launchedCalls[1].indexOf('--parent') + 1], 't_b1')
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
@@ -359,6 +360,83 @@ test('tasks テーブルの無い空 SQLite DB でも reviewWatcher / pipelineWa
     assert.deepEqual(warns, [])
   } finally {
     console.warn = origWarn
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('launchSpec はバッチ間を --parent で直列連鎖し、既存 open バッチにも繋ぐ（serial:false で解除）', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-serial-batches-'))
+  try {
+    fs.mkdirSync(path.join(root, 'docs'), { recursive: true })
+    fs.writeFileSync(
+      path.join(root, 'docs', 'SPEC-SER.md'),
+      [
+        '# SPEC: Serial',
+        '',
+        '### Batch SER-1: One',
+        '- **目的**: First',
+        '',
+        '### Batch SER-2: Two',
+        '- **目的**: Second',
+        '',
+        '### Batch SER-3: Three',
+        '- **目的**: Third',
+        '',
+      ].join('\n'),
+    )
+    const calls1 = []
+    let seq = 0
+    const specs1 = createSpecs(
+      {},
+      {
+        tasks: () => [],
+        runner: async (args) => {
+          calls1.push(args)
+          return { code: 0, stdout: JSON.stringify({ id: `t_${++seq}`, status: 'ready' }), stderr: '' }
+        },
+      },
+    )
+    const r1 = await specs1.launchSpec({ repoPath: root, board: 'demo', specRelPath: 'docs/SPEC-SER.md' })
+    assert.equal(r1.ok, true)
+    assert.equal(r1.created.length, 3)
+    assert.equal(calls1[0].includes('--parent'), false)
+    assert.equal(calls1[1][calls1[1].indexOf('--parent') + 1], 't_1')
+    assert.equal(calls1[2][calls1[2].indexOf('--parent') + 1], 't_2')
+
+    // バッチ 1 が既に running のとき、新規起票されるバッチ 2 は既存 open タスクに繋ぐ
+    const calls2 = []
+    const specs2 = createSpecs(
+      {},
+      {
+        tasks: () => [{ id: 't_existing', title: '[SER-1] One', status: 'running', spec: 'docs/SPEC-SER.md' }],
+        runner: async (args) => {
+          calls2.push(args)
+          return { code: 0, stdout: JSON.stringify({ id: `t_n${calls2.length}`, status: 'ready' }), stderr: '' }
+        },
+      },
+    )
+    const r2 = await specs2.launchSpec({ repoPath: root, board: 'demo', specRelPath: 'docs/SPEC-SER.md' })
+    assert.equal(r2.ok, true)
+    assert.equal(r2.skipped[0].taskId, 't_existing')
+    assert.equal(calls2[0][calls2[0].indexOf('--parent') + 1], 't_existing')
+    assert.equal(calls2[1][calls2[1].indexOf('--parent') + 1], 't_n1')
+
+    // serial: false を渡すと従来どおり --parent を付けない
+    const calls3 = []
+    const specs3 = createSpecs(
+      {},
+      {
+        tasks: () => [],
+        runner: async (args) => {
+          calls3.push(args)
+          return { code: 0, stdout: JSON.stringify({ id: `t_p${calls3.length}`, status: 'ready' }), stderr: '' }
+        },
+      },
+    )
+    const r3 = await specs3.launchSpec({ repoPath: root, board: 'demo', specRelPath: 'docs/SPEC-SER.md', serial: false })
+    assert.equal(r3.ok, true)
+    assert.ok(calls3.every((a) => !a.includes('--parent')))
+  } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
 })

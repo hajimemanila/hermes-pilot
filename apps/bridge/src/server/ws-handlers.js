@@ -39,6 +39,8 @@ export function createWsHandlers(ctx = {}) {
   const { cfg, hermes, auth, pty, listProfiles, checkFrame, rejectionFrame } = ctx
   // PTY の枯渇を自己増殖させないための前段（`server/ptyGate.js`）。テストは差し替える。
   const ptyGate = ctx.ptyGate ?? createPtyGate()
+  // テスト時に上流 WS（CONNECTING 中の close → error 等）を決定的に再現できるよう差し替え可能にする。
+  const WsCtor = ctx.WebSocket ?? WebSocket
 
 /**
  * チャット WS を Hermes の /api/ws へ中継する（プロトコルは素通し）。
@@ -48,8 +50,46 @@ export function createWsHandlers(ctx = {}) {
 async function proxyChat(client) {
   let upstream = null
   let clientClosed = false
+  let ka = null
   const started = Date.now()
   const stopClientKa = attachClientKeepalive(client)
+
+  /** 上流 WS を安全に閉じる（CONNECTING 中の .close() が次 tick で emit('error') を起こしても落ちない状態でのみ呼ぶ）。 */
+  function closeUpstream() {
+    if (ka) {
+      clearInterval(ka)
+      ka = null
+    }
+    if (!upstream) return
+    try {
+      const connecting = WsCtor.CONNECTING ?? 0
+      const openState = WsCtor.OPEN ?? 1
+      if (upstream.readyState === connecting) {
+        if (typeof upstream.terminate === 'function') upstream.terminate()
+        else upstream.close?.()
+      } else if (upstream.readyState === openState) {
+        upstream.close?.()
+      }
+    } catch {
+      /* noop */
+    }
+  }
+
+  const closeBoth = (code = 1000, reason = '') => {
+    stopClientKa()
+    try {
+      if (client.readyState === WebSocket.OPEN) client.close(code, reason)
+    } catch {
+      /* noop */
+    }
+    closeUpstream()
+  }
+
+  client.on('error', () => {
+    clientClosed = true
+    stopClientKa()
+    closeUpstream()
+  })
   // この接続で送ってよいプロファイル名（serve 済み）。取れなければ default のみ。
   // **listener より先に await しない**: 待つ間に届いた端末フレームは listener が無いと捨てられる
   // （実測: 最初の session.list が消えて 20 秒タイムアウトした）。解決までは hold に溜める。
@@ -106,41 +146,54 @@ async function proxyChat(client) {
   client.on('close', () => {
     clientClosed = true
     stopClientKa()
-    try {
-      upstream?.close()
-    } catch {
-      /* noop */
-    }
+    closeUpstream()
   })
 
+  let upstreamUrl
   try {
     // 端末が繋ぐたびにトークンを取り直す（gateway 再起動後の 403 を自己回復）
-    upstream = new WebSocket(await hermes.wsUrl('/api/ws', { fresh: true }), { headers: { Origin: cfg.hermesBase } })
+    upstreamUrl = await hermes.wsUrl('/api/ws', { fresh: true })
   } catch (err) {
     stopClientKa()
-    if (!clientClosed) {
+    if (!clientClosed && client.readyState === WebSocket.OPEN) {
       client.send(JSON.stringify({ jsonrpc: '2.0', method: 'event', params: { type: 'bridge.error', payload: { message: String(err?.message ?? err) } } }))
       client.close(1011)
     }
     return
   }
+  // wsUrl 待機中に端末側が既に閉じていたら、上流 WS を生成しない（CONNECTING 中切断クラッシュの根本抑止）
   if (clientClosed) {
     stopClientKa()
-    try {
-      upstream.close()
-    } catch {
-      /* noop */
+    return
+  }
+  try {
+    upstream = new WsCtor(upstreamUrl, { headers: { Origin: cfg.hermesBase } })
+  } catch (err) {
+    stopClientKa()
+    if (!clientClosed && client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify({ jsonrpc: '2.0', method: 'event', params: { type: 'bridge.error', payload: { message: String(err?.message ?? err) } } }))
+      client.close(1011)
     }
+    return
+  }
+  // `ws` は CONNECTING 中に `.close()` / `.terminate()` されると次 tick で `'error'` を emit する。
+  // 必ず同期で最初に `'error'` リスナーを張り、Unhandled error によるプロセス墜落を防ぐ。
+  upstream.on('error', () => closeBoth(1011, 'upstream error'))
+
+  if (clientClosed) {
+    stopClientKa()
+    closeUpstream()
     return
   }
   // 上流は無音で切ることがある（実測: code=1005 が散発）。25秒ごとに ping して
   // 「応答が来ないまま画面が止まる」を防ぐ。pong が90秒来なければ張り直す。
-  let ka = null
   let lastPong = Date.now()
 
   upstream.on('open', () => {
     for (const q of queue.splice(0)) upstream.send(q)
-    client.send(JSON.stringify({ jsonrpc: '2.0', method: 'event', params: { type: 'bridge.ready', payload: {} } }))
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify({ jsonrpc: '2.0', method: 'event', params: { type: 'bridge.ready', payload: {} } }))
+    }
     console.log(`[chat] upstream open (${Date.now() - started}ms)`)
     lastPong = Date.now()
     ka = setInterval(() => {
@@ -163,25 +216,14 @@ async function proxyChat(client) {
   upstream.on('message', (raw) => {
     if (client.readyState === WebSocket.OPEN) client.send(raw.toString())
   })
-  const closeBoth = (code = 1000, reason = '') => {
-    stopClientKa()
-    try {
-      if (client.readyState === WebSocket.OPEN) client.close(code, reason)
-    } catch {
-      /* noop */
-    }
-    try {
-      upstream.close()
-    } catch {
-      /* noop */
-    }
-  }
   upstream.on('close', (code) => {
-    if (ka) clearInterval(ka)
+    if (ka) {
+      clearInterval(ka)
+      ka = null
+    }
     console.log(`[chat] upstream closed code=${code} after ${Date.now() - started}ms`)
     closeBoth(code === 1000 ? 1000 : 1011, `upstream ${code}`)
   })
-  upstream.on('error', () => closeBoth(1011, 'upstream error'))
 }
 
 /**

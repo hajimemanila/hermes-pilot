@@ -92,7 +92,7 @@ export function createInbox(cfg, kanban) {
     if (!fs.existsSync(dbPath)) return []
     let db
     try {
-      db = new DatabaseSync(dbPath, { readOnly: true })
+      db = new DatabaseSync(dbPath, { readOnly: true, timeout: 3000 })
       const rows = db
         .prepare(
           `SELECT id, title, status, block_kind, block_recurrences, last_failure_error,
@@ -220,7 +220,7 @@ export function createInbox(cfg, kanban) {
   function statusOf(board, id) {
     let db
     try {
-      db = new DatabaseSync(path.join(boardsRoot, board, 'kanban.db'), { readOnly: true })
+      db = new DatabaseSync(path.join(boardsRoot, board, 'kanban.db'), { readOnly: true, timeout: 3000 })
     } catch {
       return null
     }

@@ -5,15 +5,16 @@
  *   node scripts/revoke.mjs            … 全端末をログアウト
  *   node scripts/revoke.mjs --list     … 発行済みセッションの一覧
  *
- * トークン自体を変えたい場合は `rm ~/.hermes/mobile-pwa/token` してから
- * `launchctl kickstart -k gui/$(id -u)/ai.hermes.hermes-mobile`
+ * トークン自体を変えたい場合は `rm ~/.hermes/plugin-data/hermes-pilot/token` してから
+ * `launchctl kickstart -k gui/$(id -u)/ai.hermes.pilot`
  * （トークンが変わると過去のセッションは自動的に全失効する）。
  */
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 
-const dataDir = process.env.HM_DATA ?? path.join(process.env.HERMES_HOME ?? path.join(os.homedir(), '.hermes'), 'mobile-pwa')
+const hermesHome = process.env.HERMES_HOME ?? path.join(os.homedir(), '.hermes')
+const dataDir = process.env.HM_DATA ?? process.env.HP_DATA_DIR ?? path.join(hermesHome, 'plugin-data', 'hermes-pilot')
 const file = path.join(dataDir, 'sessions.json')
 
 let store = { version: 1, tokenFingerprint: '', sessions: {} }

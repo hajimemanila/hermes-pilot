@@ -25,7 +25,7 @@ export function createUsage(cfg = {}) {
   function summarizeOne(target, since) {
     let db
     try {
-      db = new DatabaseSync(target.path, { readOnly: true })
+      db = new DatabaseSync(target.path, { readOnly: true, timeout: 3000 })
       const t = db
         .prepare(
           `SELECT COUNT(*) AS sessions,
@@ -219,7 +219,7 @@ export function createUsage(cfg = {}) {
     for (const target of targets) {
       let db
       try {
-        db = new DatabaseSync(target.path, { readOnly: true })
+        db = new DatabaseSync(target.path, { readOnly: true, timeout: 3000 })
         const where = []
         const params = []
         if (ids.length) {

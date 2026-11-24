@@ -94,7 +94,7 @@ function makeBoard(dir, slug) {
       workspace_path TEXT, branch_name TEXT, worker_pid INTEGER, last_heartbeat_at INTEGER,
       result TEXT, consecutive_failures INTEGER, session_id TEXT, current_step_key TEXT);
     CREATE TABLE task_events (id INTEGER PRIMARY KEY, task_id TEXT, run_id INTEGER, kind TEXT, payload TEXT, created_at INTEGER);
-    CREATE TABLE task_runs (id INTEGER PRIMARY KEY, task_id TEXT, status TEXT, started_at INTEGER, ended_at INTEGER, exit_code INTEGER);
+    CREATE TABLE task_runs (id INTEGER PRIMARY KEY, task_id TEXT, status TEXT, started_at INTEGER, ended_at INTEGER);
     CREATE TABLE task_comments (id INTEGER PRIMARY KEY, task_id TEXT, author TEXT, body TEXT, created_at INTEGER);
   `)
   const now = Math.floor(Date.now() / 1000)
@@ -167,6 +167,7 @@ test('カンバン: 一覧は新しい順、詳細はイベント付き', () => 
   const detail = kb.task('alpha', 't_run')
   assert.equal(detail.events.length, 1)
   assert.equal(detail.runs.length, 1)
+  assert.equal(detail.runs[0].status, 'running')
   assert.equal(detail.workerPid, 4242)
 })
 
