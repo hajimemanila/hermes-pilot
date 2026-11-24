@@ -1,6 +1,7 @@
 # SPEC: 整合性監査 2 周目 — ガードの視野（同期・payload・遷移・ブリッジ中継）を広げる (`SPEC-COHERENCE-RESIDUAL-DRIFT`)
 
-- **状態**: 仕様確定（2026-11-24・赤ペン Q1〜Q4 すべて **A** で確定。Batch `DRF-1` 〜 `DRF-5`。起票は「File batches & start」待ち・未起票）
+- **Status**: archived
+- **状態**: 完了・アーカイブ済み（2026-11-25・Batch `DRF-1` 〜 `DRF-5` 全件完了 @ `cd173ed`）
 - **決定の出所**: `~/.hermes/plugin-data/hermes-pilot/review/sheets/spec-coherence-residual-drift-1.answer.json`（4 問・選択 4 / お任せ 0）
 - **前提仕様**: [SPEC-COHERENCE.md](./SPEC-COHERENCE.md) / [SPEC-coherence-audit-2.md](./SPEC-coherence-audit-2.md)（D101〜D105） / [SPEC-spec-execution-mode-mode-zer.md](./SPEC-spec-execution-mode-mode-zer.md)（D96〜D100） / [SPEC-RELIABILITY-GUARD.md](./SPEC-RELIABILITY-GUARD.md) / [SPEC-EN-ZERO-LEAK.md](./SPEC-EN-ZERO-LEAK.md)
 - **対象リポジトリ**: `hermes-mobile-pwa`（プラグイン名: `hermes-pilot` / `Hermes Pilot`）

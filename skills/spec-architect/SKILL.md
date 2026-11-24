@@ -50,7 +50,9 @@ Instead of listing questions in chat, build **exactly one question sheet**.
 captures are an optional extension for "the visual comparison itself is the question".
 
 1. **3±1 questions.** Each question is "one thing a human decides". Put the facts (`file:line`,
-   command output) in the body and leave only the decision to the human. Evidence needs only a
+   command output) in the body and leave only the decision to the human. Keep each question concise
+   for mobile readability: summarize long `file:line` lists as 1-2 representative locations plus
+   the total count instead of dumping long slash-joined lists. Evidence needs only a
    **minimal check of the relevant spot** (do not build out the whole repo or mock things up; file the
    sheet as soon as it is decided).
    **Do not run full test or verification suites in Round 1.** Explore with `rg` / `grep` for the specific
@@ -213,6 +215,12 @@ covered. Use the Hermes native API provider plus `delegate_task` only.
 - Order it "foundation → features → polish → end-to-end verification", and make the last batch the
   integration check plus a real-screen audit.
 - More than six batches: split into independent SPECs (one SPEC = one purpose).
+
+### Round 2 self-check (before wrap-up)
+
+- **Guard scope**: if the SPEC introduces or widens a static/coherence guard, verify its scope against existing files so unrelated modules (e.g. separate DB readers) are not falsely flagged, and align the guard description in the design section with the batch's Verify section.
+- **Line-count baselines**: if any batch shrinks or modifies files tracked by the target repository's line-count baseline/ratchet, explicitly include updating that baseline in the batch steps so checks remain green.
+- **Sequential order**: batches are filed in order, so confirm every batch only depends on earlier batches (`1 -> 2 -> ... -> N`).
 
 ## Wrap-up (A2B handoff)
 

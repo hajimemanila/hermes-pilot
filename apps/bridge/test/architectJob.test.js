@@ -799,3 +799,12 @@ test('pendingSpecs は archived: true の過去 SPEC を mtime が新しくて�
     ['docs/SPEC-ACTIVE.md'],
   )
 })
+
+test('spec-architect SKILL.md はモバイル可読性・冪等キー・Round 2 自己点検を含む', () => {
+  const skill = fs.readFileSync(path.resolve(import.meta.dirname, '../../../skills/spec-architect/SKILL.md'), 'utf8')
+  assert.match(skill, /--idempotency-key\s+"?review:spec-<slug>:round-1"?/)
+  assert.match(skill, /Round 2 self-check/)
+  assert.match(skill, /Guard scope/)
+  assert.match(skill, /Line-count baselines/)
+  assert.match(skill, /mobile readability/)
+})

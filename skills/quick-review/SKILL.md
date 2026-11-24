@@ -120,6 +120,8 @@ Location: `~/.hermes/plugin-data/hermes-pilot/review/sheets/<label>-<round>.json
 }
 ```
 
+Keep `question.text` and `detail` concise for mobile screens: summarize long `file:line` lists as 1-2 representative locations plus the total count.
+
 If you attach a picture, put it at `review/thumbs/<label>-<round>/q1-A.png` and make `thumb` a path
 relative to `thumbs/...`.
 
