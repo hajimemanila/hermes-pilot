@@ -173,3 +173,55 @@ test('Kanban ネイティブ解決: branch / grep=<taskId> / 明示 SHA で解�
     fs.rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('履歴の dirty:true は実ツリーがクリーン化または別 HEAD へ進んだら自動で落ちる', async () => {
+  const { root, repo, head } = fixture()
+  try {
+    const run = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' })
+    const history = path.join(root, 'dirty-history.jsonl')
+    const writeHist = (rows) =>
+      fs.writeFileSync(history, rows.map((r) => JSON.stringify(r)).join('\n') + '\n')
+
+    writeHist([
+      {
+        event: 'done',
+        task_id: 't_dirty_head',
+        metadata: { git: { repo, branch: 'main', head, dirty: true, changed_count: 3 } },
+      },
+      {
+        event: 'done',
+        task_id: 't_dirty_nohead',
+        metadata: { git: { repo, branch: 'main', head: '', dirty: true, changed_count: 2 } },
+      },
+    ])
+
+    // 1) 現 HEAD 上で実際に未コミット変更がある間だけ dirty: true
+    fs.writeFileSync(path.join(repo, 'wip.txt'), 'uncommitted\n')
+    const giDirty = createGitInfo({ home: root, sopHistory: history })
+    const d1 = await giDirty.forTask('t_dirty_head')
+    assert.equal(d1.dirty, true)
+    assert.equal(d1.changedCount, 3)
+    assert.equal((await giDirty.diffSummary('t_dirty_head')).dirty, true)
+    assert.equal((await giDirty.forTask('t_dirty_nohead')).dirty, true)
+
+    // 2) コミットしてクリーンになり HEAD が進むと dirty / changedCount ともに落ちる
+    run('add', '-A')
+    run('commit', '-q', '-m', 'chore: commit wip')
+    const giClean = createGitInfo({ home: root, sopHistory: history })
+    const d2 = await giClean.forTask('t_dirty_head')
+    assert.equal(d2.dirty, false)
+    assert.equal(d2.changedCount, 0)
+    assert.equal((await giClean.diffSummary('t_dirty_head')).dirty, false)
+    assert.equal((await giClean.forTask('t_dirty_nohead')).dirty, false)
+
+    // 3) 別コミット（新 HEAD）上で新たに未コミットファイルができても旧コミットのタスクは dirty に戻らない
+    fs.writeFileSync(path.join(repo, 'later-wip.txt'), 'later work\n')
+    const giLater = createGitInfo({ home: root, sopHistory: history })
+    const d3 = await giLater.forTask('t_dirty_head')
+    assert.equal(d3.dirty, false)
+    assert.equal(d3.changedCount, 0)
+    assert.equal((await giLater.diffSummary('t_dirty_head')).dirty, false)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})

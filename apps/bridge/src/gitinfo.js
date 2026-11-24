@@ -18,6 +18,7 @@ import { safeList } from './lib/safe.js'
 const MAX_PATCH_LINES = 200
 const MAX_PATCH_BYTES = 60_000
 const RESOLVED_TTL_MS = 30_000
+const REPO_STATE_TTL_MS = 5_000
 const SHA_MENTION_RE = /\b(?:commit|head)\s+([0-9a-f]{7,40})\b/gi
 
 export function createGitInfo(cfg = {}, deps = {}) {
@@ -30,6 +31,8 @@ export function createGitInfo(cfg = {}, deps = {}) {
   let cache = { mtimeMs: -1, map: new Map() }
   /** @type {Map<string, {at: number, value: {git: object, anchor: null, changedFiles: string[]}|null}>} */
   const resolvedCache = new Map()
+  /** @type {Map<string, {at: number, value: {exists: boolean, head: string, dirty: boolean}}>} */
+  const repoStateCache = new Map()
   /** @type {Map<string, string>} */
   const subjectCache = new Map()
   /** @type {Map<string, {at: number, files: Array<{path: string, add: number, del: number}>, subject: string}>} */
@@ -245,6 +248,45 @@ export function createGitInfo(cfg = {}, deps = {}) {
     return s
   }
 
+  /** 実リポジトリの現在 HEAD と作業ツリー汚損状態を取得（5 秒キャッシュ付き）。 */
+  async function readLiveRepoState(repo) {
+    if (!isGitRepoDir(repo)) return { exists: false, head: '', dirty: false }
+    const cached = repoStateCache.get(repo)
+    if (cached && Date.now() - cached.at < REPO_STATE_TTL_MS) return cached.value
+    const res = await git(repo, ['status', '--porcelain=v2', '--branch'])
+    if (!res.ok) return null
+    let head = ''
+    let dirty = false
+    for (const line of String(res.stdout).split('\n')) {
+      if (!line) continue
+      if (line.startsWith('# ')) {
+        if (line.startsWith('# branch.oid ')) {
+          const oid = line.slice('# branch.oid '.length).trim().toLowerCase()
+          if (oid && oid !== '(initial)') head = oid
+        }
+        continue
+      }
+      dirty = true
+    }
+    const value = { exists: true, head, dirty }
+    repoStateCache.set(repo, { at: Date.now(), value })
+    return value
+  }
+
+  /**
+   * 記録上の `dirty` を現在の実ツリーと突き合わせる。
+   * 既にクリーン、または HEAD が対象コミットから先へ進んでいれば false を返す。
+   */
+  async function resolveDirty(repo, head, recordedDirty) {
+    if (!recordedDirty) return false
+    const live = await readLiveRepoState(repo)
+    if (!live) return Boolean(recordedDirty)
+    if (!live.exists || !live.dirty) return false
+    const want = String(head ?? '').trim().toLowerCase()
+    if (!want) return true
+    return Boolean(live.head && want.length >= 4 && (live.head === want || live.head.startsWith(want) || want.startsWith(live.head)))
+  }
+
   /**
    * タスクの git 情報（バッジ用）。履歴・Kanban 双方に無ければ null。
    * @param {string} taskId タスクID
@@ -255,13 +297,14 @@ export function createGitInfo(cfg = {}, deps = {}) {
     const e = await resolveEntry(taskId, opts)
     if (!e) return null
     const { repo, branch, head, dirty, changed_count: changedCount } = e.git
+    const [subj, liveDirty] = await Promise.all([subject(repo, head), resolveDirty(repo, head, dirty)])
     return {
       repo,
       branch: branch ?? '',
       head: head ?? '',
-      dirty: Boolean(dirty),
-      changedCount: Number(changedCount ?? 0),
-      subject: await subject(repo, head),
+      dirty: liveDirty,
+      changedCount: liveDirty ? Number(changedCount ?? 0) : 0,
+      subject: subj,
     }
   }
 
@@ -306,12 +349,13 @@ export function createGitInfo(cfg = {}, deps = {}) {
       if (subj) subjectCache.set(key, subj)
     }
     const total = files.reduce((a, f) => ({ add: a.add + f.add, del: a.del + f.del }), { add: 0, del: 0 })
+    const liveDirty = await resolveDirty(repo, head, dirty)
     return {
       ok: true,
       repo,
       head,
       subject: subj ?? '',
-      dirty: Boolean(dirty),
+      dirty: liveDirty,
       files: files.slice(0, 100),
       total,
       truncated: files.length > 100,
