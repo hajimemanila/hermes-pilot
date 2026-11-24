@@ -22,7 +22,10 @@ import {
 } from '../src/lib/repoPicker.js'
 
 const here = import.meta.dirname
-const pane = fs.readFileSync(path.resolve(here, '../src/features/ReviewPane.jsx'), 'utf8')
+// 注釈シート（`findTarget` / 対象の記憶）は `review/AnnotationCreate.jsx` へ切り出し済み。
+// アサーションは分割前と同じ（2 ファイルを連結して 1 つの読み取り対象として扱う）。
+const pane = ['ReviewPane.jsx', 'review/AnnotationCreate.jsx']
+  .map((rel) => fs.readFileSync(path.resolve(here, '../src/features', rel), 'utf8')).join('\n')
 
 /** localStorage 相当（テスト用の最小実装）。 */
 function fakeStorage(init = {}) {

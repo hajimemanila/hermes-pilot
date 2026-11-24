@@ -9,7 +9,7 @@
     "apps/dashboard/index.js": 1991,
     "apps/bridge/src/review.js": 733,
     "apps/bridge/src/server.js": 792,
-    "apps/web/src/features/ReviewPane.jsx": 1486,
+    "apps/web/src/features/ReviewPane.jsx": 724,
     "apps/bridge/test/review.test.js": 1467,
     "apps/dashboard/pilot_dashboard.py": 1440,
     "dashboard/pilot_dashboard.py": 1440,

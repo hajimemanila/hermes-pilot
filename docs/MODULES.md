@@ -21,6 +21,19 @@
   過去セッション一覧 / 入力欄の自動伸長。
 - 会話全体の状態（ソケット・送信・スクロール・添付・ドロワー開閉）は `apps/web/src/features/ChatPane.jsx` に残す。
 
+## レビューの表示パーツ
+
+- `apps/web/src/features/review/Chip.jsx`: `.ak-chip` のチップ（一覧の行・「推奨」・読取専用が共有）。
+  定義は 1 箇所だけに置く。
+- `apps/web/src/features/review/ReviewForms.jsx`: 設問から描く `StandardForm` / sandbox iframe と
+  貼り付け回答の `IframeForm` / 詳細シートへの `SheetLink`、挿絵の拡大用 `toZoom`（内部専用）。
+- `apps/web/src/features/review/ReviewDetail.jsx`: 判断待ち以外の読み取り専用詳細 `ReadOnlyDetail`
+  （回答履歴・before/after・再オープン）。
+- `apps/web/src/features/review/AnnotationCreate.jsx`: 「＋ 注釈」シート `NewAnnotationSheet` と、
+  開く前の先読み `prefetchAnnotationData`（キャッシュはこのモジュールが持つ）。
+- 一覧（`ItemRow`）・作業ログ（`WorkerFeed`）・タブ・選択状態・送信後の遷移（次の判断待ちを開く／
+  全件完了バナー）は `apps/web/src/features/ReviewPane.jsx` に残す。
+
 ## Bridge の HTTP 層
 
 - `apps/bridge/src/http/respond.js`: 応答の共通形（`sendJson` / `sendError` / `sendFailure`）・本文読み取り・
