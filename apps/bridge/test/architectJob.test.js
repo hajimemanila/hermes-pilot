@@ -807,4 +807,5 @@ test('spec-architect SKILL.md はモバイル可読性・冪等キー・Round 2 
   assert.match(skill, /Guard scope/)
   assert.match(skill, /Line-count baselines/)
   assert.match(skill, /mobile readability/)
+  assert.match(skill, /Fast intermediate Verify/)
 })

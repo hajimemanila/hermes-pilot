@@ -214,6 +214,9 @@ covered. Use the Hermes native API provider plus `delegate_task` only.
 - Dependencies run one way, front to back. If `V5-2` uses an API from `V5-1`, put `V5-1` first.
 - Order it "foundation → features → polish → end-to-end verification", and make the last batch the
   integration check plus a real-screen audit.
+- **Fast intermediate Verify**: for intermediate batches (`1 .. N-1`), set **Verify** to targeted unit tests
+  plus fast static/build/coherence checks (reserve slow headless-browser/real-screen audits and cold-install
+  suites for the final batch `N`, unless an intermediate batch specifically changes UI layout or packaging).
 - More than six batches: split into independent SPECs (one SPEC = one purpose).
 
 ### Round 2 self-check (before wrap-up)
