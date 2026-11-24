@@ -5,6 +5,7 @@ import { localizeError } from '../i18n/lang.js'
 import { useI18n } from '../i18n/index.js'
 import { sep } from '../lib/format.js'
 import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
+import { refreshSync, subscribeSync, tickSync } from '../lib/syncSources.js'
 
 /** 秒を「12m34s」形式に。 */
 function fmtElapsed(sec) {
@@ -62,20 +63,26 @@ export function LiveSheet({ onClose, notify, onAbortTask }) {
   const [data, setData] = useState(null)
   const [busy, setBusy] = useState(false)
 
-  const load = useCallback(async () => {
-    try {
-      const d = await api('/api/live')
-      setData(d)
-    } catch (e) {
+  /** ライブ進捗を反映する（取得は表の `live` = TasksPane と同じ 1 回を共有する）。 */
+  const applyLive = useCallback((d, meta) => {
+    if (meta?.error) {
+      const e = meta.error
       setData({ ok: false, code: e?.code, params: e?.params, error: e?.message, reason: e?.message, turns: [], tasks: [] })
+      return
     }
+    if (d) setData(d)
   }, [])
 
+  const load = useCallback(async () => {
+    const r = await refreshSync('live')
+    applyLive(r.value, { error: r.error })
+  }, [applyLive])
+
   useEffect(() => {
-    load()
-    const id = setInterval(() => document.visibilityState === 'visible' && load(), 5000)
-    return () => clearInterval(id)
-  }, [load])
+    const off = subscribeSync('live', applyLive)
+    tickSync('live')
+    return off
+  }, [applyLive])
 
   const abort = async (task) => {
     setBusy(true)

@@ -18,7 +18,7 @@ import { SpecSeedSheet } from './SpecSeedSheet.jsx'
 import { SpecReadyBanner } from '../components/SpecReadyBanner.jsx'
 import { SpecMarkdownSheet } from '../components/SpecMarkdownSheet.jsx'
 import { ArchitectJobBar } from '../components/ArchitectJobBar.jsx'
-import { jobPollMs, pickActiveArchitectJob, pickSpecBanner } from '../lib/specSeed.js'
+import { pickActiveArchitectJob, pickSpecBanner } from '../lib/specSeed.js'
 import { celebrate } from '../lib/vibe.js'
 import { LATEST_REPORT_ID, LAST_CHAT_KEY, followUpPromptFor, isPipelineReport, reportSummaryLine, toEpochMs } from '../lib/chatReports.js'
 import { Icon, Loader, RefreshButton, Sheet, fmtBytes, fmtDateTime, relTime } from '../components/Ui.jsx'
@@ -29,6 +29,7 @@ import { sep } from '../lib/format.js'
 import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
 import { HM_STORAGE } from '../contracts/storage.js'
 import { isOfflineError, shouldReconnectToast } from '../lib/netRecovery.js'
+import { refreshSync, setSyncParams, setSyncState, subscribeSync, tickSync } from '../lib/syncSources.js'
 import { useWakeSync } from '../lib/useWakeSync.js'
 import { ChatSessionList, DRAWER_REFRESH_THROTTLE_MS, MarkdownBody, PipelineReportCard, ToolRows, commitProgressToBlocks, fitComposer } from './chat/ChatParts.jsx'
 import { ChatDrawer } from './chat/ChatDrawer.jsx'
@@ -273,21 +274,41 @@ export function ChatPane({
    * Architect の進行バーもチャットから消えない。
    */
   const seedBoard = repo?.boards?.[0]?.slug ?? ''
-  const loadSpecJobs = useCallback(async () => {
-    try {
-      const qs = seedBoard ? `?board=${encodeURIComponent(seedBoard)}` : ''
-      const d = await api(`/api/architect/jobs${qs}`)
-      if (d?.ok) setSpecJobs(d)
-    } catch (e) {
-      if (!isOfflineError(e)) setSpecJobs(null)
+  /** ジョブ一覧の応答を反映する（取得は表の `architectJobs` = TasksPane と共有する 1 回）。 */
+  const applySpecJobs = useCallback((d, meta) => {
+    if (meta?.error) {
+      if (!isOfflineError(meta.error)) setSpecJobs(null)
+      return
     }
-  }, [seedBoard])
+    if (d?.ok) setSpecJobs(d)
+  }, [])
+
+  const loadSpecJobs = useCallback(async () => {
+    const r = await refreshSync('architectJobs')
+    applySpecJobs(r.value, { error: r.error })
+  }, [applySpecJobs])
+
+  /* 進行バーはチャットを見ている間だけ（表の `architectJobs`・進行中は 4 秒）。 */
+  useEffect(() => {
+    if (!active && !seedOpen) return undefined
+    const off = subscribeSync('architectJobs', applySpecJobs)
+    tickSync('architectJobs')
+    return off
+  }, [active, seedOpen, applySpecJobs])
 
   /** 進行バーに出すジョブ（SPEC V6 §3.3 ②）。`spec_ready` / `launched` はバナーが引き継ぐ。 */
   const activeJob = useMemo(
     () => pickActiveArchitectJob(specJobs?.jobs ?? [], specJobClosed, seedBoard),
     [specJobs, specJobClosed, seedBoard],
   )
+
+  /* 進行中（running / awaiting_spec）だけ 4 秒へ切り替える（表の `architectJobs.everyMsOf`）。 */
+  useEffect(() => {
+    if (!active) return
+    setSyncState({
+      architectBusy: Boolean(activeJob && (activeJob.status === 'running' || activeJob.status === 'awaiting_spec')),
+    })
+  }, [active, activeJob])
 
   /**
    * 進行バーの「🔍 進捗詳細」（SPEC-PILOT-V9 §3.3 ③ / D43 後半）。
@@ -314,16 +335,6 @@ export function ChatPane({
       /* 遷移できなくても画面は壊さない */
     }
   }, [seedBoard])
-
-  // 進行中は 4 秒・人待ち／停止は 20 秒（SPEC V6 §3.3 ③）
-  const jobPollInterval = jobPollMs(activeJob)
-
-  useEffect(() => {
-    if (!active && !seedOpen) return undefined
-    loadSpecJobs()
-    const timer = setInterval(loadSpecJobs, jobPollInterval)
-    return () => clearInterval(timer)
-  }, [active, seedOpen, loadSpecJobs, jobPollInterval])
 
   /** 出すカードは 1 枚だけ（完成 SPEC 優先・× で閉じたものは再表示しない）。 */
   const specBanner = useMemo(() => {
@@ -716,29 +727,21 @@ export function ChatPane({
     return () => clearInterval(id)
   }, [isWorking])
 
-  // 紐づいた Review 自律ワーカーが実行中の間は直近ツールステップを 4 秒ごとに取得する
+  // 紐づいた Review 自律ワーカーが実行中の間は直近ツールステップを取りに行く（表の `workerFeed` = 4 秒）
   const linkedWorkerId = linkedReview && (linkedReview.status === 'running' || linkedReview.status === 'ready') ? linkedReview.id : null
   useEffect(() => {
     if (!linkedWorkerId) {
       setWorkerFeed(null)
       return undefined
     }
-    let alive = true
-    const load = async () => {
-      try {
-        const r = await api(`/api/review/${encodeURIComponent(linkedWorkerId)}/worker?limit=8`)
-        if (alive) setWorkerFeed(r)
-      } catch {
-        /* 補助情報 */
-      }
-    }
-    load()
-    const id = setInterval(() => {
-      if (document.visibilityState === 'visible') load()
-    }, 4000)
+    setSyncParams({ workerFeedId: linkedWorkerId })
+    const off = subscribeSync('workerFeed', (r, meta) => {
+      if (!meta?.error) setWorkerFeed(r)
+    })
+    refreshSync('workerFeed')
     return () => {
-      alive = false
-      clearInterval(id)
+      off()
+      setSyncParams({ workerFeedId: null })
     }
   }, [linkedWorkerId])
 

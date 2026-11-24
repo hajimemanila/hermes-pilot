@@ -23,9 +23,7 @@ import { sep } from '../../lib/format.js'
 import { collapseTaskEvents } from '../../lib/tasksView.js'
 import { HM_EVENTS, emitHmEvent } from '../../contracts/events.js'
 import { WorkerFeed } from '../ReviewPane.jsx'
-
-/** 実行中タスクの詳細を追いかける間隔（heartbeat と worker の進捗が増えるため）。 */
-const DETAIL_POLL_MS = 5000
+import { refreshSync, setSyncParams, setSyncState, subscribeSync } from '../../lib/syncSources.js'
 
 /**
  * タスク状態 → 辞書キー（未知は生の値）。
@@ -184,11 +182,7 @@ function DetailBody({ detail, board, diff, patch, aborting, onToggleDiff, onPick
 
       {detail.sessionId ? (
         <div style={{ marginTop: 12 }}>
-          <WorkerFeed
-            taskId={detail.id}
-            open={detail.status === 'running' || detail.status === 'ready'}
-            endpoint={`/api/boards/${encodeURIComponent(detailBoard)}/tasks/${encodeURIComponent(detail.id)}/worker?limit=30`}
-          />
+          <WorkerFeed taskId={detail.id} open={detail.status === 'running' || detail.status === 'ready'} topic="taskDetailWorker" />
         </div>
       ) : null}
 
@@ -240,6 +234,12 @@ export function TaskDetailSheet({ target, fallbackBoard, mode = 'sheet', notify,
   const targetSeq = target?.seq ?? 0
   const key = targetId ? `${targetBoard}|${targetId}|${targetSeq}` : ''
 
+  // 取得先（開いているタスク）を取得関数へ渡す。購読より先に走らせる。
+  useEffect(() => {
+    setSyncParams({ taskDetail: targetId ? { board: targetBoard, id: targetId } : null })
+    return () => setSyncParams({ taskDetail: null })
+  }, [targetId, targetBoard])
+
   useEffect(() => {
     if (!targetId) {
       setFetched({ key: '', detail: null, loading: false, failed: false })
@@ -248,24 +248,26 @@ export function TaskDetailSheet({ target, fallbackBoard, mode = 'sheet', notify,
       return undefined
     }
     const myKey = `${targetBoard}|${targetId}|${targetSeq}`
-    let alive = true
     setFetched({ key: myKey, detail: null, loading: true, failed: false })
     setDiff(null)
     setPatch(null)
-    ;(async () => {
-      try {
-        const d = await api(`/api/boards/${encodeURIComponent(targetBoard)}/tasks/${encodeURIComponent(targetId)}`)
-        if (!alive) return
-        setFetched({ key: myKey, detail: { ...d, board: targetBoard }, loading: false, failed: false })
-      } catch (e) {
-        if (!alive) return
-        notify?.(e.message)
+    // 取得は表の `taskDetail`（1 トピック 1 取得）。ここは値を反映するだけ。
+    const apply = (d, meta) => {
+      if (meta?.error) {
+        notify?.(meta.error.message)
         setFetched({ key: myKey, detail: null, loading: false, failed: true })
+        return
       }
-    })()
-    return () => {
-      alive = false
+      if (!d || d.id !== targetId) return
+      setFetched((prev) =>
+        prev.key === myKey
+          ? { key: myKey, detail: { ...(prev.detail ?? {}), ...d, board: targetBoard }, loading: false, failed: false }
+          : prev,
+      )
     }
+    const off = subscribeSync('taskDetail', apply)
+    refreshSync('taskDetail')
+    return off
     // notify は毎レンダー作り直される素の関数。target が変わった時だけ取り直せば足りる
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetId, targetBoard, targetSeq])
@@ -274,34 +276,14 @@ export function TaskDetailSheet({ target, fallbackBoard, mode = 'sheet', notify,
   const detail = state.detail
   const board = String(detail?.board ?? fallbackBoard ?? '')
 
-  /** 実行中／待機中のあいだ詳細を再同期する（heartbeat・イベント・worker の進捗が増えるため）。 */
+  /**
+   * 実行中／待機中のあいだだけ詳細を再同期する（表の `taskDetail` = 5 秒・`enabledWhen: detailActive`）。
+   * 完了後は開いたときの 1 回で足りる。
+   */
+  const detailStatus = detail?.status ?? null
   useEffect(() => {
-    const id = detail?.id
-    const status = detail?.status
-    if (!id) return undefined
-    if (!(status === 'running' || status === 'ready')) return undefined
-    const pollBoard = String(detail?.board ?? fallbackBoard ?? '')
-    let alive = true
-    const timer = setInterval(async () => {
-      if (document.visibilityState !== 'visible') return
-      try {
-        const d = await api(`/api/boards/${encodeURIComponent(pollBoard)}/tasks/${encodeURIComponent(id)}`)
-        if (!alive) return
-        // 別のタスクを開いた／閉じたときに古い応答で上書きしない
-        setFetched((prev) =>
-          prev.detail && prev.detail.id === id
-            ? { ...prev, detail: { ...prev.detail, ...d, board: pollBoard } }
-            : prev,
-        )
-      } catch {
-        /* 一時的な失敗は次の tick で取り直す */
-      }
-    }, DETAIL_POLL_MS)
-    return () => {
-      alive = false
-      clearInterval(timer)
-    }
-  }, [detail?.id, detail?.status, detail?.board, fallbackBoard])
+    setSyncState({ detailActive: Boolean(targetId) && (detailStatus === 'running' || detailStatus === 'ready') })
+  }, [targetId, detailStatus])
 
   /** 差分サマリ（アコーディオンを開いたときだけ取りに行く）。 */
   const toggleDiff = async (id) => {

@@ -1,7 +1,6 @@
 import React, { Suspense, lazy, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { readDeepLink } from './lib/deeplink.js'
 
-import { api } from './api.js'
 import { appBadgeCount, navBadgeState, pendingCount, runningCount, unseenNotices, waitingCount } from './lib/reviewView.js'
 import { cachePercent, gwState, latestToolName, reviewJumpTarget, runningTotal } from './lib/telemetry.js'
 import {
@@ -32,9 +31,10 @@ import { consumePairToken } from './lib/pairing.js'
 import { isChunkLoadError, reloadForChunkError, retryImport } from './lib/lazyRetry.js'
 import { HM_EVENTS, emitHmEvent } from './contracts/events.js'
 import { HM_STORAGE } from './contracts/storage.js'
-import { OVERVIEW_TIMEOUT_MS, WAKE_THROTTLE_MS, isConnectivityRecovery } from './lib/netRecovery.js'
+import { WAKE_THROTTLE_MS, isConnectivityRecovery } from './lib/netRecovery.js'
 import { shouldShowBanner, transport } from './lib/transport.js'
 import { createSyncScheduler } from './lib/syncScheduler.js'
+import { createSyncSources, installSyncRuntime } from './lib/syncSources.js'
 
 /*
  * ターミナルは初回のみ読み込む。チャンク喪失・空 200（undefined 解決）も
@@ -337,11 +337,18 @@ export function App() {
    * （以前は 7 本の `setInterval` と `registerSyncer` / 1,500ms スロットルが呼び出し側に散っていた）。
    */
   const schedulerRef = useRef(null)
+  const syncSourcesRef = useRef(null)
   if (!schedulerRef.current) {
-    schedulerRef.current = createSyncScheduler({
+    // 取得関数は `lib/syncSources.js` が唯一の置き場。ここはアプリ 1 つに 1 本を配線するだけ。
+    const sourceSet = createSyncSources()
+    syncSourcesRef.current = sourceSet
+    const scheduler = createSyncScheduler({
+      sources: sourceSet.sources,
       isVisible: () => document.visibilityState === 'visible',
       currentTab: () => tabRef.current,
     })
+    schedulerRef.current = scheduler
+    installSyncRuntime({ scheduler, sources: sourceSet })
   }
   const scheduler = schedulerRef.current
   // 自分が流した `WAKE_SYNC` で自分がもう一度走らないよう印を付ける（同じ 1 周を 2 回叩かない）
@@ -490,9 +497,25 @@ export function App() {
   }, [])
 
   const connRef = useRef('ok')
-  const refresh = useCallback(async () => {
-    try {
-      const data = await api('/api/overview', { timeoutMs: OVERVIEW_TIMEOUT_MS })
+  /**
+   * `overview` の応答を状態へ反映する（取得そのものは `lib/syncSources.js` の `overview`）。
+   * 復帰（オフライン／未認証 → ok）を検知したら他トピックを 1 周させる。
+   */
+  const applyOverview = useCallback(
+    (data, error) => {
+      if (error) {
+        if (error.status === 401) {
+          connRef.current = 'error'
+          // 401 は「繋がっているが認証が要る」。`ok` が来るまで auth のまま固定する
+          transport.report('http', 'auth')
+          setAuthNeeded(true)
+          return null
+        }
+        const next = error.code === 'OFFLINE' ? 'offline' : 'error'
+        connRef.current = next
+        transport.report('http', error.code === 'OFFLINE' ? 'timeout' : 'error')
+        return null
+      }
       const prevHttp = transport.sourceState('http')
       const recovered = isConnectivityRecovery(connRef.current, 'ok')
       connRef.current = 'ok'
@@ -502,20 +525,19 @@ export function App() {
       // 本当のオフライン／初回未取得からの回復時だけ他トピックを一斉同期する（1 回の揺らぎは無音）
       if (recovered && (prevHttp === 'offline' || prevHttp === 'auth' || !overviewRef.current)) wakeSync()
       return data
+    },
+    [wakeSync],
+  )
+
+  /** 起動時と手動再試行の 1 回（単発。定期取得は表の `overview`）。 */
+  const refresh = useCallback(async () => {
+    try {
+      const data = await syncSourcesRef.current.sources.overview()
+      return applyOverview(data, null)
     } catch (e) {
-      if (e.status === 401) {
-        connRef.current = 'error'
-        // 401 は「繋がっているが認証が要る」。`ok` が来るまで auth のまま固定する
-        transport.report('http', 'auth')
-        setAuthNeeded(true)
-        return null
-      }
-      const next = e.code === 'OFFLINE' ? 'offline' : 'error'
-      connRef.current = next
-      transport.report('http', e.code === 'OFFLINE' ? 'timeout' : 'error')
-      return null
+      return applyOverview(undefined, e)
     }
-  }, [wakeSync])
+  }, [applyOverview])
 
   // 起動時の 1 回（QR ペアリング → overview）。以降の 5 秒は表の `overview` が持つ。
   useEffect(() => {
@@ -533,14 +555,14 @@ export function App() {
   }, [refresh])
 
   /*
-   * トピックごとの同期（表の `id` と 1:1）。中身は旧 `useEffect` の `sync` をそのまま移しただけで、
-   * 取得 URL・state の更新・`catch` の握り方は変えていない。間隔と停止規則は表だけが持つ。
+   * トピックごとの「受け取った値を state へ反映する」処理（表の `id` と 1:1）。
+   * 取得は `lib/syncSources.js` が 1 トピック 1 回だけ行い、その値を購読者へ配る。
+   * ここは値を反映するだけで、`api()` を定期には呼ばない。
    */
-  const syncReports = useCallback(async () => {
-    try {
-      const r = await api('/api/review/chat-reports?limit=200')
+  const applyReports = useCallback(
+    (data) => {
       if (!mountedRef.current) return
-      const items = Array.isArray(r.items) ? r.items : []
+      const items = Array.isArray(data?.items) ? data.items : []
       // チャットタブを開いている間は常に既読（点が出ても意味がない）
       if (tabRef.current === 'chat') markChatSeen()
       setChatReportItems(items)
@@ -573,76 +595,41 @@ export function App() {
       } else if (newestAt > chatReportedAtRef.current) {
         chatReportedAtRef.current = newestAt
       }
-    } catch {
-      /* 完了報告は補助情報。取れなくても画面は壊さない */
-    }
-  }, [markChatSeen, notify])
+    },
+    [markChatSeen, notify],
+  )
 
-  const syncReviewWaiting = useCallback(async () => {
-    try {
-      const r = await api('/api/review')
-      if (!mountedRef.current) return
-      const items = Array.isArray(r.items) ? r.items : []
-      setReviewItems(items)
-      setReviewWaiting(waitingCount(items))
-      setReviewRunning(runningCount(items))
-    } catch {
-      /* 取れないときは前の値を保つ（バッジは補助情報なので画面を壊さない） */
-    }
+  const applyReviewWaiting = useCallback((data, meta) => {
+    // 取れないときは前の値を保つ（バッジは補助情報なので画面を壊さない）
+    if (meta?.error || !mountedRef.current) return
+    const items = Array.isArray(data?.items) ? data.items : []
+    setReviewItems(items)
+    setReviewWaiting(waitingCount(items))
+    setReviewRunning(runningCount(items))
   }, [])
 
-  const syncReviewFeed = useCallback(async () => {
-    try {
-      const r = await api('/api/review/feed?limit=20')
-      if (mountedRef.current) setReviewUnseen(unseenNotices(r.items, lastSeenRef.current).length)
-    } catch {
-      /* フィードは補助情報。取れなくても画面は壊さない */
-    }
+  const applyReviewFeed = useCallback((data, meta) => {
+    if (meta?.error || !mountedRef.current) return
+    setReviewUnseen(unseenNotices(data?.items, lastSeenRef.current).length)
   }, [])
 
-  const syncInbox = useCallback(async () => {
-    try {
-      const r = await api('/api/inbox')
-      if (mountedRef.current) setInboxPending(pendingCount(r.items))
-    } catch {
-      /* 取れないときは前の値を保つ（バッジは補助情報なので画面を壊さない） */
-    }
-  }, [])
-
-  const syncLive = useCallback(async () => {
-    try {
-      const d = await api('/api/live')
-      if (!mountedRef.current) return
-      setLiveTurns(Number(d?.counts?.turns ?? 0))
-      setLiveTurnsList(Array.isArray(d?.turns) ? d.turns : [])
-      setLiveArchitect(Number(d?.counts?.architect ?? 0))
-    } catch {
-      /* 補助情報 */
-    }
-  }, [])
-
-  const syncUsage = useCallback(async () => {
-    try {
-      const d = await api('/api/usage?hours=24')
-      if (mountedRef.current) setUsageData(d)
-    } catch {
-      /* 補助情報。取れなくてもピルを出さないだけ */
-    }
+  const applyUsage = useCallback((data, meta) => {
+    if (meta?.error || !mountedRef.current) return
+    if (data) setUsageData(data)
   }, [])
 
   /**
-   * 購読はここ 1 本だけ（以前は 7 本の `useEffect` がそれぞれタイマーを持っていた）。
-   * `start()` は表の `everyMs` でタイマーを張るだけで、再レンダーでは張り直さない。
+   * 購読はここ 1 本だけ。`start()` は表の間隔でタイマーを張るだけで、再レンダーでは張り直さない。
+   * `inbox` / `live` の購読はペイン（TasksPane / InboxSheet / LiveSheet）が持つ
+   * — 取得は 1 回で、`hm:inbox-items` / `hm:live-turns` のイベントでバッジへ届く。
    */
   useEffect(() => {
     const offs = [
-      scheduler.subscribe('overview', refresh),
-      scheduler.subscribe('reports', syncReports),
-      scheduler.subscribe('reviewWaiting', syncReviewWaiting),
-      scheduler.subscribe('reviewFeed', syncReviewFeed),
-      scheduler.subscribe('inbox', syncInbox),
-      scheduler.subscribe('live', syncLive),
-      scheduler.subscribe('usage', syncUsage),
+      scheduler.subscribe('overview', (data, meta) => applyOverview(data, meta?.error ?? null)),
+      scheduler.subscribe('reports', applyReports),
+      scheduler.subscribe('reviewWaiting', applyReviewWaiting),
+      scheduler.subscribe('reviewFeed', applyReviewFeed),
+      scheduler.subscribe('usage', applyUsage),
     ]
     scheduler.start()
     // 初回は各画面を待たせない（`overview` は起動 effect が取るので二重にしない）
@@ -651,7 +638,7 @@ export function App() {
       for (const off of offs) off()
       scheduler.stop()
     }
-  }, [scheduler, refresh, syncReports, syncReviewWaiting, syncReviewFeed, syncInbox, syncLive, syncUsage])
+  }, [scheduler, applyOverview, applyReports, applyReviewWaiting, applyReviewFeed, applyUsage])
 
   /*
    * 復帰の合図: 表示に戻った / ページ復元 / フォーカスした / オンラインに戻った → 表を 1 周（`wakeSync`）。

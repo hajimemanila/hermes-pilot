@@ -31,6 +31,10 @@ import { Chip } from './review/Chip.jsx'
 import { IframeForm, SheetLink, StandardForm } from './review/ReviewForms.jsx'
 import { ReadOnlyDetail } from './review/ReviewDetail.jsx'
 import { NewAnnotationSheet, prefetchAnnotationData } from './review/AnnotationCreate.jsx'
+import { refreshSync, setSyncParams, subscribeSync, tickSync } from '../lib/syncSources.js'
+
+/** WorkerFeed の取得先はトピックが決めるので、トピック → パラメータ名の対応表を 1 つだけ持つ。 */
+const WORKER_FEED_PARAM = { reviewDetail: 'reviewDetailId', workerFeed: 'workerFeedId' }
 
 /** レビュービュー（標準は `sheet.json` からネイティブフォーム、既定は判断待ちのみ・送信で次へ）。 */
 
@@ -81,49 +85,50 @@ function ItemRow({ item, onOpen }) {
  * worker（profile mobile）の進行。反映中でも「何をしているか」が見えるようにする。
  *
  * レビュー詳細とタスク詳細（任意のボード）の両方から使うので名前付きで公開する。
- * エンドポイントは `endpoint` で差し替えられる（既定はレビュー詳細）。
+ * エンドポイントはトピックが決める（`reviewDetail` / `taskDetailWorker` / `workerFeed`）。
  *
- * @param {{taskId: string, open?: boolean, endpoint?: string|null}} props プロパティ
+ * @param {{taskId: string, open?: boolean, topic?: string}} props プロパティ
  */
-export function WorkerFeed({ taskId, open = false, endpoint = null }) {
+export function WorkerFeed({ taskId, open = false, topic = 'reviewDetail' }) {
   const { t } = useI18n()
   const [feed, setFeed] = useState(null)
   const [error, setError] = useState(null)
   const boxRef = React.useRef(null)
-  const url = endpoint || `/api/review/${taskId}/worker?limit=30`
 
   useEffect(() => {
-    let alive = true
-    const load = async () => {
-      try {
-        const r = await api(url)
-        if (!alive) return
-        setFeed(r)
-        setError(null)
-      } catch (e) {
-        if (!alive) return
+    const apply = (value, meta) => {
+      if (meta?.error) {
         // 直前に unblock した直後はワーカーの session_id がまだ書かれていない（NO_SESSION）ため、
-        // 赤エラーにせず「起動待ち」の柔和な表示で次の 5 秒ポーリングを待つ。
-        if (open && e?.code === 'NO_SESSION') {
+        // 赤エラーにせず「起動待ち」の柔和な表示で次の取得を待つ。
+        if (open && meta.error?.code === 'NO_SESSION') {
           setFeed((prev) => prev ?? { status: 'ready', feed: { messages: [] } })
           setError(null)
           return
         }
-        setError(e?.message || t('review.loadFailed'))
+        setError(meta.error?.message || t('review.loadFailed'))
+        return
+      }
+      if (value == null) return
+      setFeed(value)
+      setError(null)
+    }
+    // 取得は表のトピック（1 トピック 1 取得）。どの worker かは取得関数へ id で渡す。
+    const paramKey = WORKER_FEED_PARAM[topic]
+    if (paramKey) setSyncParams({ [paramKey]: taskId })
+    if (!open) {
+      // 完了後は開いたときの 1 回で足りる（ライブ更新はしない）
+      refreshSync(topic).then((r) => apply(r.value, { error: r.error }))
+      return () => {
+        if (paramKey) setSyncParams({ [paramKey]: null })
       }
     }
-    load()
-    // 進行中だけライブ更新。完了後は開いたときの1回で足りる
-    const id = open
-      ? setInterval(() => {
-          if (document.visibilityState === 'visible') load()
-        }, 5000)
-      : null
+    const off = subscribeSync(topic, apply)
+    refreshSync(topic)
     return () => {
-      alive = false
-      if (id) clearInterval(id)
+      off()
+      if (paramKey) setSyncParams({ [paramKey]: null })
     }
-  }, [open, taskId, url, t])
+  }, [open, taskId, topic, t])
 
   useEffect(() => {
     const el = boxRef.current
@@ -188,12 +193,22 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
   const feedNotifiedRef = useRef(0)
 
   const lastLoadOkRef = useRef(true)
-  const load = useCallback(async () => {
-    try {
-      const r = await api('/api/review')
-      const items = r.items || []
+  /** 一覧の応答を反映する（取得は表の `reviewWaiting` = 1 トピック 1 取得）。 */
+  const applyItems = useCallback(
+    (value, meta) => {
+      if (meta?.error) {
+        lastLoadOkRef.current = false
+        setState((prev) => ({
+          loading: false,
+          items: prev.items,
+          board: prev.board,
+          error: meta.error?.message || t('review.loadFailed'),
+        }))
+        return []
+      }
+      const items = Array.isArray(value?.items) ? value.items : []
       lastLoadOkRef.current = true
-      setState({ loading: false, items, board: r.board || null, error: null })
+      setState({ loading: false, items, board: value?.board || null, error: null })
       // 下部ナビの丸バッジ（注釈 1377.jpg の赤）を、この一覧と同じデータで同期する
       try {
         emitHmEvent(HM_EVENTS.REVIEW_ITEMS, { items })
@@ -203,25 +218,29 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
       // 「注釈を作る」シートを開いた瞬間に段階的読み込みにならないよう先読みする
       prefetchAnnotationData()
       return items
-    } catch (e) {
-      lastLoadOkRef.current = false
-      setState((prev) => ({ loading: false, items: prev.items, board: prev.board, error: e?.message || t('review.loadFailed') }))
-      return []
-    }
-  }, [])
+    },
+    [t],
+  )
+
+  const load = useCallback(
+    async () => {
+      const r = await refreshSync('reviewWaiting')
+      return applyItems(r.value, { error: r.error })
+    },
+    [applyItems],
+  )
 
   const refreshReview = useCallback(async () => {
     await load()
     return lastLoadOkRef.current
   }, [load])
 
+  /* 一覧は表の `reviewWaiting`（15 秒）。マウント中だけ購読する。 */
   useEffect(() => {
-    load()
-    const id = setInterval(() => {
-      if (document.visibilityState === 'visible') load()
-    }, 15000)
-    return () => clearInterval(id)
-  }, [load])
+    const off = subscribeSync('reviewWaiting', applyItems)
+    tickSync('reviewWaiting')
+    return off
+  }, [applyItems])
 
   const groups = useMemo(
     () => groupItems(state.items, showAllDone ? Number.MAX_SAFE_INTEGER : DONE_LIMIT),
@@ -295,13 +314,15 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
   }
 
   /**
-   * 作業フィードを読み、開いている間は既読にする（ナビの緑の点を消す）。
+   * 作業フィードを反映し、開いている間は既読にする（ナビの緑の点を消す）。
    * 新しい「完了」があればトーストで 1 回だけ知らせる（同じ行で二度は出さない）。
+   * 取得は表の `reviewFeed`（15 秒・App の未読バッジと同じ 1 回の取得を共有する）。
    */
-  const loadFeed = useCallback(async () => {
-    try {
-      const r = await api('/api/review/feed?limit=6')
-      const items = Array.isArray(r.items) ? r.items : []
+  const applyFeed = useCallback(
+    (value, meta) => {
+      if (meta?.error) return // フィードは補助情報
+      // 取得は 20 件（App の未読判定が要る）。表示は従来どおり直近 6 行。
+      const items = (Array.isArray(value?.items) ? value.items : []).slice(-6)
       setFeed(items)
       const at = Date.now()
       try {
@@ -323,17 +344,21 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
         }
         feedNotifiedRef.current = latest.at
       }
-    } catch {
-      /* フィードは補助情報 */
-    }
-  }, [notify])
+    },
+    [notify, t],
+  )
+
+  const loadFeed = useCallback(async () => {
+    const r = await refreshSync('reviewFeed')
+    applyFeed(r.value, { error: r.error })
+  }, [applyFeed])
 
   useEffect(() => {
     if (!active) return undefined
-    loadFeed()
-    const id = setInterval(() => document.visibilityState === 'visible' && loadFeed(), 15000)
-    return () => clearInterval(id)
-  }, [loadFeed, active])
+    const off = subscribeSync('reviewFeed', applyFeed)
+    tickSync('reviewFeed')
+    return off
+  }, [applyFeed, active])
 
   useWakeSync(() => {
     load()

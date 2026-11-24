@@ -132,12 +132,15 @@ test('回線復帰の契約が App・全主要ペイン・WebSocket に入って
   assert.match(app, /scheduler\.forceAll\(\)/)
 
   const tasks = readCode('features/TasksPane.jsx')
-  assert.match(tasks, /if\s*\(boardsFailedRef\.current\)\s*loadBoards\(\{\s*silent:\s*true\s*\}\)/)
+  // 定期取得は表へ移した。復帰時は「取得を 1 回やり直す」だけを呼ぶ（ボード再試行は表の enabledWhen が持つ）
+  assert.match(tasks, /refreshSync\('boards'\)/)
+  assert.match(tasks, /refreshSync\('tasks'\)/)
   assert.match(tasks, /if\s*\(tasksBoardRef\.current\s*!==\s*slug\)\s*setTasks\(\[\]\)/)
   assert.match(tasks, /if\s*\(archBoardRef\.current\s*!==\s*board\)\s*setArchitectJobs\(null\)/)
   assert.match(tasks, /if\s*\(specsBoardRef\.current\s*!==\s*slug\)\s*setSpecsInfo\(null\)/)
   assert.match(tasks, /if\s*\(cohBoardRef\.current\s*!==\s*slug\)\s*setCoherenceReport\(null\)/)
-  assert.match(tasks, /reportBoardRef\.current\s*!==\s*board\)\s*setLatestReport\(null\)/)
+  // 取得に失敗したときは前の完走レポートを消さない（エラーでは反映しない）
+  assert.match(tasks, /!meta\?\.error\s*&&\s*applySpecReports\(board,\s*d\)/)
   assert.match(tasks, /useWakeSync\(\(\)\s*=>/)
 
   const review = readCode('features/ReviewPane.jsx')

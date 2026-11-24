@@ -7,6 +7,7 @@ import { isAnswered } from '../lib/reviewView.js'
 import { localizeError } from '../i18n/lang.js'
 import { useI18n } from '../i18n/index.js'
 import { sep } from '../lib/format.js'
+import { refreshSync, subscribeSync, tickSync } from '../lib/syncSources.js'
 
 /** `blockKind` → 辞書キー（未知は生の値）。 */
 const KIND_KEY = {
@@ -30,19 +31,28 @@ export function InboxSheet({ onClose, notify, onChanged, focusTaskId = null }) {
   const [busyId, setBusyId] = useState(null)
   const [showAnswered, setShowAnswered] = useState(false)
 
-  const load = useCallback(async () => {
-    try {
-      setData(await api('/api/inbox'))
-    } catch (e) {
-      setData({ ok: false, items: [], reason: e.message })
+  /**
+   * 一覧を反映する（取得は表の `inbox` = TasksPane と同じ 1 回を共有する）。
+   * 送信後の取り直しは `load()` が 1 回だけ取得する。
+   */
+  const applyInbox = useCallback((d, meta) => {
+    if (meta?.error) {
+      setData({ ok: false, items: [], reason: meta.error?.message })
+      return
     }
+    if (d) setData(d)
   }, [])
 
+  const load = useCallback(async () => {
+    const r = await refreshSync('inbox')
+    applyInbox(r.value, { error: r.error })
+  }, [applyInbox])
+
   useEffect(() => {
-    load()
-    const id = setInterval(() => document.visibilityState === 'visible' && load(), 15_000)
-    return () => clearInterval(id)
-  }, [load])
+    const off = subscribeSync('inbox', applyInbox)
+    tickSync('inbox')
+    return off
+  }, [applyInbox])
 
   const send = async (it) => {
     const body = (drafts[it.id] ?? '').trim()

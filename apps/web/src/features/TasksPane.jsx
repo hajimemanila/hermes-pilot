@@ -13,7 +13,7 @@ import { SpecRunningBar } from '../components/SpecRunningBar.jsx'
 import { CoherenceBanner } from '../components/CoherenceBanner.jsx'
 import { SpecMarkdownSheet } from '../components/SpecMarkdownSheet.jsx'
 import { ArchitectJobBar } from '../components/ArchitectJobBar.jsx'
-import { countRunningArchitect, jobPollMs, pickActiveArchitectJob, pickSpecBanner } from '../lib/specSeed.js'
+import { countRunningArchitect, pickActiveArchitectJob, pickSpecBanner } from '../lib/specSeed.js'
 import { LiveSheet } from './LiveSheet.jsx'
 import { InboxSheet } from './InboxSheet.jsx'
 import { BoardPickerSheet } from './tasks/BoardPickerSheet.jsx'
@@ -43,6 +43,7 @@ import { HM_STORAGE } from '../contracts/storage.js'
 import { HM_EVENTS, emitHmEvent, onHmEvent } from '../contracts/events.js'
 import { isOfflineError, shouldNotifyError } from '../lib/netRecovery.js'
 import { useWakeSync } from '../lib/useWakeSync.js'
+import { refreshSync, setSyncParams, setSyncState, subscribeSync, tickSync } from '../lib/syncSources.js'
 import { ModePill, SpecPicker } from './tasks/SpecPicker.jsx'
 import { STATUS_KEY, TaskDetailSheet } from './tasks/TaskDetailSheet.jsx'
 
@@ -223,6 +224,13 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
   const reportBoardRef = useRef(null)
   const lastErrToastRef = useRef(0)
 
+  /*
+   * 取得先（表示中ボード）を取得関数へ渡す。他の購読より先に走らせるため、ref の直後に置く。
+   */
+  useEffect(() => {
+    setSyncParams({ board: board || null, architectBoard: board || null })
+  }, [board])
+
   const notifyNetErr = useCallback(
     (err, { silent = false } = {}) => {
       const now = Date.now()
@@ -233,32 +241,39 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     [notify],
   )
 
+  /** ボード一覧の応答を反映する（取得は表の `boards` = `lib/syncSources.js`）。 */
+  const applyBoards = useCallback((d) => {
+    const list = Array.isArray(d?.boards) ? d.boards : []
+    boardsFailedRef.current = false
+    setSyncState({ boardsFailed: false })
+    setBoards(list)
+    const cur = boardRef.current
+    const saved = readStoredBoard()
+    const next =
+      cur && (!list.length || list.some((b) => b.slug === cur))
+        ? cur
+        : saved && list.some((b) => b.slug === saved)
+          ? saved
+          : list.find((b) => b.current)?.slug ?? list.find((b) => !b.archived)?.slug ?? list[0]?.slug ?? null
+    setBoard(next)
+    setLoading(false)
+    return next
+  }, [])
+
   const loadBoards = useCallback(
     async ({ silent = false } = {}) => {
       try {
-        const d = await api('/api/boards')
-        const list = d.boards ?? []
-        boardsFailedRef.current = false
-        setBoards(list)
-        const cur = boardRef.current
-        const saved = readStoredBoard()
-        const next =
-          cur && (!list.length || list.some((b) => b.slug === cur))
-            ? cur
-            : saved && list.some((b) => b.slug === saved)
-              ? saved
-              : list.find((b) => b.current)?.slug ?? list.find((b) => !b.archived)?.slug ?? list[0]?.slug ?? null
-        setBoard(next)
-        return next
+        return applyBoards(await api('/api/boards'))
       } catch (e) {
         boardsFailedRef.current = true
+        setSyncState({ boardsFailed: true })
         notifyNetErr(e, { silent })
         return null
       } finally {
         setLoading(false)
       }
     },
-    [notifyNetErr],
+    [applyBoards, notifyNetErr],
   )
 
   // 選択したボードを覚える（TasksPane はタブ切替でアンマウントされるため）
@@ -270,27 +285,60 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     }
   }, [board])
 
-  /* A2B クイック起票カードの材料（SPEC V5 §3.2 D23・20 秒ごと）。 */
-  const loadArchitectJobs = useCallback(async () => {
-    if (!board) {
+  /* A2B クイック起票カードの材料（SPEC V5 §3.2 D23）。取得は表の `architectJobs`。 */
+  const applyArchitectJobs = useCallback((slug, d) => {
+    if (!slug) {
       archBoardRef.current = null
       setArchitectJobs(null)
       return
     }
+    if (d?.ok) {
+      archBoardRef.current = slug
+      setArchitectJobs(d)
+    }
+  }, [])
+
+  const loadArchitectJobs = useCallback(async () => {
+    if (!board) {
+      applyArchitectJobs(null, null)
+      return
+    }
     try {
-      const d = await api(`/api/architect/jobs?board=${encodeURIComponent(board)}`)
-      if (d?.ok) {
-        archBoardRef.current = board
-        setArchitectJobs(d)
-      }
+      applyArchitectJobs(board, await api(`/api/architect/jobs?board=${encodeURIComponent(board)}`))
     } catch {
       if (archBoardRef.current !== board) setArchitectJobs(null)
     }
-  }, [board])
+  }, [board, applyArchitectJobs])
 
   const openTaskCountRef = useRef({ board: null, count: null })
   // 同じタスクを開き直したことを TaskDetailSheet に伝える世代番号
   const detailSeq = useRef(0)
+  /** タスク一覧の応答を反映する（取得は表の `tasks`）。 */
+  const applyTasks = useCallback(
+    (slug, d) => {
+      if (!slug || slug !== boardRef.current) return false
+      tasksBoardRef.current = slug
+      const list = Array.isArray(d?.tasks) ? d.tasks : []
+      setTasks(list)
+      setArchivedTaskTotal(Number.isFinite(Number(d?.archivedCount)) ? Number(d.archivedCount) : null)
+      const openCount = list.filter((x) =>
+        ['running', 'ready', 'todo', 'blocked'].includes(String(x?.status ?? '')),
+      ).length
+      const prev = openTaskCountRef.current
+      openTaskCountRef.current = { board: slug, count: openCount }
+      if (prev.board === slug && prev.count !== null && openCount < prev.count) {
+        try {
+          emitHmEvent(HM_EVENTS.REFRESH_REPORTS)
+        } catch {
+          /* noop */
+        }
+        loadArchitectJobs()
+      }
+      return true
+    },
+    [loadArchitectJobs],
+  )
+
   const loadTasks = useCallback(
     async (slug, { silent = false } = {}) => {
       if (!slug) return false
@@ -298,24 +346,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
       try {
         const d = await api(`/api/boards/${encodeURIComponent(slug)}/tasks?limit=60`)
         if (seq !== tasksSeqRef.current) return true
-        tasksBoardRef.current = slug
-        const list = d.tasks ?? []
-        setTasks(list)
-        setArchivedTaskTotal(Number.isFinite(Number(d.archivedCount)) ? Number(d.archivedCount) : null)
-        const openCount = list.filter((x) =>
-          ['running', 'ready', 'todo', 'blocked'].includes(String(x?.status ?? '')),
-        ).length
-        const prev = openTaskCountRef.current
-        openTaskCountRef.current = { board: slug, count: openCount }
-        if (prev.board === slug && prev.count !== null && openCount < prev.count) {
-          try {
-            emitHmEvent(HM_EVENTS.REFRESH_REPORTS)
-          } catch {
-            /* noop */
-          }
-          loadArchitectJobs()
-        }
-        return true
+        return applyTasks(slug, d)
       } catch (e) {
         if (seq !== tasksSeqRef.current) return false
         // 同一ボードの一時的な瞬断・オフライン時は既存のタスク一覧を消さずに保持する
@@ -324,7 +355,7 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
         return false
       }
     },
-    [notifyNetErr, loadArchitectJobs],
+    [notifyNetErr, applyTasks],
   )
 
   /** 整理モードの一括アーカイブ（SPEC-RELIABILITY-GUARD RG-3 / D92）。 */
@@ -359,128 +390,143 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     loadBoards()
   }, [loadBoards])
 
-  // 使用量は60秒ごと（サーバ側も30秒キャッシュ）
-  useEffect(() => {
-    if (!active) return undefined
-    let alive = true
-    const load = () =>
-      api('/api/usage?hours=24')
-        .then((d) => alive && setUsageData(d))
-        .catch(() => {})
-    load()
-    const id = setInterval(() => document.visibilityState === 'visible' && load(), 60_000)
-    return () => {
-      alive = false
-      clearInterval(id)
-    }
-  }, [active])
+  /*
+   * 定期取得は表（`lib/syncScheduler.js`）の購読だけ。ここは受け取った値を反映する。
+   */
+  const applyUsage = useCallback((d) => {
+    if (d) setUsageData(d)
+  }, [])
 
-  // 実行中ターン数と内訳（タイルの点。10 秒ごと）
-  useEffect(() => {
-    if (!active) return undefined
-    let alive = true
-    const load = () =>
-      api('/api/live')
-        .then((d) => {
-          if (!alive) return
-          const turns = Number(d?.counts?.turns ?? 0)
-          setLiveTurns(turns)
-          try {
-            window.dispatchEvent(new CustomEvent(HM_EVENTS.LIVE_TURNS, { detail: { turns, items: Array.isArray(d?.turns) ? d.turns : [], architect: Number(d?.counts?.architect ?? 0) } }))
-          } catch { /* noop */ }
-        })
-        .catch(() => {})
-    load()
-    const id = setInterval(() => document.visibilityState === 'visible' && load(), 10_000)
-    return () => {
-      alive = false
-      clearInterval(id)
+  const applyLive = useCallback((d) => {
+    const turns = Number(d?.counts?.turns ?? 0)
+    setLiveTurns(turns)
+    try {
+      window.dispatchEvent(
+        new CustomEvent(HM_EVENTS.LIVE_TURNS, {
+          detail: { turns, items: Array.isArray(d?.turns) ? d.turns : [], architect: Number(d?.counts?.architect ?? 0) },
+        }),
+      )
+    } catch {
+      /* noop */
     }
-  }, [active])
+  }, [])
 
-  // 承認待ちの件数（15秒ごと）
+  /* 承認待ちの件数と、下部ナビのタスクタブの丸バッジ（注釈 1377.jpg の赤）を同じデータで同期する。 */
+  const applyInbox = useCallback((d) => {
+    const items = Array.isArray(d?.items) ? d.items : []
+    setInboxCount(pendingCount(items))
+    try {
+      emitHmEvent(HM_EVENTS.INBOX_ITEMS, { items })
+    } catch {
+      /* noop */
+    }
+  }, [])
+
   const loadInbox = useCallback(async () => {
     try {
-      const d = await api('/api/inbox')
-      const items = d?.items ?? []
-      setInboxCount(pendingCount(items))
-      // 下部ナビのタスクタブの丸バッジ（注釈 1377.jpg の赤）を、この一覧と同じデータで同期する
-      try {
-        emitHmEvent(HM_EVENTS.INBOX_ITEMS, { items })
-      } catch {
-        /* noop */
-      }
+      applyInbox(await api('/api/inbox'))
     } catch {
       /* 表示だけなので握る */
     }
-  }, [])
+  }, [applyInbox])
 
+  /*
+   * 使用量（60 秒）・ライブターン（5 秒）・承認待ち（15 秒）は表が持つ。
+   * この 3 本はタブを離れていてもバッジに要るので、`active` に関係なく購読する。
+   */
   useEffect(() => {
-    if (!active) return undefined
-    loadInbox()
-    const id = setInterval(() => document.visibilityState === 'visible' && loadInbox(), 15_000)
-    return () => clearInterval(id)
-  }, [loadInbox, active])
+    const offs = [
+      subscribeSync('usage', (d, meta) => !meta?.error && applyUsage(d)),
+      subscribeSync('live', (d, meta) => !meta?.error && applyLive(d)),
+      subscribeSync('inbox', (d, meta) => !meta?.error && applyInbox(d)),
+    ]
+    tickSync('usage')
+    tickSync('live')
+    tickSync('inbox')
+    return () => {
+      for (const off of offs) off()
+    }
+  }, [applyUsage, applyLive, applyInbox])
 
   /* Spec Launchpad 用 SPEC 検出（SPEC §5.4 / D31: ボード変更・refreshAll・一括起票・architectJobs で呼ぶ）。 */
-  const loadSpecs = useCallback(async (slug) => {
-    if (!slug) {
-      specsBoardRef.current = null
-      setSpecsInfo(null)
-      return
-    }
-    try {
-      const d = await api(`/api/specs?board=${encodeURIComponent(slug)}`)
-      specsBoardRef.current = slug
-      const keep = (s) => (s.batches ?? []).length > 0
-      const raw = (Array.isArray(d?.specs) ? d.specs : []).filter(keep)
-      const split = Array.isArray(d?.archivedSpecs)
-        ? { active: raw, archived: d.archivedSpecs.filter(keep) }
-        : splitSpecsByArchive(raw)
-      setSpecsInfo(
-        split.active.length + split.archived.length
-          ? { repo: d.repo ?? null, path: d.path ?? null, active: split.active, archived: split.archived }
-          : null,
-      )
-      setSpecPath((cur) => {
-        const all = [...split.active, ...split.archived]
-        if (cur && all.some((s) => s.path === cur)) return cur
-        return split.active[0]?.path ?? split.archived[0]?.path ?? null
-      })
-    } catch {
-      if (specsBoardRef.current !== slug) setSpecsInfo(null)
-    }
+  /** SPEC 一覧の応答を反映する（取得は表の `specs`）。 */
+  const applySpecs = useCallback((slug, d) => {
+    if (!slug || slug !== boardRef.current) return
+    specsBoardRef.current = slug
+    const keep = (s) => (s.batches ?? []).length > 0
+    const raw = (Array.isArray(d?.specs) ? d.specs : []).filter(keep)
+    const split = Array.isArray(d?.archivedSpecs)
+      ? { active: raw, archived: d.archivedSpecs.filter(keep) }
+      : splitSpecsByArchive(raw)
+    setSpecsInfo(
+      split.active.length + split.archived.length
+        ? { repo: d.repo ?? null, path: d.path ?? null, active: split.active, archived: split.archived }
+        : null,
+    )
+    setSpecPath((cur) => {
+      const all = [...split.active, ...split.archived]
+      if (cur && all.some((s) => s.path === cur)) return cur
+      return split.active[0]?.path ?? split.archived[0]?.path ?? null
+    })
   }, [])
 
-  useEffect(() => {
-    loadSpecs(board)
-  }, [board, loadSpecs])
+  const loadSpecs = useCallback(
+    async (slug) => {
+      if (!slug) {
+        specsBoardRef.current = null
+        setSpecsInfo(null)
+        return
+      }
+      try {
+        applySpecs(slug, await api(`/api/specs?board=${encodeURIComponent(slug)}`))
+      } catch {
+        if (specsBoardRef.current !== slug) setSpecsInfo(null)
+      }
+    },
+    [applySpecs],
+  )
 
-  /* 完走予兆の提案バナー（SPEC-COHERENCE §3.6 / D83・読み取り専用・D55）。 */
-  const loadCoherence = useCallback(async (slug, { fresh = false } = {}) => {
-    if (!slug) {
-      cohBoardRef.current = null
-      setCoherenceReport(null)
-      return
-    }
-    try {
-      const d = await api(`/api/coherence/report?board=${encodeURIComponent(slug)}${fresh ? '&fresh=1' : ''}`)
-      cohBoardRef.current = slug
-      setCoherenceReport(d && typeof d === 'object' ? d : null)
-    } catch {
-      if (cohBoardRef.current !== slug) setCoherenceReport(null)
-    }
-  }, [])
-
+  /* SPEC 一覧は表の `specs`（60 秒）。ボードが変わったら取得先を渡してすぐ 1 回取り直す。 */
   useEffect(() => {
     if (!board || !active) return undefined
-    if (!workActiveRef.current) loadCoherence(board)
-    // リポジトリ全体の走査なので、タスク一覧（5 秒）ほど頻繁に叩かない。作業中はポーリングも抑止する。
-    const id = setInterval(() => {
-      if (document.visibilityState === 'visible' && !workActiveRef.current) loadCoherence(board)
-    }, 120_000)
-    return () => clearInterval(id)
-  }, [board, active, loadCoherence])
+    const off = subscribeSync('specs', (d, meta) => !meta?.error && applySpecs(board, d))
+    tickSync('specs')
+    return off
+  }, [board, active, applySpecs])
+
+  /* 完走予兆の提案バナー（SPEC-COHERENCE §3.6 / D83・読み取り専用・D55）。 */
+  const applyCoherence = useCallback((slug, d) => {
+    if (!slug || slug !== boardRef.current) return
+    cohBoardRef.current = slug
+    setCoherenceReport(d && typeof d === 'object' ? d : null)
+  }, [])
+
+  const loadCoherence = useCallback(
+    async (slug, { fresh = false } = {}) => {
+      if (!slug) {
+        cohBoardRef.current = null
+        setCoherenceReport(null)
+        return
+      }
+      try {
+        const d = await api(`/api/coherence/report?board=${encodeURIComponent(slug)}${fresh ? '&fresh=1' : ''}`)
+        applyCoherence(slug, d)
+      } catch {
+        if (cohBoardRef.current !== slug) setCoherenceReport(null)
+      }
+    },
+    [applyCoherence],
+  )
+
+  /*
+   * リポジトリ全体の走査なので、タスク一覧（5 秒）ほど頻繁に叩かない（表の `coherence` = 120 秒）。
+   * 作業中（ワーカー・Architect 稼働）は表の `enabledWhen` が止める。
+   */
+  useEffect(() => {
+    if (!board || !active) return undefined
+    const off = subscribeSync('coherence', (d, meta) => !meta?.error && applyCoherence(board, d))
+    return off
+  }, [board, active, applyCoherence])
 
   const refreshAll = useCallback(async () => {
     const activeBoard = board || (await loadBoards())
@@ -495,18 +541,28 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     return Boolean(activeBoard) && results[0] !== false
   }, [board, loadBoards, loadTasks, loadInbox, loadSpecs, loadCoherence, refresh])
 
+  /* タスク一覧（5 秒）と、取得に失敗したときだけ走るボード再試行（表の `boards`）。 */
   useEffect(() => {
     if (!active) return undefined
-    if (!board) {
-      const id = setInterval(() => {
-        if (document.visibilityState === 'visible' && boardsFailedRef.current) loadBoards({ silent: true })
-      }, 5000)
-      return () => clearInterval(id)
+    const offs = [
+      subscribeSync('tasks', (d, meta) => {
+        if (meta?.error) {
+          // 同じボードの 2 回目以降は黙って握る（初回だけ知らせる）
+          notifyNetErr(meta.error, { silent: tasksBoardRef.current === board })
+          return
+        }
+        applyTasks(board, d)
+      }),
+      subscribeSync('boards', (d, meta) => {
+        if (!meta?.error) applyBoards(d)
+      }),
+    ]
+    if (board) tickSync('tasks')
+    tickSync('boards')
+    return () => {
+      for (const off of offs) off()
     }
-    loadTasks(board, { silent: tasksBoardRef.current === board })
-    const id = setInterval(() => document.visibilityState === 'visible' && loadTasks(board, { silent: true }), 5000)
-    return () => clearInterval(id)
-  }, [board, loadBoards, loadTasks, active])
+  }, [active, board, applyTasks, applyBoards, notifyNetErr])
 
   /**
    * 進行バーに出すジョブ（`running` / `awaiting_review` / `awaiting_spec` / `failed` の 1 件）。
@@ -520,9 +576,6 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     [architectJobs, architectJobClosed, board],
   )
 
-  // 状態が変わった瞬間に間隔を切り替える（効果の再生成は status/id だけで足りる）
-  const pollMs = jobPollMs(activeJob)
-
   /*
    * 稼働中の Architect ジョブ件数（D43 後半）。`/api/live` の `counts.architect` と同じ規則
    * （`running` / `awaiting_spec`）。カンバンタスクを持たない Agy Opt-in も数に入れる。
@@ -532,29 +585,38 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
     [architectJobs],
   )
 
+  /*
+   * Architect ジョブ（進行中 4 秒 / 人待ち 20 秒 = 表の `architectJobs` の `everyMsOf`）。
+   * `architectBusy` はアプリ全体の状況なので、表へ渡して間隔を切り替えてもらう。
+   */
+  useEffect(() => {
+    setSyncState({
+      architectBusy: Boolean(
+        activeJob && (activeJob.status === 'running' || activeJob.status === 'awaiting_spec'),
+      ),
+    })
+  }, [activeJob])
+
   useEffect(() => {
     if (!active) return undefined
-    loadArchitectJobs()
-    // 進行中（running / awaiting_spec）だけ 4 秒。人待ち・停止・ジョブ無しは 20 秒（SPEC V6 §3.3 ③）
-    const id = setInterval(
-      () => document.visibilityState === 'visible' && loadArchitectJobs(),
-      pollMs,
-    )
-    return () => clearInterval(id)
-  }, [loadArchitectJobs, pollMs, active])
+    const off = subscribeSync('architectJobs', (d, meta) => !meta?.error && applyArchitectJobs(board, d))
+    tickSync('architectJobs')
+    return off
+  }, [active, board, applyArchitectJobs])
 
   // スリープ復帰・回線回復・Review 回答の直後に未取得ボード／タスク一覧・進行バー・Coherence を再同期する
   useWakeSync(() => {
-    loadInbox()
+    refreshSync('inbox')
+    refreshSync('live')
+    refreshSync('architectJobs')
     if (!board) {
-      loadBoards({ silent: true })
+      refreshSync('boards')
       return
     }
-    if (boardsFailedRef.current) loadBoards({ silent: true })
-    loadArchitectJobs()
-    loadTasks(board, { silent: true })
-    loadSpecs(board)
-    loadCoherence(board)
+    refreshSync('boards')
+    refreshSync('tasks')
+    refreshSync('specs')
+    refreshSync('coherence')
   })
   useEffect(
     () =>
@@ -636,10 +698,19 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
   useEffect(() => {
     const wasActive = prevWorkActiveRef.current
     prevWorkActiveRef.current = workActive
+    // Coherence の 120 秒は作業中に止める（表の `enabledWhen`）
+    setSyncState({ workActive })
     if (wasActive && !workActive && board && active) loadCoherence(board, { fresh: true })
   }, [workActive, board, active, loadCoherence])
 
-  /* 直近のパイプライン完走サマリ（SPEC-PILOT-V4 §3.3 ③ / D20③）。未実装時の 404 は無視。 */
+  /* 直近のパイプライン完走サマリ（SPEC-PILOT-V4 §3.3 ③ / D20③・30 秒 = 表の `specReports`）。 */
+  const applySpecReports = useCallback((slug, d) => {
+    if (!slug || slug !== boardRef.current) return
+    reportBoardRef.current = slug
+    const list = Array.isArray(d?.reports) ? d.reports : Array.isArray(d?.items) ? d.items : []
+    setLatestReport(list[0] ?? null)
+  }, [])
+
   useEffect(() => {
     if (!board) {
       reportBoardRef.current = null
@@ -647,25 +718,10 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
       return undefined
     }
     if (!active) return undefined
-    let alive = true
-    const load = () =>
-      api(`/api/specs/reports?board=${encodeURIComponent(board)}&limit=1`)
-        .then((d) => {
-          if (!alive) return
-          reportBoardRef.current = board
-          const list = Array.isArray(d?.reports) ? d.reports : Array.isArray(d?.items) ? d.items : []
-          setLatestReport(list[0] ?? null)
-        })
-        .catch(() => {
-          if (alive && reportBoardRef.current !== board) setLatestReport(null)
-        })
-    load()
-    const id = setInterval(() => document.visibilityState === 'visible' && load(), 30_000)
-    return () => {
-      alive = false
-      clearInterval(id)
-    }
-  }, [board, idle, active])
+    const off = subscribeSync('specReports', (d, meta) => !meta?.error && applySpecReports(board, d))
+    tickSync('specReports')
+    return off
+  }, [board, active, applySpecReports])
 
   // 新しいパイプライン完走レポートを観測したら、生の Coherence 診断も即時 fresh 取得する
   const lastCoherenceReportAtRef = useRef(null)

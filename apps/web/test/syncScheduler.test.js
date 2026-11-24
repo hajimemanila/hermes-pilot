@@ -1,250 +1,321 @@
 /**
- * 定期同期の宣言表 + 1 本のスケジューラ（SPEC D97 / Batch `SEMM-2`）の検証。
+ * 定期同期の宣言表 + 1 本のスケジューラ（D106 / Batch `DRF-1`）の検証。
  *
- * 「何秒で・どのタブで止めるか」が表 1 つで決まり、呼び出し側（`App.jsx`）が
- * 自前のタイマーと停止規則を持たないことをここで固定する。
+ * ここで固定するのは 4 点:
+ * 1. 間隔・停止規則・状況依存の間隔が**表 1 つ**で決まる
+ * 2. **1 トピック 1 取得** — 購読が 2 本でも取得関数は 1 回だけ
+ * 3. `enabledWhen`（状況で走らせない）と `everyMsOf`（状況で間隔を変える）が効く
+ * 4. 取得が落ちても購読者全員へ error が届き、他のトピックは止まらない
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { SYNC_TOPICS, createSyncScheduler, shouldRun } from '../src/lib/syncScheduler.js'
+import { SYNC_TOPICS, createSyncScheduler, everyMsOf, isEnabled, shouldRun } from '../src/lib/syncScheduler.js'
 
-/** 表どおりに購読したスケジューラと、トピックごとの呼び出し回数。 */
+/** async の配布（microtask）を待つ。 */
+const flush = () => new Promise((resolve) => setImmediate(resolve))
+
+/**
+ * mock timers を少しずつ進める。まとめて進めると、前 tick の取得がまだ in-flight のまま
+ * 次の tick が来てしまい（実機では起きない）、回数がずれる。
+ */
+async function advance(t, ms, step = 1_000) {
+  let left = ms
+  while (left > 0) {
+    const delta = Math.min(step, left)
+    t.mock.timers.tick(delta)
+    left -= delta
+    await flush()
+  }
+}
+
+/** 全トピックを購読したスケジューラと、取得回数・配布回数の記録。 */
 function harness({ tab = 'chat', visible = true, topics = SYNC_TOPICS } = {}) {
   const state = { tab, visible }
-  const calls = []
+  const delivered = []
+  const fetched = []
+  const sources = {}
+  for (const topic of topics) {
+    sources[topic.id] = async () => {
+      fetched.push(topic.id)
+      return { topic: topic.id }
+    }
+  }
   const scheduler = createSyncScheduler({
     topics,
+    sources,
     isVisible: () => state.visible,
     currentTab: () => state.tab,
   })
   for (const topic of topics) {
-    scheduler.subscribe(topic.id, () => {
-      calls.push(topic.id)
-    })
+    scheduler.subscribe(topic.id, (value, meta) => delivered.push({ id: topic.id, value, error: meta?.error ?? null }))
   }
-  return { scheduler, state, calls, count: (id) => calls.filter((c) => c === id).length }
+  const count = (id) => delivered.filter((d) => d.id === id).length
+  const fetchCount = (id) => fetched.filter((f) => f === id).length
+  return { scheduler, state, delivered, fetched, count, fetchCount }
 }
 
-test('① 表どおりの間隔で呼ばれる（mock timers）', (t) => {
+test('① 表どおりの間隔で 1 回ずつ取得し、購読者へ配る', async (t) => {
   t.mock.timers.enable({ apis: ['setInterval'] })
   const h = harness()
   h.scheduler.start()
 
-  t.mock.timers.tick(4_999)
-  assert.equal(h.calls.length, 0, '5 秒未満では 1 本も走らない')
+  await advance(t, 4_999)
+  assert.equal(h.count('overview'), 0, '5 秒未満では overview は走らない')
+  assert.equal(h.count('tasks'), 0, 'tasks は 5 秒')
+  assert.equal(h.count('reports'), 0, 'reports は 15 秒')
 
-  t.mock.timers.tick(1) // 5 秒
+  await advance(t, 1) // 5 秒
   assert.equal(h.count('overview'), 1)
-  assert.equal(h.count('reports'), 0)
+  assert.equal(h.count('tasks'), 1, 'tasks は 5 秒')
 
-  t.mock.timers.tick(10_000) // 15 秒
-  assert.equal(h.count('overview'), 3, 'overview だけ 5 秒ごと')
-  for (const id of ['reports', 'reviewWaiting', 'reviewFeed', 'inbox', 'live']) {
+  await advance(t, 10_000) // 15 秒
+  assert.equal(h.count('overview'), 3, 'overview は 5 秒ごと')
+  for (const id of ['reports', 'reviewWaiting', 'reviewFeed', 'inbox']) {
     assert.equal(h.count(id), 1, `${id} は 15 秒で 1 回`)
   }
-  assert.equal(h.count('usage'), 0, 'usage は 60 秒まで走らない')
 
-  t.mock.timers.tick(45_000) // 60 秒
-  assert.equal(h.count('overview'), 12)
-  assert.equal(h.count('usage'), 1, 'usage は 60 秒で 1 回')
-
-  // 間隔は表の値そのもの（トピックごとに独立して回る）
+  await advance(t, 45_000) // 60 秒
   for (const topic of SYNC_TOPICS) {
+    if (typeof topic.everyMsOf === 'function' || typeof topic.enabledWhen === 'function') continue
     assert.equal(h.count(topic.id), Math.floor(60_000 / topic.everyMs), `${topic.id} の回数`)
   }
 
   h.scheduler.stop()
-  t.mock.timers.tick(60_000)
+  await advance(t, 60_000)
   assert.equal(h.count('overview'), 12, 'stop 後は増えない')
 })
 
-test('② 表示中タブでは該当トピックが呼ばれない', (t) => {
+test('② 購読が 2 本でも取得関数の呼び出しは 1 回（1 トピック 1 取得）', async (t) => {
   t.mock.timers.enable({ apis: ['setInterval'] })
-  const h = harness({ tab: 'review' })
+  let calls = 0
+  const scheduler = createSyncScheduler({
+    topics: [{ id: 'inbox', everyMs: 1_000 }],
+    sources: {
+      inbox: async () => {
+        calls += 1
+        return { items: [calls] }
+      },
+    },
+    isVisible: () => true,
+    currentTab: () => 'tasks',
+  })
+  const first = []
+  const second = []
+  scheduler.subscribe('inbox', (value) => first.push(value))
+  scheduler.subscribe('inbox', (value) => second.push(value))
+  assert.equal(scheduler.subscriberCount('inbox'), 2)
+
+  scheduler.start()
+  t.mock.timers.tick(1_000)
+  await flush()
+  assert.equal(calls, 1, '購読 2 本でも fetch は 1 回')
+  assert.deepEqual(first, [{ items: [1] }], '1 本目の購読者へ同じ値')
+  assert.deepEqual(second, [{ items: [1] }], '2 本目の購読者へも同じ値')
+
+  // 手元の操作後の取り直しも 1 回で、両方へ届く
+  const out = await scheduler.refresh('inbox')
+  assert.equal(out.ok, true)
+  assert.equal(calls, 2)
+  assert.equal(first.length, 2)
+  assert.equal(second.length, 2)
+  scheduler.stop()
+})
+
+test('③ enabledWhen: 状況が整うまで走らせず、整った瞬間から走る（破棄はしない）', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  const h = harness()
   h.scheduler.start()
-  t.mock.timers.tick(30_000)
 
-  assert.equal(h.count('reviewWaiting'), 0, 'review タブ表示中は判断待ちを取りに行かない')
-  assert.equal(h.count('reviewFeed'), 0, 'review タブ表示中はフィードを取りに行かない')
-  assert.equal(h.count('inbox'), 2, 'tasks 以外のタブでは inbox は止めない')
-  assert.equal(h.count('overview'), 6)
+  await advance(t, 20_000)
+  assert.equal(h.count('boards'), 0, 'boardsFailed=false の間は走らない')
 
-  // タブを移ると再開する（間隔は止めていないので位相もそのまま）
-  h.state.tab = 'tasks'
-  t.mock.timers.tick(15_000)
-  assert.equal(h.count('reviewWaiting'), 1, 'review から離れたら再開する')
-  assert.equal(h.count('inbox'), 2, 'tasks タブでは inbox を止める')
+  h.scheduler.setState({ boardsFailed: true, workActive: true })
+  await advance(t, 5_000)
+  assert.equal(h.count('boards'), 1, 'boardsFailed になったら再試行する')
 
-  h.state.tab = 'chat'
-  t.mock.timers.tick(15_000)
-  assert.equal(h.count('inbox'), 3, 'tasks から離れたら再開する')
+  const before = h.count('coherence')
+  await advance(t, 240_000)
+  assert.equal(h.count('coherence'), before, 'workActive の間は 120 秒きても走らない')
+
+  h.scheduler.setState({ workActive: false })
+  await advance(t, 120_000)
+  assert.ok(h.count('coherence') > before, '作業が終われば再開する')
   h.scheduler.stop()
 })
 
-test('③ 画面が見えていない間（isVisible() === false）は呼ばれない', (t) => {
+test('④ everyMsOf: 状況で間隔を変え、変わったときだけ張り直す', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  const h = harness()
+  h.scheduler.start()
+
+  assert.equal(h.scheduler.intervalOf('architectJobs'), 20_000, '既定は人待ち 20 秒')
+  await advance(t, 40_000)
+  assert.equal(h.count('architectJobs'), 2)
+
+  h.scheduler.setState({ architectBusy: true })
+  assert.equal(h.scheduler.intervalOf('architectJobs'), 4_000, '進行中は 4 秒へ張り直す')
+  await advance(t, 12_000)
+  assert.equal(h.count('architectJobs'), 5, '張り直した位相で 4 秒ごと')
+
+  // 同じ状態をもう一度入れても張り直さない（位相を保つ）
+  h.scheduler.setState({ architectBusy: true })
+  assert.equal(h.scheduler.intervalOf('architectJobs'), 4_000)
+  await advance(t, 4_000)
+  assert.equal(h.count('architectJobs'), 6)
+  h.scheduler.stop()
+})
+
+test('⑤ 画面が見えていない間は呼ばれない（戻ったら次の位相から）', async (t) => {
   t.mock.timers.enable({ apis: ['setInterval'] })
   const h = harness({ visible: false })
   h.scheduler.start()
-  t.mock.timers.tick(120_000)
-  assert.equal(h.calls.length, 0, 'document.hidden 相当では 1 本も走らない')
+  await advance(t, 120_000)
+  assert.equal(h.delivered.length, 0, 'document.hidden 相当では 1 本も走らない')
 
   h.state.visible = true
-  t.mock.timers.tick(5_000)
+  await advance(t, 5_000)
   assert.equal(h.count('overview'), 1, '戻ったら次の位相から走る')
-  assert.equal(h.count('usage'), 0, '隠れていた 60 秒ぶんをまとめて走らせない（位相は 120 秒のまま）')
-  t.mock.timers.tick(55_000) // 180 秒
-  assert.equal(h.count('usage'), 1, '位相が来たら 1 回だけ走る')
+  assert.equal(h.count('usage'), 0, '隠れていた 60 秒ぶんをまとめて走らせない')
   h.scheduler.stop()
 })
 
-test('④ forceAll は可視・タブ・スロットルを無視して全トピック 1 回、skip を尊重する', (t) => {
+test('⑥ forceAll は可視・タブを無視して 1 回ずつ、skip と enabledWhen を尊重する', async (t) => {
   t.mock.timers.enable({ apis: ['setInterval'] })
   const h = harness({ tab: 'review', visible: false })
   h.scheduler.start()
-  t.mock.timers.tick(30_000)
-  assert.equal(h.calls.length, 0)
+  await advance(t, 30_000)
+  assert.equal(h.delivered.length, 0)
 
   const ran = h.scheduler.forceAll({ skip: 'overview' })
-  assert.deepEqual([...ran].sort(), ['inbox', 'live', 'reports', 'reviewFeed', 'reviewWaiting', 'usage'].sort())
+  await flush()
+  assert.equal(ran.includes('overview'), false, 'skip したトピックは走らない')
+  assert.equal(ran.includes('boards'), false, 'enabledWhen を満たさないトピックは走らない')
   for (const topic of SYNC_TOPICS) {
-    if (topic.id === 'overview') assert.equal(h.count('overview'), 0, 'skip した トピックは走らない')
+    // `boards` / `taskDetail` / `taskDetailWorker` は状況が整っていないので走らない
+    const blocked = ['overview', 'boards', 'taskDetail', 'taskDetailWorker'].includes(topic.id)
+    if (blocked) assert.equal(h.count(topic.id), 0, `${topic.id} は走らない`)
     else assert.equal(h.count(topic.id), 1, `${topic.id} は 1 回`)
   }
 
-  // 2 回目も 1 回ずつ（スロットルは無い）
-  h.scheduler.forceAll()
-  assert.equal(h.count('overview'), 1)
-  assert.equal(h.count('usage'), 2)
-
-  // skip は配列でもよい
-  h.scheduler.forceAll({ skip: ['overview', 'usage'] })
-  assert.equal(h.count('overview'), 1)
-  assert.equal(h.count('usage'), 2)
-  assert.equal(h.count('live'), 3)
+  h.scheduler.forceAll({ skip: ['usage'] })
+  await flush()
+  assert.equal(h.count('usage'), 1, 'skip は配列でもよい')
+  assert.equal(h.count('live'), 2)
   h.scheduler.stop()
 })
 
-test('⑤ subscribe の解除後は呼ばれない（解除したトピックのタイマーも止まる）', (t) => {
+test('⑦ 解除したら走らない・購読 0 でタイマーも止まる', async (t) => {
   t.mock.timers.enable({ apis: ['setInterval'] })
   const calls = []
-  const scheduler = createSyncScheduler({ isVisible: () => true, currentTab: () => 'chat' })
+  const scheduler = createSyncScheduler({
+    sources: { live: async () => ({}), usage: async () => ({}) },
+  })
   const offLive = scheduler.subscribe('live', () => calls.push('live'))
-  const offUsage = scheduler.subscribe('usage', () => calls.push('usage'))
+  scheduler.subscribe('usage', () => calls.push('usage'))
   scheduler.start()
-  t.mock.timers.tick(30_000)
-  assert.equal(calls.filter((c) => c === 'live').length, 2)
+  await advance(t, 30_000)
+  assert.equal(calls.filter((c) => c === 'live').length, 6)
 
   offLive()
-  t.mock.timers.tick(30_000)
-  assert.equal(calls.filter((c) => c === 'live').length, 2, '解除後は走らない')
+  assert.equal(scheduler.intervalOf('live'), 0, '購読 0 になったタイマーは止まる')
+  await advance(t, 30_000)
+  assert.equal(calls.filter((c) => c === 'live').length, 6, '解除後は走らない')
   assert.equal(calls.filter((c) => c === 'usage').length, 1, '他の購読は影響を受けない')
-
-  offUsage()
-  scheduler.stop()
 
   // 未知のトピック・関数でない購読は無害
   assert.equal(typeof scheduler.subscribe('nope', () => {}), 'function')
   assert.doesNotThrow(() => scheduler.subscribe('live', null))
-  scheduler.tick('nope')
+  assert.equal(scheduler.tick('nope'), null)
+  scheduler.stop()
 })
 
-test('⑥ 表の everyMs が 7 トピックぶん重複なく揃っている', () => {
-  assert.equal(SYNC_TOPICS.length, 7, 'トピックは 7 本（App.jsx の 7 タイマーと同数）')
+test('⑧ 表の整合: トピックは重複せず、間隔はすべて正の値を持つ', () => {
   const ids = SYNC_TOPICS.map((t) => t.id)
   assert.equal(new Set(ids).size, ids.length, 'id が重複しない')
+  assert.equal(ids.length, 17, 'トピックは 17 本（ペインの取得タイマー 16 本 + worker 進捗の 1 本）')
   for (const topic of SYNC_TOPICS) {
-    assert.ok(Number.isFinite(topic.everyMs) && topic.everyMs > 0, `${topic.id} の everyMs`)
-    assert.ok(Array.isArray(topic.pauseOnTabs), `${topic.id} の pauseOnTabs は配列`)
-  }
-  assert.deepEqual(
-    SYNC_TOPICS.map((t) => [t.id, t.everyMs]),
-    [
-      ['overview', 5_000],
-      ['reports', 15_000],
-      ['reviewWaiting', 15_000],
-      ['reviewFeed', 15_000],
-      ['inbox', 15_000],
-      ['live', 15_000],
-      ['usage', 60_000],
-    ],
-    '秒数は現行のタイマー（5 / 15 / 15 / 15 / 15 / 15 / 60 秒）と同じ',
-  )
-  assert.deepEqual(
-    SYNC_TOPICS.filter((t) => t.pauseOnTabs.length > 0).map((t) => [t.id, t.pauseOnTabs]),
-    [
-      ['reviewWaiting', ['review']],
-      ['reviewFeed', ['review']],
-      ['inbox', ['tasks']],
-      // `live` は SEMM-2 では []（既存の無条件 15 秒と同じ）。同じツリーで走る SEMM-3 が
-      // `['tasks']` に変えるので、どちらの段でも壊れないよう両方を許容する。
-      ...(SYNC_TOPICS.find((t) => t.id === 'live').pauseOnTabs.length > 0
-        ? [['live', SYNC_TOPICS.find((t) => t.id === 'live').pauseOnTabs]]
-        : []),
-    ],
-    '止めるタブは review と tasks だけ（停止規則の不揃いを無くす）',
-  )
-  for (const topic of SYNC_TOPICS) {
-    for (const tabId of topic.pauseOnTabs) {
-      assert.ok(
-        ['tasks', 'review', 'chat', 'notes', 'term', 'settings'].includes(tabId),
-        `${topic.id} の pauseOnTabs は実在のタブ id（${tabId}）`,
-      )
+    const ms = everyMsOf(topic, {})
+    assert.ok(Number.isFinite(ms) && ms > 0, `${topic.id} の間隔`)
+    if (typeof topic.everyMsOf === 'function') {
+      assert.ok(Number.isFinite(topic.everyMsOf({ architectBusy: true })), `${topic.id} の状況依存間隔`)
     }
   }
-  assert.deepEqual(
-    SYNC_TOPICS.find((t) => t.id === 'live').pauseOnTabs.filter((tabId) => tabId !== 'tasks'),
-    [],
-    'live が止めるのは tasks だけ（SEMM-3 の予定地）',
-  )
+  // 代表的な間隔（旧タイマーの値をそのまま表へ移したもの）
+  const every = (id) => everyMsOf(SYNC_TOPICS.find((t) => t.id === id), {})
+  assert.equal(every('tasks'), 5_000)
+  assert.equal(every('inbox'), 15_000)
+  assert.equal(every('live'), 5_000)
+  assert.equal(every('specReports'), 30_000)
+  assert.equal(every('usage'), 60_000)
+  assert.equal(every('coherence'), 120_000)
+  assert.equal(every('taskDetail'), 5_000)
+  assert.equal(every('reviewDetail'), 5_000)
+  assert.equal(every('workerFeed'), 4_000)
+  // 状況で止まるトピックはこの 4 本だけ
+  const gated = SYNC_TOPICS.filter((t) => typeof t.enabledWhen === 'function').map((t) => t.id)
+  assert.deepEqual(gated.sort(), ['boards', 'coherence', 'taskDetail', 'taskDetailWorker'].sort())
+  assert.equal(isEnabled(SYNC_TOPICS.find((t) => t.id === 'boards'), { boardsFailed: false }), false)
+  assert.equal(isEnabled(SYNC_TOPICS.find((t) => t.id === 'tasks'), {}), true)
 })
 
-test('shouldRun は表の停止規則だけを見る', () => {
-  const reviewWaiting = SYNC_TOPICS.find((t) => t.id === 'reviewWaiting')
-  assert.equal(shouldRun(reviewWaiting, { tab: 'review', visible: true }), false)
-  assert.equal(shouldRun(reviewWaiting, { tab: 'chat', visible: true }), true)
-  assert.equal(shouldRun(reviewWaiting, { tab: null, visible: true }), true)
-  assert.equal(shouldRun(reviewWaiting, { tab: 'chat', visible: false }), false)
-  assert.equal(shouldRun(null, { tab: 'chat', visible: true }), false)
+test('shouldRun は見えているか・タブ・enabledWhen だけを見る', () => {
+  const taskDetail = SYNC_TOPICS.find((t) => t.id === 'taskDetail')
+  assert.equal(shouldRun(taskDetail, { visible: true, state: { detailActive: true } }), true)
+  assert.equal(shouldRun(taskDetail, { visible: true, state: { detailActive: false } }), false)
+  assert.equal(shouldRun(taskDetail, { visible: false, state: { detailActive: true } }), false)
+  assert.equal(shouldRun(null), false)
+  // `pauseOnTabs` は規則としては残っている（タブで止めたいトピックを足したときに使う）
+  assert.equal(shouldRun({ id: 'x', everyMs: 1000, pauseOnTabs: ['review'] }, { tab: 'review' }), false)
+  assert.equal(shouldRun({ id: 'x', everyMs: 1000, pauseOnTabs: ['review'] }, { tab: 'chat' }), true)
 })
 
-test('⑦ wake(): 短時間の復帰連打を minGapMs で束ね、skip 無しなら overview も走る', () => {
+test('⑨ wake(): 短時間の復帰連打を minGapMs で束ね、skip を尊重する', async () => {
   let clock = 10_000
-  const ran = []
-  const scheduler = createSyncScheduler({
-    isVisible: () => true,
-    currentTab: () => 'tasks',
-    now: () => clock,
-  })
-  for (const topic of SYNC_TOPICS) scheduler.subscribe(topic.id, () => ran.push(topic.id))
+  const sources = {}
+  for (const topic of SYNC_TOPICS) sources[topic.id] = async () => null
+  const scheduler = createSyncScheduler({ sources, now: () => clock })
+  for (const topic of SYNC_TOPICS) scheduler.subscribe(topic.id, () => {})
 
   const first = scheduler.wake({ minGapMs: 2_500 })
-  assert.ok(first.includes('overview'), 'シグナル復帰では overview をスキップしない')
-  assert.equal(first.length, SYNC_TOPICS.length)
+  await flush()
+  assert.ok(first.includes('overview'), '復帰シグナルでは overview も走る')
+  assert.equal(first.includes('boards'), false, 'enabledWhen を満たさないものは走らない')
 
   clock += 1_000
   assert.deepEqual(scheduler.wake({ minGapMs: 2_500 }), [], 'スロットル窓内の連続イベントは無視する')
 
   clock += 1_500
   const third = scheduler.wake({ skip: 'overview', minGapMs: 2_500 })
-  assert.equal(third.includes('overview'), false, 'recovery 時は skip を尊重する')
-  assert.equal(third.length, SYNC_TOPICS.length - 1)
+  assert.equal(third.includes('overview'), false, '復帰時も skip を尊重する')
 })
 
-test('⑧ tickVisible(): 表示中タブの pauseOnTabs と可視性に従って対象トピックだけを回す', () => {
-  const state = { tab: 'tasks', visible: true }
-  const calls = []
+test('⑩ 取得が落ちても購読者全員へ error が届き、他のトピックは止まらない', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  const errors = []
+  const others = []
   const scheduler = createSyncScheduler({
-    isVisible: () => state.visible,
-    currentTab: () => state.tab,
+    topics: [
+      { id: 'tasks', everyMs: 1_000 },
+      { id: 'inbox', everyMs: 1_000 },
+    ],
+    sources: {
+      tasks: async () => {
+        throw new Error('boom')
+      },
+      inbox: async () => ({ items: [] }),
+    },
   })
-  for (const topic of SYNC_TOPICS) scheduler.subscribe(topic.id, () => calls.push(topic.id))
+  scheduler.subscribe('tasks', (value, meta) => errors.push({ value, error: meta.error }))
+  scheduler.subscribe('tasks', (value, meta) => errors.push({ value, error: meta.error }))
+  scheduler.subscribe('inbox', () => others.push('inbox'))
+  scheduler.start()
+  t.mock.timers.tick(1_000)
+  await flush()
 
-  const ranTasks = scheduler.tickVisible()
-  assert.equal(ranTasks.includes('inbox'), false, 'tasks タブでは inbox を走らせない')
-  assert.equal(ranTasks.includes('live'), false, 'tasks タブでは live を走らせない')
-  assert.equal(ranTasks.includes('reviewWaiting'), true)
-
-  state.visible = false
-  assert.deepEqual(scheduler.tickVisible(), [], '非表示中は 1 本も走らない')
+  assert.equal(errors.length, 2, '落ちても購読者全員に配る（バッジを固めない）')
+  assert.equal(errors[0].error?.message, 'boom')
+  assert.equal(errors[0].value, undefined)
+  assert.equal(others.length, 1, '別トピックは影響を受けない')
+  scheduler.stop()
 })
