@@ -38,7 +38,29 @@ const CLI = path.join(ROOT, 'bin', 'hermes-pilot.mjs')
  * @returns {{status: number, out: string}} 実行結果
  */
 function runCli(args, home) {
-  const env = { ...process.env, HOME: home, HERMES_HOME: path.join(home, '.hermes') }
+  const stubDir = path.join(home, '.test-bin')
+  fs.mkdirSync(stubDir, { recursive: true })
+  const stub = path.join(stubDir, 'hermes')
+  fs.writeFileSync(
+    stub,
+    `#!${process.execPath}
+import fs from 'node:fs'
+import path from 'node:path'
+const [sub, action, name] = process.argv.slice(2)
+if (sub === 'profile' && action === 'create' && name) {
+  const dir = path.join(process.env.HERMES_HOME, 'profiles', name)
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, 'config.yaml'), 'model: default\\n')
+}
+`,
+    { mode: 0o755 },
+  )
+  const env = {
+    ...process.env,
+    HOME: home,
+    HERMES_HOME: path.join(home, '.hermes'),
+    PATH: `${stubDir}:${process.env.PATH ?? ''}`,
+  }
   // 開発用の上書きが残っていると一時 HOME を無視してしまうので落とす
   delete env.HM_DATA
   delete env.HP_DATA_DIR

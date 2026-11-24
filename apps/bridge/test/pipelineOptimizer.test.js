@@ -496,7 +496,7 @@ test('A2B_RULES は英語（機械向け指示）で、CJK を含まない', () 
   }
 })
 
-test('ensurePilotProfile は既定 mobile で専用プロファイルを隔離作成し、ルート SOUL.md に干渉しない', () => {
+test('ensurePilotProfile は既定 mobile で専用プロファイルを CLI 経由で隔離作成し、ルート SOUL.md に干渉しない', async () => {
   const home = tempHome()
   try {
     const hermesHome = path.join(home, '.hermes')
@@ -505,10 +505,27 @@ test('ensurePilotProfile は既定 mobile で専用プロファイルを隔離�
     fs.writeFileSync(path.join(hermesHome, 'config.yaml'), 'model: main-chat\n', 'utf8')
     const workSoul = writeProfileSoul(hermesHome, 'work', '# Work Profile\n')
 
-    const res = ensurePilotProfile({ hermesHome, profile: DEFAULT_PILOT_PROFILE })
+    const cliCalls = []
+    const fakeCreateProfile = async (args, opts) => {
+      cliCalls.push({ args, env: opts?.env })
+      const name = args[2]
+      const profDir = path.join(opts.env.HERMES_HOME, 'profiles', name)
+      fs.mkdirSync(profDir, { recursive: true })
+      if (args.includes('--clone')) {
+        fs.writeFileSync(path.join(profDir, 'config.yaml'), 'model: main-chat\n', 'utf8')
+      } else {
+        fs.writeFileSync(path.join(profDir, 'config.yaml'), 'model: default\n', 'utf8')
+      }
+      return { ok: true, code: 0, stdout: '', stderr: '' }
+    }
+
+    const res = await ensurePilotProfile({ hermesHome, profile: DEFAULT_PILOT_PROFILE, createProfile: fakeCreateProfile })
     assert.equal(res.ok, true)
     assert.equal(res.profile, 'mobile')
     assert.equal(res.copiedConfig, true)
+    assert.equal(cliCalls.length, 1)
+    assert.deepEqual(cliCalls[0].args, ['profile', 'create', 'mobile', '--clone', '--no-alias'])
+    assert.equal(cliCalls[0].env.HERMES_HOME, hermesHome)
     assert.equal(res.soul.applied, undefined) // optimizeHermesSoul と同じ { ok, path, mode, changed, backupPath }
     assert.equal(res.soul.mode, 'created')
     assert.ok(fs.existsSync(path.join(hermesHome, 'profiles', 'mobile', 'memories')))
@@ -521,6 +538,20 @@ test('ensurePilotProfile は既定 mobile で専用プロファイルを隔離�
     )
     assert.equal(fs.readFileSync(workSoul, 'utf8'), '# Work Profile\n')
 
+    // 既存プロファイルは CLI を再実行しない（冪等）
+    const again = await ensurePilotProfile({ hermesHome, profile: DEFAULT_PILOT_PROFILE, createProfile: fakeCreateProfile })
+    assert.equal(again.ok, true)
+    assert.equal(cliCalls.length, 1)
+
+    // CLI 失敗時は手動コピーにフォールバックせず失敗を返す
+    const failed = await ensurePilotProfile({
+      hermesHome,
+      profile: 'broken-prof',
+      createProfile: async () => ({ ok: false, code: 1, stdout: '', stderr: 'create error' }),
+    })
+    assert.equal(failed.ok, false)
+    assert.match(failed.soul.error, /create error/)
+
     // getOptimizeStatus(..., { pilotProfile: 'mobile' }) は専用プロファイルの状態を返す
     const st = getOptimizeStatus({ hermesHome, home, skillsSrcDir: path.join(home, 'none'), pilotProfile: 'mobile' })
     assert.equal(st.pilotProfile, 'mobile')
@@ -532,7 +563,7 @@ test('ensurePilotProfile は既定 mobile で専用プロファイルを隔離�
     assert.ok(st.availableProfiles.includes('work'))
 
     // 明示的に 'default' を選んだときだけルート SOUL.md に追記する
-    const def = ensurePilotProfile({ hermesHome, profile: 'default' })
+    const def = await ensurePilotProfile({ hermesHome, profile: 'default' })
     assert.equal(def.ok, true)
     assert.equal(def.profile, 'default')
     assert.match(fs.readFileSync(path.join(hermesHome, 'SOUL.md'), 'utf8'), /hermes-pilot:a2b:start/)

@@ -17,7 +17,7 @@
     "apps/bridge/test/architect.test.js": 607,
     "apps/web/src/features/SettingsPane.jsx": 1120,
     "scripts/audit-responsive.mjs": 1133,
-    "apps/bridge/src/pipeline-watcher.js": 1196,
+    "apps/bridge/src/pipeline-watcher.js": 1194,
     "scripts/check-coherence.mjs": 1591,
     "apps/web/src/App.jsx": 1075,
     "apps/web/test/demoMode.test.js": 522,

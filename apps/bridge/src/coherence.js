@@ -1,6 +1,15 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
+import {
+  approveChecker,
+  checkerSha256,
+  defaultAllowlistPath,
+  isCheckerApproved,
+  revokeChecker,
+} from './coherence/allowlist.js'
+
+export { approveChecker, defaultAllowlistPath, isCheckerApproved, revokeChecker }
 
 /**
  * コヒーレンス診断エンジン（SPEC-COHERENCE §3.3 / D80）。
@@ -438,6 +447,15 @@ function readBaseline(repoRoot, baselineFile) {
  * @param {string} rel 設定に書かれた相対パス
  * @returns {Promise<{ok: boolean, hardFails: object[], softSignals: object[]}>} 実行結果
  */
+/** チェッカー起動時に渡す最小環境変数（ブリッジの環境変数を丸ごと渡さない）。 */
+export function minimalCheckerEnv(baseEnv = process.env) {
+  const out = {}
+  for (const key of ['PATH', 'HOME', 'LANG']) {
+    if (baseEnv?.[key] != null) out[key] = String(baseEnv[key])
+  }
+  return out
+}
+
 export function runRepoChecker(repoRoot, rel) {
   const abs = resolveInsideRepo(repoRoot, rel)
   const ext = abs ? path.extname(abs).toLowerCase() : ''
@@ -448,7 +466,7 @@ export function runRepoChecker(repoRoot, rel) {
     execFile(
       process.execPath,
       [abs, '--json'],
-      { cwd: repoRoot, shell: false, timeout: CHECKER_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 },
+      { cwd: repoRoot, shell: false, env: minimalCheckerEnv(), timeout: CHECKER_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 },
       (err, stdout) => {
         if (err) return resolve(soft(`checker failed: ${String(err.message ?? err).slice(0, 200)}`))
         let parsed
@@ -644,12 +662,36 @@ export async function analyzeCoherence(repoRoot, opts = {}) {
     }
   }
 
-  /* --- Layer 2: repo checker（相対 .mjs/.js のみ・境界検証付き） --- */
+  /* --- Layer 2: repo checker（相対 .mjs/.js のみ・境界検証 + プラグイン管理の許可リスト必須） --- */
+  let checkerApproval = { required: false, approved: false, checker: null, sha256: null }
   if (cfg?.checker) {
-    const result = await runRepoChecker(root, cfg.checker)
-    repoChecker = result.ok
-    for (const issue of result.hardFails) hardFails.push({ ...issue, severity: 'hard' })
-    for (const issue of result.softSignals) softSignals.push({ ...issue, severity: 'soft' })
+    const abs = resolveInsideRepo(root, cfg.checker)
+    const ext = abs ? path.extname(abs).toLowerCase() : ''
+    if (!abs || !['.mjs', '.js', '.cjs'].includes(ext) || !fs.existsSync(abs)) {
+      const result = await runRepoChecker(root, cfg.checker)
+      repoChecker = result.ok
+      for (const issue of result.softSignals) softSignals.push({ ...issue, severity: 'soft' })
+    } else {
+      const sha256 = checkerSha256(abs)
+      const allowlistPath = defaultAllowlistPath(opts)
+      const approved = isCheckerApproved({ allowlistPath, repoRoot: root, rel: cfg.checker, sha256 })
+      checkerApproval = { required: true, approved, checker: cfg.checker, sha256 }
+      if (approved) {
+        const result = await runRepoChecker(root, cfg.checker)
+        repoChecker = result.ok
+        for (const issue of result.hardFails) hardFails.push({ ...issue, severity: 'hard' })
+        for (const issue of result.softSignals) softSignals.push({ ...issue, severity: 'soft' })
+      } else {
+        repoChecker = false
+        softSignals.push({
+          rule: 'repo-checker-approval',
+          severity: 'soft',
+          message: `repo checker "${cfg.checker}" requires explicit user approval before running`,
+          checker: cfg.checker,
+          sha256,
+        })
+      }
+    }
   }
 
   return {
@@ -657,6 +699,7 @@ export async function analyzeCoherence(repoRoot, opts = {}) {
     generatedAt: new Date(Number.isFinite(opts.now) ? opts.now : Date.now()).toISOString(),
     repoRoot: root,
     layers: { universal: true, repoConfig: Boolean(cfg), repoChecker },
+    checkerApproval,
     hardFails,
     softSignals,
     hotspots: hotspots.slice(0, 20),

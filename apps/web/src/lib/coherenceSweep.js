@@ -201,6 +201,7 @@ export function normalizeReport(raw) {
     generatedAt: clip(src?.generatedAt, 40),
     repoRoot: clip(src?.repoRoot, 300),
     layers: src?.layers ?? null,
+    checkerApproval: src?.checkerApproval ?? null,
     hardFails,
     softSignals,
     hotspots,

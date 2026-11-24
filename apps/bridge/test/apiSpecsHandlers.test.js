@@ -7,6 +7,9 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { createSpecsApi } from '../src/server/api-specs.js'
 import { langOf, sendError, sendFailure, sendJson } from '../src/http/respond.js'
 
@@ -28,7 +31,7 @@ function mockRes() {
   }
 }
 
-function makeHarness({ throwCoherence = false } = {}) {
+function makeHarness({ throwCoherence = false, pluginDataDir = '/tmp/plugin-data', repoPath = '/tmp/demo' } = {}) {
   let nudges = 0
   let watcherSyncs = 0
   let pilotProfile = 'mobile'
@@ -43,13 +46,14 @@ function makeHarness({ throwCoherence = false } = {}) {
   const targetRepo = {
     repo: 'demo',
     label: 'Demo',
-    path: '/tmp/demo',
+    path: repoPath,
     board: 'mobile',
   }
 
   const ctx = {
     cfg: {
       hermesHome: '/tmp/.hermes',
+      pluginDataDir,
       home: '/tmp',
       configPath: '/tmp/config.json',
       reviewDir: '/tmp/review',
@@ -274,7 +278,34 @@ test('POST /api/pipeline/profile は ensurePilotProfile / optimizeAgentSkills / 
 
   const off = await invoke(h.api.handlePipeline, 'POST', '/api/pipeline/profile', { profile: 'mobile', optimize: false })
   assert.equal(off.status, 200)
+  assert.equal(off.json().pilotProfile, 'mobile')
   assert.equal(h.profileEnsureCalls.length, 1, 'optimize: false ならプロファイル準備とスキル配置を飛ばす')
   assert.equal(h.skillOptCalls.length, 1)
   assert.equal(h.profileCacheInvalidations, 2, 'optimize: false でもキャッシュは無効化する')
+})
+
+test('POST /api/coherence/approve と /revoke はチェッカーの承認を切り替えキャッシュを消す', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-coh-api-'))
+  try {
+    const repoDir = path.join(dir, 'repo')
+    const pluginDataDir = path.join(dir, 'plugin-data')
+    fs.mkdirSync(path.join(repoDir, 'scripts'), { recursive: true })
+    fs.mkdirSync(pluginDataDir, { recursive: true })
+    fs.writeFileSync(path.join(repoDir, 'scripts/check.mjs'), 'console.log("{}")\n')
+    fs.writeFileSync(path.join(repoDir, '.hermes-coherence.json'), JSON.stringify({ checker: 'scripts/check.mjs' }))
+
+    const h = makeHarness({ pluginDataDir, repoPath: repoDir })
+
+    const app = await invoke(h.api.handleCoherence, 'POST', '/api/coherence/approve', { repo: 'demo' })
+    assert.equal(app.status, 200)
+    assert.equal(app.json().approval.ok, true)
+    assert.equal(app.json().approval.checker, 'scripts/check.mjs')
+    assert.match(app.json().approval.sha256, /^[0-9a-f]{64}$/)
+
+    const rev = await invoke(h.api.handleCoherence, 'POST', '/api/coherence/revoke', { repo: 'demo' })
+    assert.equal(rev.status, 200)
+    assert.equal(rev.json().ok, true)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })

@@ -957,9 +957,7 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
       return null // 実ディレクトリが無い workdir では走らせない
     }
     try {
-      const thresholds = opts.coherenceThresholds && typeof opts.coherenceThresholds === 'object'
-        ? opts.coherenceThresholds
-        : {}
+      const thresholds = { ...(cfg?.pluginDataDir ? { allowlistPath: path.join(cfg.pluginDataDir, 'coherence-allowlist.json') } : {}), ...(opts.coherenceThresholds && typeof opts.coherenceThresholds === 'object' ? opts.coherenceThresholds : {}) }
       const report = await analyzer(String(workdir), thresholds)
       const alert = coherenceAlertFrom(report)
       return alert?.alert === true ? alert : null

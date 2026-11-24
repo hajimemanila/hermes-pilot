@@ -169,6 +169,7 @@ export function RefactorSheet({ board = '', repo = null, initialPreset = '', onC
   const [report, setReport] = useState(null)
   const [reportState, setReportState] = useState('loading') // loading | ready | error
   const [busy, setBusy] = useState(null) // 'single' | 'spec' | null
+  const [approvingChecker, setApprovingChecker] = useState(false)
   const [error, setError] = useState(null)
   // bug-hunt の再現先行オプトイン（既定 OFF＝調査レポート専念・プリセット変更で戻す）
   const [autoFix, setAutoFix] = useState(false)
@@ -226,6 +227,28 @@ export function RefactorSheet({ board = '', repo = null, initialPreset = '', onC
   useEffect(() => {
     loadReport(false)
   }, [loadReport])
+
+  const approveRepoChecker = async () => {
+    if (approvingChecker) return
+    setApprovingChecker(true)
+    setError(null)
+    try {
+      const data = await api('/api/coherence/approve', {
+        method: 'POST',
+        body: { board, repo: repoId || null },
+      })
+      const next = normalizeReport(data)
+      setReport(next)
+      setReportState('ready')
+      if (!touched.current) setPreset(recommendSweep(next))
+      notify?.(t('coherence.checkerApproved'))
+      emitHmEvent(HM_EVENTS.WAKE_SYNC)
+    } catch (e) {
+      setError(e?.message || t('coherence.checkerApproveFailed'))
+    } finally {
+      setApprovingChecker(false)
+    }
+  }
 
   const repoKey = report?.repoRoot || board || '_default'
   const repoAck = ackForRepo(ackStore, repoKey)
@@ -341,6 +364,28 @@ export function RefactorSheet({ board = '', repo = null, initialPreset = '', onC
           ↻ {t('coherence.refresh')}
         </button>
       </div>
+
+      {reportState === 'ready' && report?.checkerApproval?.required && !report.checkerApproval.approved ? (
+        <div className="coh-signal" role="status">
+          <div className="coh-signal-msg">
+            {t('coherence.checkerPending', {
+              checker: report.checkerApproval.checker || '',
+              hash: String(report.checkerApproval.sha256 || '').slice(0, 12),
+            })}
+          </div>
+          <div className="coh-signal-actions">
+            <button
+              type="button"
+              className="btn primary"
+              disabled={approvingChecker}
+              aria-busy={approvingChecker}
+              onClick={approveRepoChecker}
+            >
+              {approvingChecker ? t('coherence.checkerApproving') : t('coherence.checkerApprove')}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {reportState === 'ready' && hasSignals ? (
         <details className="coh-details" ref={detailsRef}>

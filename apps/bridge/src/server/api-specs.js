@@ -1,3 +1,7 @@
+import path from 'node:path'
+import fs from 'node:fs'
+import { approveChecker, readRepoConfig, resolveInsideRepo, revokeChecker } from '../coherence.js'
+
 /**
  * SPEC Launchpad・コヒーレンス診断・パイプライン最適化・Architect・リポジトリの API ハンドラ。
  *
@@ -188,6 +192,41 @@ export function createSpecsApi(ctx = {}) {
 
   async function handleCoherence(req, res, url, seg) {
     const [, a, b, c, d, e] = seg
+    const allowlistPath = cfg?.pluginDataDir ? path.join(cfg.pluginDataDir, 'coherence-allowlist.json') : undefined
+    if (b === 'approve' && req.method === 'POST') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendError(res, 429, 'RATE_LIMITED')
+      }
+      const body = await readJson(req)
+      const target = resolveSpecRepo({ repoId: body?.repo, boardSlug: body?.board })
+      if (!target) return sendError(res, 404, 'NOT_FOUND', { resource: 'repo' })
+      const repoCfg = readRepoConfig(target.path)
+      if (!repoCfg?.checker) return sendError(res, 400, 'NO_CHECKER')
+      const abs = resolveInsideRepo(target.path, repoCfg.checker)
+      const ext = abs ? path.extname(abs).toLowerCase() : ''
+      if (!abs || !['.mjs', '.js', '.cjs'].includes(ext) || !fs.existsSync(abs)) {
+        return sendError(res, 400, 'INVALID_CHECKER', { checker: repoCfg.checker })
+      }
+      const approval = approveChecker({ allowlistPath, repoRoot: target.path, rel: repoCfg.checker, absPath: abs })
+      coherenceCache.delete(`${target.repo}:${target.path}`)
+      auth.audit({ kind: 'coherence.approve', repo: target.repo, checker: repoCfg.checker, sha256: approval.sha256, ok: Boolean(approval.ok) })
+      if (!approval.ok) return sendFailure(res, 400, approval)
+      const report = await analyzeCoherence(target.path, allowlistPath ? { allowlistPath } : {})
+      coherenceCache.set(`${target.repo}:${target.path}`, { at: Date.now(), report })
+      return sendJson(res, 200, { ...report, repo: target.repo, label: target.label, board: target.board, cached: false, approval })
+    }
+    if (b === 'revoke' && req.method === 'POST') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendError(res, 429, 'RATE_LIMITED')
+      }
+      const body = await readJson(req)
+      const target = resolveSpecRepo({ repoId: body?.repo, boardSlug: body?.board })
+      if (!target) return sendError(res, 404, 'NOT_FOUND', { resource: 'repo' })
+      const r = revokeChecker({ allowlistPath, repoRoot: target.path })
+      coherenceCache.delete(`${target.repo}:${target.path}`)
+      auth.audit({ kind: 'coherence.revoke', repo: target.repo, ok: true })
+      return sendJson(res, 200, { ...r, repo: target.repo })
+    }
     const target = resolveSpecRepo({
       repoId: url.searchParams.get('repo'),
       boardSlug: url.searchParams.get('board'),
@@ -201,7 +240,7 @@ export function createSpecsApi(ctx = {}) {
     }
     let report
     try {
-      report = await analyzeCoherence(target.path)
+      report = await analyzeCoherence(target.path, allowlistPath ? { allowlistPath } : {})
     } catch (e) {
       // 診断の失敗で UI を壊さない（バナーが出ないだけ）。
       return sendJson(res, 200, {
@@ -245,7 +284,7 @@ export function createSpecsApi(ctx = {}) {
       let ensured = null
       let skills = null
       if (body?.optimize !== false) {
-        ensured = ensurePilotProfile({ hermesHome: cfg.hermesHome, profile: pilotProfile })
+        ensured = await ensurePilotProfile({ hermesHome: cfg.hermesHome, profile: pilotProfile })
         skills = optimizeAgentSkills({
           home: cfg.home,
           hermesHome: cfg.hermesHome,
@@ -289,7 +328,7 @@ export function createSpecsApi(ctx = {}) {
       const doSoul = body?.soul !== false
       const doSkills = body?.skills !== false
       // 既定の専用プロファイル（`mobile`）のみに書き込み、普段使いの default SOUL は汚さない。
-      const ensured = doSoul ? ensurePilotProfile({ hermesHome: cfg.hermesHome, profile: pilotProfile }) : null
+      const ensured = doSoul ? await ensurePilotProfile({ hermesHome: cfg.hermesHome, profile: pilotProfile }) : null
       if (doSoul) invalidateProfilesCache?.()
       const soul = ensured ? ensured.soul : null
       const profiles = ensured ? { ok: ensured.ok, profiles: ensured.profiles } : null

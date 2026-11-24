@@ -10,6 +10,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { safeList } from '../lib/safe.js'
+import { runHermes } from '../lib/cli.js'
 import { A2B_RULE_BLOCK, applySoulFile, optimizeHermesSoul, profileSoulState } from './soul.js'
 
 /**
@@ -86,17 +87,20 @@ export function listProfileNames(hermesHome) {
  *
  * - `profile !== 'default'`（既定 `mobile`）のときは `profiles/<profile>/SOUL.md` のみを対象とし、
  *   ルートの `~/.hermes/SOUL.md` や他の未適用プロファイルへは 1 文字も追記しない（過干渉防止）。
- * - ルートに `config.yaml` がありプロファイル側にまだ無ければ初期設定としてコピーする（`force: false`）。
+ * - プロファイル未作成時は `hermes profile create <name> --clone --no-alias`（ルート `config.yaml` が無ければ
+ *   `--clone` なし）を呼んで、Bot トークン等のチャンネル設定を安全に分離したプロファイルを作る。
  * - 既にマーカーを持つ別 `SOUL.md` がある場合は最新ルールで冪等同期する（`create: false, append: false`）。
  *
- * @param {{hermesHome?: string, profile?: string, now?: number, block?: string}} [opts] 入力
- * @returns {{ok: boolean, profile: string, soul: object, rootSoul: object, profiles: Array<object>, copiedConfig: boolean}} 結果
+ * @param {{hermesHome?: string, profile?: string, now?: number, block?: string, hermesBin?: string, createProfile?: Function}} [opts] 入力
+ * @returns {Promise<{ok: boolean, profile: string, soul: object, rootSoul: object, profiles: Array<object>, copiedConfig: boolean}>} 結果
  */
-export function ensurePilotProfile({
+export async function ensurePilotProfile({
   hermesHome,
   profile = DEFAULT_PILOT_PROFILE,
   now = Date.now(),
   block = A2B_RULE_BLOCK,
+  hermesBin,
+  createProfile,
 } = {}) {
   const hh = String(hermesHome ?? process.env.HERMES_HOME ?? path.join(os.homedir(), '.hermes'))
   const target = sanitizePilotProfile(profile)
@@ -110,17 +114,36 @@ export function ensurePilotProfile({
   } else {
     const profileDir = path.join(hh, 'profiles', target)
     const memoriesDir = path.join(profileDir, 'memories')
-    fs.mkdirSync(memoriesDir, { recursive: true })
     const rootConfig = path.join(hh, 'config.yaml')
     const profileConfig = path.join(profileDir, 'config.yaml')
-    try {
-      if (fs.existsSync(rootConfig) && !fs.existsSync(profileConfig)) {
-        fs.cpSync(rootConfig, profileConfig, { force: false, errorOnExist: true })
-        copiedConfig = true
+    const hasRootConfig = fs.existsSync(rootConfig)
+    if (!fs.existsSync(profileConfig)) {
+      const args = hasRootConfig
+        ? ['profile', 'create', target, '--clone', '--no-alias']
+        : ['profile', 'create', target, '--no-alias']
+      const runCli = typeof createProfile === 'function' ? createProfile : runHermes
+      const res = await runCli(args, { env: { HERMES_HOME: hh }, bin: hermesBin })
+      if (!res?.ok) {
+        const error = String(res?.stderr || res?.stdout || 'hermes profile create failed').trim()
+        return {
+          ok: false,
+          profile: target,
+          soul: {
+            ok: false,
+            path: path.join(profileDir, 'SOUL.md'),
+            mode: 'error',
+            changed: false,
+            backupPath: null,
+            error,
+          },
+          rootSoul: { ok: true, path: path.join(hh, 'SOUL.md'), mode: 'skipped', changed: false, backupPath: null },
+          profiles: [],
+          copiedConfig: false,
+        }
       }
-    } catch {
-      copiedConfig = false
+      copiedConfig = hasRootConfig && fs.existsSync(profileConfig)
     }
+    fs.mkdirSync(memoriesDir, { recursive: true })
     const { exists: _e, applied: _a, ...applied } = applySoulFile(path.join(profileDir, 'SOUL.md'), {
       now,
       block,

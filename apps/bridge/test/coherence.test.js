@@ -18,13 +18,16 @@ import { fileURLToPath } from 'node:url'
 import {
   CONFIG_MAX_BYTES,
   analyzeCoherence,
+  approveChecker,
   coherenceAlertFrom,
   duplicateBatchIds,
   gitHotspots,
   isArchivedSpecText,
   listSourceFiles,
+  minimalCheckerEnv,
   readRepoConfig,
   resolveInsideRepo,
+  revokeChecker,
   runRepoChecker,
 } from '../src/coherence.js'
 import {
@@ -142,8 +145,9 @@ test('checker はリポジトリ外・絶対パス・`..` を実行しない（s
   assert.equal(direct.ok, false)
 })
 
-test('checker が JSON を返せば hardFails / softSignals を併合する', async () => {
+test('checker は未承認なら実行せず、repoPath + SHA-256 承認後に実行し、変更で再停止する', async () => {
   const root = tempDir()
+  const allowlistPath = path.join(tempDir(), 'allowlist.json')
   write(root, 'src/keep.js', 'export const ok = 1\n')
   write(
     root,
@@ -156,20 +160,68 @@ test('checker が JSON を返せば hardFails / softSignals を併合する', as
   )
   write(root, '.hermes-coherence.json', JSON.stringify({ checker: 'scripts/checker.mjs' }))
 
-  const report = await analyzeCoherence(root, { gitHotspots: noGit })
+  // 1) 未承認（既定 OFF）: 実行されない
+  const unapproved = await analyzeCoherence(root, { gitHotspots: noGit, allowlistPath })
+  assert.equal(unapproved.layers.repoChecker, false)
+  assert.equal(unapproved.checkerApproval.required, true)
+  assert.equal(unapproved.checkerApproval.approved, false)
+  assert.equal(unapproved.hardFails.length, 0)
+  assert.ok(unapproved.softSignals.some((s) => s.rule === 'repo-checker-approval'))
+
+  // 2) 承認後: 実行されて hardFails / softSignals が併合される
+  const abs = path.join(root, 'scripts/checker.mjs')
+  const app = approveChecker({ allowlistPath, repoRoot: root, rel: 'scripts/checker.mjs', absPath: abs })
+  assert.equal(app.ok, true)
+  const report = await analyzeCoherence(root, { gitHotspots: noGit, allowlistPath })
   assert.equal(report.layers.repoChecker, true)
+  assert.equal(report.checkerApproval.approved, true)
   assert.equal(report.hardFails.length, 1)
   assert.equal(report.hardFails[0].rule, 'api-parity')
   assert.ok(report.softSignals.some((s) => s.rule === 'akapen'))
   assert.equal(report.ok, false)
+
+  // 3) チェッカーが書き換わったら（ハッシュ不一致）再承認が必要になる
+  write(root, 'scripts/checker.mjs', 'process.stdout.write(JSON.stringify({ ok: true, hardFails: [], softSignals: [] }))\n')
+  const tampered = await analyzeCoherence(root, { gitHotspots: noGit, allowlistPath })
+  assert.equal(tampered.layers.repoChecker, false)
+  assert.equal(tampered.checkerApproval.approved, false)
+
+  // 4) 承認取消（revoke）で再び OFF になる
+  approveChecker({ allowlistPath, repoRoot: root, rel: 'scripts/checker.mjs', absPath: abs })
+  revokeChecker({ allowlistPath, repoRoot: root })
+  const revoked = await analyzeCoherence(root, { gitHotspots: noGit, allowlistPath })
+  assert.equal(revoked.layers.repoChecker, false)
+})
+
+test('runRepoChecker は最小環境変数（PATH / HOME / LANG）のみを渡す', async () => {
+  const min = minimalCheckerEnv({ PATH: '/usr/bin', HOME: '/home/u', LANG: 'en_US.UTF-8', SECRET_TOKEN: 'xyz' })
+  assert.deepEqual(min, { PATH: '/usr/bin', HOME: '/home/u', LANG: 'en_US.UTF-8' })
+  const root = tempDir()
+  write(
+    root,
+    'scripts/env-probe.mjs',
+    'process.stdout.write(JSON.stringify({ ok: true, hardFails: [], softSignals: [{ rule: "env-keys", message: Object.keys(process.env).sort().join(",") }] }))\n',
+  )
+  const prev = process.env.HP_SECRET_LEAK_TEST
+  process.env.HP_SECRET_LEAK_TEST = 'secret'
+  try {
+    const res = await runRepoChecker(root, 'scripts/env-probe.mjs')
+    assert.equal(res.ok, true)
+    assert.equal(res.softSignals[0].message.includes('HP_SECRET_LEAK_TEST'), false)
+  } finally {
+    if (prev === undefined) delete process.env.HP_SECRET_LEAK_TEST
+    else process.env.HP_SECRET_LEAK_TEST = prev
+  }
 })
 
 test('checker の異常終了・非 JSON は soft signal で吸収し、本体は落とさない', async () => {
   const root = tempDir()
+  const allowlistPath = path.join(tempDir(), 'allowlist.json')
   write(root, 'src/keep.js', 'export const ok = 1\n')
   write(root, 'scripts/broken.mjs', 'process.exit(3)\n')
   write(root, '.hermes-coherence.json', JSON.stringify({ checker: 'scripts/broken.mjs' }))
-  const report = await analyzeCoherence(root, { gitHotspots: noGit })
+  approveChecker({ allowlistPath, repoRoot: root, rel: 'scripts/broken.mjs', absPath: path.join(root, 'scripts/broken.mjs') })
+  const report = await analyzeCoherence(root, { gitHotspots: noGit, allowlistPath })
   assert.equal(report.layers.repoChecker, false)
   assert.ok(report.softSignals.some((s) => s.rule === 'repo-checker'))
 })
@@ -301,7 +353,9 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const CHECKER = new URL('../../../scripts/check-coherence.mjs', import.meta.url).pathname
 
 test('Layer 2 integration: the real repository wires the checker and passes it', async () => {
-  const report = await analyzeCoherence(REPO_ROOT, { withRepoConfig: true })
+  const allowlistPath = path.join(tempDir(), 'allowlist.json')
+  approveChecker({ allowlistPath, repoRoot: REPO_ROOT, rel: 'scripts/check-coherence.mjs', absPath: CHECKER })
+  const report = await analyzeCoherence(REPO_ROOT, { withRepoConfig: true, allowlistPath })
   assert.equal(report.layers.repoConfig, true)
   assert.equal(report.layers.repoChecker, true)
   assert.equal(report.ok, true)

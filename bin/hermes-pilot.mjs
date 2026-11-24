@@ -653,7 +653,7 @@ export async function runInit(
   }
 
   const profileCfg = readConfig(p.configPath)
-  const profileResult = ensurePilotProfile({ hermesHome: p.hermesHome, profile: profileCfg.pilotProfile })
+  const profileResult = await ensurePilotProfile({ hermesHome: p.hermesHome, profile: profileCfg.pilotProfile })
   // 同梱スキルは <hermesHome>/skills と Pilot プロファイルの両方へ link 優先・copy フォールバックで配置する。
   const skillsSrcDir = path.join(ROOT, 'skills')
   const skillRes = optimizeAgentSkills({ home: p.home, hermesHome: p.hermesHome, skillsSrcDir, pilotProfile: profileCfg.pilotProfile })

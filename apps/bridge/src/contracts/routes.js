@@ -54,6 +54,8 @@ export const API_ROUTES = [
 
   // --- 整合性診断 -----------------------------------------------------------
   { method: 'GET', pattern: '/api/coherence/report', demo: 'mocked', note: 'Layer 1 診断結果' },
+  { method: 'POST', pattern: '/api/coherence/approve', demo: 'bridge-only', note: 'Layer 2 チェッカーを許可リストへ登録' },
+  { method: 'POST', pattern: '/api/coherence/revoke', demo: 'bridge-only', note: 'Layer 2 チェッカーの許可を取り消す' },
 
   // --- パイプライン ---------------------------------------------------------
   { method: 'GET', pattern: '/api/pipeline/status', demo: 'mocked' },

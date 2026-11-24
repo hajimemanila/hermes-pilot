@@ -314,7 +314,7 @@ async function handleApi(req, res, url) {
   // `server/api-boards.js`（boards・review）。ルート条件と応答形は分割前と同一。
   if (a === 'repos') return apiSpecs.handleRepos(req, res, url, seg)
   if (a === 'specs') return apiSpecs.handleSpecs(req, res, url, seg)
-  if (a === 'coherence' && b === 'report' && req.method === 'GET') return apiSpecs.handleCoherence(req, res, url, seg)
+  if (a === 'coherence' && (b === 'report' || b === 'approve' || b === 'revoke')) return apiSpecs.handleCoherence(req, res, url, seg)
   if (a === 'pipeline') return apiSpecs.handlePipeline(req, res, url, seg)
   if (a === 'architect') return apiSpecs.handleArchitect(req, res, url, seg)
   if (a === 'boards') return apiBoards.handleBoards(req, res, url, seg)
