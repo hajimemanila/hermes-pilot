@@ -110,8 +110,8 @@ const ARCHIVED_RE = /^\s*[-*]?\s*\*\*\s*(?:Status|状態)\s*\*\*\s*[:：]\s*(?:a
 /** 負債マーカー（Layer 1 の `debt-spike`）。 */
 const DEBT_RE = /\b(TODO|FIXME|HACK|XXX)\b/g
 
-/** バッチ見出し（`### Batch <ID>: <title>` / `### <ID>: <title>`。`specs.js` と同じ規則）。 */
-const BATCH_HEADING_RE = /^###\s+(?:Batch\s+)?([A-Za-z][A-Za-z0-9._-]{0,15})\s*[:：]\s*(.+?)\s*$/
+/** バッチ見出し（`### Batch <ID>: <title>` / `### <ID>: <title>` / `### <ID> — <title>`。`specs.js` と同じ規則）。 */
+export const BATCH_HEADING_RE = /^###\s+(?:Batch\s+)?([A-Za-z][A-Za-z0-9._-]{0,15})(?:\s*[:：]\s*|\s+[—–-]\s+)(.+?)\s*$/
 
 /** glob（`*` / `**` / `?`）をリポジトリ相対パスの正規表現へ変換する。 */
 function globToRegExp(glob) {

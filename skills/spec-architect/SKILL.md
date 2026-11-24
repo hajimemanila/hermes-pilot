@@ -80,6 +80,11 @@ BODY
 hermes kanban block <task_id> "Waiting for the spec interview (Q1-Q3)" --kind needs_input
 ```
 
+- When Round 1 is started from an `[ARCH]` task and delegates Round 2 to a separate `[review]` card,
+  copy the Round 2 batch heading (`### Batch <SLUG>-<n>: <Title>`) and per-batch `- **Execution Mode**:`
+  requirements into that `[review]` card's body, then mark the parent `[ARCH]` task `done` once the `[review]`
+  card is `blocked`.
+
 With the `.json` alone both the PWA native form (`<StandardForm>`) and "open the whole sheet ↗" work
 (when `.html` is missing the bridge generates safe HTML from the `.json`).
 

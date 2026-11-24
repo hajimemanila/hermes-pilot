@@ -74,6 +74,7 @@ export function buildArchitectTaskBody({
     'the question itself is a visual UI layout comparison; the JSON alone renders the native form.',
     `Round 2: after the answers arrive, write \`docs/SPEC-<SLUG>.md\` with \`### Batch ${prefix}-<n>: <Title>\` sections`,
     round2Headings(lang).inline,
+    `If Round 1 delegates Round 2 to a separate \`[review]\` task, include the \`### Batch ${prefix}-<n>: <Title>\` heading and per-batch \`- **Execution Mode**:\` requirement in that \`[review]\` task body and mark this \`[ARCH]\` task \`done\` once the \`[review]\` task is \`blocked\`.`,
     ...executionPolicyLines(policy),
     'Stay inside the official local CLI: the only runner is `hermes kanban create` (no external AI CLI is launched).',
     `Board: ${board}`,
@@ -104,6 +105,7 @@ export function isReviewTask(task) {
 
 const ACTIVE_REVIEW_STATUSES = new Set(['ready', 'running', 'claimed', 'in_progress'])
 const BLOCKED_REVIEW_STATUSES = new Set(['blocked'])
+const TERMINAL_REVIEW_STATUSES = new Set(['done', 'archived', 'failed'])
 
 /**
  * Round 1 シートが `reviewDir` 上に実在し、中身も読めるか確かめる（問題②）。
@@ -150,16 +152,22 @@ export function reviewSheetReady(reviewDir, sheetRel) {
  * @param {{slackMs?: number, reviewDir?: string|null, boardSlug?: string|null, reviewBoard?: string|null, checkSheet?: boolean}} [opts] 制約
  * @returns {{taskId: string, title: string, status: string}|null} 一致タスク（無ければ null）
  */
-function matchJobReviewTask(job, tasks, statuses, { slackMs = SPEC_MTIME_SLACK_MS, reviewDir = null, checkSheet = false } = {}) {
+function matchJobReviewTask(
+  job,
+  tasks,
+  statuses,
+  { slackMs = SPEC_MTIME_SLACK_MS, reviewDir = null, checkSheet = false, excludeOwn = false } = {},
+) {
   const since = Number(job?.startedAt ?? 0) - slackMs
   const ownId = job?.taskId ? String(job.taskId) : ''
-  const revId = job?.reviewTaskId ? String(job.reviewTaskId) : ''
+  const revIds = new Set([job?.reviewTaskId, job?.lastReviewTaskId].filter(Boolean).map(String))
   const reviewDirs = [...new Set([reviewDir, job?.repoPath ? path.join(String(job.repoPath), 'review') : null].filter(Boolean))]
   const list = Array.isArray(tasks) ? tasks : []
   for (const task of list) {
     if (!task || !task.id) continue
     const id = String(task.id)
-    const same = (ownId && id === ownId) || (revId && id === revId)
+    if (excludeOwn && ownId && id === ownId) continue
+    const same = (ownId && id === ownId) || revIds.has(id)
     const fresh = Number(task.createdAt ?? 0) >= since
     if (!same && !fresh) continue
     if (!isReviewTask(task)) continue
@@ -170,7 +178,7 @@ function matchJobReviewTask(job, tasks, statuses, { slackMs = SPEC_MTIME_SLACK_M
     if (checkSheet && ak?.sheet && ak.mode !== 'annotation') {
       if (reviewDir && !reviewDirs.some((d) => reviewSheetReady(d, ak.sheet))) continue
     }
-    return { taskId: id, title: String(task.title ?? ''), status }
+    return { taskId: id, title: String(task.title ?? ''), status, result: task.result ?? null }
   }
   return null
 }
@@ -200,6 +208,14 @@ export function findJobReviewTask(job, tasks, opts = {}) {
  */
 export function findActiveJobReviewTask(job, tasks, opts) {
   return matchJobReviewTask(job, tasks, ACTIVE_REVIEW_STATUSES, opts)
+}
+
+/**
+ * 終端状態（done / archived / failed）になった子 `[review]` タスクを探す（親 `[ARCH]` 自体は除外）。
+ * 親 `[ARCH]` が `blocked` で残置された場合でも Round 2 完了／失敗を検知するため。
+ */
+export function findTerminalJobReviewTask(job, tasks, opts = {}) {
+  return matchJobReviewTask(job, tasks, TERMINAL_REVIEW_STATUSES, { ...opts, excludeOwn: true })
 }
 /**
  * ジョブが作ったと見なせる SPEC を 1 つ選ぶ。
@@ -259,18 +275,20 @@ export function syncJobFromKanban(job, { tasksOf, reviewDir, revBoard = DEFAULT_
     job.reviewTaskId = review.taskId
     job.reviewTitle = review.title
     job.reviewBoard = review.board
+    job.lastReviewTaskId = review.taskId
+    job.lastReviewBoard = review.board
     job.reviewSeenOnce = true
     return true
   }
-  if (self && TERMINAL_TASK_STATUSES.includes(String(self.status))) {
+
+  const orderedBoards = job.lastReviewBoard ? [...new Set([job.lastReviewBoard, ...scanBoards])] : scanBoards
+  if (job.reviewSeenOnce) {
     let activeReview = null
-    if (job.reviewSeenOnce) {
-      for (const slug of scanBoards) {
-        const found = findActiveJobReviewTask(job, tasksOf(slug))
-        if (found) {
-          activeReview = { ...found, board: slug }
-          break
-        }
+    for (const slug of orderedBoards) {
+      const found = findActiveJobReviewTask(job, tasksOf(slug))
+      if (found) {
+        activeReview = { ...found, board: slug }
+        break
       }
     }
     if (activeReview) {
@@ -282,6 +300,35 @@ export function syncJobFromKanban(job, { tasksOf, reviewDir, revBoard = DEFAULT_
       job.reviewBoard = null
       return true
     }
+    const selfLower = String(self?.status ?? '').toLowerCase()
+    if (!self || TERMINAL_TASK_STATUSES.includes(String(self.status)) || selfLower === 'blocked') {
+      let terminalReview = null
+      for (const slug of orderedBoards) {
+        const found = findTerminalJobReviewTask(job, tasksOf(slug))
+        if (found) {
+          terminalReview = { ...found, board: slug }
+          break
+        }
+      }
+      if (terminalReview) {
+        job.reviewTaskId = null
+        job.reviewTitle = null
+        job.reviewBoard = null
+        if (terminalReview.status === 'failed') {
+          job.status = 'failed'
+          job.queueState = null
+          job.error = String(terminalReview.result || job.error || 'Review Round 2 task failed').slice(0, 600)
+          return false
+        }
+        job.status = String(terminalReview.status)
+        job.queueState = null
+        job.finishedAt = job.finishedAt ?? at
+        return false
+      }
+    }
+  }
+
+  if (self && TERMINAL_TASK_STATUSES.includes(String(self.status))) {
     job.status = String(self.status)
     job.queueState = null
     job.reviewTaskId = null

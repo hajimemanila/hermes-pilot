@@ -81,8 +81,8 @@ export const SPEC_ARCHIVED_RE = /^\s*[-*]?\s*\*\*\s*(?:Status|状態)\s*\*\*\s*[
  * `extractSpecStatus()` が先頭 40 行で読む書式と 1:1 で対応させる。
  */
 export const SPEC_ARCHIVE_LINE = '- **Status**: archived'
-/** `### Batch <ID>: <Title>` / `### <ID>: <Title>`。 */
-const BATCH_HEADING_RE = /^###\s+(?:Batch\s+)?([A-Za-z][A-Za-z0-9._-]{0,15})\s*[:：]\s*(.+?)\s*$/
+/** `### Batch <ID>: <Title>` / `### <ID>: <Title>` / `### <ID> — <Title>`。 */
+export const BATCH_HEADING_RE = /^###\s+(?:Batch\s+)?([A-Za-z][A-Za-z0-9._-]{0,15})(?:\s*[:：]\s*|\s+[—–-]\s+)(.+?)\s*$/
 
 /** セクションの終わり（レベル 1〜3 の見出し。`####` はバッチ内の小見出しなので含める）。 */
 const SECTION_END_RE = /^#{1,3}\s/

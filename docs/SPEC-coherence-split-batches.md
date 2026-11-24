@@ -79,7 +79,11 @@ apps/web/src/features/
 すべて `[Mode: Zero-Stop]`。Verify は `npm run verify` を基本に、バッチ固有のコマンドを前に足す。
 **1 バッチ 1 テーマ・1 コミット**（MRG-5 のみ `chore(coherence):` 接頭辞）。
 
-### MRG-1 — bridge: `pipeline-optimizer.js` を 3 分割＋バレル化
+### Batch MRG-1: bridge — `pipeline-optimizer.js` を 3 分割＋バレル化
+
+- **Execution Mode**: `[Mode: Zero-Stop]`
+- **Recommended Role**: `role:builder`
+- **目的**: `pipeline-optimizer.js` を `apps/bridge/src/pipeline/`（3 モジュール＋葉 `paths.js`）へ分割し、バレル経由で 23 export と全 import 契約を 100% 維持したままホットスポットから解消する。
 
 触るファイル: `apps/bridge/src/pipeline/{paths,soul,profile,skills}.js`（新規） / `apps/bridge/src/pipeline-optimizer.js`（バレルへ置換） / `scripts/check-coherence.mjs:771`（allow へ 1 パス追加） / `docs/MODULES.md`（置き場所を追記）
 
@@ -99,9 +103,13 @@ apps/web/src/features/
 - `node scripts/check-coherence.mjs --json` の `hardFails` が `[]`、`softSignals` の件数が増えていない
 - `scripts/check-coherence.mjs` が **1590 行のまま**（増減させない）
 
-Verify: `node --test apps/bridge/test/pipelineOptimizer.test.js apps/bridge/test/routeContracts.test.js apps/bridge/test/coherence.rules.test.js && npm run verify`
+- **Verify**: `node --test apps/bridge/test/pipelineOptimizer.test.js apps/bridge/test/routeContracts.test.js apps/bridge/test/coherence.rules.test.js && npm run verify`
 
-### MRG-2 — web: `ReviewPane.jsx` から葉コンポーネントを抜く
+### Batch MRG-2: web — `ReviewPane.jsx` から葉コンポーネントを抜く
+
+- **Execution Mode**: `[Mode: Zero-Stop]`
+- **Recommended Role**: `role:builder`
+- **目的**: 1,489 行の `ReviewPane.jsx` から葉コンポーネント（Chip / フォーム / 読取詳細 / 新規注釈シート）を `apps/web/src/features/review/` へ抽出し、本体を 800 行未満に縮小する。
 
 触るファイル: `apps/web/src/features/review/{Chip,ReviewForms,ReviewDetail,AnnotationCreate}.jsx`（新規） / `apps/web/src/features/ReviewPane.jsx`（置換） / `apps/web/test/reviewRepoMemory.test.js:25`（読み先だけ変更） / `docs/MODULES.md`
 
@@ -125,9 +133,13 @@ Verify: `node --test apps/bridge/test/pipelineOptimizer.test.js apps/bridge/test
 - `App.jsx` / `TaskDetailSheet.jsx` の import 行が無変更
 - `npm run build` が通り、`npm run verify` が緑
 
-Verify: `node --test apps/web/test/reviewRepoMemory.test.js apps/web/test/netRecovery.test.js && npm run verify`
+- **Verify**: `node --test apps/web/test/reviewRepoMemory.test.js apps/web/test/netRecovery.test.js && npm run verify`
 
-### MRG-3 — 重複と死んだコードを削る
+### Batch MRG-3: 重複と死んだコードを削る
+
+- **Execution Mode**: `[Mode: Zero-Stop]`
+- **Recommended Role**: `role:builder`
+- **目的**: 参照ゼロの再エクスポート（`parsePastedReply`）削除と、分割で生じる import・小ヘルパの重複を整理する（判断はすべて `rg` 実測に基づく）。
 
 手順（判断はすべて `rg` の実測に基づく。結果はコミット前に comment へ貼る）:
 1. `export { parsePastedReply }`（`ReviewPane.jsx:38`）を削除する。参照はゼロ（import 元は `App.jsx` / `TaskDetailSheet.jsx` / テストすべて `lib/reviewPaste.js` 直）。`IframeForm` が使う import は `review/ReviewForms.jsx` 側へ移す
@@ -140,9 +152,13 @@ Verify: `node --test apps/web/test/reviewRepoMemory.test.js apps/web/test/netRec
 - `rg` の実行結果（コマンドと出力）をコミットメッセージかタスク comment に残す
 - `npm run verify` が緑
 
-Verify: `npm run verify`
+- **Verify**: `npm run verify`
 
-### MRG-4 — ソフト 2 件を 0 にする（`akapen-residual` 21 → 0 / `baseline-ratchet` 7 → 0）
+### Batch MRG-4: ソフト 2 件を 0 にする（`akapen-residual` 21 → 0 / `baseline-ratchet` 7 → 0）
+
+- **Execution Mode**: `[Mode: Zero-Stop]`
+- **Recommended Role**: `role:builder`
+- **目的**: `akapen` 残存（コメント整理＋データ互換 1 箇所集約＋プロトコル互換削除）と縮小済みラチェット台帳の更新により、`check:coherence` のソフトシグナル 2 件を 0 件にする。
 
 手順:
 1. **コメント 13 箇所**を「旧名」表記へ書き換える（リテラルを消す）:
@@ -161,9 +177,13 @@ Verify: `npm run verify`
 - `npm run verify` が緑
 - 副作用の明示: `hermes-pilot/t_5878c619`（done・旧ラウンド）は `[akapen]` タグのまま履歴に残る。レビュー一覧からは外れるが、**データは書き換えない**（移行スクリプトの「body は書き換えない」仕様を維持）
 
-Verify: `node scripts/check-coherence.mjs --json && npm run verify`
+- **Verify**: `node scripts/check-coherence.mjs --json && npm run verify`
 
-### MRG-5 — 結合検証と git-hotspot の再検出確認
+### Batch MRG-5: 結合検証と `git-hotspot` の再検出確認
+
+- **Execution Mode**: `[Mode: Zero-Stop]`
+- **Recommended Role**: `role:builder`
+- **目的**: MRG-1〜MRG-4 反映後の総合検証と `docs/MODULES.md` 更新・最終 `chore(coherence):` コミット後の `gitHotspots()` 再検出ゼロを確認する。
 
 手順:
 1. `npm run verify` をフルで 1 回
@@ -178,7 +198,7 @@ Verify: `node scripts/check-coherence.mjs --json && npm run verify`
 - hotspot プローブの before/after 出力をタスクに添付
 - `docs/MODULES.md` に `pipeline/` と `review/` の置き場所が書かれている（追記先を間違えると戻るため、§2 の表をそのまま載せる）
 
-Verify: `npm run verify`
+- **Verify**: `npm run verify`
 
 ## 4. 全体の受入条件
 

@@ -103,6 +103,8 @@ export function createReviewWatcher(cfg, opts = {}) {
     const db = safeList('reviewWatcher.openDb', () => new DatabaseSync(dbPath, { readOnly: true }), null)
     if (!db) return []
     try {
+      const hasTasks = safeList('reviewWatcher.hasTasks', () => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks'").get()), false)
+      if (!hasTasks) return []
       return safeList('reviewWatcher.readTasks', () =>
         db
           .prepare(
@@ -115,11 +117,7 @@ export function createReviewWatcher(cfg, opts = {}) {
           .all(),
       )
     } finally {
-      try {
-        db.close()
-      } catch {
-        /* noop */
-      }
+      try { db.close() } catch { /* noop */ }
     }
   }
 

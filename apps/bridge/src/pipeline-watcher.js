@@ -755,23 +755,15 @@ export function createPipelineWatcher(cfg = {}, opts = {}) {
     const db = safeList('pipelineWatcher.openDb', () => new DatabaseSync(dbPath, { readOnly: true }), null)
     if (!db) return []
     try {
+      const hasTasks = safeList('pipelineWatcher.hasTasks', () => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks'").get()), false)
+      if (!hasTasks) return []
       return safeList('pipelineWatcher.readTasks', () =>
-        db
-          .prepare(
-            `SELECT id, title, body, status, result, created_at, started_at, completed_at, session_id
-               FROM tasks
-              WHERE COALESCE(status, '') != 'archived'
-              ORDER BY COALESCE(completed_at, created_at) DESC
-              LIMIT ${TASKS_PER_DB}`,
-          )
-          .all(),
+        db.prepare(`SELECT id, title, body, status, result, created_at, started_at, completed_at, session_id
+                      FROM tasks WHERE COALESCE(status, '') != 'archived'
+                     ORDER BY COALESCE(completed_at, created_at) DESC LIMIT ${TASKS_PER_DB}`).all(),
       )
     } finally {
-      try {
-        db.close()
-      } catch {
-        /* noop */
-      }
+      try { db.close() } catch { /* noop */ }
     }
   }
 
