@@ -29,3 +29,17 @@
 - `apps/bridge/src/http/login-page.js`: ログイン画面の HTML と日英文言。
 - `apps/bridge/src/http/static-files.js`: `dist` → `dist.prev` フォールバックを含む静的配信。
 - ルーティングとドメイン判断は `apps/bridge/src/server.js` に残す（ここは「読む／書く」だけ）。
+
+## Bridge の A2B パイプライン最適化
+
+- 入口は `apps/bridge/src/pipeline-optimizer.js` の**バレルだけ**（明示的な named re-export・実装を置かない）。
+  公開している 23 export は分割前と同一なので、新しい呼び出し元はこのパスを import する。
+- 実体は `apps/bridge/src/pipeline/` の 4 ファイル。依存は `paths` ← `soul` ← `profile` ← `skills` の DAG
+  （`pipeline/` の内部は直接 import し、バレル経由にしない＝循環を作らない）。
+  - `paths.js`: `REPO_ROOT` / `BUNDLED_SKILLS` / `DEFAULT_SKILLS_SRC` だけの葉。
+  - `soul.js`: A2B マーカーと規範文・`mergeSoul` / `backupStamp` / `nextBackupPath` / `applySoulFile` /
+    `inspectSoulFile` / `profileSoulState` / `optimizeHermesSoul`（† の 3 つは `pipeline/` 内部共有専用）。
+  - `profile.js`: プロファイル名の正規化・探索と `SOUL.md` の同期（`ensurePilotProfile` / `optimizeProfileSouls`）。
+  - `skills.js`: 同梱スキルのファイル配置と適用状況（`installSkill` / `optimizeAgentSkills` / `getOptimizeStatus`）。
+- `optimizeAntigravitySkills`（現行名 `optimizeAgentSkills`）は `pipeline/skills.js` が定義元なので、
+  `scripts/check-coherence.mjs` の `LEGACY_SYMBOLS` の allow にこのパスが入っている（消すと hard fail）。
