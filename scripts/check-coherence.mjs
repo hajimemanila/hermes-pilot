@@ -10,9 +10,10 @@
  *
  * Output contract consumed by `runRepoChecker()` without any change there:
  *   `node scripts/check-coherence.mjs --json`
- *   -> exactly one JSON object on stdout: { ok, hardFails, softSignals }
+ *   -> exactly one JSON object on stdout: { ok, hardFails, softSignals, notices }
  *   -> exit 0 when ok is true, exit 1 when a hard fail exists (a non-zero exit makes
  *      Layer 1 record a `repo-checker` soft signal and keeps the bridge alive).
+ *   `notices` carries coverage facts only ("N file(s) scanned"); it never fails a build.
  *
  * Flags:
  *   --json              machine readable output on stdout (nothing else on stdout)
@@ -35,25 +36,33 @@ import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { bundleServerSource } from './lib/source-bundle.mjs'
 import {
+  CLOCK_INTERVAL_MS,
   SAFE_OWNER_FILE,
   TRANSITION_OWNER_FILES,
   WRITE_ROUTES,
+  callSpans,
   lineOf,
   routeBlocks,
   silentServerProblems,
+  splitTopLevelArgs,
   stripComments,
   swallowOwnerProblems,
+  syncScopeProblems,
   transitionOwnerProblems,
 } from './lib/coherence-guards.mjs'
 
 export {
+  CLOCK_INTERVAL_MS,
   SAFE_OWNER_FILE,
   TRANSITION_OWNER_FILES,
   WRITE_ROUTES,
+  callSpans,
   routeBlocks,
   silentServerProblems,
+  splitTopLevelArgs,
   stripComments,
   swallowOwnerProblems,
+  syncScopeProblems,
   transitionOwnerProblems,
 }
 const SELF = path.resolve(fileURLToPath(import.meta.url))
@@ -225,6 +234,7 @@ export class Findings {
     this.pending = pending && typeof pending === 'object' ? pending : {}
     this.hardFails = []
     this.softSignals = []
+    this.notices = []
   }
 
   /** A rule violation: hard by default, soft while the rule is pending. */
@@ -242,6 +252,14 @@ export class Findings {
   /** An informational signal that never fails the build by itself. */
   soft(rule, message, extra = {}) {
     this.softSignals.push(makeIssue(rule, 'soft', message, extra))
+  }
+
+  /**
+   * A coverage note: what the rule looked at, so "0 findings" can be told apart
+   * from "0 files scanned". Never a hard fail and never a soft signal.
+   */
+  note(rule, message, extra = {}) {
+    this.notices.push(makeIssue(rule, 'note', message, extra))
   }
 }
 
@@ -831,74 +849,6 @@ async function ruleLegacyReentry(root, findings) {
 const CLI_SPAWN_NAMES = ['execFile', 'execFileSync', 'spawn', 'spawnSync']
 const CLI_CONTEXT_CHARS = 2000
 
-/**
- * Split a source string into top level call spans (`callee(...)`).
- *
- * Comments are blanked first, so offsets keep matching the raw text while a
- * commented out call is invisible.
- *
- * @param {string} text source
- * @param {string[]} [names] callee names to look for
- * @returns {{callee: string, index: number, close: number, body: string}[]} spans
- */
-export function callSpans(text, names = CLI_SPAWN_NAMES) {
-  const src = stripComments(text)
-  const out = []
-  const re = new RegExp(`\\b(${names.map((n) => n.replace(/[$]/g, '\\$&')).join('|')})\\s*\\(`, 'g')
-  for (const m of src.matchAll(re)) {
-    const open = m.index + m[0].length - 1
-    let depth = 0
-    let close = src.length - 1
-    for (let i = open; i < src.length; i += 1) {
-      const ch = src[i]
-      if (ch === '(') depth += 1
-      else if (ch === ')') {
-        depth -= 1
-        if (depth === 0) {
-          close = i
-          break
-        }
-      }
-    }
-    out.push({ callee: m[1], index: m.index, close, body: src.slice(open + 1, close) })
-  }
-  return out
-}
-
-/**
- * Split a call body at top level commas (strings and nested brackets are kept).
- *
- * @param {string} body call argument text
- * @returns {string[]} trimmed arguments
- */
-export function splitTopLevelArgs(body) {
-  const parts = []
-  let depth = 0
-  let start = 0
-  let quote = null
-  for (let i = 0; i < body.length; i += 1) {
-    const ch = body[i]
-    if (quote) {
-      if (ch === '\\') i += 1
-      else if (ch === quote) quote = null
-      continue
-    }
-    if (ch === "'" || ch === '"' || ch === '`') {
-      quote = ch
-      continue
-    }
-    if (ch === '(' || ch === '[' || ch === '{') depth += 1
-    else if (ch === ')' || ch === ']' || ch === '}') depth -= 1
-    else if (ch === ',' && depth === 0) {
-      parts.push(body.slice(start, i).trim())
-      start = i + 1
-    }
-  }
-  const tail = body.slice(start).trim()
-  if (tail) parts.push(tail)
-  return parts
-}
-
 /** True when the argument list is a hermes CLI invocation. */
 function isHermesInvocation(args, body) {
   const bin = (args[0] ?? '').trim()
@@ -918,7 +868,7 @@ function isHermesInvocation(args, body) {
 export function cliInvocationProblems(text) {
   const src = stripComments(text)
   const problems = []
-  for (const call of callSpans(src)) {
+  for (const call of callSpans(src, CLI_SPAWN_NAMES)) {
     const args = splitTopLevelArgs(call.body)
     if (!isHermesInvocation(args, call.body)) continue
     const line = lineOf(src, call.index)
@@ -1070,8 +1020,19 @@ async function ruleCreateRouteParity(root, findings) {
 /* recurrence guards: the four owners (D96 / D97 / D99 / D100)          */
 /* ------------------------------------------------------------------ */
 
-/** The app shell must not schedule anything itself (D97). */
-export const SYNC_OWNER_FILES = Object.freeze(['apps/web/src/App.jsx'])
+/**
+ * Directories whose whole code tree must schedule through the sync scheduler (D107).
+ *
+ * The guard watches every module under these roots instead of the app shell alone,
+ * so a timer added to a pane is a hard fail on the same commit.
+ */
+export const SYNC_SCOPE_DIRS = Object.freeze(['apps/web/src'])
+
+/** Owner modules: the scheduler itself and the single place a topic is fetched. */
+export const SYNC_SCOPE_EXCLUDE = Object.freeze([
+  'apps/web/src/lib/syncScheduler.js',
+  'apps/web/src/lib/syncSources.js',
+])
 
 /** The only module allowed to keep a reconnect clock and the backoff formula (D96). */
 export const TRANSPORT_OWNER_FILE = 'apps/web/src/lib/transport.js'
@@ -1090,27 +1051,6 @@ export const CLI_OWNER_FILE = 'apps/bridge/src/lib/cli.js'
  * Each one carries a comment at the call site explaining why it stays outside `run()`.
  */
 export const CLI_OWNER_ALLOWED = Object.freeze(['apps/bridge/src/coherence.js', 'apps/bridge/src/server/helpers.js'])
-
-/**
- * (9) `setInterval(` call sites in a source file.
- *
- * The periodic sync is declared once in `lib/syncScheduler.js`; a timer written in
- * the shell is the drift this rule exists for. Comments do not count.
- *
- * @param {string} text file source
- * @returns {{line: number, reason: string}[]} problems
- */
-export function syncOwnerProblems(text) {
-  const src = stripComments(String(text ?? ''))
-  const problems = []
-  for (const m of src.matchAll(/\bsetInterval\s*\(/g)) {
-    problems.push({
-      line: lineOf(src, m.index),
-      reason: 'setInterval( in the app shell; declare the topic in lib/syncScheduler.js',
-    })
-  }
-  return problems
-}
 
 /**
  * Blank out `export { ... } from '...'` statements, keeping offsets intact.
@@ -1168,20 +1108,34 @@ export function writeOwnerProblems(rel, text) {
   return problems
 }
 
-/** (9) Recurrence guard: one scheduler owns the periodic sync (D97). */
+/**
+ * (9) Recurrence guard: one scheduler owns the periodic sync (D97 / D107).
+ *
+ * The scan covers every code file under `SYNC_SCOPE_DIRS` minus `SYNC_SCOPE_EXCLUDE`,
+ * and the clock exception is a rule (`syncScopeProblems`), never a file allow list.
+ */
 async function ruleSyncOwner(root, findings) {
   const rule = 'sync-owner'
+  const scanned = SYNC_SCOPE_DIRS.flatMap((dir) => walkCode(root, dir)).filter(
+    (file) => !SYNC_SCOPE_EXCLUDE.includes(file.rel),
+  )
   const hits = []
-  for (const rel of SYNC_OWNER_FILES) {
-    const text = readText(path.join(root, rel))
+  for (const file of scanned) {
+    const text = readText(file.abs)
     if (text === null) continue
-    for (const problem of syncOwnerProblems(text)) {
-      hits.push({ file: rel, line: problem.line, reason: problem.reason })
+    for (const problem of syncScopeProblems(file.rel, text)) {
+      hits.push({ file: file.rel, line: problem.line, reason: problem.reason })
     }
   }
+  findings.note(
+    rule,
+    `${scanned.length} file(s) scanned in ${SYNC_SCOPE_DIRS.join(', ')} (${SYNC_SCOPE_EXCLUDE.length} owner module(s) excluded)`,
+    { value: scanned.length, dirs: [...SYNC_SCOPE_DIRS], excluded: [...SYNC_SCOPE_EXCLUDE] },
+  )
   if (hits.length) {
-    findings.violation(rule, `${hits.length} raw setInterval( call site(s) in the app shell`, {
+    findings.violation(rule, `${hits.length} raw setInterval( call site(s) outside the sync scheduler`, {
       value: hits.length,
+      scanned: scanned.length,
       files: hits.slice(0, 10),
     })
   }
@@ -1494,6 +1448,7 @@ export async function analyzeRepo(root = DEFAULT_ROOT, options = {}) {
     pending: Object.keys(pending).length,
     hardFails,
     softSignals,
+    notices: findings.notices,
   }
 }
 
@@ -1550,6 +1505,9 @@ export function formatReport(result) {
   }
   for (const issue of result.softSignals) {
     lines.push(`  soft [${issue.rule}] ${issue.message}`)
+  }
+  for (const issue of result.notices ?? []) {
+    lines.push(`  note [${issue.rule}] ${issue.message}`)
   }
   lines.push(result.ok ? 'check-coherence: OK' : 'check-coherence: FAILED')
   return lines.join('\n')

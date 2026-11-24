@@ -23,6 +23,9 @@ export const TRANSITION_OWNER_FILES = Object.freeze([
 /** Kanban verbs that only `apps/bridge/src/review/transitions.js` may run. */
 const TRANSITION_VERBS = Object.freeze(['unblock', 'complete'])
 
+/** The only `setInterval` period a component may keep for a wall clock (D107). */
+export const CLOCK_INTERVAL_MS = 1000
+
 /** Line number (1-based) of a character offset. */
 export function lineOf(text, index) {
   let line = 1
@@ -82,6 +85,119 @@ export function stripComments(text) {
     i += 1
   }
   return out.join('')
+}
+
+/**
+ * Split a source string into top level call spans (`callee(...)`).
+ *
+ * Comments are blanked first, so offsets keep matching the raw text while a
+ * commented out call is invisible.
+ *
+ * @param {string} text source
+ * @param {string[]} names callee names to look for
+ * @returns {{callee: string, index: number, close: number, body: string}[]} spans
+ */
+export function callSpans(text, names) {
+  const src = stripComments(String(text ?? ''))
+  const out = []
+  if (!Array.isArray(names) || names.length === 0) return out
+  const re = new RegExp(`\\b(${names.map((n) => n.replace(/[$]/g, '\\$&')).join('|')})\\s*\\(`, 'g')
+  for (const m of src.matchAll(re)) {
+    const open = m.index + m[0].length - 1
+    let depth = 0
+    let close = src.length - 1
+    for (let i = open; i < src.length; i += 1) {
+      const ch = src[i]
+      if (ch === '(') depth += 1
+      else if (ch === ')') {
+        depth -= 1
+        if (depth === 0) {
+          close = i
+          break
+        }
+      }
+    }
+    out.push({ callee: m[1], index: m.index, close, body: src.slice(open + 1, close) })
+  }
+  return out
+}
+
+/**
+ * Split a call body at top level commas (strings and nested brackets are kept).
+ *
+ * @param {string} body call argument text
+ * @returns {string[]} trimmed arguments
+ */
+export function splitTopLevelArgs(body) {
+  const parts = []
+  let depth = 0
+  let start = 0
+  let quote = null
+  for (let i = 0; i < body.length; i += 1) {
+    const ch = body[i]
+    if (quote) {
+      if (ch === '\\') i += 1
+      else if (ch === quote) quote = null
+      continue
+    }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      quote = ch
+      continue
+    }
+    if (ch === '(' || ch === '[' || ch === '{') depth += 1
+    else if (ch === ')' || ch === ']' || ch === '}') depth -= 1
+    else if (ch === ',' && depth === 0) {
+      parts.push(body.slice(start, i).trim())
+      start = i + 1
+    }
+  }
+  const tail = body.slice(start).trim()
+  if (tail) parts.push(tail)
+  return parts
+}
+
+/**
+ * Numeric milliseconds of a `setInterval` delay argument, or null.
+ *
+ * Only a plain numeric literal counts (`1000` / `1_000`); a computed delay such as
+ * `5 * 1000` stays null so it cannot silently look like a clock.
+ *
+ * @param {string} arg delay argument text
+ * @returns {number|null} milliseconds
+ */
+export function intervalMsOf(arg) {
+  let token = String(arg ?? '').trim()
+  while (token.startsWith('(') && token.endsWith(')')) token = token.slice(1, -1).trim()
+  const digits = token.replace(/_/g, '')
+  return /^[0-9]+$/.test(digits) ? Number(digits) : null
+}
+
+/**
+ * (9) Periodic `setInterval(` outside the sync scheduler (D97 / D107).
+ *
+ * The periodic sync is declared once in `lib/syncScheduler.js`; a timer written in
+ * any other web module is the drift this rule exists for. The only exception is a
+ * common rule, not a file allow list: a `CLOCK_INTERVAL_MS` timer whose callback
+ * reads `Date.now()` is a wall clock. Comments do not count.
+ *
+ * @param {string} rel repository relative path (used in the reason only)
+ * @param {string} text file source
+ * @returns {{line: number, reason: string}[]} problems
+ */
+export function syncScopeProblems(rel, text) {
+  const src = stripComments(String(text ?? ''))
+  const problems = []
+  for (const call of callSpans(src, ['setInterval'])) {
+    const args = splitTopLevelArgs(call.body)
+    const callback = args[0] ?? ''
+    const everyMs = intervalMsOf(args[1] ?? '')
+    if (everyMs === CLOCK_INTERVAL_MS && /Date\.now\s*\(/.test(callback)) continue
+    problems.push({
+      line: lineOf(src, call.index),
+      reason: `periodic setInterval in ${rel}; declare the topic in lib/syncScheduler.js`,
+    })
+  }
+  return problems
 }
 
 /**

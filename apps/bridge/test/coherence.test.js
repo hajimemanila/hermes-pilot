@@ -39,7 +39,7 @@ import {
   pathMatches,
   silentServerProblems,
   stripComments,
-  syncOwnerProblems,
+  syncScopeProblems,
   transitionOwnerProblems,
   transportOwnerProblems,
   unusedErrorDetails,

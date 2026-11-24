@@ -39,7 +39,7 @@ import {
   pathMatches,
   silentServerProblems,
   stripComments,
-  syncOwnerProblems,
+  syncScopeProblems,
   transitionOwnerProblems,
   transportOwnerProblems,
   unusedErrorDetails,
@@ -422,7 +422,7 @@ test('create-route-parity: a filing route without --assignee or a watcher nudge 
   assert.ok(hardRules(report).includes('create-route-parity'))
 })
 
-test('sync-owner: a raw setInterval in App.jsx is a hard fail, a scheduler subscription is not', async () => {
+test('sync-owner: a raw setInterval anywhere under apps/web/src is a hard fail, a 1s clock is not', async () => {
   const APP_WITH_TIMER = [
     'export function App() {',
     '  useEffect(() => {',
@@ -439,25 +439,64 @@ test('sync-owner: a raw setInterval in App.jsx is a hard fail, a scheduler subsc
     '',
   ].join('\n')
 
-  const problems = syncOwnerProblems(APP_WITH_TIMER)
+  const problems = syncScopeProblems('apps/web/src/App.jsx', APP_WITH_TIMER)
   assert.equal(problems.length, 1)
   assert.equal(problems[0].line, 3)
   assert.match(problems[0].reason, /syncScheduler/)
-  assert.deepEqual(syncOwnerProblems(APP_WITH_SCHEDULER), [])
+  assert.match(problems[0].reason, /apps\/web\/src\/App\.jsx/)
+  assert.deepEqual(syncScopeProblems('apps/web/src/App.jsx', APP_WITH_SCHEDULER), [])
   // A comment that remembers the old timer is not a call site.
-  assert.deepEqual(syncOwnerProblems('// setInterval( used to live here\n'), [])
+  assert.deepEqual(syncScopeProblems('apps/web/src/App.jsx', '// setInterval( used to live here\n'), [])
 
   const bad = await analyzeRepo(ruleFixture({ 'apps/web/src/App.jsx': APP_WITH_TIMER }))
   const issue = bad.hardFails.find((entry) => entry.rule === 'sync-owner')
   assert.ok(issue, 'the shell timer must be reported')
   assert.equal(issue.files[0].file, 'apps/web/src/App.jsx')
   assert.equal(issue.files[0].line, 3)
+  assert.equal(issue.scanned, 1)
 
   const good = await analyzeRepo(ruleFixture({ 'apps/web/src/App.jsx': APP_WITH_SCHEDULER }))
   assert.deepEqual(
     hardRules(good).filter((rule) => rule === 'sync-owner'),
     [],
   )
+})
+
+test('sync-owner: the clock exception is one rule (1000ms + Date.now), not a file allow list', async () => {
+  const CLOCK = 'const id = setInterval(() => setNow(Date.now()), 1000)\n'
+  const CLOCK_NORMALISED = 'useEffect(() => setInterval(() => { setNow(Date.now()) }, 1_000), [])\n'
+  const FETCH_5S = 'useEffect(() => setInterval(() => load(), 5_000), [])\n'
+  const FETCH_1S = 'useEffect(() => setInterval(() => load(), 1000), [])\n'
+
+  // A wall clock in a pane passes without being named anywhere.
+  assert.deepEqual(syncScopeProblems('apps/web/src/features/ChatPane.jsx', CLOCK), [])
+  assert.deepEqual(syncScopeProblems('apps/web/src/features/ChatPane.jsx', CLOCK_NORMALISED), [])
+  // 1000ms alone is not an exception: a 1s data fetch must move to syncSources.
+  const oneSecondFetch = syncScopeProblems('apps/web/src/features/TasksPane.jsx', FETCH_1S)
+  assert.equal(oneSecondFetch.length, 1)
+  assert.equal(oneSecondFetch[0].line, 1)
+
+  // Control experiment: a 5s periodic fetch in a pane is a hard fail at rule level.
+  const paneFixture = {
+    'apps/web/src/features/TasksPane.jsx': FETCH_5S,
+    'apps/web/src/features/ChatPane.jsx': CLOCK,
+    'apps/web/src/lib/syncScheduler.js': 'const schedule = setIntervalFn ?? globalThis.setInterval\nsetInterval(tick, 5000)\n',
+  }
+  const report = await analyzeRepo(ruleFixture(paneFixture))
+  const p0 = report.hardFails.filter((entry) => entry.rule === 'sync-owner')
+  assert.equal(p0.length, 1)
+  assert.equal(p0[0].files[0].file, 'apps/web/src/features/TasksPane.jsx')
+  assert.equal(p0[0].scanned, 2, 'syncScheduler.js is excluded, the two panes are scanned')
+
+  // Same fixture without the 5s fetch is green, and the coverage note still reports 2 files.
+  const clean = await analyzeRepo(
+    ruleFixture({ 'apps/web/src/features/ChatPane.jsx': CLOCK, 'apps/web/src/lib/syncScheduler.js': 'setInterval(tick, 5000)\n' }),
+  )
+  assert.deepEqual(hardRules(clean).filter((rule) => rule === 'sync-owner'), [])
+  const note = clean.notices.find((entry) => entry.rule === 'sync-owner')
+  assert.equal(note.value, 1)
+  assert.match(note.message, /1 file\(s\) scanned in apps\/web\/src/)
+  assert.match(note.message, /2 owner module\(s\) excluded/)
 })
 
 test('transport-owner: offlineSince and the backoff formula only live in lib/transport.js', async () => {

@@ -107,7 +107,8 @@ Layer 1 は Node / npm / このリポジトリの語彙を一切仮定しない�
   丸・赤帯・`gwState`・`data-transport` は `aggregate()` の 1 語を見る。バックオフ式もここ。
   再エクスポートだけ `apps/web/src/lib/termReconnect.js` に残してよい（ルール `transport-owner`）
 - **定期同期**: `apps/web/src/lib/syncScheduler.js` の宣言表 + 1 本のスケジューラ。
-  `App.jsx` に `setInterval(` を書かない（ルール `sync-owner`）
+  `apps/web/src/**` に `setInterval(` を書かない（ルール `sync-owner`）。例外は共通規則だけで、
+  間隔 `1000` かつコールバックが `Date.now()` を読む壁時計に限る
 - **イベント payload**: `apps/web/src/contracts/events.js` の `HM_EVENT_META.required` が正本。
   送信側の実リテラルと `contracts.test.js` が突き合わせる
 - **タスク遷移**: `apps/bridge/src/review/transitions.js` の遷移表 + `apply()` が唯一の実行者。
