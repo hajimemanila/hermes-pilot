@@ -60,7 +60,11 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
       if (!item) return { data: { questions: [] }, answer: null }
       const answered = item.status === 'done'
       return {
-        data: { title: item.review?.title || item.title, questions: item.review?.mode === 'standard' ? demoQuestions() : [] },
+        data: {
+          title: item.review?.title || item.title,
+          deck: item.review?.mode === 'standard',
+          questions: item.review?.mode === 'standard' ? demoQuestions() : [],
+        },
         answer: answered ? { answers: [{ id: 'q1', choice: 'A' }], global: '', by: 'mobile' } : null,
       }
     }

@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { demoFetch, resetDemoState } from '../src/demo/mockApi.js'
 import {
   EDGE_DEAD_ZONE_PX,
   SWIPE_THRESHOLD_PX,
@@ -120,4 +121,29 @@ test('AP-4: createRemixPending / buildRemixPayload は 2 秒チップウィン�
     reason: 'simpler',
     hint: 'Less text',
   })
+})
+
+test('AP-6: デモモードで Autopilot デッキ（visualMock / remix / annotations 付き answer）が完結する', async () => {
+  resetDemoState()
+  const sheet = await demoFetch('/api/review/t_demo_review/data')
+  assert.equal(sheet.data.deck, true)
+  assert.equal(sheet.data.questions.length, 3)
+  assert.equal(sheet.data.questions[0].visualMock.shot, 'shots/demo-q1.png')
+
+  const remix = await demoFetch('/api/review/t_demo_review/remix', {
+    method: 'POST',
+    body: { questionId: 'q1', reason: 'simpler', hint: 'Larger CTA' },
+  })
+  assert.equal(remix.ok, true)
+  assert.equal(remix.record.questionId, 'q1')
+  assert.equal(remix.record.reason, 'simpler')
+
+  const answered = await demoFetch('/api/review/t_demo_review/answer', {
+    method: 'POST',
+    body: {
+      answers: [{ id: 'q1', choice: 'A' }, { id: 'q2', choice: 'A' }, { id: 'q3', choice: null }],
+      annotations: [{ questionId: 'q1', shot: 'shots/demo-q1.png', marks: [{ type: 'rect' }], note: 'Keep bold' }],
+    },
+  })
+  assert.equal(answered.ok, true)
 })

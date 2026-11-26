@@ -70,6 +70,7 @@ export function demoQuestions() {
     {
       id: 'q1',
       text: 'Which screen should the guided tour open first?',
+      visualMock: { shot: 'shots/demo-q1.png', layoutVariant: 'A', template: 'layout-card' },
       options: [
         {
           id: 'A',
@@ -83,6 +84,7 @@ export function demoQuestions() {
     {
       id: 'q2',
       text: 'How should the completion receipt be shared?',
+      visualMock: { shot: 'shots/demo-q2.png', layoutVariant: 'A', template: 'flow-card' },
       options: [
         {
           id: 'A',
@@ -96,6 +98,7 @@ export function demoQuestions() {
     {
       id: 'q3',
       text: 'Which Vibe mode should the demo start in on a PC?',
+      visualMock: { shot: 'shots/demo-q3.png', layoutVariant: 'A', template: 'policy-card' },
       options: [
         { id: 'A', label: 'Dopamine', detail: 'Full reward feedback; it is the default for first run.', recommended: true },
         { id: 'B', label: 'Serotonin', detail: 'Quiet mode; keeps the standard haptics only.' },
