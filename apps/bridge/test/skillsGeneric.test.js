@@ -46,3 +46,18 @@ test('同梱 3 スキルと Architect プロンプトに特定リポ前提の文
     }
   }
 })
+
+test('AP-2: spec-architect と quick-review が 3 枚デッキ・visualMock・赤入れ注入・remix 契約を含む', () => {
+  const arch = fs.readFileSync(path.join(ROOT, 'skills', 'spec-architect', 'SKILL.md'), 'utf8')
+  assert.match(arch, /"deck":\s*true/)
+  assert.match(arch, /visualMock/)
+  assert.match(arch, /\.remix\.json/)
+  assert.match(arch, /annotations/)
+  assert.match(arch, /Visual Gate/)
+
+  const qr = fs.readFileSync(path.join(ROOT, 'skills', 'quick-review', 'SKILL.md'), 'utf8')
+  assert.match(qr, /"deck":\s*true/)
+  assert.match(qr, /"visualMock"/)
+  assert.match(qr, /\/api\/review\/:id\/remix/)
+  assert.match(qr, /\.remix\.json/)
+})

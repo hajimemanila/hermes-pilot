@@ -90,12 +90,23 @@ hermes kanban block <task_id> "Waiting for the spec interview (Q1-Q3)" --kind ne
 With the `.json` alone both the PWA native form (`<StandardForm>`) and "open the whole sheet ↗" work
 (when `.html` is missing the bridge generates safe HTML from the `.json`).
 
+#### Visual-first Autopilot Deck Mode (optional)
+
+When the seed designs a new UI/screen or visual direction (or runs in Autopilot mode), emit **one 3-card deck** (`"deck": true`) in Round 1 (`sheets/spec-<slug>-1.json`) so the user can swipe all three cards in one pass:
+
+1. **Card 1 (`q1`)**: Primary screen layout with `visualMock` (`shot` under `shots/` and/or lightweight static `html` under `sheets/`, rendered at the mobile viewport declared by the target repository — use a lightweight template so Card 1 is ready immediately).
+2. **Card 2 (`q2`)**: Key interaction flow or modal/state variant with `visualMock`.
+3. **Card 3 (`q3`)**: Data persistence, scope, or edge-case policy (structured options with `recommended: true`).
+
+If the user swipes left (REMIX), `.remix.json` (`{ questionId, reason, hint }`) is written and the task unblocks: regenerate the targeted card's `visualMock` / options in that direction and re-block.
+
 While waiting, work on other tasks. **Never invent answers.**
 
 ### Round 2 — generate the SPEC
 
 Read the answers (`.answer.json` / `.answer.txt` / the `[Review Answer]` comment) and write
 `docs/SPEC-<SLUG>.md`. `(unselected = take recommended)` may be settled with the recommendation.
+If `.answer.json` contains `annotations` (`{ questionId, shot, marks, note }`), inject those redlined coordinates and notes into the matching batch's **Objective** and **Verify** as mandatory requirements, and verify in the final `[Mode: Visual Gate]` (`role:visual-reviewer`) pass that every annotated mock region is reflected in the live screenshot.
 
 Required format (the Hermes Pilot spec parser reads it mechanically. **Do not change the shape**):
 
