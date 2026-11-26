@@ -1,12 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { api } from '../../api.js'
 import { useI18n } from '../../i18n/lang.js'
 import { haptic } from '../../lib/haptic.js'
 import { celebrateAction } from '../../lib/vibe.js'
+import { AnnotationEditor } from '../AnnotationEditor.jsx'
 import {
+  REMIX_CHIPS,
+  buildRemixPayload,
   classifySwipe,
+  createRemixPending,
   createUndoEntry,
   isInEdgeDeadZone,
   isUndoActive,
+  resolveHoldOutcome,
 } from '../../lib/autopilotDeck.js'
 
 /**
@@ -37,13 +43,20 @@ function TemplatePreview({ kind, title, t }) {
 export function AutopilotDeck({
   cards = [],
   onCommitAction,
+  onRemixCard,
+  onSaveMemo,
   onUndoAction,
   onSwitchCockpit,
+  notify,
 }) {
   const { t } = useI18n()
   const [index, setIndex] = useState(0)
   const [drag, setDrag] = useState({ active: false, dx: 0, dy: 0 })
   const [undo, setUndo] = useState(null)
+  const [remixPending, setRemixPending] = useState(null)
+  const [remixNoteMode, setRemixNoteMode] = useState(false)
+  const [remixNoteText, setRemixNoteText] = useState('')
+  const [annotatingCard, setAnnotatingCard] = useState(null)
   const gestureRef = useRef({ active: false, startX: 0, startY: 0, pointerId: null })
 
   const card = cards[index] || null
@@ -56,15 +69,62 @@ export function AutopilotDeck({
     return () => clearTimeout(id)
   }, [undo])
 
+  const sendRemix = async (targetCard, reason, hint = '') => {
+    setRemixPending(null)
+    setRemixNoteMode(false)
+    setRemixNoteText('')
+    const payload = buildRemixPayload(targetCard, reason, hint)
+    if (onRemixCard) {
+      await onRemixCard(targetCard, payload)
+      return
+    }
+    if (targetCard?.taskId) {
+      await api(`/api/review/${encodeURIComponent(targetCard.taskId)}/remix`, {
+        method: 'POST',
+        body: payload,
+      })
+    }
+  }
+
+  useEffect(() => {
+    if (!remixPending || remixNoteMode) return undefined
+    const ms = Math.max(0, remixPending.expiresAt - Date.now())
+    const id = setTimeout(() => {
+      sendRemix(remixPending.card, 'alternative', '')
+    }, ms)
+    return () => clearTimeout(id)
+  }, [remixPending, remixNoteMode])
+
   const commit = (direction) => {
     if (!card) return
-    const actionMap = { right: 'go', left: 'remix', up: 'annotate', down: 'hold' }
-    const action = actionMap[direction] || 'go'
-    haptic(action === 'go' ? 'success' : 'action')
-    if (action === 'go') celebrateAction('approve', { sfx: true })
-    setUndo(createUndoEntry(card, action))
+    if (direction === 'up') {
+      haptic('action')
+      setAnnotatingCard(card)
+      return
+    }
+    if (direction === 'left') {
+      haptic('action')
+      setRemixPending(createRemixPending(card))
+      setRemixNoteMode(false)
+      setRemixNoteText('')
+      setIndex((i) => i + 1)
+      onCommitAction?.(card, 'remix')
+      return
+    }
+    if (direction === 'down') {
+      haptic('action')
+      const outcome = resolveHoldOutcome(card)
+      if (outcome.kind === 'memo') onSaveMemo?.(outcome.memoText, card)
+      setUndo(createUndoEntry(card, 'hold'))
+      setIndex((i) => i + 1)
+      onCommitAction?.(card, 'hold', outcome)
+      return
+    }
+    haptic('success')
+    celebrateAction('approve', { sfx: true })
+    setUndo(createUndoEntry(card, 'go'))
     setIndex((i) => i + 1)
-    onCommitAction?.(card, action)
+    onCommitAction?.(card, 'go')
   }
 
   const handlePointerDown = (e) => {
@@ -182,6 +242,51 @@ export function AutopilotDeck({
         )}
       </div>
 
+      {remixPending && (
+        <div className="ap-remix-bar" role="region" aria-label={t('autopilot.btn.remix')}>
+          {remixNoteMode ? (
+            <form
+              className="ap-remix-note-row"
+              onSubmit={(e) => {
+                e.preventDefault()
+                sendRemix(remixPending.card, 'note', remixNoteText)
+              }}
+            >
+              <input
+                type="text"
+                className="ap-remix-input"
+                value={remixNoteText}
+                onChange={(e) => setRemixNoteText(e.target.value)}
+                placeholder={t('autopilot.remix.note')}
+              />
+              <button type="submit" className="ap-remix-send">
+                {t('autopilot.btn.go')}
+              </button>
+            </form>
+          ) : (
+            <div className="ap-remix-chips">
+              {REMIX_CHIPS.map((chip) => (
+                <button
+                  key={chip.id}
+                  type="button"
+                  className="ap-remix-chip"
+                  onClick={() => {
+                    if (chip.id === 'note') {
+                      setRemixNoteMode(true)
+                    } else {
+                      sendRemix(remixPending.card, chip.id, '')
+                    }
+                  }}
+                >
+                  <span>{chip.icon}</span>
+                  <span>{t(chip.labelKey)}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {isUndoActive(undo) && (
         <div className="ap-undo-pill" role="status">
           <span className="ap-undo-label">{t('autopilot.undoPrompt', { action: undo.action.toUpperCase() })}</span>
@@ -229,6 +334,26 @@ export function AutopilotDeck({
           <span>{t('autopilot.btn.go')}</span>
         </button>
       </footer>
+      {annotatingCard && (
+        <AnnotationEditor
+          item={{ id: annotatingCard.taskId, title: annotatingCard.text || annotatingCard.title }}
+          imageSrc={
+            annotatingCard.visualMock?.shot && annotatingCard.taskId
+              ? `/api/review/${encodeURIComponent(annotatingCard.taskId)}/thumb/${annotatingCard.visualMock.shot}`
+              : null
+          }
+          onClose={() => setAnnotatingCard(null)}
+          onCollectAnnotation={(ann) => {
+            const target = annotatingCard
+            setAnnotatingCard(null)
+            celebrateAction('approve', { sfx: true })
+            setUndo(createUndoEntry(target, 'annotate'))
+            setIndex((i) => i + 1)
+            onCommitAction?.(target, 'annotate', { annotation: ann })
+          }}
+          notify={notify}
+        />
+      )}
     </section>
   )
 }

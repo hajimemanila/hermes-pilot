@@ -42,7 +42,15 @@ const AMBER_INK = '#231603'
 /** これ以上の幅なら「画像｜操作列」の横並びにする（タブレット横・2 ペインの詳細）。 */
 const WIDE_MIN = 560
 
-export function AnnotationEditor({ item, defaultBoard = null, onClose, onSubmitted, notify }) {
+export function AnnotationEditor({
+  item,
+  defaultBoard = null,
+  imageSrc = null,
+  onCollectAnnotation = null,
+  onClose,
+  onSubmitted,
+  notify,
+}) {
   const { t } = useI18n()
   const canvasRef = useRef(null)
   const imgRef = useRef(null)
@@ -68,7 +76,7 @@ export function AnnotationEditor({ item, defaultBoard = null, onClose, onSubmitt
   const [wide, setWide] = useState(false)
   const [closing, setClosing] = useState(false)
   const rootRef = useRef(null)
-  const baseSrc = `/api/review/${item.id}/image`
+  const baseSrc = imageSrc || `/api/review/${item.id}/image`
   const imgSrc = compare ? `${baseSrc}?compare=1` : baseSrc
 
   /** 画像を画面に収める（contain）大きさを CSS px で返す。 */
@@ -257,11 +265,20 @@ export function AnnotationEditor({ item, defaultBoard = null, onClose, onSubmitt
         width: canvas.width / dpr,
         height: canvas.height / dpr,
       })
+      const composedNote = composeNote(note, strokesRef.current)
+      if (typeof onCollectAnnotation === 'function') {
+        onCollectAnnotation({
+          marks,
+          note: composedNote,
+          annotatedImage: exportDataUrl(),
+        })
+        return
+      }
       const r = await api(`/api/review/${item.id}/annotation`, {
         method: 'POST',
         body: {
           annotated_image: exportDataUrl(),
-          note: composeNote(note, strokesRef.current),
+          note: composedNote,
           marks,
           by: 'mobile',
           chat: readActiveChatId(),

@@ -308,3 +308,56 @@
 .ap-act-go { border-color: var(--good-line); background: var(--good-bg); color: var(--good-fg); }
 .ap-act-remix { border-color: var(--danger-line); background: var(--danger-bg); color: var(--danger-fg); }
 .ap-act-annotate { border-color: var(--warn); color: var(--warn); }
+
+.ap-remix-bar {
+  background: var(--glass-strong);
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  padding: 8px;
+}
+
+.ap-remix-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ap-remix-chip {
+  min-height: 44px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ap-remix-note-row {
+  display: flex;
+  gap: 8px;
+}
+
+.ap-remix-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-elev);
+  color: var(--text);
+  padding: 0 10px;
+}
+
+.ap-remix-send {
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid var(--accent);
+  background: var(--rec-bg);
+  color: var(--accent);
+  font-weight: 700;
+}

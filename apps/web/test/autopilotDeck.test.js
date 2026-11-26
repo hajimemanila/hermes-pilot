@@ -5,10 +5,13 @@ import {
   SWIPE_THRESHOLD_PX,
   buildAnswerPayload,
   buildDeckFromSheet,
+  buildRemixPayload,
   classifySwipe,
+  createRemixPending,
   createUndoEntry,
   isInEdgeDeadZone,
   isUndoActive,
+  resolveHoldOutcome,
 } from '../src/lib/autopilotDeck.js'
 
 test('AP-3: isInEdgeDeadZone は左右端 24px をブロックし中央を許可する', () => {
@@ -92,4 +95,29 @@ test('AP-3: createUndoEntry / isUndoActive は 3 秒ウィンドウを管理す�
   const entry = createUndoEntry({ key: 't1:q1', text: 'Layout' }, 'go', 1000)
   assert.equal(isUndoActive(entry, 2500), true)
   assert.equal(isUndoActive(entry, 4000), false)
+})
+
+test('AP-4: resolveHoldOutcome は設問を recommended 委譲、brainstorm をメモ保存に分岐する', () => {
+  assert.deepEqual(resolveHoldOutcome({ kind: 'question', text: 'Layout' }), {
+    kind: 'delegate',
+    action: 'hold',
+    choice: null,
+  })
+  assert.deepEqual(resolveHoldOutcome({ kind: 'brainstorm', text: 'Try dark glass card' }), {
+    kind: 'memo',
+    action: 'hold',
+    choice: null,
+    memoText: 'Try dark glass card',
+  })
+})
+
+test('AP-4: createRemixPending / buildRemixPayload は 2 秒チップウィンドウとペイロードを作る', () => {
+  const card = { key: 't1:q1', taskId: 't1', questionId: 'q1' }
+  const pending = createRemixPending(card, 1000)
+  assert.equal(pending.expiresAt, 3000)
+  assert.deepEqual(buildRemixPayload(card, 'simpler', '  Less text '), {
+    questionId: 'q1',
+    reason: 'simpler',
+    hint: 'Less text',
+  })
 })

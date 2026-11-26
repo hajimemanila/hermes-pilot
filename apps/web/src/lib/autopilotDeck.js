@@ -176,3 +176,55 @@ export function createUndoEntry(card, action, now = Date.now(), windowMs = UNDO_
 export function isUndoActive(entry, now = Date.now()) {
   return Boolean(entry && Number.isFinite(entry.expiresAt) && now < entry.expiresAt)
 }
+
+/**
+ * 下スワイプ（HOLD）の文脈別分岐（AP-4）。
+ * 設問カードは recommended 委譲、Brainstorm カードは MemosPane 保存。
+ * @param {object} card
+ * @returns {{kind: 'memo'|'delegate', action: 'hold', choice: null, memoText?: string}}
+ */
+export function resolveHoldOutcome(card) {
+  if (card?.kind === 'brainstorm') {
+    return {
+      kind: 'memo',
+      action: 'hold',
+      choice: null,
+      memoText: String(card.text || card.title || '').trim(),
+    }
+  }
+  return {
+    kind: 'delegate',
+    action: 'hold',
+    choice: null,
+  }
+}
+
+/**
+ * 左スワイプ直後の 2 秒ワンタップ REMIX チップ待機状態を作る。
+ * @param {object} card
+ * @param {number} [now]
+ * @param {number} [windowMs]
+ */
+export function createRemixPending(card, now = Date.now(), windowMs = REMIX_CHIP_WINDOW_MS) {
+  return {
+    card,
+    cardKey: String(card?.key ?? ''),
+    taskId: String(card?.taskId ?? ''),
+    questionId: String(card?.questionId ?? ''),
+    expiresAt: now + windowMs,
+  }
+}
+
+/**
+ * `POST /api/review/:id/remix` 用のペイロードを組み立てる。
+ * @param {object} card
+ * @param {string} [reason]
+ * @param {string} [hint]
+ */
+export function buildRemixPayload(card, reason = 'alternative', hint = '') {
+  return {
+    questionId: String(card?.questionId ?? ''),
+    reason: String(reason || 'alternative'),
+    hint: String(hint || '').trim(),
+  }
+}
