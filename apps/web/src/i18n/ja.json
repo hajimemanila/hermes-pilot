@@ -1310,5 +1310,15 @@
   "autopilot.complete.openPreview": "できた画面を開く",
   "autopilot.complete.copied": "起動コマンドをコピーしました",
   "autopilot.complete.receipt": "実績レシートを見る",
-  "autopilot.complete.startNext": "次のアプリを作る"
+  "autopilot.complete.startNext": "次のアプリを作る",
+  "autopilot.project.select": "プロジェクトを選択",
+  "autopilot.project.switchAria": "プロジェクトの切替・新規作成",
+  "autopilot.project.openPreview": "完成品を見る",
+  "autopilot.project.sheetTitle": "Autopilot プロジェクト",
+  "autopilot.project.newTitle": "新規プロジェクトを作成",
+  "autopilot.project.newPlaceholder": "例: b-news-site",
+  "autopilot.project.newBtn": "新規作成",
+  "autopilot.project.newOrSwitch": "新規プロジェクト・切替",
+  "autopilot.project.created": "新規プロジェクト {name} を作成しました",
+  "autopilot.project.createFailed": "プロジェクトの作成に失敗しました"
 }

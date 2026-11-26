@@ -301,20 +301,40 @@ const FALLBACK_HTTP_RE = /\b(https?:\/\/(?:localhost|127\.0\.0\.1|[^\s/]+\.[^\s/
 const LAUNCH_CMD_RE = /(?:Launch|Start|Run|Command):\s*`?([^\n`]+)`?/i
 const ENTRY_HTML_RE = /(?:Preview|Entry):\s*`?([A-Za-z0-9._/-]+\.html?)`?/i
 
-function safeHttpUrl(raw) {
+export function isSameOriginPreviewUrl(raw) {
   const s = String(raw || '').trim()
-  return /^https?:\/\//i.test(s) ? s : null
+  return /^\/api\/boards\/[^/]+\/preview-files\//.test(s) || s === './'
+}
+
+export function isReachablePublicUrl(raw) {
+  const s = String(raw || '').trim()
+  if (!/^https?:\/\//i.test(s)) return false
+  try {
+    const u = new URL(s)
+    const host = String(u.hostname || '').toLowerCase()
+    if (!host) return false
+    if (host === 'localhost' || host === '0.0.0.0' || host === '::1' || host === '[::1]') return false
+    if (host.startsWith('127.') || host.startsWith('10.') || host.startsWith('192.168.') || host.startsWith('169.254.')) return false
+    if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return false
+    if (host.endsWith('.local')) return false
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**
- * 完了レポート・完了タスクから成果物の確認導線（Web URL / 起動コマンド / スクショ）を抽出する。
+ * 完了レポート・完了タスク・ボード静的プレビューから成果物の確認導線を抽出する。
+ * 母艦ローカル (`127.0.0.1` / `localhost`) や一時 LAN IP (`192.168.x.x`) は除外し、
+ * 同一オリジン `/api/boards/:board/preview-files/` を最優先する。
  */
-export function extractDeliverable({ report = null, tasks = [], reviewItems = [] } = {}) {
+export function extractDeliverable({ report = null, tasks = [], reviewItems = [], preview = null } = {}) {
   const list = Array.isArray(tasks) ? tasks : []
   const doneTasks = list
     .filter((t) => String(t?.status || '').toLowerCase() === 'done')
     .sort((a, b) => Number(b.completed_at ?? b.created_at ?? 0) - Number(a.completed_at ?? a.created_at ?? 0))
-  if (!report && doneTasks.length === 0) return null
+  const hasStaticPreview = preview?.kind === 'static' && isSameOriginPreviewUrl(preview?.url)
+  if (!report && doneTasks.length === 0 && !hasStaticPreview) return null
 
   const blobs = [
     String(report?.text ?? ''),
@@ -323,26 +343,32 @@ export function extractDeliverable({ report = null, tasks = [], reviewItems = []
   const merged = blobs.join('\n')
 
   const urlMatch = PREVIEW_URL_RE.exec(merged) || FALLBACK_HTTP_RE.exec(merged)
-  const previewUrl = urlMatch ? safeHttpUrl(urlMatch[1]) : null
+  const scrapedUrl = urlMatch && isReachablePublicUrl(urlMatch[1]) ? urlMatch[1].trim() : null
+  const previewUrl =
+    hasStaticPreview
+      ? preview.url
+      : isReachablePublicUrl(preview?.url)
+        ? preview.url
+        : scrapedUrl
   const entryMatch = ENTRY_HTML_RE.exec(merged)
-  const entryPath = !previewUrl && entryMatch ? entryMatch[1] : null
+  const entryPath = (entryMatch && entryMatch[1]) || preview?.entry || null
   const launchMatch = LAUNCH_CMD_RE.exec(merged)
-  const launchCmd = launchMatch ? launchMatch[1].trim().slice(0, 160) : null
+  const launchCmd = (launchMatch ? launchMatch[1].trim().slice(0, 160) : null) || preview?.launchCmd || null
 
   const latestVisual = (Array.isArray(reviewItems) ? reviewItems : []).find((r) => r?.review?.image)
   const shotUrl = latestVisual ? `/api/review/${encodeURIComponent(latestVisual.id)}/image` : null
   const topTask = doneTasks[0] || null
-  const id = String(report?.taskId || report?.at || topTask?.id || 'done')
+  const id = String(report?.taskId || report?.at || topTask?.id || preview?.updatedAt || 'done')
   return {
     id,
-    title: String(topTask?.title || report?.label || report?.spec || 'Completed'),
+    title: String(topTask?.title || report?.label || report?.spec || preview?.board || 'Completed'),
     summary: String(topTask?.result || report?.text || '').split('\n')[0].slice(0, 180),
     previewUrl,
     entryPath,
     launchCmd,
     shotUrl,
     completedAt: Number(report?.at || (topTask?.completed_at ? topTask.completed_at * 1000 : 0)) || null,
-    board: report?.board || null,
+    board: report?.board || preview?.board || null,
     spec: report?.spec || topTask?.spec || null,
   }
 }
@@ -359,6 +385,7 @@ export function projectStudioStage({
   tasks = [],
   specReports = [],
   reviewItems = [],
+  preview = null,
   dismissedCompleteId = null,
 } = {}) {
   if (Array.isArray(cards) && cards.length > 0) {
@@ -405,7 +432,7 @@ export function projectStudioStage({
   }
 
   const report = Array.isArray(specReports) ? specReports[0] || null : specReports
-  const deliverable = extractDeliverable({ report, tasks: taskList, reviewItems })
+  const deliverable = extractDeliverable({ report, tasks: taskList, reviewItems, preview })
   if (deliverable && deliverable.id !== dismissedCompleteId) {
     return { act: 'complete', deliverable }
   }

@@ -43,6 +43,12 @@ export function demoRoute(path) {
     return { name: 'review.misc', id, params }
   }
   if (p === '/api/boards') return { name: 'boards', params }
+  if (parts[1] === 'boards' && parts[2] && parts[3] === 'preview') {
+    return { name: 'board.preview', id: decodeURIComponent(parts[2]), params }
+  }
+  if (parts[1] === 'boards' && parts[2] && parts[3] === 'preview-files') {
+    return { name: 'board.previewFiles', id: decodeURIComponent(parts[2]), params }
+  }
   if (parts[1] === 'boards' && parts[2] && parts[3] === 'tasks') {
     const boardSlug = decodeURIComponent(parts[2])
     // D92: 整理モードの一括アーカイブ（`/tasks/bulk-archive` を taskId と誤読しない）
@@ -92,6 +98,7 @@ export function demoRoute(path) {
   if (p === '/api/memos') return { name: 'memos.list', params }
   if (parts[1] === 'memos' && parts[2]) return { name: 'memos.item', id: decodeURIComponent(parts[2]), params }
   if (p === '/api/repos') return { name: 'repos', params }
+  if (p === '/api/repos/new') return { name: 'repos.new', params }
   if (p === '/api/telemetry/receipt') return { name: 'receipt', params }
   // Discord ディープリンク（本番 `/api/discord/session`）。デモは「リンク無し」を明示して返す。
   if (p === '/api/discord/session') return { name: 'discord.session', params }

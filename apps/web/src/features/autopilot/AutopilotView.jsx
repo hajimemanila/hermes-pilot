@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../../api.js'
 import { HM_EVENTS, emitHmEvent } from '../../contracts/events.js'
+import { HM_STORAGE } from '../../contracts/storage.js'
 import { useI18n } from '../../i18n/index.js'
 import {
   AUTOPILOT_RECIPES,
@@ -14,8 +15,16 @@ import { buildSeedPayload } from '../../lib/specSeed.js'
 import { refreshSync, setSyncParams, subscribeSync, tickSync } from '../../lib/syncSources.js'
 import { celebrate } from '../../lib/vibe.js'
 import { MissionReceiptSheet } from '../MissionReceiptSheet.jsx'
-import { CompletionCard, LiveStudioCard, StarterStage } from './AutopilotCards.jsx'
+import {
+  AutopilotProjectBar,
+  AutopilotProjectSheet,
+  CompletionCard,
+  LiveStudioCard,
+  StarterStage,
+} from './AutopilotCards.jsx'
 import { AutopilotDeck } from './AutopilotDeck.jsx'
+
+const AP_BOARD_KEY = HM_STORAGE.BOARD
 
 export function AutopilotLensToggle({ lens, onChange, waitingCount = 0 }) {
   const { t } = useI18n()
@@ -71,7 +80,16 @@ export function AutopilotSwipeLink({ count = 0 }) {
  */
 export function AutopilotView({ overview, notify, onSwitchCockpit }) {
   const { t, lang } = useI18n()
-  const [board, setBoard] = useState(overview?.board || null)
+  const [boards, setBoards] = useState([])
+  const [board, setBoard] = useState(() => {
+    try {
+      return localStorage.getItem(AP_BOARD_KEY) || overview?.board || null
+    } catch {
+      return overview?.board || null
+    }
+  })
+  const [preview, setPreview] = useState(null)
+  const [pickerOpen, setPickerOpen] = useState(false)
   const [items, setItems] = useState([])
   const [jobs, setJobs] = useState([])
   const [live, setLive] = useState(null)
@@ -82,26 +100,59 @@ export function AutopilotView({ overview, notify, onSwitchCockpit }) {
   const [dismissedCompleteId, setDismissedCompleteId] = useState(null)
   const [receiptOpen, setReceiptOpen] = useState(false)
 
-  useEffect(() => {
-    if (board) {
-      setSyncParams({ board, architectBoard: board })
-      tickSync('tasks')
-      tickSync('specReports')
-      tickSync('architectJobs')
-      return undefined
+  const selectBoard = useCallback((slug) => {
+    const next = slug || null
+    setBoard(next)
+    setPreview(null)
+    setTasks([])
+    setSpecReports([])
+    setDecisions({})
+    setDismissedCompleteId(null)
+    try {
+      if (next) localStorage.setItem(AP_BOARD_KEY, next)
+    } catch {
+      /* noop */
     }
+  }, [])
+
+  const loadBoards = useCallback(async () => {
+    try {
+      const res = await api('/api/boards')
+      const list = Array.isArray(res?.boards) ? res.boards : []
+      setBoards(list)
+      if (!board && list[0]?.slug) selectBoard(list[0].slug)
+    } catch {
+      /* noop */
+    }
+  }, [board, selectBoard])
+
+  useEffect(() => {
+    loadBoards()
+  }, [loadBoards])
+
+  useEffect(() => {
+    if (!board) return undefined
+    setSyncParams({ board, architectBoard: board })
+    tickSync('tasks')
+    tickSync('specReports')
+    tickSync('architectJobs')
+    return undefined
+  }, [board])
+
+  useEffect(() => {
+    if (!board) return undefined
     let alive = true
-    api('/api/boards')
+    api(`/api/boards/${encodeURIComponent(board)}/preview`)
       .then((res) => {
-        if (!alive) return
-        const first = Array.isArray(res?.boards) ? res.boards[0]?.slug : null
-        if (first) setBoard(first)
+        if (alive) setPreview(res?.ok ? res : null)
       })
-      .catch(() => {})
+      .catch(() => {
+        if (alive) setPreview(null)
+      })
     return () => {
       alive = false
     }
-  }, [board])
+  }, [board, tasks.length, specReports.length])
 
   const onReview = useCallback((r) => setItems(Array.isArray(r?.items) ? r.items : []), [])
   const onJobs = useCallback((r) => setJobs(Array.isArray(r?.jobs) ? r.jobs : []), [])
@@ -159,9 +210,10 @@ export function AutopilotView({ overview, notify, onSwitchCockpit }) {
         tasks,
         specReports,
         reviewItems: items,
+        preview,
         dismissedCompleteId,
       }),
-    [cards, jobs, live, tasks, specReports, items, dismissedCompleteId],
+    [cards, jobs, live, tasks, specReports, items, preview, dismissedCompleteId],
   )
 
   const handleCommitAction = async (question, action, extra = {}) => {
@@ -235,6 +287,12 @@ export function AutopilotView({ overview, notify, onSwitchCockpit }) {
 
   return (
     <div className="ap-view">
+      <AutopilotProjectBar
+        boards={boards}
+        board={board}
+        preview={preview}
+        onOpenPicker={() => setPickerOpen(true)}
+      />
       {stage.act === 'deck' && (
         <AutopilotDeck
           cards={stage.cards}
@@ -270,7 +328,21 @@ export function AutopilotView({ overview, notify, onSwitchCockpit }) {
         <StarterStage
           recipes={AUTOPILOT_RECIPES}
           onStartSeed={handleStartSeed}
+          onOpenPicker={() => setPickerOpen(true)}
           onSwitchCockpit={onSwitchCockpit}
+          notify={notify}
+        />
+      )}
+      {pickerOpen && (
+        <AutopilotProjectSheet
+          boards={boards}
+          board={board}
+          onSelectBoard={selectBoard}
+          onCreatedProject={async (slug) => {
+            await loadBoards()
+            selectBoard(slug)
+          }}
+          onClose={() => setPickerOpen(false)}
           notify={notify}
         />
       )}

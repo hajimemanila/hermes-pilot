@@ -66,6 +66,16 @@ export function createSpecsApi(ctx = {}) {
       auth.audit({ kind: 'repos.scan', count: r.repos.length })
       return sendJson(res, 200, r)
     }
+    if (b === 'new' && req.method === 'POST') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendError(res, 429, 'RATE_LIMITED')
+      }
+      const body = await readJson(req)
+      const r = await repos.createNew(body || {})
+      auth.audit({ kind: 'repos.createNew', name: body?.name ?? null, board: r.board?.slug ?? null, ok: Boolean(r.ok) })
+      if (!r.ok) return sendFailure(res, r.code === 'CONFLICT' ? 409 : 400, r)
+      return sendJson(res, 201, { ...r, repos: repos.list({ force: true }), scanDirs: repos.scanDirs() })
+    }
     if (b && c === 'board' && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
         return sendError(res, 429, 'RATE_LIMITED')

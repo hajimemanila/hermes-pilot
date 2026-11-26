@@ -5,6 +5,7 @@
  * 依存（cfg・各クライアント・送信ヘルパ）は `ctx` で受け取る。
  */
 import { injectReviewBridge, reviewSheetHeaders, reviewViewHeaders, reviewViewHtml } from '../review.js'
+import { detectProjectPreview, readPreviewFile } from '../preview.js'
 
 export function createBoardsApi(ctx = {}) {
   const {
@@ -39,6 +40,32 @@ export function createBoardsApi(ctx = {}) {
     // /api/boards/:slug/tasks/:id/diff                   … そのタスクのコミット差分
     // POST /api/boards/:slug/tasks/:id/abort             … 実行中タスクの中断
     if (!b) return sendJson(res, 200, { boards: kanban.boards() })
+    if (b && c === 'preview' && !d && req.method === 'GET') {
+      const boardObj = typeof kanban.boards === 'function' ? kanban.boards().find((x) => x && x.slug === b) : null
+      if (!boardObj) return sendError(res, 404, 'BOARD_NOT_FOUND', { board: b })
+      return sendJson(res, 200, detectProjectPreview(boardObj.workdir, b))
+    }
+    if (b && c === 'preview-files' && req.method === 'GET') {
+      const boardObj = typeof kanban.boards === 'function' ? kanban.boards().find((x) => x && x.slug === b) : null
+      if (!boardObj) return sendError(res, 404, 'BOARD_NOT_FOUND', { board: b })
+      if (!d && !url.pathname.endsWith('/')) {
+        res.writeHead(302, { location: `/api/boards/${encodeURIComponent(b)}/preview-files/` })
+        return res.end()
+      }
+      const marker = '/preview-files/'
+      const idx = url.pathname.indexOf(marker)
+      const rawRel = idx >= 0 ? url.pathname.slice(idx + marker.length) : ''
+      let rel = ''
+      try {
+        rel = decodeURIComponent(rawRel)
+      } catch {
+        return sendError(res, 400, 'BAD_REQUEST')
+      }
+      const r = readPreviewFile(boardObj.workdir, b, rel)
+      if (!r.ok) return sendFailure(res, r.code === 'BAD_REQUEST' ? 400 : 404, r)
+      res.writeHead(200, r.headers)
+      return res.end(r.data)
+    }
     // クイック起票（POST /api/boards/:slug/tasks）
     if (b && c === 'tasks' && !d && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {

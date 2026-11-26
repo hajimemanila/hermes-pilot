@@ -1,8 +1,180 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
+import { api } from '../../api.js'
+import { Sheet } from '../../components/Ui.jsx'
 import { useI18n } from '../../i18n/index.js'
 import { haptic } from '../../lib/haptic.js'
+import { repoLabel } from '../../lib/repoPicker.js'
 import { SEED_MAX, canSubmit } from '../../lib/specSeed.js'
 import { celebrateAction } from '../../lib/vibe.js'
+
+/**
+ * Autopilot 上部常設のプロジェクト切替＋同一オリジン成果物プレビューバー。
+ */
+export function AutopilotProjectBar({ boards = [], board = null, preview = null, onOpenPicker }) {
+  const { t } = useI18n()
+  const active = boards.find((b) => b.slug === board) || null
+  const label = active?.name || active?.label || board || t('autopilot.project.select')
+  return (
+    <div className="ap-project-bar">
+      <button
+        type="button"
+        className="ap-project-btn"
+        onClick={() => {
+          haptic('tap')
+          onOpenPicker?.()
+        }}
+        aria-label={t('autopilot.project.switchAria')}
+      >
+        <span aria-hidden="true">{active?.icon || '📁'}</span>
+        <span className="ap-project-name">{label}</span>
+        <span className="ap-project-caret" aria-hidden="true">▾</span>
+      </button>
+      {preview?.url && (
+        <a
+          href={preview.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="ap-preview-chip"
+          onClick={() => haptic('action')}
+        >
+          🌐 {t('autopilot.project.openPreview')} ↗
+        </a>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Autopilot 内のプロジェクト新規作成＋過去プロジェクト／リポジトリ切替シート。
+ */
+export function AutopilotProjectSheet({
+  boards = [],
+  board = null,
+  onSelectBoard,
+  onCreatedProject,
+  onClose,
+  notify,
+}) {
+  const { t } = useI18n()
+  const [name, setName] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [unboarded, setUnboarded] = useState([])
+  const [busyRepoId, setBusyRepoId] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    api('/api/repos?fresh=1')
+      .then((d) => {
+        if (!alive) return
+        const list = Array.isArray(d?.repos) ? d.repos : []
+        setUnboarded(list.filter((r) => !(r.boards?.length)))
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  const createNew = async (e) => {
+    e?.preventDefault?.()
+    const clean = String(name || '').trim()
+    if (!clean || creating) return
+    setCreating(true)
+    try {
+      const res = await api('/api/repos/new', { method: 'POST', body: { name: clean } })
+      if (!res?.ok || !res.board?.slug) {
+        notify?.(res?.error || t('autopilot.project.createFailed'))
+        return
+      }
+      notify?.(t('autopilot.project.created', { name: res.board.slug }))
+      await onCreatedProject?.(res.board.slug)
+      onClose?.()
+    } catch (err) {
+      notify?.(err?.message || t('autopilot.project.createFailed'))
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const attachRepo = async (repo) => {
+    if (!repo?.id || busyRepoId) return
+    setBusyRepoId(repo.id)
+    try {
+      const res = await api(`/api/repos/${encodeURIComponent(repo.id)}/board`, { method: 'POST', body: {} })
+      if (!res?.ok || !res.board?.slug) {
+        notify?.(res?.error || t('chat.boardCreateFailed'))
+        return
+      }
+      await onCreatedProject?.(res.board.slug)
+      onClose?.()
+    } catch (err) {
+      notify?.(err?.message || t('chat.boardCreateFailed'))
+    } finally {
+      setBusyRepoId('')
+    }
+  }
+
+  return (
+    <Sheet title={`📁 ${t('autopilot.project.sheetTitle')}`} onClose={onClose}>
+      <form className="ap-new-proj-card" onSubmit={createNew}>
+        <div className="ap-new-proj-title">✨ {t('autopilot.project.newTitle')}</div>
+        <div className="ap-launcher-bar">
+          <input
+            type="text"
+            className="ap-launcher-input"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={t('autopilot.project.newPlaceholder')}
+            aria-label={t('autopilot.project.newPlaceholder')}
+          />
+          <button type="submit" className="ap-launcher-submit" disabled={creating || !name.trim()}>
+            {creating ? t('chat.creating') : t('autopilot.project.newBtn')}
+          </button>
+        </div>
+      </form>
+
+      <div className="pick-list">
+        {boards.map((b) => (
+          <button
+            key={b.slug}
+            type="button"
+            className={`pick-item${board === b.slug ? ' on' : ''}`}
+            onClick={() => {
+              haptic('tap')
+              onSelectBoard?.(b.slug)
+              onClose?.()
+            }}
+          >
+            <span aria-hidden="true">{b.icon || '📁'}</span>
+            <span className="pick-main">
+              <span className="pick-title">{b.name || b.label || b.slug}</span>
+              <span className="pick-sub">{b.slug}</span>
+            </span>
+            <span className="pick-meta">{board === b.slug ? '✓' : ''}</span>
+          </button>
+        ))}
+
+        {unboarded.length > 0 && <div className="sec">{t('tasks.unboardedRepos')}</div>}
+        {unboarded.map((r) => (
+          <button
+            key={r.id}
+            type="button"
+            className="pick-item"
+            disabled={Boolean(busyRepoId)}
+            onClick={() => attachRepo(r)}
+          >
+            <span aria-hidden="true">📂</span>
+            <span className="pick-main">
+              <span className="pick-title">{repoLabel(r)}</span>
+              <span className="pick-sub">{r.path}</span>
+            </span>
+            <span className="pick-meta">{busyRepoId === r.id ? t('chat.creating') : t('tasks.createBoardAction')}</span>
+          </button>
+        ))}
+      </div>
+    </Sheet>
+  )
+}
 
 /**
  * 選択肢ごとのビジュアルモック描画（実スクショ優先、無ければ案ごとの差別化プレビュー）。
@@ -59,7 +231,7 @@ export function OptionMockPreview({ option, question, shotUrl, layoutVariant, th
 /**
  * 第1幕: ライト層向けのビジュアル・スターターカード＋1行入力ランチャー。
  */
-export function StarterStage({ recipes = [], onStartSeed, onSwitchCockpit, notify }) {
+export function StarterStage({ recipes = [], onStartSeed, onOpenPicker, onSwitchCockpit, notify }) {
   const { t } = useI18n()
   const [seedText, setSeedText] = useState('')
   const [busy, setBusy] = useState(false)
@@ -140,6 +312,18 @@ export function StarterStage({ recipes = [], onStartSeed, onSwitchCockpit, notif
         </div>
       </form>
 
+      {onOpenPicker && (
+        <button
+          type="button"
+          className="ap-pill-ghost"
+          onClick={() => {
+            haptic('tap')
+            onOpenPicker()
+          }}
+        >
+          + {t('autopilot.project.newOrSwitch')}
+        </button>
+      )}
       {onSwitchCockpit && (
         <button type="button" className="ap-subtle-link" onClick={onSwitchCockpit}>
           🎛 {t('autopilot.openCockpit')}

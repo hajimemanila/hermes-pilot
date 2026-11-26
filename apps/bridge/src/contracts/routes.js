@@ -43,6 +43,7 @@ export const API_ROUTES = [
   { method: 'GET', pattern: '/api/repos', demo: 'mocked' },
   { method: 'POST', pattern: '/api/repos', demo: 'bridge-only', note: '追加・scanDirs 更新（書き込み）' },
   { method: 'POST', pattern: '/api/repos/scan', demo: 'bridge-only' },
+  { method: 'POST', pattern: '/api/repos/new', demo: 'mocked', note: '新規プロジェクト作成（mkdir + git init + board）' },
   { method: 'POST', pattern: '/api/repos/:id/board', demo: 'bridge-only' },
   { method: 'DELETE', pattern: '/api/repos/:id', demo: 'bridge-only' },
 
@@ -73,6 +74,8 @@ export const API_ROUTES = [
 
   // --- カンバン -------------------------------------------------------------
   { method: 'GET', pattern: '/api/boards', demo: 'mocked' },
+  { method: 'GET', pattern: '/api/boards/:board/preview', demo: 'mocked', note: 'ボード成果物のプレビュー情報' },
+  { method: 'GET', pattern: '/api/boards/:board/preview-files/*', demo: 'bridge-only', note: '同一オリジン静的プレビュー配信' },
   { method: 'GET', pattern: '/api/boards/:board/tasks', demo: 'mocked' },
   { method: 'POST', pattern: '/api/boards/:board/tasks', demo: 'mocked', note: 'クイック起票' },
   { method: 'GET', pattern: '/api/boards/:board/tasks/:id', demo: 'mocked' },

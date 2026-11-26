@@ -30,8 +30,10 @@ export function buildAutopilotRound1Lines({ slug }) {
  */
 export function buildAutopilotDeliverableLines() {
   return [
-    'Final Deliverable Handoff — in the final batch completion summary and report text, always include machine-readable launch details so the user can check the result in one tap:',
-    '  - `Preview: <http(s)://... or relative entry path>` (whenever a web UI, page, or dev preview server is available)',
-    '  - `Launch: <one-line command to start or open the app>` (whenever a local server, CLI, or desktop/mobile app command applies)',
+    'Final Deliverable Handoff — build a static web bundle when building a web UI (e.g. `dist/index.html` or `index.html`) so Hermes Pilot serves it automatically on the same authenticated origin (`/api/boards/<board>/preview-files/`).',
+    'NEVER output loopback (`127.0.0.1`, `localhost`) or ephemeral LAN IP (`192.168.x.x`) preview URLs in user-facing summaries.',
+    'In the final batch completion summary and report text, include machine-readable handoff details:',
+    '  - `Preview: dist/index.html` (or an explicit public `https://...` URL if deployed externally)',
+    '  - `Launch: <one-line command to start or open the app>` (whenever a local CLI or app launch applies)',
   ]
 }

@@ -1310,5 +1310,15 @@
   "autopilot.complete.openPreview": "Open Live Preview",
   "autopilot.complete.copied": "Launch command copied",
   "autopilot.complete.receipt": "View Receipt",
-  "autopilot.complete.startNext": "Start Next Project"
+  "autopilot.complete.startNext": "Start Next Project",
+  "autopilot.project.select": "Select project",
+  "autopilot.project.switchAria": "Switch or create project",
+  "autopilot.project.openPreview": "Preview",
+  "autopilot.project.sheetTitle": "Autopilot Projects",
+  "autopilot.project.newTitle": "Create Brand-New Project",
+  "autopilot.project.newPlaceholder": "e.g. retro-news-site",
+  "autopilot.project.newBtn": "Create",
+  "autopilot.project.newOrSwitch": "New / Switch Project",
+  "autopilot.project.created": "Created project {name}",
+  "autopilot.project.createFailed": "Could not create project"
 }

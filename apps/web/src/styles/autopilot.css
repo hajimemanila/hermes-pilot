@@ -415,6 +415,63 @@ html[data-vibe='dopamine'] .ap-launcher-submit { background: var(--vibe-primary-
 .ap-wipe-divider { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); }
 .ap-wipe-slider { width: 100%; accent-color: var(--accent); }
 
+.ap-project-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  max-width: 460px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.ap-project-btn {
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.ap-project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ap-project-caret { color: var(--muted); font-size: 11px; flex-shrink: 0; }
+
+.ap-preview-chip {
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1px solid var(--good-line);
+  background: var(--good-bg);
+  color: var(--good-fg);
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.ap-new-proj-card {
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line-strong);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.ap-new-proj-title { font-size: 13px; font-weight: 800; color: var(--text); }
+
 @keyframes ap-pulse {
   0%, 100% { transform: scale(1); opacity: 1; }
   50% { transform: scale(1.35); opacity: 0.55; }

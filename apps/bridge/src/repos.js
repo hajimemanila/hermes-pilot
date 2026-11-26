@@ -2,8 +2,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { DatabaseSync } from 'node:sqlite'
-import { outcomeOf, runHermes } from './lib/cli.js'
-import { writeJsonAtomic } from './lib/atomic.js'
+import { outcomeOf, run as runCli, runHermes } from './lib/cli.js'
+import { writeFileAtomic, writeJsonAtomic } from './lib/atomic.js'
 import { safeList } from './lib/safe.js'
 
 /**
@@ -442,6 +442,9 @@ export function createRepos(cfg = {}, deps = {}) {
   const listBoards = deps.boards ?? (() => [])
   const readCwds = deps.cwds ?? (() => readSessionCwds(cfg))
   const now = deps.now ?? (() => Date.now())
+  const runGit =
+    deps.runGit ??
+    ((args, cwd) => runCli('git', args, { cwd, timeoutMs: 15_000, maxBuffer: 1_000_000 }))
   const configPath = deps.configPath ?? cfg.reposPath ?? ''
   const run =
     deps.runner
@@ -607,5 +610,52 @@ export function createRepos(cfg = {}, deps = {}) {
     return { ok: true, created: true, board: { slug: repo.id, name: repo.label, current: false } }
   }
 
-  return { list, scanDirs, targets, add, remove, setScanDirs, scan, createBoard, invalidate }
+  /**
+   * 新規プロジェクトを作成し（mkdir + README + git init）、登録＆ボード作成まで一気に行う。
+   * @param {{name?: string, parentDir?: string}} [input]
+   */
+  async function createNew(input = {}) {
+    const rawName = String(input?.name ?? '').trim()
+    const slug = rawName
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 40)
+    if (!slug || !isSafeBoardSlug(slug)) return { ok: false, code: 'BOARD_NAME_INVALID' }
+    const label = rawName.slice(0, 60) || slug
+
+    let parentAbs = ''
+    if (input?.parentDir) {
+      parentAbs = expandHome(String(input.parentDir).trim())
+      if (!path.isAbsolute(parentAbs)) return { ok: false, code: 'REPO_PATH_INVALID' }
+      if (normalizePath(parentAbs) === normalizePath(os.homedir()) || normalizePath(parentAbs) === '/') {
+        return { ok: false, code: 'SCAN_DIR_FORBIDDEN' }
+      }
+    } else {
+      const dirs = scanDirs()
+      if (dirs.length) parentAbs = expandHome(dirs[0])
+      else {
+        const firstRepo = list().find((r) => r?.path)
+        if (firstRepo) parentAbs = path.dirname(firstRepo.path)
+      }
+    }
+    if (!parentAbs) return { ok: false, code: 'SCAN_DIR_MISSING' }
+
+    const targetDir = path.join(path.resolve(parentAbs), slug)
+    if (fs.existsSync(targetDir)) return { ok: false, code: 'CONFLICT', params: { path: targetDir } }
+
+    fs.mkdirSync(targetDir, { recursive: true })
+    writeFileAtomic(path.join(targetDir, 'README.md'), `# ${label}\n`)
+    const gitRes = outcomeOf(await runGit(['init'], targetDir))
+    if (gitRes.code !== 0) {
+      return { ok: false, code: 'CREATE_FAILED', error: gitRes.stderr || gitRes.stdout || 'git init failed' }
+    }
+    const added = add({ path: targetDir, id: slug, label })
+    if (!added.ok) return added
+    const created = await createBoard(slug)
+    if (!created.ok) return created
+    return { ok: true, repo: added.repo, board: created.board, path: targetDir }
+  }
+
+  return { list, scanDirs, targets, add, remove, setScanDirs, scan, createBoard, createNew, invalidate }
 }

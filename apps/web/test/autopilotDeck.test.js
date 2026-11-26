@@ -14,6 +14,8 @@ import {
   currentOptionCard,
   extractDeliverable,
   isInEdgeDeadZone,
+  isReachablePublicUrl,
+  isSameOriginPreviewUrl,
   isUndoActive,
   projectStudioStage,
   resolveHoldOutcome,
@@ -130,6 +132,43 @@ test('AP-v2: extractDeliverable は安全でない URL (javascript:) を拒否�
   })
   assert.equal(d.previewUrl, null)
   assert.equal(d.launchCmd, 'node app.js')
+})
+
+test('AP-v2: 127.0.0.1 や 192.168.x.x を除外し同一オリジンプレビューを優先する', () => {
+  assert.equal(isReachablePublicUrl('http://127.0.0.1:4173'), false)
+  assert.equal(isReachablePublicUrl('http://localhost:3000'), false)
+  assert.equal(isReachablePublicUrl('http://192.168.100.148:4173'), false)
+  assert.equal(isReachablePublicUrl('https://example.ts.net/app'), true)
+  assert.equal(isSameOriginPreviewUrl('/api/boards/b-news/preview-files/'), true)
+
+  const fromLocalOnly = extractDeliverable({
+    tasks: [{
+      id: 't_local',
+      status: 'done',
+      title: 'B News',
+      result: 'Preview: http://192.168.100.148:4173/\nLaunch: npm run preview',
+    }],
+    preview: {
+      ok: true,
+      kind: 'static',
+      board: 'b-news',
+      url: '/api/boards/b-news/preview-files/',
+      entry: 'dist/index.html',
+      launchCmd: 'npm run dev',
+    },
+  })
+  assert.equal(fromLocalOnly.previewUrl, '/api/boards/b-news/preview-files/')
+  assert.equal(fromLocalOnly.launchCmd, 'npm run preview')
+
+  const strippedNoStatic = extractDeliverable({
+    tasks: [{
+      id: 't_stripped',
+      status: 'done',
+      title: 'B News',
+      result: 'Preview: http://127.0.0.1:4173/',
+    }],
+  })
+  assert.equal(strippedNoStatic.previewUrl, null)
 })
 
 test('AP-3/4: createUndoEntry / resolveHoldOutcome / createRemixPending', () => {

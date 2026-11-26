@@ -135,6 +135,19 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
       return {
         boards: [{ slug: DEMO_BOARD, label: 'Mobile (demo)', current: true, counts: { running: state.tasks.filter((t) => t.status === 'running').length } }],
       }
+    case 'board.preview':
+      return {
+        ok: true,
+        kind: 'static',
+        board: route.id,
+        url: `/api/boards/${encodeURIComponent(route.id)}/preview-files/`,
+        entry: 'dist/index.html',
+        rootRel: 'dist',
+        updatedAt: Date.now(),
+        launchCmd: 'npm run dev',
+      }
+    case 'board.previewFiles':
+      return { ok: true, demo: true }
     case 'board.tasks':
       // COH-2: 緊急停止の状態も返す（本番の `/api/overview` の `paused` と同じ値）。
       // D92: `archivedCount` は一覧の LIMIT と独立に数える（「アーカイブ済み (N)」の N）。
@@ -505,6 +518,20 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
     }
     case 'repos':
       return { repos: [{ id: 'hermes-pilot-demo', label: 'hermes-pilot (demo)', path: '/demo/hermes-pilot', board: DEMO_BOARD }] }
+    case 'repos.new': {
+      const slug = String(payload?.name || 'new-app')
+        .toLowerCase()
+        .replace(/[^a-z0-9._-]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'new-app'
+      return {
+        ok: true,
+        repo: { id: slug, label: payload?.name || slug, path: `/demo/${slug}`, boards: [{ slug, name: payload?.name || slug }] },
+        board: { slug, name: payload?.name || slug, current: false },
+        path: `/demo/${slug}`,
+        repos: [{ id: 'hermes-pilot-demo', label: 'hermes-pilot (demo)', path: '/demo/hermes-pilot', board: DEMO_BOARD }],
+        scanDirs: ['/demo'],
+      }
+    }
     case 'receipt':
       return receiptBody()
     // V10 §3.3 / D47: 1 タップ環境最適化（SOUL.md ＋ 同梱 3 スキル）と専用プロファイル選択
