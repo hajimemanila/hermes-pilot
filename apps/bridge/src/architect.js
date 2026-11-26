@@ -114,6 +114,7 @@ export {
   runnerLabel,
   sanitizeRunner,
 } from './architect/labels.js'
+export { buildAutopilotDeliverableLines, buildAutopilotRound1Lines } from './architect/autopilot.js'
 export { EXISTING_SPECS_MAX, SPEC_SLUG_MAX, buildArchitectTaskTitle, buildSeedPrompt, makeJobId, normalizeSeed, recentSpecPaths, seedHashOf, suggestSpecSlug } from './architect/seed.js'
 export {
   buildArchitectTaskBody,
@@ -148,31 +149,15 @@ export { computePhase, findRecentSheet, isJobStalled, publicJob } from './archit
  */
 export function createCliRunner(cfg = {}) {
   return ({
-    runnerId,
-    prompt,
-    repoPath,
-    board = '',
-    seedText = '',
-    jobId = '',
-    executionPolicy = DEFAULT_EXECUTION_POLICY,
-    lang = DEFAULT_LANG,
-    suggestedSlug,
-    existingSpecs,
-    usedBatchPrefixes,
-    timeoutMs = RUNNER_TIMEOUT_MS,
+    runnerId, prompt, repoPath, board = '', seedText = '', jobId = '',
+    executionPolicy = DEFAULT_EXECUTION_POLICY, autopilot = false, lang = DEFAULT_LANG,
+    suggestedSlug, existingSpecs, usedBatchPrefixes, timeoutMs = RUNNER_TIMEOUT_MS,
   }) => {
     const slug = String(suggestedSlug ?? '').trim() || suggestSpecSlug(seedText || prompt, jobId)
     const title = buildArchitectTaskTitle({ seedText: seedText || prompt })
     const body = buildArchitectTaskBody({
-      prompt,
-      board,
-      repoPath,
-      jobId,
-      executionPolicy,
-      suggestedSlug: slug,
-      existingSpecs,
-      usedBatchPrefixes,
-      lang,
+      prompt, board, repoPath, jobId, executionPolicy, autopilot: Boolean(autopilot),
+      suggestedSlug: slug, existingSpecs, usedBatchPrefixes, lang,
     })
     const args = buildKanbanCreateArgs({ board, title, body, assignee: pilotAssigneeOf(cfg) })
     // `bin` / `args` は新形（`lib/cli.js` の統一形）から取る。
@@ -374,16 +359,9 @@ export function createArchitect(cfg = {}, deps = {}) {
     job.suggestedSlug = suggestedSlug
 
     const prompt = buildSeedPrompt({
-      jobId: job.id,
-      seedText,
-      board,
-      repoPath,
-      autoStart: job.autoStart,
-      executionPolicy,
-      lang: job.lang,
-      suggestedSlug,
-      existingSpecs,
-      usedBatchPrefixes,
+      jobId: job.id, seedText, board, repoPath, autoStart: job.autoStart,
+      executionPolicy, autopilot: Boolean(input.autopilot), lang: job.lang,
+      suggestedSlug, existingSpecs, usedBatchPrefixes,
     })
     job.prompt = prompt
 
@@ -391,17 +369,9 @@ export function createArchitect(cfg = {}, deps = {}) {
     void Promise.resolve()
       .then(() =>
         runner({
-          runnerId,
-          prompt,
-          repoPath,
-          board,
-          seedText,
-          jobId: job.id,
-          executionPolicy,
-          lang: job.lang,
-          suggestedSlug,
-          existingSpecs,
-          usedBatchPrefixes,
+          runnerId, prompt, repoPath, board, seedText, jobId: job.id,
+          executionPolicy, autopilot: Boolean(input.autopilot), lang: job.lang,
+          suggestedSlug, existingSpecs, usedBatchPrefixes,
         }),
       )
       .then(async (res) => {

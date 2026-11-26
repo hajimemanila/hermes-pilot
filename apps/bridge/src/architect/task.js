@@ -11,6 +11,7 @@ import { isJaLang, languageRule } from '../language-rule.js'
 import { DEFAULT_EXECUTION_POLICY, DEFAULT_REVIEW_BOARD, SPEC_MTIME_SLACK_MS, TERMINAL_TASK_STATUSES, executionPolicyLines, normalizeExecutionPolicy } from './labels.js'
 import { round2Headings, suggestSpecSlug } from './seed.js'
 import { batchIdPrefixForSlug, queueStateOf, reviewBoardsFor } from './batch.js'
+import { buildAutopilotDeliverableLines, buildAutopilotRound1Lines } from './autopilot.js'
 
 /**
  * [`[ARCH]` タスクの本文]（spec-architect プロトコル＋実行契約）。
@@ -31,6 +32,7 @@ export function buildArchitectTaskBody({
   repoPath,
   jobId,
   executionPolicy = DEFAULT_EXECUTION_POLICY,
+  autopilot = false,
   suggestedSlug,
   existingSpecs,
   usedBatchPrefixes,
@@ -50,6 +52,28 @@ export function buildArchitectTaskBody({
   const usedLine = prefixes.length
     ? `Batch ID prefixes already used by active SPECs: ${prefixes.join(', ')} (do not reuse one as-is; pick a distinct slug)`
     : `Batch ID prefixes already used by active SPECs: none (the ${prefix} prefix above is free)`
+  const round1Lines = autopilot
+    ? buildAutopilotRound1Lines({ slug })
+    : policy === 'visual-gate'
+      ? [
+          'Round 1: write the Quick Review JSON sheet under review/sheets/',
+          '(spec-<slug>-1.json, "mode": "standard", 2-5 decisions) and file it as a blocked `[review]` task',
+          'with `--idempotency-key review:spec-<slug>:round-1` (so a retry never creates a duplicate review card)',
+          'whose machine line is `mode=standard sheet=sheets/spec-<slug>-1.json`. Do not wait in chat.',
+          'Round 1 speed: locate only the relevant symbols (rg/grep), skip running full test/verification suites during Round 1, write the sheet and block immediately.',
+          'Round 1 speed: skip bespoke HTML sheets and headless browser screenshots unless',
+          'the question itself is a visual UI layout comparison; the JSON alone renders the native form.',
+        ]
+      : [
+          'Round 1: write the Quick Review JSON sheet under review/sheets/',
+          '(spec-<slug>-1.json, "mode": "standard", 2-5 decisions) and file it as a blocked `[review]` task',
+          'with `--idempotency-key review:spec-<slug>:round-1` (so a retry never creates a duplicate review card)',
+          'whose machine line is `mode=standard sheet=sheets/spec-${slug}-1.json`. Do not wait in chat.'.replace('spec-${slug}', 'spec-<slug>'),
+          'Round 1 speed: locate only the relevant symbols (rg/grep), skip running full test/verification suites or a headless browser during Round 1, write the JSON sheet and block immediately.',
+          'Round 1 speed: skip bespoke HTML sheets and headless browser screenshots unless',
+          'the question itself is a visual UI layout comparison; the JSON alone renders the native form.',
+        ]
+  const deliverableLines = autopilot || policy === 'visual-gate' ? buildAutopilotDeliverableLines() : []
   return [
     `[hermes-pilot:architect job=${jobId}] Architect (Kanban native)`,
     '',
@@ -66,17 +90,12 @@ export function buildArchitectTaskBody({
       : 'Existing specs: none in docs/ yet (the slug above is free)',
     batchRule,
     usedLine,
-    'Round 1: write the Quick Review JSON sheet under review/sheets/',
-    '(spec-<slug>-1.json, "mode": "standard", 2-5 decisions) and file it as a blocked `[review]` task',
-    'with `--idempotency-key review:spec-<slug>:round-1` (so a retry never creates a duplicate review card)',
-    'whose machine line is `mode=standard sheet=sheets/spec-<slug>-1.json`. Do not wait in chat.',
-    'Round 1 speed: locate only the relevant symbols (rg/grep), skip running full test/verification suites or a headless browser during Round 1, write the JSON sheet and block immediately.',
-    'Round 1 speed: skip bespoke HTML sheets and headless browser screenshots unless',
-    'the question itself is a visual UI layout comparison; the JSON alone renders the native form.',
+    ...round1Lines,
     `Round 2: after the answers arrive, write \`docs/SPEC-<SLUG>.md\` with \`### Batch ${prefix}-<n>: <Title>\` sections`,
     round2Headings(lang).inline,
     `If Round 1 delegates Round 2 to a separate \`[review]\` task, include the \`### Batch ${prefix}-<n>: <Title>\` heading and per-batch \`- **Execution Mode**:\` requirement in that \`[review]\` task body and mark this \`[ARCH]\` task \`done\` once the \`[review]\` task is \`blocked\`.`,
     ...executionPolicyLines(policy),
+    ...deliverableLines,
     'Stay inside the official local CLI: the only runner is `hermes kanban create` (no external AI CLI is launched).',
     `Board: ${board}`,
     `Repository: ${repoPath}`,

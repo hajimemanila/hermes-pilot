@@ -54,19 +54,28 @@ export function sanitizeVisualMock(vm) {
   return out
 }
 
-/** シート全体および設問ごとの `visualMock` パスを安全化する（未指定時は無変更）。 */
+/** シート全体・設問ごと・選択肢ごとの `visualMock` パスを安全化する（未指定時は無変更）。 */
 export function sanitizeSheetVisualMocks(rawData) {
   if (!rawData || typeof rawData !== 'object') return rawData
   const hasTop = rawData.visualMock !== undefined
   const qs = Array.isArray(rawData.questions) ? rawData.questions : null
-  const hasQ = Boolean(qs && qs.some((q) => q?.visualMock !== undefined))
+  const optHasVm = (q) => Array.isArray(q?.options) && q.options.some((o) => o?.visualMock !== undefined)
+  const hasQ = Boolean(qs && qs.some((q) => q?.visualMock !== undefined || optHasVm(q)))
   if (!hasTop && !hasQ) return rawData
   const out = { ...rawData }
   if (hasTop) out.visualMock = sanitizeVisualMock(rawData.visualMock)
   if (hasQ) {
-    out.questions = qs.map((q) =>
-      q && q.visualMock !== undefined ? { ...q, visualMock: sanitizeVisualMock(q.visualMock) } : q,
-    )
+    out.questions = qs.map((q) => {
+      if (!q || (q.visualMock === undefined && !optHasVm(q))) return q
+      const nextQ = { ...q }
+      if (q.visualMock !== undefined) nextQ.visualMock = sanitizeVisualMock(q.visualMock)
+      if (optHasVm(q)) {
+        nextQ.options = q.options.map((o) =>
+          o && o.visualMock !== undefined ? { ...o, visualMock: sanitizeVisualMock(o.visualMock) } : o,
+        )
+      }
+      return nextQ
+    })
   }
   return out
 }

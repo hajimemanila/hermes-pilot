@@ -10,7 +10,7 @@ import crypto from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { readTailText } from '../tail.js'
 import { outputOf } from '../lib/cli.js'
-import { parseReviewLine } from './parse.js'
+import { isSafeVisualMockRel, parseReviewLine } from './parse.js'
 import { opsText } from './text.js'
 import { writeFileAtomic, writeJsonAtomic } from '../lib/atomic.js'
 
@@ -38,7 +38,7 @@ export function createReviewMedia(ctx = {}) {
 
   function thumb(rel) {
     const s = String(rel || '')
-    if (!s.startsWith('thumbs/') || !/\.(png|jpe?g|webp)$/i.test(s)) {
+    if (!isSafeVisualMockRel(s) || !/^(?:thumbs|shots)\//.test(s) || !/\.(png|jpe?g|webp)$/i.test(s)) {
       return { ok: false, code: 'BAD_THUMB' }
     }
     const abs = resolveInside(s)

@@ -2,17 +2,21 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../../api.js'
 import { HM_EVENTS, emitHmEvent } from '../../contracts/events.js'
 import { useI18n } from '../../i18n/index.js'
-import { buildAnswerPayload, buildDeckFromSheet } from '../../lib/autopilotDeck.js'
+import {
+  AUTOPILOT_RECIPES,
+  buildAnswerPayload,
+  buildDeckFromSheet,
+  projectStudioStage,
+} from '../../lib/autopilotDeck.js'
 import { readActiveChatId } from '../../lib/chatReports.js'
 import { haptic } from '../../lib/haptic.js'
-import { buildSeedPayload, pickActiveArchitectJob } from '../../lib/specSeed.js'
-import { refreshSync, subscribeSync, tickSync } from '../../lib/syncSources.js'
+import { buildSeedPayload } from '../../lib/specSeed.js'
+import { refreshSync, setSyncParams, subscribeSync, tickSync } from '../../lib/syncSources.js'
 import { celebrate } from '../../lib/vibe.js'
+import { MissionReceiptSheet } from '../MissionReceiptSheet.jsx'
+import { CompletionCard, LiveStudioCard, StarterStage } from './AutopilotCards.jsx'
 import { AutopilotDeck } from './AutopilotDeck.jsx'
 
-/**
- * `[✨ Autopilot | 🎛 Cockpit]` 2 段階ゼロフォーク切替ピル（AP-5）。
- */
 export function AutopilotLensToggle({ lens, onChange, waitingCount = 0 }) {
   const { t } = useI18n()
   return (
@@ -46,9 +50,6 @@ export function AutopilotLensToggle({ lens, onChange, waitingCount = 0 }) {
   )
 }
 
-/**
- * Cockpit 側（ReviewPane / TasksPane）から Autopilot デッキへ戻る導線（AP-5）。
- */
 export function AutopilotSwipeLink({ count = 0 }) {
   const { t } = useI18n()
   return (
@@ -66,86 +67,75 @@ export function AutopilotSwipeLink({ count = 0 }) {
 }
 
 /**
- * 進行中のモック ↔ 実装スクショのワイプ比較ライブ進捗カード（AP-5）。
- */
-function LiveWipeCard({ item }) {
-  const { t } = useI18n()
-  const [split, setSplit] = useState(50)
-  if (!item) return null
-  const afterSrc = `/api/review/${encodeURIComponent(item.id)}/image`
-  const beforeSrc = item.review?.hasCompare ? `${afterSrc}?compare=1` : afterSrc
-  return (
-    <section className="ap-wipe-card" aria-label={t('autopilot.wipe.aria')}>
-      <header className="ap-wipe-head">
-        <span className="ap-wipe-badge">{t('autopilot.wipe.live')}</span>
-        <span className="ap-wipe-title">{item.title}</span>
-        <span className="ap-wipe-pct">{split}%</span>
-      </header>
-      <div className="ap-wipe-stage">
-        <img src={afterSrc} alt={t('autopilot.wipe.after')} className="ap-wipe-img" />
-        <div className="ap-wipe-before" style={{ width: `${split}%` }}>
-          <img src={beforeSrc} alt={t('autopilot.wipe.before')} className="ap-wipe-img" />
-        </div>
-        <div className="ap-wipe-divider" style={{ left: `${split}%` }} aria-hidden="true" />
-      </div>
-      <input
-        type="range"
-        min="0"
-        max="100"
-        value={split}
-        onChange={(e) => setSplit(Number(e.target.value))}
-        aria-label={t('autopilot.wipe.sliderAria')}
-        className="ap-wipe-slider"
-      />
-    </section>
-  )
-}
-
-/**
- * Zero-Fork Autopilot 投影ビュー（`syncSources.reviewWaiting` 購読のみ・独自ポーリング無し）。
+ * Zero-Fork Autopilot 統合ビュー（4 幕スタジオ投影）。
  */
 export function AutopilotView({ overview, notify, onSwitchCockpit }) {
   const { t, lang } = useI18n()
+  const [board, setBoard] = useState(overview?.board || null)
   const [items, setItems] = useState([])
   const [jobs, setJobs] = useState([])
+  const [live, setLive] = useState(null)
+  const [tasks, setTasks] = useState([])
+  const [specReports, setSpecReports] = useState([])
   const [sheetById, setSheetById] = useState({})
   const [decisions, setDecisions] = useState({})
-
-  const applyItems = useCallback((res) => {
-    setItems(Array.isArray(res?.items) ? res.items : [])
-  }, [])
-  const applyJobs = useCallback((res) => {
-    setJobs(Array.isArray(res?.jobs) ? res.jobs : [])
-  }, [])
+  const [dismissedCompleteId, setDismissedCompleteId] = useState(null)
+  const [receiptOpen, setReceiptOpen] = useState(false)
 
   useEffect(() => {
-    const offReview = subscribeSync('reviewWaiting', applyItems)
-    const offJobs = subscribeSync('architectJobs', applyJobs)
+    if (board) {
+      setSyncParams({ board, architectBoard: board })
+      tickSync('tasks')
+      tickSync('specReports')
+      tickSync('architectJobs')
+      return undefined
+    }
+    let alive = true
+    api('/api/boards')
+      .then((res) => {
+        if (!alive) return
+        const first = Array.isArray(res?.boards) ? res.boards[0]?.slug : null
+        if (first) setBoard(first)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [board])
+
+  const onReview = useCallback((r) => setItems(Array.isArray(r?.items) ? r.items : []), [])
+  const onJobs = useCallback((r) => setJobs(Array.isArray(r?.jobs) ? r.jobs : []), [])
+  const onLive = useCallback((r) => setLive(r || null), [])
+  const onTasks = useCallback((r) => setTasks(Array.isArray(r?.tasks) ? r.tasks : []), [])
+  const onReports = useCallback((r) => setSpecReports(Array.isArray(r?.reports) ? r.reports : []), [])
+
+  useEffect(() => {
+    const offs = [
+      subscribeSync('reviewWaiting', onReview),
+      subscribeSync('architectJobs', onJobs),
+      subscribeSync('live', onLive),
+      subscribeSync('tasks', onTasks),
+      subscribeSync('specReports', onReports),
+    ]
     tickSync('reviewWaiting')
     tickSync('architectJobs')
-    return () => {
-      offReview()
-      offJobs()
+    tickSync('live')
+    if (board) {
+      tickSync('tasks')
+      tickSync('specReports')
     }
-  }, [applyItems, applyJobs])
-
-  const activeJob = useMemo(() => pickActiveArchitectJob(jobs), [jobs])
+    return () => offs.forEach((off) => off?.())
+  }, [onReview, onJobs, onLive, onTasks, onReports, board])
 
   const waiting = useMemo(() => items.filter((x) => x.status === 'blocked'), [items])
-  const liveCompareItem = useMemo(
-    () => items.find((x) => x.status !== 'blocked' && x.review?.image && x.review?.hasCompare) || null,
-    [items],
-  )
 
   useEffect(() => {
     let alive = true
     for (const item of waiting) {
-      if (sheetById[item.id]) continue
-      if (item.review?.mode === 'annotation') continue
+      if (sheetById[item.id] || item.review?.mode === 'annotation') continue
       api(`/api/review/${encodeURIComponent(item.id)}/data`)
         .then((res) => {
-          if (!alive) return
-          setSheetById((prev) => ({ ...prev, [item.id]: res }))
+          if (alive) setSheetById((prev) => ({ ...prev, [item.id]: res }))
         })
         .catch(() => {})
     }
@@ -156,34 +146,48 @@ export function AutopilotView({ overview, notify, onSwitchCockpit }) {
 
   const cards = useMemo(() => {
     const out = []
-    for (const item of waiting) {
-      out.push(...buildDeckFromSheet(item, sheetById[item.id] || null))
-    }
+    for (const item of waiting) out.push(...buildDeckFromSheet(item, sheetById[item.id] || null))
     return out
   }, [waiting, sheetById])
 
-  const handleCommitAction = async (card, action, extra = {}) => {
+  const stage = useMemo(
+    () =>
+      projectStudioStage({
+        cards,
+        jobs,
+        live,
+        tasks,
+        specReports,
+        reviewItems: items,
+        dismissedCompleteId,
+      }),
+    [cards, jobs, live, tasks, specReports, items, dismissedCompleteId],
+  )
+
+  const handleCommitAction = async (question, action, extra = {}) => {
     if (action === 'remix') return
     const next = {
       ...decisions,
-      [card.key]: {
+      [question.key]: {
         action,
-        choice: action === 'hold' ? null : card.recommendedId || 'A',
+        choice: action === 'hold' ? null : (extra?.choice || question.recommendedId || 'A'),
+        shot: extra?.shot || question.visualMock?.shot || null,
         annotation: extra?.annotation || null,
       },
     }
     setDecisions(next)
-    const taskCards = cards.filter((c) => c.taskId === card.taskId)
-    const allDecided = taskCards.length > 0 && taskCards.every((c) => next[c.key])
-    if (allDecided && card.taskId) {
+    const taskCards = cards.filter((c) => c.taskId === question.taskId)
+    if (taskCards.length > 0 && taskCards.every((c) => next[c.key]) && question.taskId) {
       const payload = buildAnswerPayload(taskCards, next)
       try {
-        await api(`/api/review/${encodeURIComponent(card.taskId)}/answer`, {
+        await api(`/api/review/${encodeURIComponent(question.taskId)}/answer`, {
           method: 'POST',
           body: payload,
         })
         notify?.(t('autopilot.answered'))
         refreshSync('reviewWaiting')
+        refreshSync('architectJobs')
+        if (board) refreshSync('tasks')
       } catch (e) {
         notify?.(e?.message || t('review.sendFailed'))
       }
@@ -211,7 +215,8 @@ export function AutopilotView({ overview, notify, onSwitchCockpit }) {
         seedText,
         autoStart: true,
         executionPolicy: 'visual-gate',
-        board: overview?.board || '',
+        autopilot: true,
+        board: board || overview?.board || '',
         repo: overview?.repo || null,
         chat: readActiveChatId(),
         lang,
@@ -230,23 +235,53 @@ export function AutopilotView({ overview, notify, onSwitchCockpit }) {
 
   return (
     <div className="ap-view">
-      {liveCompareItem && <LiveWipeCard item={liveCompareItem} />}
-      <AutopilotDeck
-        cards={cards}
-        activeJob={activeJob}
-        onStartSeed={handleStartSeed}
-        onCommitAction={handleCommitAction}
-        onSaveMemo={handleSaveMemo}
-        onUndoAction={(entry) => {
-          setDecisions((prev) => {
-            const copy = { ...prev }
-            delete copy[entry.cardKey]
-            return copy
-          })
-        }}
-        onSwitchCockpit={onSwitchCockpit}
-        notify={notify}
-      />
+      {stage.act === 'deck' && (
+        <AutopilotDeck
+          cards={stage.cards}
+          onCommitAction={handleCommitAction}
+          onSaveMemo={handleSaveMemo}
+          onUndoAction={(entry) => {
+            setDecisions((prev) => {
+              const copy = { ...prev }
+              delete copy[entry.cardKey]
+              return copy
+            })
+          }}
+          notify={notify}
+        />
+      )}
+      {stage.act === 'live' && (
+        <LiveStudioCard
+          stage={stage}
+          onSwitchCockpit={onSwitchCockpit}
+          onSaveMemo={handleSaveMemo}
+        />
+      )}
+      {stage.act === 'complete' && (
+        <CompletionCard
+          deliverable={stage.deliverable}
+          onOpenReceipt={() => setReceiptOpen(true)}
+          onStartNew={() => setDismissedCompleteId(stage.deliverable.id)}
+          onSwitchCockpit={onSwitchCockpit}
+          notify={notify}
+        />
+      )}
+      {stage.act === 'start' && (
+        <StarterStage
+          recipes={AUTOPILOT_RECIPES}
+          onStartSeed={handleStartSeed}
+          onSwitchCockpit={onSwitchCockpit}
+          notify={notify}
+        />
+      )}
+      {receiptOpen && (
+        <MissionReceiptSheet
+          board={board}
+          spec={stage?.deliverable?.spec || null}
+          onClose={() => setReceiptOpen(false)}
+          notify={notify}
+        />
+      )}
     </div>
   )
 }

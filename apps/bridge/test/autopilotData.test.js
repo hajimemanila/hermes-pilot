@@ -11,6 +11,8 @@ import {
   sanitizeVisualMock,
   toReplyText,
 } from '../src/review.js'
+import { buildArchitectTaskBody, buildSeedPrompt } from '../src/architect.js'
+import { findHardcodedVerification } from '../src/contracts/verify.js'
 
 function tempJsonOnlyBoard() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ap1-review-'))
@@ -162,4 +164,72 @@ test('AP-1: remix は .remix.json を書いて blocked を unblock し、非 blo
   const notWaiting = await api.remix('t_sheetjson', { questionId: 'q1' }, 'en')
   assert.equal(notWaiting.ok, false)
   assert.equal(notWaiting.code, 'NOT_WAITING')
+})
+
+test('AP-v2: 選択肢単位 visualMock サニタイズと thumb() の shots/ 許可', () => {
+  const { root, workdir } = tempJsonOnlyBoard()
+  fs.mkdirSync(path.join(workdir, 'shots'), { recursive: true })
+  const pngStub = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
+  fs.writeFileSync(path.join(workdir, 'shots', 'opt-a.png'), pngStub)
+
+  const jsonPath = path.join(workdir, 'sheets', 'json-only-1.json')
+  const orig = JSON.parse(fs.readFileSync(jsonPath, 'utf8'))
+  orig.questions[0].options[0].visualMock = {
+    shot: 'shots/opt-a.png',
+    html: 'secrets/bad.html',
+    layoutVariant: 'A',
+  }
+  fs.writeFileSync(jsonPath, JSON.stringify(orig))
+
+  const api = createReview({ kanbanRoot: path.join(root, 'kanban') })
+  const sheet = api.sheetData('t_sheetjson')
+  assert.deepEqual(sheet.data.questions[0].options[0].visualMock, {
+    shot: 'shots/opt-a.png',
+    html: null,
+    layoutVariant: 'A',
+  })
+
+  const hit = api.thumb('shots/opt-a.png')
+  assert.equal(hit.ok, true)
+  assert.equal(hit.type, 'image/png')
+  assert.equal(api.thumb('../secrets/opt-a.png').ok, false)
+  assert.equal(api.thumb('secrets/opt-a.png').ok, false)
+})
+
+test('AP-v2: autopilot ヘルパは Cockpit 契約を壊さずビジュアル優先・成果物導線を注入する', () => {
+  const cockpitZero = buildArchitectTaskBody({
+    prompt: 'Build demo',
+    board: 'mobile',
+    repoPath: '/tmp/demo',
+    jobId: 'arch-1',
+    executionPolicy: 'zero-stop',
+    autopilot: false,
+  })
+  assert.match(cockpitZero, /skip bespoke HTML sheets/)
+  assert.doesNotMatch(cockpitZero, /Final Deliverable Handoff/)
+
+  const cockpitVg = buildArchitectTaskBody({
+    prompt: 'Build demo',
+    board: 'mobile',
+    repoPath: '/tmp/demo',
+    jobId: 'arch-2',
+    executionPolicy: 'visual-gate',
+    autopilot: false,
+  })
+  assert.doesNotMatch(cockpitVg, /or a headless browser during Round 1/)
+  assert.match(cockpitVg, /Final Deliverable Handoff/)
+
+  const apPrompt = buildSeedPrompt({
+    jobId: 'arch-3',
+    seedText: 'Pomodoro app',
+    board: 'mobile',
+    repoPath: '/tmp/demo',
+    autopilot: true,
+    executionPolicy: 'visual-gate',
+  })
+  assert.match(apPrompt, /Autopilot Visual-First Round 1/)
+  assert.match(apPrompt, /For EACH option \(A, B, C\)/)
+  assert.match(apPrompt, /Preview:/)
+  assert.match(apPrompt, /Launch:/)
+  assert.equal(findHardcodedVerification(apPrompt).ok, true)
 })

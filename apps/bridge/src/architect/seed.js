@@ -8,6 +8,7 @@ import { isJaLang, languageRule } from '../language-rule.js'
 import { safeList } from '../lib/safe.js'
 import { BOARD_RE, DEFAULT_EXECUTION_POLICY, DEFAULT_REVIEW_BOARD, SEED_MAX, SEED_MIN, executionPolicyLines } from './labels.js'
 import { batchIdPrefixForSlug } from './batch.js'
+import { buildAutopilotDeliverableLines, buildAutopilotRound1Lines } from './autopilot.js'
 
 /** 推奨スラッグの最大長（`docs/SPEC-<SLUG>.md` のファイル名が長くなりすぎないように）。 */
 export const SPEC_SLUG_MAX = 28
@@ -169,6 +170,7 @@ export function buildSeedPrompt({
   repoPath,
   autoStart = false,
   executionPolicy = DEFAULT_EXECUTION_POLICY,
+  autopilot = false,
   lang = DEFAULT_LANG,
   suggestedSlug,
   existingSpecs,
@@ -188,6 +190,25 @@ export function buildSeedPrompt({
   const usedLine = prefixes.length
     ? `Batch ID prefixes already used by active SPECs: ${prefixes.join(', ')} (do not reuse one as-is; pick a distinct slug)`
     : `Batch ID prefixes already used by active SPECs: none (the ${prefix} prefix above is free)`
+  const round1Lines = autopilot
+    ? buildAutopilotRound1Lines({ slug })
+    : [
+        'Round 1 — instead of a wall of chat questions, write ONE structured sheet as JSON:',
+        `\`review/sheets/spec-${slug}-1.json\` with \`"mode": "standard"\` and 2-5 design decisions`,
+        '(each option marked `recommended: true` for the best one), then file it as a blocked [review]',
+        'kanban task whose machine line reads',
+        `\`[review] label=spec-${slug} round=1 mode=standard sheet=sheets/spec-${slug}-1.json target=<repo>\``,
+        'so the phone renders the native 1-tap form. Stop there.',
+        'Do not reuse a file name from Existing specs above: pick a distinct slug if it would clash.',
+        '',
+        'Round 1 speed rule — the JSON is the deliverable. Locate only the relevant symbols (rg/grep);',
+        'do NOT run full test or verification suites, and do NOT hand-write a long bespoke HTML sheet or launch',
+        'a headless browser to screenshot mockups unless the question itself is',
+        'a visual UI-layout comparison (placement, density, colour) that words cannot settle; even then it',
+        'is optional and comes after the JSON. For spec, logic, string, API and data questions just check',
+        'the cited file:line, write the sheet and block immediately.',
+      ]
+  const deliverableLines = autopilot ? ['', ...buildAutopilotDeliverableLines()] : []
   return [
     `[hermes-pilot:architect job=${jobId}]`,
     'You are the spec-architect. Follow the `spec-architect` skill protocol (Round 1 → Round 2).',
@@ -209,20 +230,7 @@ export function buildSeedPrompt({
     batchRule,
     usedLine,
     '',
-    'Round 1 — instead of a wall of chat questions, write ONE structured sheet as JSON:',
-    `\`review/sheets/spec-${slug}-1.json\` with \`"mode": "standard"\` and 2-5 design decisions`,
-    '(each option marked `recommended: true` for the best one), then file it as a blocked [review]',
-    'kanban task whose machine line reads',
-    `\`[review] label=spec-${slug} round=1 mode=standard sheet=sheets/spec-${slug}-1.json target=<repo>\``,
-    'so the phone renders the native 1-tap form. Stop there.',
-    'Do not reuse a file name from Existing specs above: pick a distinct slug if it would clash.',
-    '',
-    'Round 1 speed rule — the JSON is the deliverable. Locate only the relevant symbols (rg/grep);',
-    'do NOT run full test or verification suites, and do NOT hand-write a long bespoke HTML sheet or launch',
-    'a headless browser to screenshot mockups unless the question itself is',
-    'a visual UI-layout comparison (placement, density, colour) that words cannot settle; even then it',
-    'is optional and comes after the JSON. For spec, logic, string, API and data questions just check',
-    'the cited file:line, write the sheet and block immediately.',
+    ...round1Lines,
     `Round 2 — after the answers arrive, write docs/SPEC-<SLUG>.md. Every batch heading`,
     `\`### Batch ${prefix}-<n>: <Title>\` must be followed by:`,
     '  - **Execution Mode**: [Mode: Zero-Stop | Fast-Track Review | Visual Gate]',
@@ -230,6 +238,7 @@ export function buildSeedPrompt({
     '',
     'Execution policy for the batches you generate:',
     ...executionPolicyLines(executionPolicy),
+    ...deliverableLines,
     '',
     auto,
   ].join('\n')

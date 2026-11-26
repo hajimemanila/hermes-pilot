@@ -1,71 +1,64 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { api } from '../../api.js'
 import { useI18n } from '../../i18n/index.js'
-import { haptic } from '../../lib/haptic.js'
-import { SEED_MAX, TEMPLATE_IDS, canSubmit } from '../../lib/specSeed.js'
-import { celebrateAction } from '../../lib/vibe.js'
-import { AnnotationEditor } from '../AnnotationEditor.jsx'
 import {
   REMIX_CHIPS,
   buildRemixPayload,
   classifySwipe,
   createRemixPending,
   createUndoEntry,
+  currentOptionCard,
   isInEdgeDeadZone,
   isUndoActive,
-  resolveHoldOutcome,
+  resolveOptionSwipe,
 } from '../../lib/autopilotDeck.js'
+import { haptic } from '../../lib/haptic.js'
+import { celebrateAction } from '../../lib/vibe.js'
+import { AnnotationEditor } from '../AnnotationEditor.jsx'
+import { OptionMockPreview } from './AutopilotCards.jsx'
+
+const FLY_MS = 220
 
 /**
- * 0 秒表示用の軽量テンプレートプレビュー（モック画像が無い・読込前の即時プレースホルダ）。
- */
-function TemplatePreview({ kind, title, t }) {
-  return (
-    <div className={`ap-template-preview ap-tpl-${kind || 'layout-card'}`} aria-hidden="true">
-      <div className="ap-tpl-bar">
-        <span className="ap-tpl-dot" />
-        <span className="ap-tpl-title">{title || t('autopilot.mockLabel')}</span>
-      </div>
-      <div className="ap-tpl-body">
-        <div className="ap-tpl-hero" />
-        <div className="ap-tpl-lines">
-          <span />
-          <span />
-        </div>
-        <div className="ap-tpl-cta" />
-      </div>
-    </div>
-  )
-}
-
-/**
- * Autopilot 4 方向スワイプデッキ（AP-3）。
+ * Autopilot Option-Cycle スワイプデッキ（1 選択肢 = 1 カード / 3 枚スタック物理 / きらめき）。
  */
 export function AutopilotDeck({
   cards = [],
-  activeJob = null,
-  onStartSeed,
   onCommitAction,
   onRemixCard,
   onSaveMemo,
   onUndoAction,
-  onSwitchCockpit,
   notify,
 }) {
   const { t } = useI18n()
   const [index, setIndex] = useState(0)
-  const [drag, setDrag] = useState({ active: false, dx: 0, dy: 0 })
+  const [optIndex, setOptIndex] = useState(0)
+  const [drag, setDrag] = useState({ active: false, dx: 0, dy: 0, gx: 50, gy: 35 })
+  const [flying, setFlying] = useState(null)
   const [undo, setUndo] = useState(null)
   const [remixPending, setRemixPending] = useState(null)
   const [remixNoteMode, setRemixNoteMode] = useState(false)
   const [remixNoteText, setRemixNoteText] = useState('')
-  const [annotatingCard, setAnnotatingCard] = useState(null)
-  const [seedText, setSeedText] = useState('')
-  const [seedBusy, setSeedBusy] = useState(false)
+  const [annotating, setAnnotating] = useState(null)
   const gestureRef = useRef({ active: false, startX: 0, startY: 0, pointerId: null })
+  const flyTimerRef = useRef(null)
 
-  const card = cards[index] || null
+  const question = cards[index] || null
+  const cardView = currentOptionCard(question, optIndex)
+  const nextQuestion = !cardView?.isLastOption ? question : cards[index + 1] || null
+  const nextOptionView = nextQuestion
+    ? currentOptionCard(nextQuestion, !cardView?.isLastOption ? optIndex + 1 : 0)
+    : null
+  const thirdQuestion = cards[index + (!cardView?.isLastOption ? 1 : 2)] || null
   const swipe = classifySwipe(drag.dx, drag.dy)
+
+  useEffect(() => {
+    setOptIndex(0)
+  }, [question?.key])
+
+  useEffect(() => () => {
+    if (flyTimerRef.current) clearTimeout(flyTimerRef.current)
+  }, [])
 
   useEffect(() => {
     if (!undo) return undefined
@@ -100,40 +93,76 @@ export function AutopilotDeck({
     return () => clearTimeout(id)
   }, [remixPending, remixNoteMode])
 
-  const commit = (direction) => {
-    if (!card) return
-    if (direction === 'up') {
+  const shotUrlFor = (shot, taskId) =>
+    shot && taskId ? `/api/review/${encodeURIComponent(taskId)}/thumb/${shot}` : null
+
+  const applyOutcome = (direction, rect) => {
+    if (!question || !cardView) return
+    const res = resolveOptionSwipe(question, optIndex, direction)
+    if (!res) return
+
+    if (res.type === 'annotate') {
       haptic('action')
-      setAnnotatingCard(card)
+      setAnnotating({ question, option: cardView.option, shot: cardView.shot })
       return
     }
-    if (direction === 'left') {
-      haptic('action')
-      setRemixPending(createRemixPending(card))
-      setRemixNoteMode(false)
-      setRemixNoteText('')
-      setIndex((i) => i + 1)
-      onCommitAction?.(card, 'remix')
+
+    if (res.type === 'next-option') {
+      haptic('tap')
+      setFlying('left')
+      flyTimerRef.current = setTimeout(() => {
+        setFlying(null)
+        setOptIndex(res.nextOptionIndex)
+      }, FLY_MS)
       return
     }
-    if (direction === 'down') {
+
+    if (res.type === 'remix-chips') {
       haptic('action')
-      const outcome = resolveHoldOutcome(card)
-      if (outcome.kind === 'memo') onSaveMemo?.(outcome.memoText, card)
-      setUndo(createUndoEntry(card, 'hold'))
-      setIndex((i) => i + 1)
-      onCommitAction?.(card, 'hold', outcome)
+      setFlying('left')
+      flyTimerRef.current = setTimeout(() => {
+        setFlying(null)
+        setRemixPending(createRemixPending(question))
+        setRemixNoteMode(false)
+        setRemixNoteText('')
+      }, FLY_MS)
       return
     }
+
+    if (res.type === 'hold') {
+      haptic('action')
+      setFlying('down')
+      flyTimerRef.current = setTimeout(() => {
+        setFlying(null)
+        if (res.outcome.kind === 'memo') onSaveMemo?.(res.outcome.memoText, question)
+        setUndo(createUndoEntry(question, 'hold', Date.now(), 3000, optIndex))
+        setIndex((i) => i + 1)
+        setOptIndex(0)
+        onCommitAction?.(question, 'hold', res.outcome)
+      }, FLY_MS)
+      return
+    }
+
+    // 右スワイプ（採用）
     haptic('success')
-    celebrateAction('approve', { sfx: true })
-    setUndo(createUndoEntry(card, 'go'))
-    setIndex((i) => i + 1)
-    onCommitAction?.(card, 'go')
+    celebrateAction('approve', {
+      x: rect ? Math.round(rect.left + rect.width / 2) : null,
+      y: rect ? Math.round(rect.top + rect.height / 2) : null,
+      sfx: true,
+    })
+    setFlying('right')
+    flyTimerRef.current = setTimeout(() => {
+      setFlying(null)
+      setUndo(createUndoEntry(question, 'go', Date.now(), 3000, optIndex))
+      setIndex((i) => i + 1)
+      setOptIndex(0)
+      onCommitAction?.(question, 'go', { choice: res.choice, shot: cardView.shot })
+    }, FLY_MS)
   }
 
   const handlePointerDown = (e) => {
-    if (!card || e.button > 0) return
+    if (!cardView || flying || e.button > 0) return
+    if (e.target?.closest?.('button, a, input, textarea')) return
     if (isInEdgeDeadZone(e.clientX, typeof window !== 'undefined' ? window.innerWidth : 0)) return
     gestureRef.current = {
       active: true,
@@ -142,13 +171,17 @@ export function AutopilotDeck({
       pointerId: e.pointerId,
     }
     e.currentTarget?.setPointerCapture?.(e.pointerId)
-    setDrag({ active: true, dx: 0, dy: 0 })
+    setDrag({ active: true, dx: 0, dy: 0, gx: 50, gy: 35 })
   }
 
   const handlePointerMove = (e) => {
     const g = gestureRef.current
     if (!g.active || g.pointerId !== e.pointerId) return
-    setDrag({ active: true, dx: e.clientX - g.startX, dy: e.clientY - g.startY })
+    const dx = e.clientX - g.startX
+    const dy = e.clientY - g.startY
+    const gx = Math.max(10, Math.min(90, Math.round(50 + dx / 5)))
+    const gy = Math.max(10, Math.min(90, Math.round(35 + dy / 5)))
+    setDrag({ active: true, dx, dy, gx, gy })
   }
 
   const handlePointerEnd = (e) => {
@@ -156,9 +189,10 @@ export function AutopilotDeck({
     if (!g.active || g.pointerId !== e.pointerId) return
     gestureRef.current.active = false
     const finalSwipe = classifySwipe(e.clientX - g.startX, e.clientY - g.startY)
-    setDrag({ active: false, dx: 0, dy: 0 })
+    const rect = e.currentTarget?.getBoundingClientRect?.()
+    setDrag({ active: false, dx: 0, dy: 0, gx: 50, gy: 35 })
     if (finalSwipe.committed && finalSwipe.direction) {
-      commit(finalSwipe.direction)
+      applyOutcome(finalSwipe.direction, rect)
     }
   }
 
@@ -171,138 +205,114 @@ export function AutopilotDeck({
     const prev = undo
     setUndo(null)
     setIndex((i) => Math.max(0, i - 1))
+    setOptIndex(prev.prevOptionIndex || 0)
     onUndoAction?.(prev)
   }
 
-  const shotUrl = card?.visualMock?.shot && card?.taskId
-    ? `/api/review/${encodeURIComponent(card.taskId)}/thumb/${card.visualMock.shot}`
-    : null
-  const rotDeg = drag.active ? Math.max(-14, Math.min(14, drag.dx / 18)) : 0
-  const cardStyle = drag.active
-    ? { transform: `translate3d(${drag.dx}px, ${drag.dy}px, 0) rotate(${rotDeg}deg)` }
-    : undefined
+  if (!cardView) return null
 
-  const submitSeed = async (e) => {
-    e?.preventDefault?.()
-    if (seedBusy || !canSubmit(seedText) || !onStartSeed) return
-    setSeedBusy(true)
-    try {
-      await onStartSeed(seedText)
-      setSeedText('')
-    } catch (err) {
-      notify?.(err?.message || t('seed.failed'))
-    } finally {
-      setSeedBusy(false)
-    }
+  const rotDeg = drag.active ? Math.max(-14, Math.min(14, drag.dx / 16)) : 0
+  const stackLift = drag.active ? Math.min(1, Math.hypot(drag.dx, drag.dy) / 90) : 0
+  const frontStyle = {
+    '--ap-glint-x': `${drag.gx}%`,
+    '--ap-glint-y': `${drag.gy}%`,
+    ...(drag.active
+      ? { transform: `translate3d(${drag.dx}px, ${drag.dy}px, 0) rotate(${rotDeg}deg)` }
+      : {}),
   }
+  const glowCls = swipe.direction ? ` glow-${swipe.direction}` : ''
+  const flyCls = flying ? ` fly-${flying}` : ''
+  const shotUrl = shotUrlFor(cardView.shot, question.taskId)
 
   return (
     <section className="ap-deck-shell" aria-label={t('autopilot.deckAria')}>
       <div className="ap-deck-stage">
-        {card ? (
-          <article
-            className={`ap-card${drag.active ? ' dragging' : ''}`}
-            style={cardStyle}
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerEnd}
-            onPointerCancel={handlePointerEnd}
+        {thirdQuestion && (
+          <div className="ap-card ap-stack-back ap-stack-3" aria-hidden="true" />
+        )}
+        {nextOptionView && (
+          <div
+            className="ap-card ap-stack-back ap-stack-2"
+            style={{
+              transform: `scale(${0.94 + stackLift * 0.04}) translate3d(0, ${14 - stackLift * 10}px, 0)`,
+            }}
+            aria-hidden="true"
           >
-            {swipe.stamp && (
-              <div
-                className={`ap-stamp ap-stamp-${swipe.direction}`}
-                style={{ opacity: Math.min(1, 0.25 + swipe.progress * 0.75) }}
-              >
-                {swipe.stamp}
-              </div>
-            )}
-
             <header className="ap-card-head">
-              <span className="ap-card-counter">
-                {index + 1} / {cards.length}
-              </span>
-              {card.title && <span className="ap-card-topic">{card.title}</span>}
+              <span className="ap-opt-pill">{nextOptionView.option.id}</span>
+              <span className="ap-card-topic">{nextOptionView.option.label}</span>
             </header>
-
-            <div className="ap-card-media">
-              {shotUrl ? (
-                <img src={shotUrl} alt={card.text || card.title} className="ap-card-shot" />
-              ) : (
-                <TemplatePreview kind={card.templateKind} title={card.title} t={t} />
-              )}
-            </div>
-
-            <div className="ap-card-copy">
-              <h2 className="ap-card-q">{card.text}</h2>
-              {card.options?.length > 0 && (
-                <ul className="ap-card-opts">
-                  {card.options.slice(0, 3).map((opt) => (
-                    <li key={opt.id} className={`ap-card-opt${opt.recommended ? ' rec' : ''}`}>
-                      <span className="ap-opt-id">{opt.id}</span>
-                      <span className="ap-opt-label">{opt.label}</span>
-                      {opt.recommended && <span className="ap-opt-rec">{t('review.recommended')}</span>}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </article>
-        ) : (
-          <div className="ap-empty-card ap-launcher-card">
-            {activeJob && (
-              <div className="ap-generating-pill" role="status">
-                <span className="ap-tpl-dot" aria-hidden="true" />
-                <span>
-                  {t('autopilot.generatingTitle')} — {activeJob.seed}
-                </span>
-              </div>
-            )}
-            <div className="ap-empty-icon">✨</div>
-            <h2 className="ap-empty-title">{t('autopilot.startTitle')}</h2>
-            <p className="ap-empty-sub">{t('autopilot.startSub')}</p>
-            {onStartSeed && (
-              <form className="ap-launcher-form" onSubmit={submitSeed}>
-                <textarea
-                  className="ap-launcher-input"
-                  rows={2}
-                  maxLength={SEED_MAX}
-                  value={seedText}
-                  onChange={(e) => setSeedText(e.target.value)}
-                  placeholder={t('autopilot.startPlaceholder')}
-                  aria-label={t('autopilot.startPlaceholder')}
-                />
-                <div className="ap-launcher-chips">
-                  {TEMPLATE_IDS.map((id) => (
-                    <button
-                      key={id}
-                      type="button"
-                      className="ap-launcher-chip"
-                      onClick={() => {
-                        haptic('tap')
-                        const prefix = t(`seed.tpl.${id}Text`)
-                        setSeedText((cur) => (String(cur).startsWith(prefix) ? cur : `${prefix}${cur}`.slice(0, SEED_MAX)))
-                      }}
-                    >
-                      {t(`seed.tpl.${id}`)}
-                    </button>
-                  ))}
-                </div>
-                <button
-                  type="submit"
-                  className="ap-launcher-submit"
-                  disabled={seedBusy || !canSubmit(seedText)}
-                >
-                  {seedBusy ? t('seed.submitting') : `✨ ${t('autopilot.startBtn')}`}
-                </button>
-              </form>
-            )}
-            {onSwitchCockpit && (
-              <button type="button" className="ap-empty-cockpit-btn" onClick={onSwitchCockpit}>
-                {t('autopilot.openCockpit')}
-              </button>
-            )}
           </div>
         )}
+
+        <article
+          className={`ap-card ap-card-front${drag.active ? ' dragging' : ''}${glowCls}${flyCls}`}
+          style={frontStyle}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerEnd}
+          onPointerCancel={handlePointerEnd}
+        >
+          <div className="ap-card-glint" aria-hidden="true" />
+
+          {swipe.stamp && (
+            <div
+              className={`ap-stamp ap-stamp-${swipe.direction}`}
+              style={{ opacity: Math.min(1, 0.3 + swipe.progress * 0.7) }}
+            >
+              {swipe.direction === 'left' && !cardView.isLastOption
+                ? `${t('autopilot.btn.nextOpt')} ${question.options[optIndex + 1]?.id || ''}`
+                : swipe.stamp}
+            </div>
+          )}
+
+          <header className="ap-card-head">
+            <span className="ap-card-counter">
+              Q{index + 1} / {cards.length}
+            </span>
+            <div className="ap-variant-dots" role="tablist" aria-label={t('autopilot.variantAria')}>
+              {question.options.map((opt, idx) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={idx === optIndex}
+                  className={`ap-var-pill${idx === optIndex ? ' active' : ''}`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    haptic('tap')
+                    setOptIndex(idx)
+                  }}
+                >
+                  {opt.id}
+                </button>
+              ))}
+            </div>
+            {cardView.option.recommended && (
+              <span className="ap-rec-badge">★ {t('review.recommended')}</span>
+            )}
+          </header>
+
+          <div className="ap-card-media">
+            <OptionMockPreview
+              option={cardView.option}
+              question={question}
+              shotUrl={shotUrl}
+              layoutVariant={cardView.layoutVariant}
+              theme={cardView.theme}
+              t={t}
+            />
+          </div>
+
+          <div className="ap-card-copy">
+            <p className="ap-card-q-sub">{question.text}</p>
+            <h2 className="ap-card-opt-hero">
+              <span className="ap-opt-id-chip">{cardView.option.id}</span>
+              <span>{cardView.option.label}</span>
+            </h2>
+            {cardView.option.detail && <p className="ap-card-opt-detail">{cardView.option.detail}</p>}
+          </div>
+        </article>
       </div>
 
       {remixPending && (
@@ -322,23 +332,29 @@ export function AutopilotDeck({
                 onChange={(e) => setRemixNoteText(e.target.value)}
                 placeholder={t('autopilot.remix.note')}
               />
-              <button type="submit" className="ap-remix-send">
-                {t('autopilot.btn.go')}
-              </button>
+              <button type="submit" className="ap-remix-send">{t('autopilot.btn.go')}</button>
             </form>
           ) : (
             <div className="ap-remix-chips">
+              <button
+                type="button"
+                className="ap-remix-chip"
+                onClick={() => {
+                  haptic('tap')
+                  setRemixPending(null)
+                  setOptIndex(0)
+                }}
+              >
+                ↺ {t('autopilot.remix.backToFirst')}
+              </button>
               {REMIX_CHIPS.map((chip) => (
                 <button
                   key={chip.id}
                   type="button"
                   className="ap-remix-chip"
                   onClick={() => {
-                    if (chip.id === 'note') {
-                      setRemixNoteMode(true)
-                    } else {
-                      sendRemix(remixPending.card, chip.id, '')
-                    }
+                    if (chip.id === 'note') setRemixNoteMode(true)
+                    else sendRemix(remixPending.card, chip.id, '')
                   }}
                 >
                   <span>{chip.icon}</span>
@@ -363,56 +379,56 @@ export function AutopilotDeck({
         <button
           type="button"
           className="ap-act-btn ap-act-remix"
-          disabled={!card}
-          onClick={() => commit('left')}
+          onClick={(e) => applyOutcome('left', e.currentTarget.getBoundingClientRect())}
         >
-          <span>↩</span>
-          <span>{t('autopilot.btn.remix')}</span>
+          <span className="ap-act-ico">✕</span>
+          <span className="ap-act-lbl">
+            {cardView.isLastOption ? t('autopilot.btn.remix') : t('autopilot.btn.nextOpt')}
+          </span>
         </button>
         <button
           type="button"
           className="ap-act-btn ap-act-hold"
-          disabled={!card}
-          onClick={() => commit('down')}
+          onClick={(e) => applyOutcome('down', e.currentTarget.getBoundingClientRect())}
         >
-          <span>⏸</span>
-          <span>{t('autopilot.btn.hold')}</span>
+          <span className="ap-act-ico">⏸</span>
+          <span className="ap-act-lbl">{t('autopilot.btn.hold')}</span>
         </button>
         <button
           type="button"
           className="ap-act-btn ap-act-annotate"
-          disabled={!card}
-          onClick={() => commit('up')}
+          onClick={(e) => applyOutcome('up', e.currentTarget.getBoundingClientRect())}
         >
-          <span>🖍</span>
-          <span>{t('autopilot.btn.annotate')}</span>
+          <span className="ap-act-ico">🖍</span>
+          <span className="ap-act-lbl">{t('autopilot.btn.annotate')}</span>
         </button>
         <button
           type="button"
           className="ap-act-btn ap-act-go"
-          disabled={!card}
-          onClick={() => commit('right')}
+          onClick={(e) => applyOutcome('right', e.currentTarget.getBoundingClientRect())}
         >
-          <span>✓</span>
-          <span>{t('autopilot.btn.go')}</span>
+          <span className="ap-act-ico">♥</span>
+          <span className="ap-act-lbl">{t('autopilot.btn.go')}</span>
         </button>
       </footer>
-      {annotatingCard && (
+
+      {annotating && (
         <AnnotationEditor
-          item={{ id: annotatingCard.taskId, title: annotatingCard.text || annotatingCard.title }}
-          imageSrc={
-            annotatingCard.visualMock?.shot && annotatingCard.taskId
-              ? `/api/review/${encodeURIComponent(annotatingCard.taskId)}/thumb/${annotatingCard.visualMock.shot}`
-              : null
-          }
-          onClose={() => setAnnotatingCard(null)}
+          item={{ id: annotating.question.taskId, title: annotating.option?.label || annotating.question.text }}
+          imageSrc={shotUrlFor(annotating.shot, annotating.question.taskId)}
+          onClose={() => setAnnotating(null)}
           onCollectAnnotation={(ann) => {
-            const target = annotatingCard
-            setAnnotatingCard(null)
+            const target = annotating
+            setAnnotating(null)
             celebrateAction('approve', { sfx: true })
-            setUndo(createUndoEntry(target, 'annotate'))
+            setUndo(createUndoEntry(target.question, 'annotate', Date.now(), 3000, optIndex))
             setIndex((i) => i + 1)
-            onCommitAction?.(target, 'annotate', { annotation: ann })
+            setOptIndex(0)
+            onCommitAction?.(target.question, 'annotate', {
+              choice: target.option?.id,
+              shot: target.shot,
+              annotation: ann,
+            })
           }}
           notify={notify}
         />

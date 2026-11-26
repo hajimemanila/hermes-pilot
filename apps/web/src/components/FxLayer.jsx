@@ -27,11 +27,11 @@ const FLASH_MS = 2400
 const MAX_CANVAS_BURSTS = 6
 /** Tier 1〜4 すべてのタップ対象（同期ハプティック保証用）。 */
 const HAPTIC_TARGET_SELECTOR =
-  '.btn, .chip, .hm-switch, .seed-seg-btn, .seed-toggle, .seed-submit, .report-card-btn, .composer .plus, .composer .send, .chat-report-btn, .pill-btn, .ak-btn, .ak-empty-btn, .ak-thumb-btn, .ak-anno-preview-btn, .receipt-btn, .spec-banner-btn, .job-bar-btn, .job-bar-x, .icon-btn, .prof-chip, .snippet-chip, .settings-nav-chip, .pick-item, .list-item, .row:not(.static), .stat, .spec-bar, .inbox-bar, details > summary, .link, .code-copy, button.t-pill, .nav-item'
+  '.btn, .chip, .hm-switch, .seed-seg-btn, .seed-toggle, .seed-submit, .report-card-btn, .composer .plus, .composer .send, .chat-report-btn, .pill-btn, .ak-btn, .ak-empty-btn, .ak-thumb-btn, .ak-anno-preview-btn, .receipt-btn, .spec-banner-btn, .job-bar-btn, .job-bar-x, .icon-btn, .prof-chip, .snippet-chip, .settings-nav-chip, .pick-item, .list-item, .row:not(.static), .stat, .spec-bar, .inbox-bar, details > summary, .link, .code-copy, button.t-pill, .nav-item, .ap-act-btn, .ap-recipe-card, .ap-launcher-submit, .ap-deliverable-btn'
 
 /** Tier 1〜3: バネ変形＋作画 VFX 対象。 */
 const SAKUGA_SPRING_SELECTOR =
-  '.btn, .chip, .hm-switch, .seed-seg-btn, .seed-toggle, .seed-submit, .report-card-btn, .composer .plus, .composer .send, .chat-report-btn, .pill-btn, .ak-btn, .ak-empty-btn, .ak-thumb-btn, .ak-anno-preview-btn, .receipt-btn, .spec-banner-btn, .job-bar-btn, .icon-btn, .prof-chip, .snippet-chip, .settings-nav-chip, details > summary, button.t-pill, .nav-item'
+  '.btn, .chip, .hm-switch, .seed-seg-btn, .seed-toggle, .seed-submit, .report-card-btn, .composer .plus, .composer .send, .chat-report-btn, .pill-btn, .ak-btn, .ak-empty-btn, .ak-thumb-btn, .ak-anno-preview-btn, .receipt-btn, .spec-banner-btn, .job-bar-btn, .icon-btn, .prof-chip, .snippet-chip, .settings-nav-chip, details > summary, button.t-pill, .nav-item, .ap-act-btn, .ap-recipe-card, .ap-launcher-submit, .ap-deliverable-btn'
 
 /** Tier 2: 状態切替・セグメント・トグル。 */
 const TIER2_SWITCH_SELECTOR = '.hm-switch, .seed-toggle'

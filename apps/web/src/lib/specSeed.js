@@ -82,6 +82,7 @@ export function buildSeedPayload({
   seedText,
   autoStart = false,
   executionPolicy = DEFAULT_EXECUTION_POLICY,
+  autopilot = false,
   board,
   repo = null,
   chat = null,
@@ -96,6 +97,7 @@ export function buildSeedPayload({
     runner: 'hermes',
     lang: lang === 'en' ? 'en' : 'ja',
   }
+  if (autopilot) body.autopilot = true
   if (board) body.board = String(board)
   if (repo) body.repo = String(repo)
   if (chat) body.chat = String(chat)

@@ -77,8 +77,14 @@ export function demoQuestions() {
           label: 'Review — one tap on the decision sheet',
           detail: 'Opens the pending Quick Review sheet with the recommended answers pre-selected.',
           recommended: true,
+          visualMock: { shot: 'shots/demo-q1-a.png', layoutVariant: 'A', theme: 'cyan' },
         },
-        { id: 'B', label: 'Tasks — read the board first', detail: 'Slower start; the tour would need an extra tap.' },
+        {
+          id: 'B',
+          label: 'Tasks — read the board first',
+          detail: 'Slower start; the tour would need an extra tap.',
+          visualMock: { shot: 'shots/demo-q1-b.png', layoutVariant: 'B', theme: 'amber' },
+        },
       ],
     },
     {

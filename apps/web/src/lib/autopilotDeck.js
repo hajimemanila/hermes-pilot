@@ -1,6 +1,6 @@
 /**
- * Autopilot スワイプデッキの純関数群（AP-3 / AP-4）。
- * デッドゾーン判定・90px 閾値・4 方向スタンプ・デッキ構築・Undo 状態・回答組み立てを担う。
+ * Autopilot v2 スワイプデッキ & 4 幕スタジオ投影の純関数群。
+ * 1 選択肢 = 1 カード（A → 左スワイプで B → C → REMIX）、ライブ実況翻訳、成果物抽出を担う。
  */
 
 export const EDGE_DEAD_ZONE_PX = 24
@@ -10,7 +10,7 @@ export const REMIX_CHIP_WINDOW_MS = 2000
 
 export const SWIPE_STAMPS = {
   right: 'GO',
-  left: 'REMIX',
+  left: 'NEXT',
   up: 'ANNOTATE',
   down: 'HOLD',
 }
@@ -22,13 +22,42 @@ export const REMIX_CHIPS = [
   { id: 'note', icon: '💬', labelKey: 'autopilot.remix.note' },
 ]
 
-/**
- * 左右端のブラウザ戻るジェスチャー用デッドゾーン内か判定する。
- * @param {number} startX ポインタ開始 X 座標
- * @param {number} viewportWidth 画面幅
- * @param {number} [edgePx]
- * @returns {boolean}
- */
+/** 第1幕: ライト層向けのビジュアル・スターターカード（i18n キー参照、日本語直書き禁止）。 */
+export const AUTOPILOT_RECIPES = [
+  {
+    id: 'timer',
+    icon: '⏱',
+    accent: 'cyan',
+    titleKey: 'autopilot.recipe.timerTitle',
+    subKey: 'autopilot.recipe.timerSub',
+    seedKey: 'autopilot.recipe.timerSeed',
+  },
+  {
+    id: 'habit',
+    icon: '✅',
+    accent: 'emerald',
+    titleKey: 'autopilot.recipe.habitTitle',
+    subKey: 'autopilot.recipe.habitSub',
+    seedKey: 'autopilot.recipe.habitSeed',
+  },
+  {
+    id: 'polish',
+    icon: '🎨',
+    accent: 'amber',
+    titleKey: 'autopilot.recipe.polishTitle',
+    subKey: 'autopilot.recipe.polishSub',
+    seedKey: 'autopilot.recipe.polishSeed',
+  },
+  {
+    id: 'tracker',
+    icon: '📊',
+    accent: 'violet',
+    titleKey: 'autopilot.recipe.trackerTitle',
+    subKey: 'autopilot.recipe.trackerSub',
+    seedKey: 'autopilot.recipe.trackerSeed',
+  },
+]
+
 export function isInEdgeDeadZone(startX, viewportWidth, edgePx = EDGE_DEAD_ZONE_PX) {
   const x = Number(startX)
   const w = Number(viewportWidth)
@@ -38,13 +67,6 @@ export function isInEdgeDeadZone(startX, viewportWidth, edgePx = EDGE_DEAD_ZONE_
   return false
 }
 
-/**
- * ドラッグ変位 (dx, dy) からスワイプ方向・ゴーストスタンプ・進捗・確定有無を返す。
- * @param {number} dx
- * @param {number} dy
- * @param {number} [thresholdPx]
- * @returns {{direction: 'right'|'left'|'up'|'down'|null, stamp: string|null, progress: number, committed: boolean}}
- */
 export function classifySwipe(dx, dy, thresholdPx = SWIPE_THRESHOLD_PX) {
   const x = Number(dx) || 0
   const y = Number(dy) || 0
@@ -73,17 +95,36 @@ export function classifySwipe(dx, dy, thresholdPx = SWIPE_THRESHOLD_PX) {
   }
 }
 
-/**
- * レビュータスクとシート JSON から Autopilot カードデッキを組み立てる。
- * @param {object} task
- * @param {object|null} sheetData
- * @returns {Array<object>}
- */
+function normalizeQuestionOptions(q, fallbackTitle) {
+  const rawOpts = Array.isArray(q?.options) ? q.options : []
+  if (rawOpts.length > 0) {
+    return rawOpts.map((o, idx) => ({
+      id: String(o?.id ?? String.fromCharCode(65 + idx)),
+      label: String(o?.label ?? ''),
+      detail: String(o?.detail ?? ''),
+      recommended: Boolean(o?.recommended),
+      thumb: o?.thumb || null,
+      visualMock: o?.visualMock || null,
+    }))
+  }
+  return [
+    {
+      id: 'A',
+      label: String(fallbackTitle || q?.text || 'Option A'),
+      detail: '',
+      recommended: true,
+      thumb: null,
+      visualMock: q?.visualMock || null,
+    },
+  ]
+}
+
 export function buildDeckFromSheet(task, sheetData) {
   const taskId = String(task?.id ?? '')
   const data = sheetData?.data ?? sheetData ?? {}
   const qs = Array.isArray(data?.questions) ? data.questions : []
   if (qs.length === 0) {
+    const vm = data?.visualMock || (task?.review?.image ? { shot: task.review.image } : null)
     return [
       {
         key: `${taskId}:visual`,
@@ -94,16 +135,17 @@ export function buildDeckFromSheet(task, sheetData) {
         kind: 'visual',
         title: String(task?.title || data?.title || 'Visual Review'),
         text: String(task?.review?.note || ''),
-        options: [],
+        options: normalizeQuestionOptions({ visualMock: vm }, task?.title || data?.title),
         recommendedId: 'A',
-        visualMock: data?.visualMock || (task?.review?.image ? { shot: task.review.image } : null),
-        templateKind: data?.visualMock?.template || 'layout-card',
+        visualMock: vm,
+        templateKind: vm?.template || 'layout-card',
       },
     ]
   }
   return qs.map((q, idx) => {
-    const opts = Array.isArray(q?.options) ? q.options : []
-    const rec = opts.find((o) => o?.recommended) || opts[0]
+    const opts = normalizeQuestionOptions(q, q.text)
+    const rec = opts.find((o) => o.recommended) || opts[0]
+    const vm = q.visualMock || (idx === 0 ? data?.visualMock : null) || null
     return {
       key: `${taskId}:${q.id || `q${idx + 1}`}`,
       taskId,
@@ -114,19 +156,62 @@ export function buildDeckFromSheet(task, sheetData) {
       title: String(data?.title || task?.title || ''),
       text: String(q.text || ''),
       options: opts,
-      recommendedId: rec ? String(rec.id) : null,
-      visualMock: q.visualMock || (idx === 0 ? data?.visualMock : null) || null,
-      templateKind: q.visualMock?.template || (idx === 0 ? 'layout-card' : idx === 1 ? 'flow-card' : 'policy-card'),
+      recommendedId: rec ? String(rec.id) : 'A',
+      visualMock: vm,
+      templateKind: vm?.template || (idx === 0 ? 'layout-card' : idx === 1 ? 'flow-card' : 'policy-card'),
     }
   })
 }
 
 /**
- * デッキの各カード決定から `POST /api/review/:id/answer` 用ペイロードを組み立てる。
- * @param {Array<object>} cards
- * @param {Record<string, {action: 'go'|'hold'|'annotate', choice?: string|null, note?: string, annotation?: object}>} decisions
- * @returns {{answers: Array<{id: string, choice: string|null, note: string}>, global: string, annotations: Array<object>}}
+ * 1 選択肢 = 1 カードの表示モデルを返す（オプション切替で即座に差し替わる）。
+ * @param {object|null} card デッキ内の設問ノード
+ * @param {number} [optionIndex] 現在表示中の選択肢添字
  */
+export function currentOptionCard(card, optionIndex = 0) {
+  if (!card) return null
+  const opts = Array.isArray(card.options) && card.options.length > 0 ? card.options : normalizeQuestionOptions(card, card.text)
+  const safeIdx = Math.max(0, Math.min(opts.length - 1, Number(optionIndex) || 0))
+  const option = opts[safeIdx]
+  const vm = option?.visualMock || card.visualMock || null
+  const shot = vm?.shot || option?.thumb || null
+  return {
+    question: card,
+    option,
+    optionIndex: safeIdx,
+    optionCount: opts.length,
+    isLastOption: safeIdx >= opts.length - 1,
+    shot,
+    layoutVariant: vm?.layoutVariant || String(option?.id || 'A'),
+    theme: vm?.theme || (safeIdx === 0 ? 'cyan' : safeIdx === 1 ? 'amber' : 'violet'),
+    templateKind: vm?.template || card.templateKind || 'layout-card',
+  }
+}
+
+/**
+ * 選択肢カードでのスワイプ結果を決定する（A → 左スワイプで B → C → 最後に REMIX チップ）。
+ * @param {object} card
+ * @param {number} optionIndex
+ * @param {'right'|'left'|'up'|'down'} direction
+ */
+export function resolveOptionSwipe(card, optionIndex, direction) {
+  const view = currentOptionCard(card, optionIndex)
+  if (!view) return null
+  if (direction === 'right') {
+    return { type: 'adopt', choice: view.option.id, advanceQuestion: true }
+  }
+  if (direction === 'left') {
+    if (!view.isLastOption) {
+      return { type: 'next-option', nextOptionIndex: view.optionIndex + 1, advanceQuestion: false }
+    }
+    return { type: 'remix-chips', advanceQuestion: false }
+  }
+  if (direction === 'up') {
+    return { type: 'annotate', choice: view.option.id, advanceQuestion: false }
+  }
+  return { type: 'hold', outcome: resolveHoldOutcome(card), advanceQuestion: true }
+}
+
 export function buildAnswerPayload(cards, decisions = {}) {
   const answers = []
   const annotations = []
@@ -142,7 +227,7 @@ export function buildAnswerPayload(cards, decisions = {}) {
     if (dec.action === 'annotate' && dec.annotation) {
       annotations.push({
         questionId: card.questionId,
-        shot: card.visualMock?.shot ?? null,
+        shot: dec.shot ?? card.visualMock?.shot ?? null,
         marks: Array.isArray(dec.annotation.marks) ? dec.annotation.marks : [],
         note: String(dec.annotation.note ?? ''),
       })
@@ -151,38 +236,21 @@ export function buildAnswerPayload(cards, decisions = {}) {
   return { answers, global: '', annotations }
 }
 
-/**
- * 3 秒 Undo ピル用のエントリを作る。
- * @param {object} card
- * @param {string} action
- * @param {number} [now]
- * @param {number} [windowMs]
- */
-export function createUndoEntry(card, action, now = Date.now(), windowMs = UNDO_WINDOW_MS) {
+export function createUndoEntry(card, action, now = Date.now(), windowMs = UNDO_WINDOW_MS, prevOptionIndex = 0) {
   return {
     cardKey: String(card?.key ?? ''),
     title: String(card?.text || card?.title || ''),
     action,
+    prevOptionIndex,
     createdAt: now,
     expiresAt: now + windowMs,
   }
 }
 
-/**
- * Undo エントリがまだ有効期限内か判定する。
- * @param {object|null} entry
- * @param {number} [now]
- */
 export function isUndoActive(entry, now = Date.now()) {
   return Boolean(entry && Number.isFinite(entry.expiresAt) && now < entry.expiresAt)
 }
 
-/**
- * 下スワイプ（HOLD）の文脈別分岐（AP-4）。
- * 設問カードは recommended 委譲、Brainstorm カードは MemosPane 保存。
- * @param {object} card
- * @returns {{kind: 'memo'|'delegate', action: 'hold', choice: null, memoText?: string}}
- */
 export function resolveHoldOutcome(card) {
   if (card?.kind === 'brainstorm') {
     return {
@@ -199,12 +267,6 @@ export function resolveHoldOutcome(card) {
   }
 }
 
-/**
- * 左スワイプ直後の 2 秒ワンタップ REMIX チップ待機状態を作る。
- * @param {object} card
- * @param {number} [now]
- * @param {number} [windowMs]
- */
 export function createRemixPending(card, now = Date.now(), windowMs = REMIX_CHIP_WINDOW_MS) {
   return {
     card,
@@ -215,16 +277,138 @@ export function createRemixPending(card, now = Date.now(), windowMs = REMIX_CHIP
   }
 }
 
-/**
- * `POST /api/review/:id/remix` 用のペイロードを組み立てる。
- * @param {object} card
- * @param {string} [reason]
- * @param {string} [hint]
- */
 export function buildRemixPayload(card, reason = 'alternative', hint = '') {
   return {
     questionId: String(card?.questionId ?? ''),
     reason: String(reason || 'alternative'),
     hint: String(hint || '').trim(),
   }
+}
+
+/** 生ツール名を初心者向けの親しみやすい実況 i18n キーへ変換する。 */
+export function translateActivity(toolName, fallbackTitle = '') {
+  const s = `${toolName || ''} ${fallbackTitle || ''}`.toLowerCase()
+  if (/test|assert|verify|check|vitest|playwright|pytest/.test(s)) return 'autopilot.live.actTest'
+  if (/build|vite|bundle|compile|deploy/.test(s)) return 'autopilot.live.actBuild'
+  if (/shot|preview|browser|visual|png|html/.test(s)) return 'autopilot.live.actPreview'
+  if (/write|edit|patch|create|style|css|jsx|tsx/.test(s)) return 'autopilot.live.actWrite'
+  if (/read|grep|rg|search|inspect|list/.test(s)) return 'autopilot.live.actInspect'
+  return 'autopilot.live.actWorking'
+}
+
+const PREVIEW_URL_RE = /(?:Preview|URL|Open|App):\s*(https?:\/\/[^\s)>"'`]+)/i
+const FALLBACK_HTTP_RE = /\b(https?:\/\/(?:localhost|127\.0\.0\.1|[^\s/]+\.[^\s/]+)[^\s)>"'`]*)/i
+const LAUNCH_CMD_RE = /(?:Launch|Start|Run|Command):\s*`?([^\n`]+)`?/i
+const ENTRY_HTML_RE = /(?:Preview|Entry):\s*`?([A-Za-z0-9._/-]+\.html?)`?/i
+
+function safeHttpUrl(raw) {
+  const s = String(raw || '').trim()
+  return /^https?:\/\//i.test(s) ? s : null
+}
+
+/**
+ * 完了レポート・完了タスクから成果物の確認導線（Web URL / 起動コマンド / スクショ）を抽出する。
+ */
+export function extractDeliverable({ report = null, tasks = [], reviewItems = [] } = {}) {
+  const list = Array.isArray(tasks) ? tasks : []
+  const doneTasks = list
+    .filter((t) => String(t?.status || '').toLowerCase() === 'done')
+    .sort((a, b) => Number(b.completed_at ?? b.created_at ?? 0) - Number(a.completed_at ?? a.created_at ?? 0))
+  if (!report && doneTasks.length === 0) return null
+
+  const blobs = [
+    String(report?.text ?? ''),
+    ...doneTasks.slice(0, 5).map((t) => `${t.title || ''}\n${t.result || ''}\n${t.body || ''}`),
+  ].filter(Boolean)
+  const merged = blobs.join('\n')
+
+  const urlMatch = PREVIEW_URL_RE.exec(merged) || FALLBACK_HTTP_RE.exec(merged)
+  const previewUrl = urlMatch ? safeHttpUrl(urlMatch[1]) : null
+  const entryMatch = ENTRY_HTML_RE.exec(merged)
+  const entryPath = !previewUrl && entryMatch ? entryMatch[1] : null
+  const launchMatch = LAUNCH_CMD_RE.exec(merged)
+  const launchCmd = launchMatch ? launchMatch[1].trim().slice(0, 160) : null
+
+  const latestVisual = (Array.isArray(reviewItems) ? reviewItems : []).find((r) => r?.review?.image)
+  const shotUrl = latestVisual ? `/api/review/${encodeURIComponent(latestVisual.id)}/image` : null
+  const topTask = doneTasks[0] || null
+  const id = String(report?.taskId || report?.at || topTask?.id || 'done')
+  return {
+    id,
+    title: String(topTask?.title || report?.label || report?.spec || 'Completed'),
+    summary: String(topTask?.result || report?.text || '').split('\n')[0].slice(0, 180),
+    previewUrl,
+    entryPath,
+    launchCmd,
+    shotUrl,
+    completedAt: Number(report?.at || (topTask?.completed_at ? topTask.completed_at * 1000 : 0)) || null,
+    board: report?.board || null,
+    spec: report?.spec || topTask?.spec || null,
+  }
+}
+
+const OPEN_STATUSES = new Set(['running', 'ready', 'blocked', 'review', 'in_progress', 'claimed'])
+
+/**
+ * 現在のボード／ジョブ状態から Autopilot の 4 幕ステージを判定する純関数。
+ */
+export function projectStudioStage({
+  cards = [],
+  jobs = [],
+  live = null,
+  tasks = [],
+  specReports = [],
+  reviewItems = [],
+  dismissedCompleteId = null,
+} = {}) {
+  if (Array.isArray(cards) && cards.length > 0) {
+    return { act: 'deck', cards }
+  }
+
+  const jobList = (Array.isArray(jobs) ? jobs : []).filter((j) => j && !j.dismissed)
+  const activeJob =
+    jobList.find((j) => ['running', 'awaiting_spec', 'awaiting_review', 'spec_ready'].includes(String(j.status))) || null
+  const taskList = Array.isArray(tasks) ? tasks : []
+  const openTasks = taskList.filter((t) => OPEN_STATUSES.has(String(t?.status || '').toLowerCase()))
+  const runningTask = openTasks.find((t) => ['running', 'in_progress', 'claimed'].includes(String(t?.status || '').toLowerCase())) || openTasks[0] || null
+  const turns = Array.isArray(live?.turns) ? live.turns : []
+  const liveTurn = turns[0] || null
+
+  if (activeJob || openTasks.length > 0 || liveTurn) {
+    const doneCount = taskList.filter((t) => String(t?.status || '').toLowerCase() === 'done').length
+    const totalCount = taskList.length
+    const phase = String(activeJob?.phase || '')
+    const rawTool = liveTurn?.lastTool?.name || liveTurn?.lastActivity || ''
+    const activityKey = translateActivity(rawTool, runningTask?.title || activeJob?.seed || '')
+    let stepIndex = 1
+    if (['spawning', 'round1_sheet', 'awaiting_review'].includes(phase) || totalCount === 0) {
+      stepIndex = 0
+    } else if (activityKey === 'autopilot.live.actTest' || activityKey === 'autopilot.live.actPreview') {
+      stepIndex = 2
+    } else if (phase === 'spec_ready' || (totalCount > 0 && doneCount >= totalCount)) {
+      stepIndex = 3
+    }
+    const compareItem = (Array.isArray(reviewItems) ? reviewItems : []).find((r) => r?.review?.image) || null
+    return {
+      act: 'live',
+      activeJob,
+      activeTask: runningTask,
+      liveTurn,
+      stepIndex,
+      doneCount,
+      totalCount,
+      activityKey,
+      toolLabel: rawTool || runningTask?.title || activeJob?.seed || '',
+      elapsedSec: activeJob?.elapsedSec ?? null,
+      compareItem,
+    }
+  }
+
+  const report = Array.isArray(specReports) ? specReports[0] || null : specReports
+  const deliverable = extractDeliverable({ report, tasks: taskList, reviewItems })
+  if (deliverable && deliverable.id !== dismissedCompleteId) {
+    return { act: 'complete', deliverable }
+  }
+
+  return { act: 'start' }
 }

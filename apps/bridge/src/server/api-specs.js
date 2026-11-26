@@ -403,6 +403,7 @@ export function createSpecsApi(ctx = {}) {
         runner: body?.runner,
         autoStart: Boolean(body?.autoStart),
         executionPolicy: body?.executionPolicy,
+        autopilot: Boolean(body?.autopilot),
         chat: body?.chat,
         lang: body?.lang,
       })
