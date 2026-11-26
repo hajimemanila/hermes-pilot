@@ -17,6 +17,8 @@
 export const HM_EVENTS = Object.freeze({
   /** レビュータスクを開く。 */
   OPEN_REVIEW: 'hm:open-review',
+  /** Autopilot レンズを開く。 */
+  OPEN_AUTOPILOT: 'hm:open-autopilot',
   /** カンバンのタスク詳細を開く。 */
   OPEN_TASK: 'hm:open-task',
   /** チャットの会話を開く（検索・レビュー・メモから）。 */
@@ -93,6 +95,11 @@ export const HM_EVENT_META = Object.freeze({
     from: 'LiveSheet / ChatPane / ArchitectJobBar',
     to: 'App',
     required: ['taskId'],
+  },
+  [HM_EVENTS.OPEN_AUTOPILOT]: {
+    detail: null,
+    from: 'ReviewPane / TasksPane',
+    to: 'App',
   },
   [HM_EVENTS.OPEN_TASK]: {
     detail: '{ board, taskId, jobId? }',

@@ -361,3 +361,132 @@
   color: var(--accent);
   font-weight: 700;
 }
+
+.ap-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ap-lens-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line-strong);
+  gap: 2px;
+}
+
+.ap-lens-btn {
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ap-lens-btn.active {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.ap-lens-badge {
+  font-size: 11px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--warn);
+  color: var(--on-warn);
+}
+
+.ap-swipe-link {
+  min-height: 44px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid var(--accent);
+  background: var(--rec-bg);
+  color: var(--rec-fg);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ap-wipe-card {
+  margin: 8px 12px 0;
+  padding: 10px;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ap-wipe-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.ap-wipe-badge {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--good-bg);
+  color: var(--good-fg);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.ap-wipe-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.ap-wipe-pct { color: var(--muted); flex-shrink: 0; }
+
+.ap-wipe-stage {
+  position: relative;
+  height: 120px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-elev);
+}
+
+.ap-wipe-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.ap-wipe-before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  overflow: hidden;
+}
+
+.ap-wipe-divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+}
+
+.ap-wipe-slider {
+  width: 100%;
+  accent-color: var(--accent);
+}

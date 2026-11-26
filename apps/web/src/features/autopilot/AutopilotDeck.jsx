@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { api } from '../../api.js'
-import { useI18n } from '../../i18n/lang.js'
+import { useI18n } from '../../i18n/index.js'
 import { haptic } from '../../lib/haptic.js'
 import { celebrateAction } from '../../lib/vibe.js'
 import { AnnotationEditor } from '../AnnotationEditor.jsx'

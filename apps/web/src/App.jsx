@@ -16,6 +16,7 @@ import { TasksPane } from './features/TasksPane.jsx'
 import { ChatPane } from './features/ChatPane.jsx'
 import { SettingsPane } from './features/SettingsPane.jsx'
 import { ReviewPane } from './features/ReviewPane.jsx'
+import { AutopilotLensToggle, AutopilotView } from './features/autopilot/AutopilotView.jsx'
 import { SearchSheet } from './features/SearchSheet.jsx'
 import { UsageSheet } from './features/UsageSheet.jsx'
 import { LiveSheet } from './features/LiveSheet.jsx'
@@ -283,6 +284,7 @@ export function App() {
   const [usageData, setUsageData] = useState(null)
   const [usageOpen, setUsageOpen] = useState(false)
   const [liveOpen, setLiveOpen] = useState(false)
+  const [lens, setLens] = useState('cockpit')
   const chatMountedRef = useRef(chatMounted)
   chatMountedRef.current = chatMounted
   const chatSeenRef = useRef(0)
@@ -428,6 +430,8 @@ export function App() {
     window.addEventListener(HM_EVENTS.OPEN_BOARD, onOpenBoard)
     window.addEventListener(HM_EVENTS.OPEN_LIVE, onOpenLive)
     window.addEventListener(HM_EVENTS.OPEN_TASK, onOpenTask)
+    const onOpenAutopilot = () => setLens('autopilot')
+    window.addEventListener(HM_EVENTS.OPEN_AUTOPILOT, onOpenAutopilot)
     return () => {
       window.removeEventListener(HM_EVENTS.CHAT_UNREAD, onOtherUnread)
       window.removeEventListener(HM_EVENTS.CHAT_STREAMING, onChatStreaming)
@@ -437,6 +441,7 @@ export function App() {
       window.removeEventListener(HM_EVENTS.OPEN_BOARD, onOpenBoard)
       window.removeEventListener(HM_EVENTS.OPEN_LIVE, onOpenLive)
       window.removeEventListener(HM_EVENTS.OPEN_TASK, onOpenTask)
+      window.removeEventListener(HM_EVENTS.OPEN_AUTOPILOT, onOpenAutopilot)
     }
   }, [])
 
@@ -804,17 +809,9 @@ export function App() {
         >
           Hermes <b>Pilot</b>
         </span>
+        <AutopilotLensToggle lens={lens} onChange={setLens} waitingCount={waitingTotal} />
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <button
-            className="icon-btn"
-            aria-label={t('app.search')}
-            onClick={() => {
-              haptic('tap')
-              setSearchOpen(true)
-            }}
-          >
-            <Icon name="search" size={18} />
-          </button>
+          <button className="icon-btn" aria-label={t('app.search')} onClick={() => { haptic('tap'); setSearchOpen(true) }}><Icon name="search" size={18} /></button>
           <span
             className={`conn ${conn === 'ready' ? 'ok' : conn === 'offline' ? 'offline' : 'error'}`}
             title={conn === 'ready' ? t('app.connected') : conn === 'offline' || conn === 'auth' ? t('app.disconnected') : t('app.connRecovering')}
@@ -900,9 +897,7 @@ export function App() {
       ) : null}
 
       <main className="panes">
-        {booting ? (
-          <Loader label={t('common.loading')} />
-        ) : (
+        {booting ? <Loader label={t('common.loading')} /> : lens === 'autopilot' ? <AutopilotView notify={notify} onSwitchCockpit={() => setLens('cockpit')} /> : (
           <>
             {mountedTabs.tasks ? (
               <TabHost active={tab === 'tasks'}>

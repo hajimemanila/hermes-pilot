@@ -1252,5 +1252,16 @@
   "autopilot.remix.theme": "Colors / mood",
   "autopilot.remix.simpler": "Simpler layout",
   "autopilot.remix.denser": "More detail",
-  "autopilot.remix.note": "Add note"
+  "autopilot.remix.note": "Add note",
+  "autopilot.lens.aria": "Switch between Autopilot and Cockpit",
+  "autopilot.lens.autopilot": "Autopilot",
+  "autopilot.lens.cockpit": "Cockpit",
+  "autopilot.swipeLink": "Swipe in Autopilot ({n})",
+  "autopilot.memoSaved": "Saved to Memos",
+  "autopilot.wipe.aria": "Mock vs live comparison",
+  "autopilot.wipe.live": "LIVE",
+  "autopilot.wipe.before": "Mock",
+  "autopilot.wipe.after": "Live",
+  "autopilot.wipe.sliderAria": "Comparison slider",
+  "autopilot.answered": "Review answers sent"
 }

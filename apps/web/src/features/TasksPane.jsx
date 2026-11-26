@@ -18,6 +18,7 @@ import { LiveSheet } from './LiveSheet.jsx'
 import { InboxSheet } from './InboxSheet.jsx'
 import { BoardPickerSheet } from './tasks/BoardPickerSheet.jsx'
 import { CloseActions } from '../components/CloseActions.jsx'
+import { AutopilotSwipeLink } from './autopilot/AutopilotView.jsx'
 import { pendingCount } from '../lib/reviewView.js'
 import { fmtCost, sep } from '../lib/format.js'
 import { followUpPromptFor, readActiveChatId, reportBodyFor, reportSummaryLine, toEpochMs } from '../lib/chatReports.js'
@@ -1653,15 +1654,8 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
       <div className="list-head">
         <span>{t('tasks.tasks')}</span>
         <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <button
-            className="link"
-            onClick={() => {
-              haptic('tap')
-              setCaptureOpen(true)
-            }}
-          >
-            {t('tasks.newTask')}
-          </button>
+          {(overview?.counts?.reviewWaiting ?? 0) > 0 && <AutopilotSwipeLink count={overview.counts.reviewWaiting} />}
+          <button className="link" onClick={() => { haptic('tap'); setCaptureOpen(true) }}>{t('tasks.newTask')}</button>
           {/* 整理モードの入り口（D92）。ON の間は行がチェックボックスになる */}
           <button
             className={`link organize-toggle${organize ? ' on' : ''}`}

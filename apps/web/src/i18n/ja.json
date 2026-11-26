@@ -1252,5 +1252,16 @@
   "autopilot.remix.theme": "色・雰囲気",
   "autopilot.remix.simpler": "シンプル化",
   "autopilot.remix.denser": "情報量増",
-  "autopilot.remix.note": "一言入力"
+  "autopilot.remix.note": "一言入力",
+  "autopilot.lens.aria": "Autopilot と Cockpit を切り替え",
+  "autopilot.lens.autopilot": "オートパイロット",
+  "autopilot.lens.cockpit": "コックピット",
+  "autopilot.swipeLink": "Autopilot でスワイプ ({n})",
+  "autopilot.memoSaved": "メモへ保存しました",
+  "autopilot.wipe.aria": "モックと実装のワイプ比較",
+  "autopilot.wipe.live": "ライブ",
+  "autopilot.wipe.before": "モック",
+  "autopilot.wipe.after": "実装",
+  "autopilot.wipe.sliderAria": "比較スライダー",
+  "autopilot.answered": "レビュー回答を送信しました"
 }
