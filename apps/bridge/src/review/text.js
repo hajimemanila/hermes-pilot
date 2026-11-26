@@ -23,6 +23,7 @@ export const REPLY_HEAD_RE = /^【(?:レビュー|赤ペン)回答】/
  */
 export const REPLY_MARK_SOURCE = '【(?:レビュー|赤ペン)回答】|\\[Review Answer\\]'
 export const GLOBAL_LABEL_RE = /^(?:全体への(?:レビュー|赤ペン)|Overall Note):\s*(.*)$/
+export const ANNOTATIONS_LABEL_RE = /^(?:赤入れ注釈|Annotations):/
 
 /**
  * 回答テキストの表記（`lang` ごと・キー集合は両言語で同一）。
@@ -36,6 +37,7 @@ export const REPLY_TEXT = {
     unselected: '(unselected = take recommended)',
     noteMark: 'note:',
     globalLabel: 'Overall Note',
+    annotationsLabel: 'Annotations',
     tail: 'Apply the answers above and continue. Items left unselected are settled by the recommended option.',
   },
   ja: {
@@ -43,6 +45,7 @@ export const REPLY_TEXT = {
     unselected: '(未選択 = お任せ)',
     noteMark: '補足:',
     globalLabel: '全体へのレビュー',
+    annotationsLabel: '赤入れ注釈',
     tail: '上の回答を反映して作業を続けてください。お任せの項目は推奨案で確定してください。',
   },
 }
@@ -77,6 +80,10 @@ export const OPS_TEXT = {
     annotationWaiting: 'Awaiting annotation (from image)',
     /** @param {string} note @param {boolean} again */
     approved: (note, again) => `Visual check OK${note ? `: ${note}` : ''}${again ? ' (resend)' : ''}`,
+    remixRequested: 'Alternative requested (remix)',
+    /** @param {string} qid @param {string} reason @param {string} hint @param {string} rel */
+    remixSummary: (qid, reason, hint, rel) =>
+      `Remix requested${qid ? ` (${qid})` : ''}: ${reason || 'alternative'}${hint ? ` — ${hint}` : ''} — ${rel}`,
   },
   ja: {
     answered: 'レビュー回答を受領',
@@ -89,6 +96,9 @@ export const OPS_TEXT = {
     annotationTitle: '注釈（画像から作成）',
     annotationWaiting: '注釈待ち（画像から作成）',
     approved: (note, again) => `検収 OK（Visual check passed）${note ? `: ${note}` : ''}${again ? '（再送）' : ''}`,
+    remixRequested: '別案を再生成リクエスト（REMIX）',
+    remixSummary: (qid, reason, hint, rel) =>
+      `別案リクエスト${qid ? ` (${qid})` : ''}: ${reason || '別アプローチ'}${hint ? ` — ${hint}` : ''} — ${rel}`,
   },
 }
 

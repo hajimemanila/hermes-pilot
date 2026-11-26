@@ -124,6 +124,8 @@ Keep `question.text` and `detail` concise for mobile screens: summarize long `fi
 
 If you attach a picture, put it at `review/thumbs/<label>-<round>/q1-A.png` and make `thumb` a path
 relative to `thumbs/...`.
+For Autopilot visual decks, you may also set top-level `"deck": true` and per-question `"visualMock": { "shot": "shots/...", "html": "sheets/...", "layoutVariant": "A", "template": "..." }` (all paths must stay relative under `thumbs/`, `shots/`, or `sheets/`).
+Card-level redlines submitted from Autopilot are saved in `.answer.json` (`annotations`) and summarized in `.answer.txt` (`Annotations:`); left-swipe alternative requests (`POST /api/review/:id/remix`) write `.remix.json` (`{ questionId, reason, hint }`) and unblock the task for regeneration.
 
 Only when you also use `.html`, copy this skill's `assets/sheet-template.html` and replace the content.
 The bridge reads exactly three things, so **do not change the structure** (not needed when you file with `.json` alone):

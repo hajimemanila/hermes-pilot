@@ -30,6 +30,7 @@ export function demoRoute(path) {
     if (leaf === 'data') return { name: 'review.data', id, params }
     if (leaf === 'annotation') return { name: 'review.annotation', id, params }
     if (leaf === 'answer') return { name: 'review.answer', id, params }
+    if (leaf === 'remix') return { name: 'review.remix', id, params }
     if (leaf === 'approve') return { name: 'review.approve', id, params }
     if (leaf === 'reopen') return { name: 'review.reopen', id, params }
     if (leaf === 'worker') return { name: 'review.worker', id, params }

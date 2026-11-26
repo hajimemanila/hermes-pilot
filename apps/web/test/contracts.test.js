@@ -192,10 +192,10 @@ function eventsMissingRequired(meta) {
   })
 }
 
-test('HM_EVENTS は 26 種で、値がすべて一意な hm: 名', () => {
+test('HM_EVENTS は 27 種で、値がすべて一意な hm: 名', () => {
   const values = Object.values(HM_EVENTS)
-  assert.equal(values.length, 26)
-  assert.equal(new Set(values).size, 26, '同じイベント名が 2 回定義されている')
+  assert.equal(values.length, 27)
+  assert.equal(new Set(values).size, 27, '同じイベント名が 2 回定義されている')
   for (const name of values) assert.match(name, /^hm:[a-z][a-z-]*$/)
   assert.ok(Object.isFrozen(HM_EVENTS))
 })
@@ -207,7 +207,7 @@ test('HM_EVENT_META は送信側のあるイベントを全件宣言している
   // `HM_EVENTS.OPEN_INBOX` は App → TasksPane の prop 経路へ移行済みで、
   // 生 `addEventListener` による後方互換の受信だけが残っている。
   assert.deepEqual([...names].filter((name) => !declared.has(name)), [HM_EVENTS.OPEN_INBOX])
-  assert.equal(declared.size, 25)
+  assert.equal(declared.size, 26)
   for (const [name, meta] of Object.entries(HM_EVENT_META)) {
     assert.ok(name.startsWith('hm:'), `${name} は hm: 名前空間の外`)
     assert.ok(meta && typeof meta === 'object', `${name} の META が無い`)
@@ -316,7 +316,7 @@ test('detail: null のイベントは required を持たず、素通りが維持
   const nullEvents = Object.entries(HM_EVENT_META)
     .filter(([, entry]) => entry.detail === null)
     .map(([name]) => name)
-  assert.equal(nullEvents.length, 6)
+  assert.equal(nullEvents.length, 7)
   for (const name of nullEvents) {
     assert.equal(HM_EVENT_META[name].required, undefined, `${name} に required がある`)
     assert.deepEqual(requiredKeys(name), [])

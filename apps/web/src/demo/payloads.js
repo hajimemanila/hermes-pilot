@@ -219,7 +219,7 @@ export function overviewBody() {
   return {
     hermes: { version: '0.23.1', model: 'demo', gateway: 'running', sessions: 1, profiles: ['demo'] },
     system: { cpuCount: 10, memory: { total: 16 * 1024 ** 3, available: 8 * 1024 ** 3, used: 8 * 1024 ** 3, percent: 50 }, disk: null, load: null, uptime: null },
-    bridge: { ok: true, version: '0.2.5', port: 0, startedAt: state.now, uptimeSec: Math.round((Date.now() - state.now) / 1000) },
+    bridge: { ok: true, version: '0.3.0', port: 0, startedAt: state.now, uptimeSec: Math.round((Date.now() - state.now) / 1000) },
     kanban: {
       boards: 1,
       running,

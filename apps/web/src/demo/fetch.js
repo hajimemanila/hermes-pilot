@@ -60,7 +60,11 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
       if (!item) return { data: { questions: [] }, answer: null }
       const answered = item.status === 'done'
       return {
-        data: { title: item.review?.title || item.title, questions: item.review?.mode === 'standard' ? demoQuestions() : [] },
+        data: {
+          title: item.review?.title || item.title,
+          deck: item.review?.mode === 'standard',
+          questions: item.review?.mode === 'standard' ? demoQuestions() : [],
+        },
         answer: answered ? { answers: [{ id: 'q1', choice: 'A' }], global: '', by: 'mobile' } : null,
       }
     }
@@ -76,6 +80,22 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
       }
       publish('review')
       return { ok: true, files: { answer: 'answer.json', sheet: null }, duplicate: false }
+    }
+    case 'review.remix': {
+      const item = itemById(route.id)
+      publish('review')
+      return {
+        ok: true,
+        taskId: route.id,
+        status: item?.status ?? 'blocked',
+        moved: null,
+        files: { remix: 'sheets/demo-review-01.remix.json' },
+        record: {
+          questionId: body?.questionId ?? null,
+          reason: body?.reason ?? 'alternative',
+          hint: body?.hint ?? '',
+        },
+      }
     }
     case 'review.approve': {
       const item = itemById(route.id)

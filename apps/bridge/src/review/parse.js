@@ -4,7 +4,16 @@
  */
 import crypto from 'node:crypto'
 import path from 'node:path'
-import { GLOBAL_LABEL_RE, LABEL_RE, LINE_RE, REPLY_HEAD_RE, REPLY_MARK_SOURCE, UNSELECTED_RE, replyTextOf } from './text.js'
+import {
+  ANNOTATIONS_LABEL_RE,
+  GLOBAL_LABEL_RE,
+  LABEL_RE,
+  LINE_RE,
+  REPLY_HEAD_RE,
+  REPLY_MARK_SOURCE,
+  UNSELECTED_RE,
+  replyTextOf,
+} from './text.js'
 
 export function parseReviewLine(body) {
   const m = LINE_RE.exec(String(body || ''))
@@ -27,6 +36,39 @@ export function isSafeRel(rel) {
   const s = String(rel || '')
   if (!s || s.startsWith('/') || s.includes('..') || s.includes('\0')) return false
   return /^[A-Za-z0-9._/-]+$/.test(s)
+}
+
+/** `visualMock.shot` / `visualMock.html` 用: `thumbs/`・`shots/`・`sheets/` 配下のみ許可する。 */
+export function isSafeVisualMockRel(rel) {
+  const s = String(rel || '')
+  if (!isSafeRel(s)) return false
+  return /^(?:thumbs|shots|sheets)\//.test(s)
+}
+
+/** `visualMock` オブジェクトの安全化（不正パスを除去し、非破壊に返す）。 */
+export function sanitizeVisualMock(vm) {
+  if (!vm || typeof vm !== 'object' || Array.isArray(vm)) return null
+  const out = { ...vm }
+  if (out.shot !== undefined) out.shot = isSafeVisualMockRel(out.shot) ? String(out.shot) : null
+  if (out.html !== undefined) out.html = isSafeVisualMockRel(out.html) ? String(out.html) : null
+  return out
+}
+
+/** シート全体および設問ごとの `visualMock` パスを安全化する（未指定時は無変更）。 */
+export function sanitizeSheetVisualMocks(rawData) {
+  if (!rawData || typeof rawData !== 'object') return rawData
+  const hasTop = rawData.visualMock !== undefined
+  const qs = Array.isArray(rawData.questions) ? rawData.questions : null
+  const hasQ = Boolean(qs && qs.some((q) => q?.visualMock !== undefined))
+  if (!hasTop && !hasQ) return rawData
+  const out = { ...rawData }
+  if (hasTop) out.visualMock = sanitizeVisualMock(rawData.visualMock)
+  if (hasQ) {
+    out.questions = qs.map((q) =>
+      q && q.visualMock !== undefined ? { ...q, visualMock: sanitizeVisualMock(q.visualMock) } : q,
+    )
+  }
+  return out
 }
 
 /**
@@ -136,7 +178,13 @@ export function answerHash({ answers = [], global = '', annotations = [] }) {
       .map((a) => ({ id: String(a.id ?? ''), choice: a.choice ?? null, note: String(a.note ?? '') }))
       .sort((x, y) => x.id.localeCompare(y.id)),
     global: String(global ?? ''),
-    annotations: [...annotations].map((a) => ({ region: a.region ?? null, note: String(a.note ?? '') })),
+    annotations: [...annotations].map((a) => {
+      const base = { region: a?.region ?? null, note: String(a?.note ?? '') }
+      if (a?.questionId != null) base.questionId = String(a.questionId)
+      if (a?.shot != null) base.shot = String(a.shot)
+      if (a?.marks !== undefined) base.marks = Array.isArray(a.marks) ? a.marks : null
+      return base
+    }),
   }
   return crypto.createHash('sha256').update(JSON.stringify(norm)).digest('hex')
 }
@@ -174,6 +222,10 @@ export function parseReplyText(text) {
       inGlobal = true
       continue
     }
+    if (ANNOTATIONS_LABEL_RE.test(line)) {
+      inGlobal = false
+      continue
+    }
     if (inGlobal) out.global += `\n${line}`
   }
   out.global = out.global.trim()
@@ -189,7 +241,7 @@ export function parseReplyText(text) {
  * @param {Array<{id: string, text?: string}>} [questions] 設問（見出しに使う）
  * @param {'ja'|'en'} [lang] 見出しの言語（既定は `en`・SPEC-i18n-gen D4）
  */
-export function toReplyText(label, answers, global, questions = [], lang = 'en') {
+export function toReplyText(label, answers, global, questions = [], lang = 'en', annotations = []) {
   const title = new Map(questions.map((q) => [String(q.id), String(q.text ?? '')]))
   const t = replyTextOf(lang)
   const lines = [`${t.head}${label}`]
@@ -200,6 +252,16 @@ export function toReplyText(label, answers, global, questions = [], lang = 'en')
     lines.push(`Q${String(a.id).replace(/^q/i, '')}. ${q}: ${choice}${note}`)
   }
   lines.push(`${t.globalLabel}: ${String(global ?? '').replace(/\r/g, '')}`)
+  if (Array.isArray(annotations) && annotations.length > 0) {
+    lines.push(`${t.annotationsLabel}:`)
+    for (const ann of annotations) {
+      const qid = String(ann?.questionId ?? 'card')
+      const shot = ann?.shot && isSafeVisualMockRel(ann.shot) ? ` (${ann.shot})` : ''
+      const marks = Array.isArray(ann?.marks) && ann.marks.length > 0 ? ` [${ann.marks.length} marks]` : ''
+      const note = String(ann?.note ?? '').replace(/\r?\n/g, ' ').trim()
+      lines.push(`- [${qid}]${shot}${marks}${note ? ` ${note}` : ''}`)
+    }
+  }
   lines.push('---')
   lines.push(t.tail)
   return `${lines.join('\n')}\n`

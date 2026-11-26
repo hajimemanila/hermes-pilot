@@ -7,6 +7,7 @@ import { celebrate } from '../lib/vibe.js'
 import { readActiveChatId } from '../lib/chatReports.js'
 import { readReviewRepo } from '../lib/repoPicker.js'
 import { AnnotationEditor } from './AnnotationEditor.jsx'
+import { AutopilotSwipeLink } from './autopilot/AutopilotView.jsx'
 import {
   DONE_LIMIT,
   REVIEW_STATUS_KEY,
@@ -537,16 +538,8 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
           </div>
         </div>
         <span className="ak-head-actions">
-          <button
-            className="btn ak-new-btn"
-            type="button"
-            onClick={() => {
-              haptic('tap')
-              setShowNew(true)
-            }}
-          >
-            {t('review.newAnnotation')}
-          </button>
+          {counts.waiting > 0 && <AutopilotSwipeLink count={counts.waiting} />}
+          <button className="btn ak-new-btn" type="button" onClick={() => { haptic('tap'); setShowNew(true) }}>{t('review.newAnnotation')}</button>
           <RefreshButton onRefresh={refreshReview} />
         </span>
       </div>

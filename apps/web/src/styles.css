@@ -1,7 +1,6 @@
 /*
  * スタイルの入口（読み込み順＝カスケード順）。中身は `styles/` 配下の
  * テーマ別ファイルに分割してある（肥大化した 1 ファイルに追記し続けないため）。
- *
  * ルール:
  *  - 新しいスタイルは、意味の合う既存ファイルへ追記する。どれにも合わなければ
  *    新しいファイルを作り、この manifest の「意味の合う位置」に 1 行足す。
@@ -29,3 +28,4 @@
 @import './styles/spec-seed.css'; /* 310 lines — Spec Seed sheet + A2B quick intake */
 @import './styles/spec-launchpad.css'; /* 582 lines — 44px tap targets, architect bar, SPEC selector, MD preview */
 @import './styles/memos.css'; /* 663 lines — new-SPEC banner, memos view */
+@import './styles/autopilot.css'; /* Autopilot swipe deck + action bar */

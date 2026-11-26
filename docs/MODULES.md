@@ -87,6 +87,12 @@ apps/web/src/features/
   review/ReviewForms.jsx     ← toZoom / StandardForm / IframeForm / SheetLink
   review/ReviewDetail.jsx    ← ReadOnlyDetail
   review/AnnotationCreate.jsx← downscaleFile / prefetchAnnotationData / findTarget / NewAnnotationSheet
+  autopilot/
+    AutopilotDeck.jsx        ← スワイプデッキ UI（24px デッドゾーン・90px 閾値・REMIX チップ・Undo）
+    AutopilotView.jsx        ← Zero-Fork レンズ投影・AutopilotLensToggle・AutopilotSwipeLink・LiveWipeCard
+
+apps/web/src/lib/autopilotDeck.js ← スワイプ分類・デッキ構築・回答/REMIX/HOLD 純関数
+apps/web/src/styles/autopilot.css ← Autopilot 専用スタイル（tokens.css トークンのみ使用）
 ```
 
 † は「分割前は private だったが、モジュール境界を越えるので export する」もの。`pipeline/` 内の
