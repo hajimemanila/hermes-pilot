@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { api } from '../../api.js'
 import { useI18n } from '../../i18n/index.js'
 import { haptic } from '../../lib/haptic.js'
+import { SEED_MAX, TEMPLATE_IDS, canSubmit } from '../../lib/specSeed.js'
 import { celebrateAction } from '../../lib/vibe.js'
 import { AnnotationEditor } from '../AnnotationEditor.jsx'
 import {
@@ -42,6 +43,8 @@ function TemplatePreview({ kind, title, t }) {
  */
 export function AutopilotDeck({
   cards = [],
+  activeJob = null,
+  onStartSeed,
   onCommitAction,
   onRemixCard,
   onSaveMemo,
@@ -57,6 +60,8 @@ export function AutopilotDeck({
   const [remixNoteMode, setRemixNoteMode] = useState(false)
   const [remixNoteText, setRemixNoteText] = useState('')
   const [annotatingCard, setAnnotatingCard] = useState(null)
+  const [seedText, setSeedText] = useState('')
+  const [seedBusy, setSeedBusy] = useState(false)
   const gestureRef = useRef({ active: false, startX: 0, startY: 0, pointerId: null })
 
   const card = cards[index] || null
@@ -177,6 +182,20 @@ export function AutopilotDeck({
     ? { transform: `translate3d(${drag.dx}px, ${drag.dy}px, 0) rotate(${rotDeg}deg)` }
     : undefined
 
+  const submitSeed = async (e) => {
+    e?.preventDefault?.()
+    if (seedBusy || !canSubmit(seedText) || !onStartSeed) return
+    setSeedBusy(true)
+    try {
+      await onStartSeed(seedText)
+      setSeedText('')
+    } catch (err) {
+      notify?.(err?.message || t('seed.failed'))
+    } finally {
+      setSeedBusy(false)
+    }
+  }
+
   return (
     <section className="ap-deck-shell" aria-label={t('autopilot.deckAria')}>
       <div className="ap-deck-stage">
@@ -229,10 +248,54 @@ export function AutopilotDeck({
             </div>
           </article>
         ) : (
-          <div className="ap-empty-card">
+          <div className="ap-empty-card ap-launcher-card">
+            {activeJob && (
+              <div className="ap-generating-pill" role="status">
+                <span className="ap-tpl-dot" aria-hidden="true" />
+                <span>
+                  {t('autopilot.generatingTitle')} — {activeJob.seed}
+                </span>
+              </div>
+            )}
             <div className="ap-empty-icon">✨</div>
-            <h2 className="ap-empty-title">{t('autopilot.allClearTitle')}</h2>
-            <p className="ap-empty-sub">{t('autopilot.allClearSub')}</p>
+            <h2 className="ap-empty-title">{t('autopilot.startTitle')}</h2>
+            <p className="ap-empty-sub">{t('autopilot.startSub')}</p>
+            {onStartSeed && (
+              <form className="ap-launcher-form" onSubmit={submitSeed}>
+                <textarea
+                  className="ap-launcher-input"
+                  rows={2}
+                  maxLength={SEED_MAX}
+                  value={seedText}
+                  onChange={(e) => setSeedText(e.target.value)}
+                  placeholder={t('autopilot.startPlaceholder')}
+                  aria-label={t('autopilot.startPlaceholder')}
+                />
+                <div className="ap-launcher-chips">
+                  {TEMPLATE_IDS.map((id) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className="ap-launcher-chip"
+                      onClick={() => {
+                        haptic('tap')
+                        const prefix = t(`seed.tpl.${id}Text`)
+                        setSeedText((cur) => (String(cur).startsWith(prefix) ? cur : `${prefix}${cur}`.slice(0, SEED_MAX)))
+                      }}
+                    >
+                      {t(`seed.tpl.${id}`)}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="submit"
+                  className="ap-launcher-submit"
+                  disabled={seedBusy || !canSubmit(seedText)}
+                >
+                  {seedBusy ? t('seed.submitting') : `✨ ${t('autopilot.startBtn')}`}
+                </button>
+              </form>
+            )}
             {onSwitchCockpit && (
               <button type="button" className="ap-empty-cockpit-btn" onClick={onSwitchCockpit}>
                 {t('autopilot.openCockpit')}

@@ -1263,5 +1263,10 @@
   "autopilot.wipe.before": "Mock",
   "autopilot.wipe.after": "Live",
   "autopilot.wipe.sliderAria": "Comparison slider",
-  "autopilot.answered": "Review answers sent"
+  "autopilot.answered": "Review answers sent",
+  "autopilot.startTitle": "Start in Autopilot",
+  "autopilot.startSub": "Describe what you want to build in one line or pick a starter, and AI will prepare swipeable mock cards.",
+  "autopilot.startPlaceholder": "e.g. Build a Pomodoro timer with a clean daily streak",
+  "autopilot.startBtn": "Generate Cards",
+  "autopilot.generatingTitle": "Drafting cards"
 }

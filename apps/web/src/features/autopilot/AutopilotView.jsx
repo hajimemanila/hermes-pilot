@@ -3,8 +3,11 @@ import { api } from '../../api.js'
 import { HM_EVENTS, emitHmEvent } from '../../contracts/events.js'
 import { useI18n } from '../../i18n/index.js'
 import { buildAnswerPayload, buildDeckFromSheet } from '../../lib/autopilotDeck.js'
+import { readActiveChatId } from '../../lib/chatReports.js'
 import { haptic } from '../../lib/haptic.js'
+import { buildSeedPayload, pickActiveArchitectJob } from '../../lib/specSeed.js'
 import { refreshSync, subscribeSync, tickSync } from '../../lib/syncSources.js'
+import { celebrate } from '../../lib/vibe.js'
 import { AutopilotDeck } from './AutopilotDeck.jsx'
 
 /**
@@ -101,21 +104,32 @@ function LiveWipeCard({ item }) {
 /**
  * Zero-Fork Autopilot 投影ビュー（`syncSources.reviewWaiting` 購読のみ・独自ポーリング無し）。
  */
-export function AutopilotView({ notify, onSwitchCockpit }) {
-  const { t } = useI18n()
+export function AutopilotView({ overview, notify, onSwitchCockpit }) {
+  const { t, lang } = useI18n()
   const [items, setItems] = useState([])
+  const [jobs, setJobs] = useState([])
   const [sheetById, setSheetById] = useState({})
   const [decisions, setDecisions] = useState({})
 
   const applyItems = useCallback((res) => {
     setItems(Array.isArray(res?.items) ? res.items : [])
   }, [])
+  const applyJobs = useCallback((res) => {
+    setJobs(Array.isArray(res?.jobs) ? res.jobs : [])
+  }, [])
 
   useEffect(() => {
-    const off = subscribeSync('reviewWaiting', applyItems)
+    const offReview = subscribeSync('reviewWaiting', applyItems)
+    const offJobs = subscribeSync('architectJobs', applyJobs)
     tickSync('reviewWaiting')
-    return off
-  }, [applyItems])
+    tickSync('architectJobs')
+    return () => {
+      offReview()
+      offJobs()
+    }
+  }, [applyItems, applyJobs])
+
+  const activeJob = useMemo(() => pickActiveArchitectJob(jobs), [jobs])
 
   const waiting = useMemo(() => items.filter((x) => x.status === 'blocked'), [items])
   const liveCompareItem = useMemo(
@@ -190,11 +204,37 @@ export function AutopilotView({ notify, onSwitchCockpit }) {
     }
   }
 
+  const handleStartSeed = async (seedText) => {
+    const res = await api('/api/architect/seed', {
+      method: 'POST',
+      body: buildSeedPayload({
+        seedText,
+        autoStart: true,
+        executionPolicy: 'visual-gate',
+        board: overview?.board || '',
+        repo: overview?.repo || null,
+        chat: readActiveChatId(),
+        lang,
+      }),
+    })
+    try {
+      celebrate('launch')
+    } catch {
+      /* noop */
+    }
+    notify?.(t('seed.toast'))
+    refreshSync('architectJobs')
+    refreshSync('reviewWaiting')
+    return res
+  }
+
   return (
     <div className="ap-view">
       {liveCompareItem && <LiveWipeCard item={liveCompareItem} />}
       <AutopilotDeck
         cards={cards}
+        activeJob={activeJob}
+        onStartSeed={handleStartSeed}
         onCommitAction={handleCommitAction}
         onSaveMemo={handleSaveMemo}
         onUndoAction={(entry) => {

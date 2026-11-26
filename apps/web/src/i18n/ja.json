@@ -1263,5 +1263,10 @@
   "autopilot.wipe.before": "モック",
   "autopilot.wipe.after": "実装",
   "autopilot.wipe.sliderAria": "比較スライダー",
-  "autopilot.answered": "レビュー回答を送信しました"
+  "autopilot.answered": "レビュー回答を送信しました",
+  "autopilot.startTitle": "Autopilot で開発を始める",
+  "autopilot.startSub": "作りたいものを一言入力するかレシピを選ぶと、スワイプできる方向性カードを自動生成します。",
+  "autopilot.startPlaceholder": "例: シンプルなポモドーロタイマーを作りたい",
+  "autopilot.startBtn": "カードを生成する",
+  "autopilot.generatingTitle": "カードを生成中"
 }

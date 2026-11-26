@@ -897,7 +897,7 @@ export function App() {
       ) : null}
 
       <main className="panes">
-        {booting ? <Loader label={t('common.loading')} /> : lens === 'autopilot' ? <AutopilotView notify={notify} onSwitchCockpit={() => setLens('cockpit')} /> : (
+        {booting ? <Loader label={t('common.loading')} /> : lens === 'autopilot' ? <AutopilotView overview={overview} notify={notify} onSwitchCockpit={() => setLens('cockpit')} /> : (
           <>
             {mountedTabs.tasks ? (
               <TabHost active={tab === 'tasks'}>
