@@ -26,8 +26,11 @@ import {
   answeredAtForReview,
   compareCandidates,
   isSafeRel,
+  isSafeVisualMockRel,
   parseReplyText,
   parseReviewLine,
+  sanitizeSheetVisualMocks,
+  sanitizeVisualMock,
   sheetPaths,
   toReplyText,
 } from './review/parse.js'
@@ -41,6 +44,7 @@ import {
 } from './review/sheet-html.js'
 import { createReviewMedia } from './review/media.js'
 import { createReviewFeeds } from './review/feeds.js'
+import { createReviewRemix } from './review/remix.js'
 import { createReviewTransitions } from './review/transitions.js'
 import {
   expandHome,
@@ -59,28 +63,8 @@ import {
 /*
  * 分割したモジュールの再エクスポート。`./review.js` からの import 契約は 1 つも変えない。
  */
-export {
-  answerHash,
-  answeredAtForReview,
-  compareCandidates,
-  isSafeRel,
-  parseReplyText,
-  parseReviewLine,
-  sheetPaths,
-  toReplyText,
-} from './review/parse.js'
-export {
-  HTML_TEXT,
-  REVIEW_SHEET_CSP,
-  REVIEW_VIEW_CSP,
-  escapeHtmlText,
-  htmlText,
-  injectReviewBridge,
-  renderSheetHtmlFromData,
-  reviewSheetHeaders,
-  reviewViewHeaders,
-  reviewViewHtml,
-} from './review/sheet-html.js'
+export { answerHash, answeredAtForReview, compareCandidates, isSafeRel, isSafeVisualMockRel, parseReplyText, parseReviewLine, sanitizeVisualMock, sheetPaths, toReplyText } from './review/parse.js'
+export { HTML_TEXT, REVIEW_SHEET_CSP, REVIEW_VIEW_CSP, escapeHtmlText, htmlText, injectReviewBridge, renderSheetHtmlFromData, reviewSheetHeaders, reviewViewHeaders, reviewViewHtml } from './review/sheet-html.js'
 export { opsText, reopenTextOf, replyTextOf } from './review/text.js'
 
 export function createReview(cfg, opts = {}) {
@@ -345,8 +329,9 @@ export function createReview(cfg, opts = {}) {
     if (!ak?.sheet) return { ok: false, code: 'NO_SHEET' }
     const extras = b.workdir ? [b.workdir] : []
     const abs = resolveInside(sheetPaths(ak.sheet).dataRel, extras)
-    const data = abs ? readJsonIfExists(abs) : null
-    if (!data) return { ok: false, code: 'DATA_MISSING' }
+    const rawData = abs ? readJsonIfExists(abs) : null
+    if (!rawData) return { ok: false, code: 'DATA_MISSING' }
+    const data = sanitizeSheetVisualMocks(rawData)
     // 回答の履歴（完了した項目を「なぜこの設計か」まで辿れるようにする）。
     // 回答は無いことがある（回答前に片付けた等）ので、無ければ null。
     const answer = readJsonIfExists(resolveInside(sheetPaths(ak.sheet).answerRel, extras) || '\0')
@@ -471,7 +456,7 @@ export function createReview(cfg, opts = {}) {
     const writePair = opts.writePairAtomic ?? writePairAtomic
     const pair = writePair([
       [answerFile, record, { json: true }],
-      [textFile, toReplyText(ak.label ?? id, record.answers, global, questions, lang)],
+      [textFile, toReplyText(ak.label ?? id, record.answers, global, questions, lang, record.annotations)],
     ])
     if (pair.failedAt === 0) throw pair.error
     if (pair.failedAt !== null) {
@@ -713,6 +698,7 @@ export function createReview(cfg, opts = {}) {
     library,
   })
   const { feed, chatReport, chatReports, libraryFile, slugOf, createFromImage, chatFor } = feeds
+  const { remix } = createReviewRemix(surfaceCtx)
 
   return {
     board,
@@ -724,6 +710,7 @@ export function createReview(cfg, opts = {}) {
     sheetHtml,
     sheetData,
     answer,
+    remix,
     reopen,
     approve,
     sessionId,

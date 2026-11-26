@@ -77,6 +77,22 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
       publish('review')
       return { ok: true, files: { answer: 'answer.json', sheet: null }, duplicate: false }
     }
+    case 'review.remix': {
+      const item = itemById(route.id)
+      publish('review')
+      return {
+        ok: true,
+        taskId: route.id,
+        status: item?.status ?? 'blocked',
+        moved: null,
+        files: { remix: 'sheets/demo-review-01.remix.json' },
+        record: {
+          questionId: body?.questionId ?? null,
+          reason: body?.reason ?? 'alternative',
+          hint: body?.hint ?? '',
+        },
+      }
+    }
     case 'review.approve': {
       const item = itemById(route.id)
       if (item) {

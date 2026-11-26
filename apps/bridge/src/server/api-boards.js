@@ -393,6 +393,22 @@ export function createBoardsApi(ctx = {}) {
       // レビュー待ち以外への送信は 409（状態の衝突）として返す。他の失敗は 400。
       return r.ok ? sendJson(res, 200, r) : sendFailure(res, r.code === 'NOT_WAITING' ? 409 : 400, r)
     }
+    if (c === 'remix' && req.method === 'POST') {
+      if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
+        return sendError(res, 429, 'RATE_LIMITED')
+      }
+      const body = await readJson(req)
+      const r = await review.remix(b, body || {}, langOf(req, url))
+      auth.audit({
+        kind: 'review.remix',
+        task: b,
+        questionId: body?.questionId ?? null,
+        reason: body?.reason ?? null,
+        ok: Boolean(r.ok),
+      })
+      if (r.ok) nudgeWatchers()
+      return r.ok ? sendJson(res, 200, r) : sendFailure(res, r.code === 'NOT_WAITING' ? 409 : 400, r)
+    }
     if (c === 'reopen' && req.method === 'POST') {
       if (!writeAllowed(cfg.rate.maxWrites, cfg.rate.windowMs)) {
         return sendError(res, 429, 'RATE_LIMITED')

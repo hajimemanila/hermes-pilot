@@ -109,6 +109,7 @@ export const API_ROUTES = [
   { method: 'GET', pattern: '/api/review/:id/annotation', demo: 'mocked' },
   { method: 'POST', pattern: '/api/review/:id/annotation', demo: 'mocked' },
   { method: 'POST', pattern: '/api/review/:id/answer', demo: 'mocked' },
+  { method: 'POST', pattern: '/api/review/:id/remix', demo: 'mocked', note: 'Autopilot 左スワイプでの別案再生成要求' },
   { method: 'POST', pattern: '/api/review/:id/reopen', demo: 'mocked' },
   { method: 'POST', pattern: '/api/review/:id/approve', demo: 'mocked' },
 
