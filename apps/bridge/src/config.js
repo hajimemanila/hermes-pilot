@@ -11,7 +11,7 @@ function readPackageVersion() {
   } catch {
     /* fallback below */
   }
-  return '0.2.5'
+  return '0.3.0'
 }
 
 export const VERSION = readPackageVersion()

@@ -1,6 +1,6 @@
 # SPEC: v0.3.0 Autopilot Mode — スワイプデッキ＆ビジュアル優先 A2B パイプライン (`SPEC-AUTOPILOT`)
 
-- **状態**: 仕様確定（`feat/v0.3.0-autopilot` ブランチ起点・未起票。「File batches & start」待ち）
+- **状態**: 完了（`v0.3.0`・`AP-1`〜`AP-6` 実装＆検証済み）
 - **対象リポジトリ**: `~/projects/hermes-mobile-pwa`（`v0.2.5` → `v0.3.0`）
 - **前提・関連仕様**:
   - [SPEC-COHERENCE.md](./SPEC-COHERENCE.md) / [SPEC-COHERENCE-RESIDUAL-DRIFT.md](./SPEC-COHERENCE-RESIDUAL-DRIFT.md)（4 つの正本原則: `sync-owner` / `transport-owner` / `transition-owner` / `board-tick-owner`）
