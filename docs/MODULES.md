@@ -80,6 +80,13 @@ apps/bridge/src/
     skills.js                ← SKILL_TARGET_CANDIDATES / installSkill / optimizeAntigravitySkills /
                                optimizeAgentSkills / getOptimizeStatus
   review/legacy-tags.js      ← LEGACY_REVIEW_TAG（[akapen] の唯一の定義）
+  review/autopilot-contract.js ← Autopilot Fast-Lane 定数（STYLE_PRESETS / Auto-Resolve / Promote）
+
+scripts/
+  render-mocks.mjs           ← Fast-Lane 並列 CDP モック描画＆Pre-Flight Visual Gate CLI
+
+skills/
+  autopilot-fastlane/SKILL.md ← Autopilot Fast-Lane 汎用スキル（サンドボックス描画 / Promote 手順）
 
 apps/web/src/features/
   ReviewPane.jsx             ← TABS / ItemRow / WorkerFeed / ReviewPane（約 748 行）
@@ -89,10 +96,17 @@ apps/web/src/features/
   review/AnnotationCreate.jsx← downscaleFile / prefetchAnnotationData / findTarget / NewAnnotationSheet
   autopilot/
     AutopilotDeck.jsx        ← スワイプデッキ UI（24px デッドゾーン・90px 閾値・REMIX チップ・Undo）
-    AutopilotView.jsx        ← Zero-Fork レンズ投影・AutopilotLensToggle・AutopilotSwipeLink・LiveWipeCard
+    AutopilotCards.jsx       ← StarterStage / LiveStudioCard / CompletionCard / OptionMockPreview
+    AutopilotView.jsx        ← Zero-Fork レンズ投影・AutopilotLensToggle・AutopilotSwipeLink
+    MockCompareStage.jsx     ← 0.1秒フリック比較・長押し Peek・▶ 触ってみる iframe（sandbox 強制）
+    StyleGachaBar.jsx        ← 5種スタイル・ガチャ（上限3回制御）
+    LiveRadarCard.jsx        ← Panoptes 着想・純粋 React+SVG レーダー BI（subscribeSync のみ）
+    BeforeAfterTimelapse.jsx ← 完了カード用ビフォー・アフター タイムラプス比較
 
-apps/web/src/lib/autopilotDeck.js ← スワイプ分類・デッキ構築・回答/REMIX/HOLD 純関数
-apps/web/src/styles/autopilot.css ← Autopilot 専用スタイル（tokens.css トークンのみ使用）
+apps/web/src/lib/autopilotDeck.js  ← スワイプ分類・デッキ構築・フリック判定・REMIX/HOLD 純関数
+apps/web/src/lib/liveRadar.js      ← LiveRadarCard 座標投影・トークン集計純関数
+apps/web/src/styles/autopilot.css  ← Autopilot 専用スタイル（tokens.css トークンのみ使用）
+apps/web/src/styles/autopilot-radar.css ← LiveRadarCard SVG ＆ タイムラプス専用 CSS
 ```
 
 † は「分割前は private だったが、モジュール境界を越えるので export する」もの。`pipeline/` 内の

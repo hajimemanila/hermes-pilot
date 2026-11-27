@@ -97,8 +97,14 @@ export function demoQuestions() {
           label: 'Copy an X post + download the 1200x630 PNG',
           detail: 'Matches SPEC-PILOT-V5 D26: the receipt is a shareable card.',
           recommended: true,
+          visualMock: { shot: 'shots/demo-q2-a.png', layoutVariant: 'A', theme: 'cyan' },
         },
-        { id: 'B', label: 'PNG only', detail: 'No text for a post.' },
+        {
+          id: 'B',
+          label: 'PNG only',
+          detail: 'No text for a post.',
+          visualMock: { shot: 'shots/demo-q2-b.png', layoutVariant: 'B', theme: 'violet' },
+        },
       ],
     },
     {

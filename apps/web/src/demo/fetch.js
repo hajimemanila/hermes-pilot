@@ -93,6 +93,7 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
         record: {
           questionId: body?.questionId ?? null,
           reason: body?.reason ?? 'alternative',
+          stylePreset: body?.stylePreset ?? null,
           hint: body?.hint ?? '',
         },
       }
@@ -337,6 +338,13 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
         })
       const architectRunning = architect.filter((j) => ['running', 'awaiting_spec'].includes(String(j.status))).length
       // 何か動いていればターン 1 本を見せる（Discord / PWA のターンに相当する行）
+      const demoRecentTools = [
+        { name: 'render_mocks', at: at - 4_000 },
+        { name: 'vision_analyze', at: at - 11_000 },
+        { name: 'edit_file', at: at - 19_000 },
+        { name: 'read_file', at: at - 27_000 },
+        { name: 'terminal', at: at - 36_000 },
+      ]
       const turns =
         tasks.length || architectRunning
           ? [
@@ -349,17 +357,29 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
                 startedAt: at - 40_000,
                 elapsedSec: 40,
                 expiresInSec: 280,
-                lastActivity: 'Running verification suite',
-                lastTool: { name: 'exec', at: at - 4_000 },
+                lastActivity: 'Running Pre-Flight Visual Gate',
+                lastTool: demoRecentTools[0],
+                recentTools: demoRecentTools,
+                toolCount: 12,
               },
             ]
           : []
+      const telemetry = {
+        recentTools: turns[0]
+          ? demoRecentTools.map((rt) => ({ ...rt, sessionId: DEMO_SESSION, profile: 'default' }))
+          : [],
+        toolCount: turns[0] ? 12 : 0,
+        activeTurns: turns.length,
+        activeTasks: tasks.length,
+        phaseLabel: architect[0]?.phase || (tasks.length || turns.length ? 'running' : 'idle'),
+      }
       return {
         ok: true,
         counts: { turns: turns.length, tasks: tasks.length, architect: architectRunning },
         turns,
         tasks,
         architect,
+        telemetry,
         demo: true,
       }
     }
