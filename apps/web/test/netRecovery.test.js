@@ -131,8 +131,9 @@ test('回線復帰の契約が App・全主要ペイン・WebSocket に入って
   assert.match(app, /createSyncScheduler\(/)
   assert.match(app, /scheduler\.forceAll\(\)/)
 
-  const tasks = readCode('features/TasksPane.jsx')
+  const tasks = readCode('features/tasks/useTasksData.js')
   // 定期取得は表へ移した。復帰時は「取得を 1 回やり直す」だけを呼ぶ（ボード再試行は表の enabledWhen が持つ）
+  // CSW3-6: ペインのデータ層はこの hook が持つ（読み先を新しい置き場所へ）
   assert.match(tasks, /refreshSync\('boards'\)/)
   assert.match(tasks, /refreshSync\('tasks'\)/)
   assert.match(tasks, /if\s*\(tasksBoardRef\.current\s*!==\s*slug\)\s*setTasks\(\[\]\)/)

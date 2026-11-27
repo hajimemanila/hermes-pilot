@@ -231,7 +231,8 @@ test('normalizeCoherenceAlert は生の /api/coherence/report の hardFails/soft
 })
 
 test('TasksPane は WAKE_SYNC・REFRESH_REPORTS・fresh 取得で Coherence バナーを再同期する', () => {
-  const src = fs.readFileSync(new URL('../src/features/TasksPane.jsx', import.meta.url), 'utf8')
+  // 分割後: データ層は features/tasks/useTasksData.js が持つ（CSW3-6）
+  const src = fs.readFileSync(new URL('../src/features/tasks/useTasksData.js', import.meta.url), 'utf8')
   assert.match(src, /loadCoherence\(board,\s*\{\s*fresh:\s*true\s*\}\)/)
   assert.match(src, /HM_EVENTS\.REFRESH_REPORTS/)
 })
@@ -316,7 +317,8 @@ test('coherenceBannerView: 作業中 (busy:true) はアラートを抑止し、�
 })
 
 test('TasksPane は workActive 中に Coherence バナー抑止・停止→idle で fresh 再取得を行う', () => {
-  const src = fs.readFileSync(new URL('../src/features/TasksPane.jsx', import.meta.url), 'utf8')
+  // 分割後: workActive の判定と fresh 再取得は features/tasks/useTasksData.js が持つ（CSW3-6）
+  const src = fs.readFileSync(new URL('../src/features/tasks/useTasksData.js', import.meta.url), 'utf8')
   assert.match(src, /coherenceBannerView\([^)]*\{\s*busy:\s*workActive\s*\}/)
   assert.match(src, /workActiveRef\.current/)
   assert.match(src, /prevWorkActiveRef\.current/)

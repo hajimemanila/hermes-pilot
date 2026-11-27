@@ -481,5 +481,7 @@ test('TasksPane は pendingInboxOpen を消費してシートを開く', () => {
   const pane = code('features/TasksPane.jsx')
   assert.match(pane, /pendingInboxOpen = null/)
   assert.match(pane, /onConsumedPendingInboxOpen/)
-  assert.match(pane, /openInbox\(pendingInboxOpen\.task \?\? null\)/)
+  // 消費そのもの（openInbox 呼び出し）は CSW3-6 でデータ層へ移った
+  const data = code('features/tasks/useTasksData.js')
+  assert.match(data, /openInbox\(pendingInboxOpen\.task \?\? null\)/)
 })
