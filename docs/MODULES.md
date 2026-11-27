@@ -10,6 +10,10 @@
 - 実体は `apps/web/src/styles/*.css`（`tokens` / `shell` / `chat` / `review` / `vibe-fx` …）。
 - **読み込み順＝カスケード順**。順序は動かさない。新しい見た目は意味の合うファイルへ追記し、
   どれにも合わなければ新ファイル＋manifest に 1 行。
+- `apps/web/src/styles/autopilot.css` は**入れ子 manifest**（3 行・規則を書かない）。規則は
+  `autopilot-deck.css`（基底デッキ／`@media (max-width: 430px)` まで）と `autopilot-story.css`
+  （`/* --- AP2-4 --- */` 以降の Story Flick・Live Sandbox・Style Gacha）。`styles.css` は
+  `autopilot.css` を 1 行 import するだけで 31 行のまま動かさない。
 - 各ファイルは ratchet の上限（`scripts/coherence-baseline.json` の `maxLines` = 800 行）以下に保つ。
 - テストは `apps/web/test/helpers/styles.js` の `readStyles()` で全ソースを展開して読む
   （`apps/web/test/stylesManifest.test.js` が manifest・参照先・行数・`:root` の単一性を機械検査）。
@@ -106,7 +110,7 @@ apps/web/src/features/
     LiveRadarCard.jsx        ← Panoptes 着想・純粋 React+SVG レーダー BI（subscribeSync のみ）
     BeforeAfterTimelapse.jsx ← 完了カード用ビフォー・アフター タイムラプス比較
 
-apps/web/src/lib/autopilotDeck.js  ← 再エクスポート専用バレル（公開契約 27 名をここで固定）
+apps/web/src/lib/autopilotDeck.js  ← 再エクスポート専用バレル（公開契約 27 名をここで固定。実装を置かない）
 apps/web/src/lib/autopilot/
   deck-core.js                     ← 定数・データ・ジェスチャ判定（13 export）
   deck-flow.js                     ← デッキ構築・カード切替・回答/undo/remix 進行（9 export）
@@ -118,3 +122,8 @@ apps/web/src/styles/autopilot-radar.css ← LiveRadarCard SVG ＆ タイムラ�
 
 † は「分割前は private だったが、モジュール境界を越えるので export する」もの。`pipeline/` 内の
 内部共有であることをコメントで明示する（公開契約には数えない）。
+
+## 死んだコードの再測定（SEMM-10 / 2026-11-27 実測）
+
+- `rg` 参照ゼロ export **0 件**（`lib/autopilot/*.js` 27・`lib/autopilotDeck.js` 27・`features/autopilot/*.jsx` 17・`bridge/src/architect/*.js` 63 を全数）・未参照 `.ap-*` クラス **0 件**（133 クラス中）。削る対象は無い。
+- 注意: `ap-stamp-{left,right,up,down}` と `ap-theme-{cyan,emerald,amber,violet}` の 8 つは**文字列で書かれていない**（`ap-stamp-${swipe.direction}` / `ap-theme-${theme}` のテンプレート結合）。リテラル検索だけで判定すると誤って「未参照」に見えるので、動的結合の接頭辞まで見る。

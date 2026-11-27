@@ -405,6 +405,10 @@ html[data-vibe='dopamine'] .ap-launcher-submit { background: var(--vibe-primary-
 .ap-lens-toggle { display: inline-flex; align-items: center; flex: 0 1 auto; min-width: 0; max-width: 100%; padding: 2px; border-radius: 999px; background: var(--bg-elev); border: 1px solid var(--line-strong); gap: 2px; }
 .ap-lens-btn { min-height: 34px; padding: 0 10px; border-radius: 999px; border: 0; background: transparent; color: var(--muted); font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; flex-shrink: 0; line-height: 1; }
 .ap-lens-btn.active { background: var(--accent); color: var(--on-accent); }
+/* 見た目は 30px 前後のまま、当たり判定だけ 44px に広げる（WCAG 2.5.5 / audit:responsive の tap）。
+   `::before` は透明・中央固定なので見た目は 1px も変わらない（chat.css の .chat-jump-bottom と同型）。 */
+.ap-lens-btn { position: relative; }
+.ap-lens-btn::before { content: ''; position: absolute; left: 50%; top: 50%; width: 100%; height: 44px; transform: translate(-50%, -50%); }
 .ap-lens-badge { font-size: 11px; padding: 0 5px; border-radius: 999px; background: var(--warn); color: var(--on-warn); }
 @media (max-width: 430px) {
   .ap-lens-btn { min-height: 30px; padding: 0 6px; font-size: 10.5px; gap: 2px; }

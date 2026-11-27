@@ -215,6 +215,13 @@ blocked からの遷移判断が 5 か所に散っていた。正本を作って
 
 ---
 
+## P11. ファイル分割の 2 つの地雷（`node -e` と「移動のみ」の契約）
+
+- **`node -e` / `node -c` はヘッドレス実行で承認待ちブロックに当たり、ワーカーが永久に止まる**。式の比較はテストファイル内の `assert.deepEqual` か `diff` / `rg` / `npm run` で組む。
+- **分割は移動のみ。契約は既存パスのバレル（manifest）で固定する**。呼び出し元の import を 1 行も変えず、字面は `diff <(git show HEAD:<path>) <(cat <新ファイル…>)` が無出力であることで担保する（`architect.js` / `autopilotDeck.js` / `styles/autopilot.css` が同型）。
+
+---
+
 ## 再発防止の運用
 
 ```bash
