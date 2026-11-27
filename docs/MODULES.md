@@ -125,5 +125,6 @@ apps/web/src/styles/autopilot-radar.css ← LiveRadarCard SVG ＆ タイムラ�
 
 ## 死んだコードの再測定（SEMM-10 / 2026-11-27 実測）
 
-- `rg` 参照ゼロ export **0 件**（`lib/autopilot/*.js` 27・`lib/autopilotDeck.js` 27・`features/autopilot/*.jsx` 17・`bridge/src/architect/*.js` 63 を全数）・未参照 `.ap-*` クラス **0 件**（133 クラス中）。削る対象は無い。
-- 注意: `ap-stamp-{left,right,up,down}` と `ap-theme-{cyan,emerald,amber,violet}` の 8 つは**文字列で書かれていない**（`ap-stamp-${swipe.direction}` / `ap-theme-${theme}` のテンプレート結合）。リテラル検索だけで判定すると誤って「未参照」に見えるので、動的結合の接頭辞まで見る。
+- `rg` 参照ゼロ export **0 件**（分割で生まれた 20 ファイル・133 export を全数。`lib/autopilot/*.js` ・`lib/autopilotDeck.js` ・`features/autopilot/*` ・`bridge/src/architect/*`）・未参照 `.ap-*` クラス **0 件**（autopilot 系 CSS 4 枚の 164 クラス全数）。削る対象は無い。
+- 再測定で 1 件だけ出た `architect/task.js` の `findTerminalJobReviewTask`（同一ファイル内でしか使われず、バレルからも出していない）は `export` を落として内部関数にした。
+- 注意: `ap-stamp-{left,right,up,down}` `ap-theme-{cyan,emerald,amber,violet}` `ap-radar-blip-{core,verify,explore}` の 11 個は**文字列で書かれていない**（`ap-stamp-${swipe.direction}` / `ap-theme-${theme}` / `ap-radar-blip-${b.ring}` のテンプレート結合）。リテラル検索だけで判定すると誤って「未参照」に見えるので、動的結合の接頭辞まで見る。

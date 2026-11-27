@@ -234,7 +234,7 @@ export function findActiveJobReviewTask(job, tasks, opts) {
  * 終端状態（done / archived / failed）になった子 `[review]` タスクを探す（親 `[ARCH]` 自体は除外）。
  * 親 `[ARCH]` が `blocked` で残置された場合でも Round 2 完了／失敗を検知するため。
  */
-export function findTerminalJobReviewTask(job, tasks, opts = {}) {
+function findTerminalJobReviewTask(job, tasks, opts = {}) {
   return matchJobReviewTask(job, tasks, TERMINAL_REVIEW_STATUSES, { ...opts, excludeOwn: true })
 }
 /**
