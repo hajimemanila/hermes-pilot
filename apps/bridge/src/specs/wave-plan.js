@@ -9,7 +9,7 @@
 
 export const MAX_AUTOPILOT_PARALLEL = 3
 
-export const SHARED_HOTSPOT_FILES = new Set([
+const SHARED_HOTSPOT_FILES = new Set([
   'package.json',
   'package-lock.json',
   'scripts/coherence-baseline.json',

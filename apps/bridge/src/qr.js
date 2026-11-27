@@ -771,7 +771,7 @@ export function pairingTargets({ token, port = 4097, dnsName = null, lanIp = nul
  * @param {Array<{kind: string, url: string}>} targets 候補
  * @returns {{kind: string, url: string}|null} 先頭候補
  */
-export function bestTarget(targets) {
+function bestTarget(targets) {
   return Array.isArray(targets) && targets.length ? targets[0] : null
 }
 

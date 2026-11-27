@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { run } from './lib/cli.js'
 import { safeList } from './lib/safe.js'
+import { expandHome } from './lib/homePath.js'
 
 /**
  * タスクと Git の紐付け。
@@ -76,14 +77,6 @@ export function createGitInfo(cfg = {}, deps = {}) {
   function entryFor(taskId) {
     const map = loadHistory()
     return map.get(String(taskId)) ?? null
-  }
-
-  /** 先頭の `~` を展開する。 */
-  function expandHome(p) {
-    const raw = String(p ?? '').trim()
-    if (!raw) return ''
-    if (home && (raw === '~' || raw.startsWith('~/'))) return path.join(home, raw.slice(1))
-    return raw
   }
 
   /** `.git`（ディレクトリまたは worktree ファイル）を持つリポジトリか判定する。 */
@@ -200,8 +193,9 @@ export function createGitInfo(cfg = {}, deps = {}) {
       return null
     }
 
-    const ws = expandHome(task.workspace)
-    const wd = expandHome(boardWorkdir)
+    // `~` の展開は `lib/homePath.js`。`home` 未設定なら `os.homedir()` を使う。
+    const ws = expandHome(task.workspace, home || undefined)
+    const wd = expandHome(boardWorkdir, home || undefined)
     const repo = isGitRepoDir(ws) ? ws : isGitRepoDir(wd) ? wd : null
     if (!repo) {
       resolvedCache.set(key, { at: Date.now(), value: null })

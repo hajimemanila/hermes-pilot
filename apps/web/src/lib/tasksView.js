@@ -61,7 +61,7 @@ export function collapseTaskEvents(events = []) {
  * `hardFailCount > 0 || hotspotCount >= 1 || softSignalCount >= 3`。
  * 「どれか 1 つでも該当」なので、`hotspots` の下限だけ 1 と書いておく。
  */
-export const COHERENCE_THRESHOLDS = Object.freeze({ hotspotCount: 1, softSignalCount: 3 })
+const COHERENCE_THRESHOLDS = Object.freeze({ hotspotCount: 1, softSignalCount: 3 })
 
 /** 数値化（不正は 0）。 */
 function num(value) {

@@ -47,10 +47,10 @@ export const BOARD_ROW_COLUMNS = Object.freeze([
 ])
 
 /** 1 DB から読む行数（review は 500、pipeline は 300 だった → 広い方に揃える）。 */
-export const BOARD_ROW_LIMIT = 500
+const BOARD_ROW_LIMIT = 500
 
 /** 盤面走査の既定周期（変えない・SPEC 非対象）。 */
-export const BOARD_TICK_INTERVAL_MS = 10_000
+const BOARD_TICK_INTERVAL_MS = 10_000
 
 /** アーカイブ済みはどちらの購読者も通知・集計に使わない（読む前に落とす）。 */
 const ARCHIVED = 'archived'

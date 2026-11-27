@@ -32,7 +32,7 @@ export const LATEST_REPORT_ID = '__latest__'
  * パイプライン統合レポート（`kind: 'pipeline'`）が持つ追加フィールド。
  * ブリッジが `chat-reports.jsonl` の行に載せた値をそのまま UI まで運ぶ。
  */
-export const PIPELINE_KEYS = [
+const PIPELINE_KEYS = [
   'kind',
   'status',
   'board',

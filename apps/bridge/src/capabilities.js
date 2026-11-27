@@ -82,7 +82,7 @@ export function hasBinary(name, pathEnv = process.env.PATH ?? '') {
  * @param {string|string[]} dirsOrPathEnv PATH 文字列かディレクトリ配列
  * @returns {string[]} ディレクトリ一覧（空要素は落とす）
  */
-export function toDirList(dirsOrPathEnv) {
+function toDirList(dirsOrPathEnv) {
   if (Array.isArray(dirsOrPathEnv)) return dirsOrPathEnv.map((d) => String(d ?? '')).filter(Boolean)
   return String(dirsOrPathEnv ?? '')
     .split(path.delimiter)

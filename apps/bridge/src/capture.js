@@ -16,7 +16,7 @@ import { outcomeOf, runHermes } from './lib/cli.js'
 const TITLE_MAX = 200
 const BODY_MAX = 4000
 export const DEDUPE_MS = 10 * 60_000
-export const CAPTURE_STATE_MAX = 500
+const CAPTURE_STATE_MAX = 500
 
 /**
  * 入力を検証・正規化する。

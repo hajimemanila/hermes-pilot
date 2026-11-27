@@ -60,7 +60,7 @@ export {
  */
 
 /** 走査するディレクトリ（リポジトリ直下・`docs/`・アーカイブ置き場）。 */
-export const SPEC_DIRS = ['docs', 'docs/archive', '']
+const SPEC_DIRS = ['docs', 'docs/archive', '']
 
 /** ファイル名の規則（`SPEC*.md`。大文字小文字は問わない）。 */
 export const SPEC_FILE_RE = /^SPEC.*\.md$/i

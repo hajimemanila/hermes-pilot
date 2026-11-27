@@ -117,7 +117,7 @@ export function opsText(lang) {
  * 理由文は worker がそのまま読む **カンバンに残る散文**なので、呼び出し元の表示言語で出す
  * （SPEC-EN-ZERO-LEAK D73）。機械トークン（タスク id・パス）は含めない。
  */
-export const REOPEN_TEXT = {
+const REOPEN_TEXT = {
   en: { defaultReason: 'Please re-check and update the implementation' },
   ja: { defaultReason: 'レビューの再確認をお願いします' },
 }

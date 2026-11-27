@@ -42,7 +42,7 @@ export function isSplitLayout() {
  * いま現行の 2 ペイン以上で描くべきか（React 外から読む）。
  * @returns {boolean} 820px 以上なら true
  */
-export function isWideLayout() {
+function isWideLayout() {
   return matches(WIDE_QUERY)
 }
 

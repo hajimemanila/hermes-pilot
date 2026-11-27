@@ -37,7 +37,7 @@ export const UNIVERSAL_DEFAULTS = {
 }
 
 /** 走査しないディレクトリ（言語非依存の一般的な生成物・依存・VCS）。 */
-export const IGNORE_DIRS = new Set([
+const IGNORE_DIRS = new Set([
   '.git',
   '.hg',
   '.svn',
@@ -69,7 +69,7 @@ export const IGNORE_DIRS = new Set([
 ])
 
 /** 行数を数える対象（テキストのソースだけ。画像・lockfile は数えない）。 */
-export const SOURCE_EXT = new Set([
+const SOURCE_EXT = new Set([
   '.js',
   '.mjs',
   '.cjs',
@@ -108,7 +108,7 @@ export const SOURCE_EXT = new Set([
 export const CONFIG_MAX_BYTES = 64 * 1024
 
 /** `checker` 実行のタイムアウト（10 秒）。 */
-export const CHECKER_TIMEOUT_MS = 10_000
+const CHECKER_TIMEOUT_MS = 10_000
 
 /** ファイル名の規則（`SPEC*.md`。`specs.js` と同じ規則）。 */
 const SPEC_FILE_RE = /^SPEC.*\.md$/i

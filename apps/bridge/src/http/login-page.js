@@ -11,7 +11,7 @@ import { langOf } from './respond.js'
  * ログイン画面の文言（`Accept-Language` / `?lang=` で切り替える）。
  * 既定は英語 — PWA 本体の既定言語（`en`）と揃える。
  */
-export const LOGIN_TEXT = {
+const LOGIN_TEXT = {
   en: {
     title: 'Hermes Pilot — Sign in',
     placeholder: 'App token',

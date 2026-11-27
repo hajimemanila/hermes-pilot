@@ -181,6 +181,13 @@ ChatPane の中身を実測すると、**ロジック（state + ハンドラ）�
 - **受入条件（Verify）**: `node --test apps/web/test/vibe.test.js apps/web/test/demoEmbed.test.js apps/bridge/test/repos.test.js apps/bridge/test/coherence.rules.test.js` が exit 0 かつ `npm test` が exit 0 かつ `npm run check:coherence` が exit 0 かつ `node scripts/check-coherence.mjs --json` の `hardFails` が `[]` かつ `dead-export` の指摘が 0 件（`softSignals` にも出ない＝pending 解除済み）
 - **実装要点**: `expandHome` の統一で相対パスの解決位置が変わるため、`normalizePath`（`repos.js`）側に `path.resolve(home, ...)` を明示して `apps/bridge/test/repos.test.js:51` の期待値を維持する。`syncRuntime` / `syncParams` / `resetSyncRuntime` は削除前に `rg` で参照 0 を再確認する。削除で `sync-owner` ルールの走査除外リストが陳腐化しないかも見る。
 
+**実施記録（CSW3-8・実測）**:
+- 片付け前の再測定: `dead-export` は **67 件**（§7.2 の 66 件 ＋ CSW3-3 で新設した `features/chat/ChatTimeline.jsx` の `scrollMessagesToEnd`）。内訳は「同一ファイル内でのみ使用 **64 件**（`export` を外す）」「完全未使用 **3 件**（`syncSources.js` の `syncRuntime` / `syncParams` / `resetSyncRuntime` を削除）」。
+- `safeStorage` は `apps/web/src/lib/safeStorage.js` の 1 定義（`createMemoryStorage` も同居）。`demo/frame.js` は同ファイルから `import` したうえで `export { createMemoryStorage, safeStorage } from '../lib/safeStorage.js'` の再輸出を残し、`lib/vibe.js` / `lib/soundFx.js` の private 版は import に置き換えた（`storage` 未指定の既定が新しい 1 定義になる）。
+- `expandHome` は `apps/bridge/src/lib/homePath.js` の 1 定義。`repos.js` の `normalizePath` は `path.resolve(home, expandHome(raw, home))` と明示し、絶対パスを前提にしていた他の呼び出し（スキャン・設定正規化・手動追加・ボード作成の親ディレクトリ）は private の `expandHomeAbs` に寄せて従来挙動を保った。`review/boards.js` と `repos.js` は再輸出を残し、`gitinfo.js` の入れ子関数は import に置き換えた（`home` 未設定は `os.homedir()`）。
+- `sync-owner` の走査除外リスト（`syncScheduler.js` / `syncSources.js`）は陳腐化しない。削除したのは取得関数ではなく未使用のアクセサ 3 つで、走査対象は 133 ファイルに増えた。
+- 片付け後: `ruleCount` 16 / `pending` 0 / `hardFails` `[]` / `softSignals` `[]`（`dead-export` は常時 hard に戻った）。`npm test` は 1416 pass / fail 0（片付け前と同数）。
+
 ### Batch CSW3-9: INTEGRITY + VISUAL GATE — `npm run verify`・0 hard / 0 soft・390px 実画面 1 枚
 
 - **Execution Mode**: [Mode: Zero-Stop]

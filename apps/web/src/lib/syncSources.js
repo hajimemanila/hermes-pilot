@@ -18,7 +18,7 @@ import { OVERVIEW_TIMEOUT_MS } from './netRecovery.js'
  *
  * @type {{ board: string|null, architectBoard: string|null, taskDetail: {board: string, id: string}|null, reviewDetailId: string|null, workerFeedId: string|null }}
  */
-export const SYNC_PARAMS = {
+const SYNC_PARAMS = {
   board: null,
   architectBoard: null,
   taskDetail: null,
@@ -103,16 +103,6 @@ export function installSyncRuntime(next) {
   return runtime
 }
 
-/** テスト・デモ用に登録を外す。 */
-export function resetSyncRuntime() {
-  runtime = null
-}
-
-/** 登録済みのランタイム（未登録なら null）。 */
-export function syncRuntime() {
-  return runtime
-}
-
 /**
  * トピックを購読する。**マウント中だけ**呼ぶ（戻り値を effect の後始末で呼ぶ）。
  *
@@ -146,9 +136,4 @@ export function setSyncState(patch) {
 export function setSyncParams(patch) {
   if (runtime?.sources) return runtime.sources.setParams(patch)
   return Object.assign(SYNC_PARAMS, patch || {})
-}
-
-/** いまの取得先パラメータ（読み取り専用の写し）。 */
-export function syncParams() {
-  return { ...(runtime?.sources?.params ?? SYNC_PARAMS) }
 }

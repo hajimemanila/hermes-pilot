@@ -129,7 +129,7 @@ export function jobStatusKey(status) {
 }
 
 /** 進行バー（`ArchitectJobBar`）に出す状態（SPEC V6 §3.3 ①）。 */
-export const JOB_ACTIVE_STATUSES = Object.freeze(['running', 'awaiting_review', 'awaiting_spec', 'failed'])
+const JOB_ACTIVE_STATUSES = Object.freeze(['running', 'awaiting_review', 'awaiting_spec', 'failed'])
 
 /**
  * キュー状態 → 表示チップの i18n キー（SPEC V7 §3.3 ③ / D33）。
@@ -183,10 +183,10 @@ export function dismissJobPath(jobId) {
 }
 
 /** 進行中（自律で進む）ジョブのポーリング間隔。 */
-export const JOB_POLL_ACTIVE_MS = 4000
+const JOB_POLL_ACTIVE_MS = 4000
 
 /** 待機中（人待ち・停止）と、ジョブが無いときのポーリング間隔。 */
-export const JOB_POLL_IDLE_MS = 20000
+const JOB_POLL_IDLE_MS = 20000
 
 /**
  * 進行バーに出すジョブを 1 件選ぶ（SPEC V6 §3.3 ①・SPEC-PILOT-V9 §3.3 ① / D43）。

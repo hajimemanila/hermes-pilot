@@ -40,7 +40,7 @@ export const TRANSITION_TABLE = {
 }
 
 /** `request-changes` に載せる理由の最後の砦（言語別の既定は `review.js` が渡す）。 */
-export const REOPEN_FALLBACK_REASON = 'Please re-check and update the implementation'
+const REOPEN_FALLBACK_REASON = 'Please re-check and update the implementation'
 
 /** `complete` に載せる metadata の既定値（検収の証跡）。 */
 export const APPROVE_METADATA = { closed_from: 'review', approved_by: 'mobile' }

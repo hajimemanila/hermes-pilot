@@ -30,7 +30,7 @@ import { t } from '../../i18n/lang.js'
  * スクロール領域を末尾へ送る（`↓ 最新へ` と、統合レポートへの合流が同じ操作を使う）。
  * 描画前（要素が無い）なら false を返し、呼び出し側が state を動かさないようにする。
  */
-export function scrollMessagesToEnd(listRef) {
+function scrollMessagesToEnd(listRef) {
   const el = listRef?.current
   if (!el) return false
   el.scrollTop = el.scrollHeight

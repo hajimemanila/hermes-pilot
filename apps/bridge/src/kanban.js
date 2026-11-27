@@ -10,7 +10,7 @@ import { safeList } from './lib/safe.js'
  * @param {unknown} body タスク本文
  * @returns {string|null} 正規化した SPEC 相対パス
  */
-export function extractSpecFromBody(body) {
+function extractSpecFromBody(body) {
   const text = String(body ?? '')
   if (!text) return null
   const m = /^Spec:\s*(.+?)\s*$/m.exec(text)

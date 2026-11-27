@@ -11,18 +11,16 @@ import os from 'node:os'
 import { DatabaseSync } from 'node:sqlite'
 import { safeList } from '../lib/safe.js'
 import { LEGACY_REVIEW_LIKE } from './legacy-tags.js'
+import { expandHome } from '../lib/homePath.js'
 
-/** `~` / `~/` をホームディレクトリへ展開する。 */
-export function expandHome(p, home = os.homedir()) {
-  const s = String(p ?? '').trim()
-  if (!s) return ''
-  if (s === '~') return home
-  if (s.startsWith('~/')) return path.join(home, s.slice(2))
-  return s
-}
+/**
+ * `~` / `~/` の展開は `lib/homePath.js` が唯一の定義（SPEC-COHERENCE-SWEEP-3 §3.5）。
+ * `review.js` はこのモジュールから `expandHome` を import しているので再輸出を残す。
+ */
+export { expandHome } from '../lib/homePath.js'
 
 /** 比較用にパスを正規化する（絶対化・小文字化・末尾スラッシュ除去）。 */
-export function normPath(p, home = os.homedir()) {
+function normPath(p, home = os.homedir()) {
   const raw = expandHome(p, home)
   if (!raw) return ''
   const abs = path.resolve(raw).toLowerCase()

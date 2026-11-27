@@ -13,6 +13,7 @@ import { setLang } from '../i18n/lang.js'
 import { setThemePref } from '../lib/theme.js'
 import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
 import { HM_STORAGE } from '../contracts/storage.js'
+import { createMemoryStorage, safeStorage } from '../lib/safeStorage.js'
 
 export const VIBE_KEY = HM_STORAGE.VIBE
 export const SOUND_KEY = HM_STORAGE.SOUND
@@ -29,7 +30,7 @@ export const MSG_READY = 'hm-demo:ready'
  * その環境では相対 URL が解決できず（`./?demo-frame=1` は 404）、`localStorage` の
  * プロパティ参照そのものが `SecurityError` になる。両方をここで吸収する。
  */
-export const EMBED_FLAG = '__HM_DEMO_EMBED__'
+const EMBED_FLAG = '__HM_DEMO_EMBED__'
 
 /**
  * 埋め込み（srcdoc / sandbox / file:// 以外の一時オリジン）で動いているか。
@@ -151,57 +152,13 @@ export function buildEmbeddedFrameSrcDoc(html) {
   return source.slice(0, root.index) + marked + source.slice(root.index + root[0].length)
 }
 
-/** メモリだけの Storage 代替（サンドボックスでも例外を投げない）。 */
-export function createMemoryStorage() {
-  const map = new Map()
-  return {
-    getItem: (key) => (map.has(String(key)) ? map.get(String(key)) : null),
-    setItem: (key, value) => {
-      map.set(String(key), String(value))
-    },
-    removeItem: (key) => {
-      map.delete(String(key))
-    },
-    clear: () => map.clear(),
-    key: (index) => [...map.keys()][Number(index)] ?? null,
-    get length() {
-      return map.size
-    },
-  }
-}
-
 /**
- * 保存領域を安全に取り出す（ネイティブが例外を投げる環境ではメモリ実装）。
+ * 保存領域の実装は `lib/safeStorage.js` が唯一の定義（SPEC-COHERENCE-SWEEP-3 §3.5）。
  *
- * @param {'localStorage'|'sessionStorage'} [kind] 種類
- * @param {Window} [win] 対象の window
- * @returns {Storage|object} 使える保存領域
+ * ここは既存の import 元（`apps/web/test/demoEmbed.test.js` など）を変えずに済ませるための
+ * 再輸出だけを持つ。
  */
-export function safeStorage(kind = 'localStorage', win = globalThis.window) {
-  const memKey = `__hmMem_${kind}`
-  const fallback = () => {
-    if (!win) return createMemoryStorage()
-    if (!win[memKey]) {
-      try {
-        Object.defineProperty(win, memKey, { value: createMemoryStorage(), configurable: true })
-      } catch {
-        return createMemoryStorage()
-      }
-    }
-    return win[memKey]
-  }
-  try {
-    const native = win?.[kind]
-    if (!native) return fallback()
-    // 参照できても書き込みで落ちる環境（プライベートモードの quota 0）を弾く
-    const probe = '__hm_probe__'
-    native.setItem(probe, '1')
-    native.removeItem(probe)
-    return native
-  } catch {
-    return fallback()
-  }
-}
+export { createMemoryStorage, safeStorage } from '../lib/safeStorage.js'
 
 /**
  * `window.localStorage` / `window.sessionStorage` を安全な実装に差し替える（冪等）。
@@ -265,7 +222,7 @@ function write(key, value, win = globalThis.window) {
  * @param {{vibe?: string, sound?: boolean, theme?: string, lang?: string}} detail 設定
  * @param {Document} [doc] 対象の文書（テスト用）
  */
-export function applyDemoSettings(detail = {}, doc = globalThis.document) {
+function applyDemoSettings(detail = {}, doc = globalThis.document) {
   if (!doc) return
   if (detail.vibe === 'dopamine' || detail.vibe === 'serotonin') {
     write(VIBE_KEY, detail.vibe)

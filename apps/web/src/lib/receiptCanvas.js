@@ -27,7 +27,7 @@ export const RECEIPT_SCALE = 2
 export const KPI_KEYS = ['cost', 'cache', 'saved', 'zeroTyping', 'tests', 'duration', 'apiCalls', 'totalTokens']
 
 /** KPI タイルの列数（1200px 幅で `4×2`）。 */
-export const KPI_COLUMNS = 4
+const KPI_COLUMNS = 4
 
 /**
  * トークン数の短縮表記（`950` / `480K` / `1.2M`）。レシートの狭いタイルに収めるため、

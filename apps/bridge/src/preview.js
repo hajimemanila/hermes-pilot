@@ -134,7 +134,7 @@ export function detectProjectPreview(repoPath, boardSlug) {
  * Vite 等の root-absolute パス（`/assets/...`）を `/api/boards/:board/preview-files/...` へ書き換え、
  * `<base href="...">` を注入してサブパス配下でもそのまま動作させる。
  */
-export function rewritePreviewHtml(html, boardSlug) {
+function rewritePreviewHtml(html, boardSlug) {
   const prefix = `/api/boards/${encodeURIComponent(String(boardSlug || ''))}/preview-files/`
   let out = String(html ?? '')
   // `/api/` や `//` 以外の先頭 `/` 参照をプレビュー配下へ寄せる

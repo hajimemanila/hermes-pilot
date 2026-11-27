@@ -44,7 +44,7 @@ export function checkerSha256(absPath) {
  * @param {string} allowlistPath 許可リストの絶対パス
  * @returns {{version: number, approved: Record<string, {checker: string, sha256: string, approvedAt?: string}>}} 内容
  */
-export function readAllowlist(allowlistPath) {
+function readAllowlist(allowlistPath) {
   if (!allowlistPath) return { version: 1, approved: {} }
   try {
     const raw = JSON.parse(fs.readFileSync(allowlistPath, 'utf8'))

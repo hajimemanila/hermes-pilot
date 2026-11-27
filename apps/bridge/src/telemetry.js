@@ -20,7 +20,7 @@ import { extractTaskSpec, readRuns, runsPathFor } from './specs.js'
  */
 
 /** 既定の集計窓（時間）。 */
-export const DEFAULT_HOURS = 24
+const DEFAULT_HOURS = 24
 
 /**
  * 手入力の「1 アクション」換算文字数。
@@ -33,7 +33,7 @@ export const TYPED_CHARS_PER_ACTION = 40
  * その割引は **既に `cost` に反映済み**。よって節約見込額は実コストから逆算する
  * （トークン数×単価で積むと、state.db の単価仮定と二重計上になって実コストを大きく超える）。
  */
-export const CACHE_SAVINGS_RATIO = 0.9
+const CACHE_SAVINGS_RATIO = 0.9
 
 /** 1 タップと数える audit 種別（既定 1 回、`choiceCount` があればその数）。 */
 const TAP_KINDS = new Set(['review.answer', 'review.approve', 'review.annotation', 'kanban.close', 'kanban.unblock'])

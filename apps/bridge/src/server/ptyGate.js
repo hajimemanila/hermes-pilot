@@ -18,7 +18,7 @@ import fs from 'node:fs'
 export const PTMX_PATH = '/dev/ptmx'
 
 /** 失敗後に spawn を試さない時間。クライアントの再接続（1s→最大15s）より短くしない。 */
-export const DEFAULT_COOLDOWN_MS = 15_000
+const DEFAULT_COOLDOWN_MS = 15_000
 
 /**
  * 門番を作る。`openImpl` / `closeImpl` / `now` はテスト用の差し込み口。

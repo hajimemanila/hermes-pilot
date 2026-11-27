@@ -16,11 +16,11 @@
  */
 
 /** 補足欄の見出し（シートが出力する・日英）。 */
-export const PASTE_NOTE_MARKS = ['補足:', 'note:', 'Note:']
+const PASTE_NOTE_MARKS = ['補足:', 'note:', 'Note:']
 /** 全体メモの見出し（シートが出力する・日英・旧名 `全体への赤ペン:` も受ける）。 */
-export const PASTE_GLOBAL_MARKS = ['全体へのレビュー:', '全体への赤ペン:', 'Overall Note:']
+const PASTE_GLOBAL_MARKS = ['全体へのレビュー:', '全体への赤ペン:', 'Overall Note:']
 /** 未選択を表す接頭辞（シートが出力する・日英）。 */
-export const PASTE_UNSELECTED_MARKS = ['(未選択', '(unselected']
+const PASTE_UNSELECTED_MARKS = ['(未選択', '(unselected']
 
 /** 正規表現のメタ文字を落とす（見出しは固定文字列だが、後で増やしても壊れないように）。 */
 const esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

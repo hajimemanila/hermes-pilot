@@ -230,7 +230,7 @@ export const DEMO_SNIPPETS = {
  *
  * @type {{id: string, hot?: boolean, run?: boolean, en: [string, string], ja: [string, string], text: string}[]}
  */
-export const DEMO_TERM_BUILTIN = [
+const DEMO_TERM_BUILTIN = [
   // --- Hot 6（バーに出す: 安全・読み取り専用・どの cwd でも完結） -----------
   {
     id: 't-hermes-status',

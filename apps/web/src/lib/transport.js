@@ -114,7 +114,7 @@ export function blankSources() {
  * @param {Record<string, number>} [graceMs] 系統ごとの猶予
  * @returns {string} 状態語彙
  */
-export function sourceStateAt(source, record, nowMs, graceMs = GRACE_MS) {
+function sourceStateAt(source, record, nowMs, graceMs = GRACE_MS) {
   const rec = record && typeof record === 'object' ? record : null
   if (!rec || rec.kind === UNKNOWN) return 'connecting'
   if (rec.kind === 'ready') return 'ready'

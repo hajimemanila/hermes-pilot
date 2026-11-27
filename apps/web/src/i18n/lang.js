@@ -41,7 +41,7 @@ export function normalizePref(value) {
  * @param {unknown} tag タグ
  * @returns {'ja'|'en'} 言語
  */
-export function langOfTag(tag) {
+function langOfTag(tag) {
   return String(tag ?? '').trim().toLowerCase().startsWith('ja') ? 'ja' : 'en'
 }
 

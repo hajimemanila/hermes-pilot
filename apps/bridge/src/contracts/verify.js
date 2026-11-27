@@ -17,7 +17,7 @@
  */
 
 /** 委ね先の説明（英文の契約文に埋め込む括弧書き）。 */
-export const VERIFY_SOURCE_HINTS = 'its profile memory, AGENTS.md, or the SPEC **Verify** section'
+const VERIFY_SOURCE_HINTS = 'its profile memory, AGENTS.md, or the SPEC **Verify** section'
 
 /** 検証コマンドの呼称（英文。文の主語として使える名詞句）。 */
 export const VERIFY_COMMAND_NOUN = 'the verification command the target repository declares'
@@ -30,7 +30,7 @@ export const SCREEN_CHECK_CONTRACT =
   'the screen sizes the target repository declares (its SPEC **Verify** section or design rules)'
 
 /** 検証コマンドの呼称（和文。レポート・提案文の JA 側に使う）。 */
-export const VERIFY_COMMAND_NOUN_JA = '対象リポジトリが宣言する検証コマンド'
+const VERIFY_COMMAND_NOUN_JA = '対象リポジトリが宣言する検証コマンド'
 
 /** 検証コマンド＋委ね先（和文）。 */
 export const VERIFY_CONTRACT_JA = `${VERIFY_COMMAND_NOUN_JA}（SPEC の Verify 欄・プロファイルメモリ・AGENTS.md）`

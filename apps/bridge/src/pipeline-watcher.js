@@ -49,7 +49,7 @@ import { LEGACY_REVIEW_TAG } from './review/legacy-tags.js'
  */
 
 /** レポート種別（`chat-reports.jsonl` の `kind`）。 */
-export const PIPELINE_KIND = 'pipeline'
+const PIPELINE_KIND = 'pipeline'
 
 /** 「まだ動いている」状態。これが 0 になったら収束。 */
 const OPEN_STATUSES = new Set(['running', 'ready', 'todo'])
@@ -329,7 +329,7 @@ const REPORT_LABELS = {
  * @param {'ja'|'en'} [lang] 表示言語
  * @returns {string|null} 表示文字列
  */
-export function fmtDurationMin(min, lang = 'ja') {
+function fmtDurationMin(min, lang = 'ja') {
   const n = Number(min)
   if (!Number.isFinite(n) || n <= 0) return null
   const h = Math.floor(n / 60)
@@ -344,7 +344,7 @@ export function fmtDurationMin(min, lang = 'ja') {
  * @param {number|null|undefined} value トークン数
  * @returns {string|null} 表示文字列
  */
-export function fmtTokenCount(value) {
+function fmtTokenCount(value) {
   const n = Number(value)
   if (!Number.isFinite(n) || n < 0) return null
   if (n >= 1e6) return `${Math.round((n / 1e6) * 10) / 10}M`
@@ -658,7 +658,7 @@ function waveHash(tasks) {
  * @param {object} [cfg] 設定（`reviewDir` / `pluginDataDir` / `kanbanRoot`）
  * @returns {string} ディレクトリ
  */
-export function reviewRootFor(cfg = {}) {
+function reviewRootFor(cfg = {}) {
   return (
     cfg.reviewDir ??
     path.join(

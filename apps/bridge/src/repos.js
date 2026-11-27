@@ -5,6 +5,13 @@ import { DatabaseSync } from 'node:sqlite'
 import { outcomeOf, run as runCli, runHermes } from './lib/cli.js'
 import { writeFileAtomic, writeJsonAtomic } from './lib/atomic.js'
 import { safeList } from './lib/safe.js'
+import { expandHome } from './lib/homePath.js'
+
+/**
+ * `~` / `~/` の展開は `lib/homePath.js` が唯一の定義（SPEC-COHERENCE-SWEEP-3 §3.5）。
+ * 既存の import 元のために再輸出を残す。
+ */
+export { expandHome } from './lib/homePath.js'
 
 /**
  * リポジトリ（作業ディレクトリ）の自動検出と、カンバンボードとの対応。
@@ -38,23 +45,25 @@ const DEFAULT_SCAN_DIRS = ['~/Projects', '~/projects']
 export function normalizePath(p, home = os.homedir()) {
   const raw = String(p ?? '').trim()
   if (!raw) return ''
-  const abs = path.resolve(expandHome(raw, home))
+  // 相対パスはホーム基準で解決する（`expandHome` 自体は絶対化しない・§3.5）。
+  const abs = path.resolve(home, expandHome(raw, home))
   const lower = abs.toLowerCase()
   return lower.length > 1 ? lower.replace(/[/\\]+$/, '') : lower
 }
 
 /**
- * `~` を展開して絶対パスにする（表記はそのまま）。
+ * `~` を展開し、**相対パスもホーム基準で絶対化する**（このモジュールの従来挙動）。
+ *
+ * `expandHome`（`lib/homePath.js`）は §3.5 で「相対はそのまま」に揃えたので、
+ * 絶対パスを前提にしていた呼び出しはこちらを使う。解決位置を呼び出し側で隠さない。
+ *
  * @param {string} p パス
  * @param {string} [home] ホーム
- * @returns {string} 絶対パス
+ * @returns {string} 絶対パス（空入力は空文字）
  */
-export function expandHome(p, home = os.homedir()) {
-  const raw = String(p ?? '').trim()
-  if (!raw) return ''
-  if (raw === '~') return home
-  if (raw.startsWith('~/')) return path.join(home, raw.slice(2))
-  return path.isAbsolute(raw) ? raw : path.resolve(home, raw)
+function expandHomeAbs(p, home = os.homedir()) {
+  const expanded = expandHome(p, home)
+  return expanded ? path.resolve(home, expanded) : ''
 }
 
 /**
@@ -109,7 +118,7 @@ export function dedupeScanDirs(dirs, home = os.homedir()) {
   for (const raw of Array.isArray(dirs) ? dirs : []) {
     const s = typeof raw === 'string' ? raw.trim() : ''
     if (!s) continue
-    const abs = expandHome(s, home)
+    const abs = expandHomeAbs(s, home)
     let key = `raw:${s}`
     try {
       const st = fs.statSync(abs)
@@ -130,7 +139,7 @@ export function dedupeScanDirs(dirs, home = os.homedir()) {
       out[idx] = s
     } else if (sTilde === prevTilde) {
       const real = realBasename(abs)
-      if (path.basename(abs) === real && path.basename(expandHome(prev, home)) !== real) {
+      if (path.basename(abs) === real && path.basename(expandHomeAbs(prev, home)) !== real) {
         out[idx] = s
       }
     }
@@ -148,7 +157,7 @@ export function defaultReposConfig(home = os.homedir()) {
     scanDirs: dedupeScanDirs(
       DEFAULT_SCAN_DIRS.filter((d) => {
         try {
-          return fs.statSync(expandHome(d, home)).isDirectory()
+          return fs.statSync(expandHomeAbs(d, home)).isDirectory()
         } catch {
           return false
         }
@@ -167,7 +176,7 @@ export function defaultReposConfig(home = os.homedir()) {
  * @param {string} [home] ホーム
  * @returns {{scanDirs: string[], pinned: string[], hidden: string[], custom: Array<{id: string, label: string, path: string}>}} 設定
  */
-export function normalizeReposConfig(raw, home = os.homedir()) {
+function normalizeReposConfig(raw, home = os.homedir()) {
   const base = defaultReposConfig(home)
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return base
   const strList = (v, map) =>
@@ -177,7 +186,7 @@ export function normalizeReposConfig(raw, home = os.homedir()) {
   const custom = []
   if (Array.isArray(raw.custom)) {
     for (const c of raw.custom) {
-      const abs = expandHome(String(c?.path ?? '').trim(), home)
+      const abs = expandHomeAbs(String(c?.path ?? '').trim(), home)
       if (!abs || !path.isAbsolute(abs)) continue
       const id = repoIdFromPath(String(c?.id ?? '').trim() || abs)
       const label = String(c?.label ?? '').trim() || path.basename(abs)
@@ -228,7 +237,7 @@ export function scanGitDirs(scanDirs = [], home = os.homedir()) {
   const out = []
   const seen = new Set()
   for (const rawDir of scanDirs) {
-    const dir = expandHome(String(rawDir ?? '').trim(), home)
+    const dir = expandHomeAbs(String(rawDir ?? '').trim(), home)
     if (!dir || !path.isAbsolute(dir)) continue
     let entries = []
     try {
@@ -268,7 +277,7 @@ export function mergeRepos({ config = {}, scanned = [], boards = [], cwds = [], 
   const homeKey = normalizePath(home, home)
 
   const push = (raw, label, source) => {
-    const abs = expandHome(String(raw ?? '').trim(), home)
+    const abs = expandHomeAbs(String(raw ?? '').trim(), home)
     if (!abs || !path.isAbsolute(abs)) return
     const key = normalizePath(abs, home)
     if (!key || key === homeKey || key === '/' || seenPath.has(key) || hidden.has(key)) return
@@ -514,7 +523,7 @@ export function createRepos(cfg = {}, deps = {}) {
     if (raw === '~' || normalizePath(raw) === normalizePath(os.homedir())) {
       return { ok: false, code: 'REPO_PATH_FORBIDDEN' }
     }
-    const abs = expandHome(raw)
+    const abs = expandHomeAbs(raw)
     if (!path.isAbsolute(abs)) return { ok: false, code: 'REPO_PATH_INVALID' }
     if (!isGitRepo(abs)) return { ok: false, code: 'REPO_NOT_GIT' }
     const config = readConfig()
@@ -563,7 +572,7 @@ export function createRepos(cfg = {}, deps = {}) {
     for (const raw of dirs) {
       const s = String(raw ?? '').trim()
       if (!s) continue
-      const abs = expandHome(s)
+      const abs = expandHomeAbs(s)
       if (!path.isAbsolute(abs)) return { ok: false, code: 'SCAN_DIR_NOT_ABSOLUTE', params: { path: s } }
       if (normalizePath(abs) === normalizePath(os.homedir())) {
         return { ok: false, code: 'SCAN_DIR_FORBIDDEN' }
@@ -626,14 +635,14 @@ export function createRepos(cfg = {}, deps = {}) {
 
     let parentAbs = ''
     if (input?.parentDir) {
-      parentAbs = expandHome(String(input.parentDir).trim())
+      parentAbs = expandHomeAbs(String(input.parentDir).trim())
       if (!path.isAbsolute(parentAbs)) return { ok: false, code: 'REPO_PATH_INVALID' }
       if (normalizePath(parentAbs) === normalizePath(os.homedir()) || normalizePath(parentAbs) === '/') {
         return { ok: false, code: 'SCAN_DIR_FORBIDDEN' }
       }
     } else {
       const dirs = scanDirs()
-      if (dirs.length) parentAbs = expandHome(dirs[0])
+      if (dirs.length) parentAbs = expandHomeAbs(dirs[0])
       else {
         const firstRepo = list().find((r) => r?.path)
         if (firstRepo) parentAbs = path.dirname(firstRepo.path)

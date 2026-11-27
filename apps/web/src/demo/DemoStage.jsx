@@ -50,7 +50,7 @@ function writeStored(key, value) {
 }
 
 /** 保存値から初期の Vibe を決める（未保存は dopamine。CSS と揃える）。 */
-export function initialVibe() {
+function initialVibe() {
   const saved = readStored(VIBE_KEY)
   if (saved === 'dopamine' || saved === 'serotonin') return saved
   try {

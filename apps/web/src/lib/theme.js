@@ -17,7 +17,7 @@ export const THEMES = ['dark', 'light', 'system']
 /** 既定。SPEC §7.1 は Dark 既定。 */
 export const DEFAULT_THEME = 'dark'
 /** 実際に適用される色（`system` を解決した結果）。 */
-export const RESOLVED = ['dark', 'light']
+const RESOLVED = ['dark', 'light']
 /** `<meta name="theme-color">` に入れる色（背景トークンと同じ）。 */
 export const THEME_COLOR = { dark: '#051319', light: '#f4f7f8' }
 /** 端末設定の判定に使うクエリ。 */
@@ -73,7 +73,7 @@ export function resolveTheme(pref, opts) {
  * 保存されている設定値を読む（未保存・不正・localStorage 不可は既定）。
  * @returns {'dark'|'light'|'system'} 設定値
  */
-export function readThemePref() {
+function readThemePref() {
   try {
     const raw = typeof localStorage === 'undefined' ? null : localStorage.getItem(THEME_KEY)
     return normalizeTheme(raw) ?? DEFAULT_THEME
@@ -103,7 +103,7 @@ function notify() {
  * @param {'dark'|'light'} resolved 適用する色
  * @returns {'dark'|'light'} 反映した色
  */
-export function applyResolved(resolved) {
+function applyResolved(resolved) {
   const theme = RESOLVED.includes(resolved) ? resolved : 'dark'
   if (typeof document === 'undefined') return theme
   try {

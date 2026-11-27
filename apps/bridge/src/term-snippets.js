@@ -28,7 +28,7 @@ const DEFAULT_PILOT_CLI = path.resolve(path.dirname(fileURLToPath(import.meta.ur
  * @param {object} [caps] Capability / 上書き（テスト用）
  * @returns {string} 実行可能な ASCII コマンド
  */
-export function pairQrCommand(caps = {}) {
+function pairQrCommand(caps = {}) {
   const override = typeof caps?.pilotQrCmd === 'string' ? caps.pilotQrCmd.trim() : ''
   if (override) return override
   const onPath = typeof caps?.hasPilotCli === 'boolean' ? caps.hasPilotCli : hasBinary('hermes-pilot')

@@ -14,6 +14,8 @@
 
 import { haptic, hapticPattern } from './haptic.js'
 import { isSoundEnabled, playSound } from './soundFx.js'
+// 保存領域の取得は `lib/safeStorage.js` が唯一の定義（SPEC-COHERENCE-SWEEP-3 §3.5）。
+import { safeStorage } from './safeStorage.js'
 import { HM_EVENTS } from '../contracts/events.js'
 import { HM_STORAGE } from '../contracts/storage.js'
 
@@ -26,14 +28,14 @@ export const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)'
 /** コンボが継続する窓（ms）。 */
 export const COMBO_WINDOW_MS = 20_000
 /** コンボの上限（表示崩れ防止）。 */
-export const COMBO_MAX = 99
+const COMBO_MAX = 99
 /** モード変更の通知イベント名。 */
 export const VIBE_EVENT = HM_EVENTS.VIBE
 /** パーティクル発火イベント名（`FxLayer.jsx` が購読する）。 */
 export const FX_EVENT = HM_EVENTS.FX_BURST
 
 /** コンボを進める操作（承認・赤入れ・一括起票）。 */
-export const COMBO_KINDS = ['approve', 'stamp', 'fastTrack', 'launch']
+const COMBO_KINDS = ['approve', 'stamp', 'fastTrack', 'launch']
 
 /**
  * Dopamine の振動計画。配列は多段バイブ、文字列は既存の `haptic()` の種類。
@@ -51,7 +53,7 @@ export const HAPTIC_PLAN = {
 }
 
 /** Serotonin でも残す基本ハプティック（`haptic.js` の種類）。 */
-export const SEROTONIN_HAPTIC = {
+const SEROTONIN_HAPTIC = {
   allClear: 'success',
   receipt: 'success',
   approve: 'success',
@@ -60,15 +62,6 @@ export const SEROTONIN_HAPTIC = {
   launch: 'success',
   combo: 'action',
   tap: 'tap',
-}
-
-/** `localStorage` が無い/壊れている環境でも落ちない取得。 */
-function safeStorage() {
-  try {
-    return globalThis.localStorage ?? null
-  } catch {
-    return null
-  }
 }
 
 /** `document` が無い環境（Node テスト）でも落ちない取得。 */
@@ -360,14 +353,14 @@ export class ComboTracker {
 }
 
 /** アプリ共通のコンボ追跡（現在モードを毎回読む）。 */
-export const comboTracker = new ComboTracker({ vibe: () => getActiveVibe() })
+const comboTracker = new ComboTracker({ vibe: () => getActiveVibe() })
 
 /**
  * パーティクル発火イベントを投げる（`FxLayer.jsx` が 1 つだけ購読する）。
  * @param {{kind: string, combo?: number, x?: number, y?: number, target?: object}} detail
  * @returns {boolean} 発火したか
  */
-export function dispatchFx(detail) {
+function dispatchFx(detail) {
   const w = safeWin(detail?.target)
   try {
     if (typeof w?.dispatchEvent !== 'function' || typeof globalThis.CustomEvent !== 'function') return false

@@ -7,11 +7,11 @@
 
 export const RADAR_SIZE = 220
 export const RADAR_CENTER = 110
-export const ORBIT_RADIUS = 78
+const ORBIT_RADIUS = 78
 
 export const WORKER_PALETTE = Object.freeze(['w1', 'w2', 'w3'])
 
-export const RING_RADII = Object.freeze({
+const RING_RADII = Object.freeze({
   core: 34,
   verify: 62,
   explore: 86,

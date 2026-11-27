@@ -31,7 +31,7 @@ const TOOL_ERROR_RE =
   /(?:\bexit(?:\s+code)?\s+[1-9]\d*\b|\btraceback\b|\bsyntaxerror\b|\btypeerror\b|\breferenceerror\b|\bassertionerror\b|\bcommand failed\b|\benoent\b|\berror\s*:|\bfailed\b)/i
 
 /** Detect tool errors from message content while ignoring `"0 fail"` / `"0 errors"`. */
-export function detectToolError(content) {
+function detectToolError(content) {
   const raw = String(content ?? '').trim()
   if (!raw) return { failed: false, errorTail: null }
   const normalized = raw.replace(HARMLESS_ZERO_ERR_RE, ' ')
@@ -77,7 +77,7 @@ function lineMultisetDelta(oldStr, newStr) {
  * @param {string|null} content
  * @returns {{filePath: string|null, addedLines: number, removedLines: number, command: string|null}}
  */
-export function extractToolXray(toolName, args = null, content = null) {
+function extractToolXray(toolName, args = null, content = null) {
   const a = args && typeof args === 'object' ? args : {}
   const filePath = shortenFilePath(a.path ?? a.file_path ?? a.Path ?? a.TargetFile ?? a.file ?? null)
   let addedLines = 0
@@ -112,16 +112,16 @@ const LEASE_GRACE_SEC = 60
  * `awaiting_review`（赤ペン待ち）は 🔔 判断待ちピルが受け持つので件数には数えないが、
  * 「いま何が動いているか」を見る場所としては一覧に出す（SPEC-PILOT-V9 §3.2）。
  */
-export const ARCHITECT_LIST_STATUSES = ['running', 'awaiting_spec', 'awaiting_review']
+const ARCHITECT_LIST_STATUSES = ['running', 'awaiting_spec', 'awaiting_review']
 
 /** `counts.architect`（⚡ 実行中）に数える状態。 */
-export const ARCHITECT_RUNNING_STATUSES = ['running', 'awaiting_spec']
+const ARCHITECT_RUNNING_STATUSES = ['running', 'awaiting_spec']
 
 /**
  * 停滞とみなす経過（3分）。`architect.js` の `STALLED_AFTER_MS` と同値で、
  * あちらが `stalled` を返すようになったらそちらを優先する（この値はその手前の保険）。
  */
-export const ARCHITECT_STALLED_MS = 180_000
+const ARCHITECT_STALLED_MS = 180_000
 
 /**
  * ジョブの状態 → フェーズの控えめな写像。
@@ -132,7 +132,7 @@ export const ARCHITECT_STALLED_MS = 180_000
  * @param {string} status ジョブ状態
  * @returns {string} フェーズ名
  */
-export function phaseOfStatus(status) {
+function phaseOfStatus(status) {
   const s = String(status ?? '')
   if (['awaiting_review', 'spec_ready', 'launched', 'failed'].includes(s)) return s
   return 'spawning'

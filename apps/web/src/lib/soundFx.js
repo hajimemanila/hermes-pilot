@@ -13,6 +13,8 @@
  */
 
 import { HM_STORAGE } from '../contracts/storage.js'
+// 保存領域の取得は `lib/safeStorage.js` が唯一の定義（SPEC-COHERENCE-SWEEP-3 §3.5）。
+import { safeStorage } from './safeStorage.js'
 
 /** `localStorage` のキー。 */
 export const SOUND_KEY = HM_STORAGE.SOUND
@@ -28,15 +30,6 @@ export const NOTES = {
   G5: 783.99,
   A5: 880.0,
   C6: 1046.5,
-}
-
-/** localStorage が無い/壊れている環境でも落ちない取得。 */
-function safeStorage() {
-  try {
-    return globalThis.localStorage ?? null
-  } catch {
-    return null
-  }
 }
 
 /**
@@ -73,7 +66,7 @@ export function setSoundEnabled(enabled, storage = safeStorage()) {
  * @param {number} combo
  * @returns {number} 周波数の倍率
  */
-export function comboShift(combo) {
+function comboShift(combo) {
   const n = Math.max(1, Math.min(7, Math.floor(Number(combo) || 1)))
   return 2 ** (((n - 1) * 2) / 12)
 }

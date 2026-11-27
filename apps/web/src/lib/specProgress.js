@@ -23,7 +23,7 @@ const BATCH_LINE_RE = /^Batch:\s*([A-Za-z][A-Za-z0-9._-]{0,15})\s*(?:—|–|-{1
 const LEGACY_SPEC_RE = /(?:docs\/)?SPEC[A-Za-z0-9._-]*\.md/i
 
 /** 完了とみなす状態。`archived`（破棄済み）は**完了ではない**（D92）。 */
-export const DONE_STATUS = 'done'
+const DONE_STATUS = 'done'
 
 /** 無印タスクを拾ってよい猶予（ms）。SPEC の mtime とタスク作成時刻の丸め差を吸収する。 */
 export const SPEC_MTIME_SLACK_MS = 5000

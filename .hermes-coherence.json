@@ -5,9 +5,6 @@
   "hotspotTouches": 5,
   "baselineFile": "scripts/coherence-baseline.json",
   "checker": "scripts/check-coherence.mjs",
-  "checkerPending": {
-    "dead-export": "CSW3-8"
-  },
   "deadExportDirs": ["apps/web/src", "apps/bridge/src"],
   "deadExportReaderDirs": [
     "apps/web/src",
