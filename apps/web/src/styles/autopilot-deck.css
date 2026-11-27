@@ -336,36 +336,36 @@ html[data-vibe='dopamine'] .ap-launcher-submit { background: var(--vibe-primary-
 
 .ap-studio-card,
 .ap-complete-card {
-  padding: 18px 16px;
-  border-radius: 22px;
+  padding: 12px 14px;
+  border-radius: 20px;
   background: var(--surface);
   border: 1px solid var(--line-strong);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   position: relative;
   overflow: hidden;
 }
 
 .ap-studio-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.ap-live-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: var(--rec-bg); color: var(--rec-fg); font-size: 11px; font-weight: 800; }
+.ap-live-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; background: var(--rec-bg); color: var(--rec-fg); font-size: 11px; font-weight: 800; }
 .ap-live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: ap-pulse 1.6s ease-in-out infinite; }
 .ap-batch-pill { font-size: 12px; font-weight: 800; color: var(--accent); }
-.ap-studio-title, .ap-complete-title { margin: 0; font-size: 17px; font-weight: 800; color: var(--text); overflow-wrap: anywhere; }
+.ap-studio-title, .ap-complete-title { margin: 0; font-size: 15px; font-weight: 800; color: var(--text); overflow-wrap: anywhere; }
 
 .ap-step-track { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
-.ap-step-node { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); }
-.ap-step-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--line-strong); }
+.ap-step-node { display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 10.5px; color: var(--muted); }
+.ap-step-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--line-strong); }
 .ap-step-node.done { color: var(--good); }
 .ap-step-node.done .ap-step-dot { background: var(--good); }
 .ap-step-node.current { color: var(--accent); font-weight: 800; }
 .ap-step-node.current .ap-step-dot { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
 
-.ap-progress-rail { height: 8px; border-radius: 999px; background: var(--bg-elev); overflow: hidden; }
+.ap-progress-rail { height: 7px; border-radius: 999px; background: var(--bg-elev); overflow: hidden; }
 .ap-progress-fill { height: 100%; border-radius: 999px; background: var(--accent); transition: width 0.35s ease; }
 
-.ap-ticker-box { padding: 10px 12px; border-radius: 12px; background: var(--bg-elev); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 3px; }
-.ap-ticker-text { font-size: 13px; font-weight: 700; color: var(--text); }
+.ap-ticker-compact { padding: 6px 10px; border-radius: 10px; background: var(--bg-elev); border: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.ap-ticker-text { font-size: 12px; font-weight: 700; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ap-ticker-sub { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ap-studio-foot, .ap-complete-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
 

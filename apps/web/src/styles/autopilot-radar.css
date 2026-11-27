@@ -1,15 +1,15 @@
 /* AP2-5: Panoptes-inspired LiveRadarCard SVG & BeforeAfterTimelapse CSS-only transitions */
 
 .ap-radar-card {
-  margin-top: 4px;
-  padding: 12px;
-  border-radius: 16px;
-  background: radial-gradient(circle at 50% 32%, rgba(34, 211, 238, 0.1), var(--bg-elev));
+  margin-top: 2px;
+  padding: 9px 10px;
+  border-radius: 14px;
+  background: radial-gradient(circle at 50% 30%, rgba(34, 211, 238, 0.1), var(--bg-elev));
   border: 1px solid var(--line);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 7px;
 }
 
 .ap-radar-stage {
@@ -21,10 +21,17 @@
 }
 
 .ap-radar-svg {
-  width: 220px;
-  height: 220px;
+  width: 160px;
+  height: 160px;
   max-width: 100%;
   display: block;
+}
+
+@media (max-width: 400px), (max-height: 760px) {
+  .ap-radar-svg {
+    width: 148px;
+    height: 148px;
+  }
 }
 
 .ap-radar-ring {
@@ -32,6 +39,14 @@
   stroke: var(--line-strong);
   stroke-width: 1;
   stroke-dasharray: 3 3;
+}
+
+.ap-radar-ring-label {
+  font-size: 8px;
+  font-weight: 800;
+  fill: var(--muted);
+  letter-spacing: 0.04em;
+  pointer-events: none;
 }
 
 .ap-radar-axis {
@@ -46,6 +61,17 @@
 
 .ap-radar-core-dot {
   fill: var(--accent);
+}
+
+.ap-radar-blip-node {
+  cursor: pointer;
+}
+
+.ap-radar-selected-ring {
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 1.5;
+  stroke-dasharray: 2 2;
 }
 
 .ap-radar-blip {
@@ -66,23 +92,83 @@
   animation: ap-blip-ping 1.8s ease-out infinite;
 }
 
+.ap-radar-inspector {
+  width: 100%;
+  padding: 6px 9px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ap-radar-insp-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  min-width: 0;
+}
+
+.ap-radar-insp-ring {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--rec-bg);
+  color: var(--rec-fg);
+  font-size: 10px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.ap-radar-insp-tool {
+  font-weight: 800;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
+}
+
+.ap-radar-insp-sub {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.ap-radar-insp-task {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
+}
+
+.ap-radar-insp-hint {
+  font-size: 10px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
 .ap-radar-metrics {
   width: 100%;
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 6px;
+  gap: 5px;
 }
 
 .ap-radar-stat {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 4px 9px;
+  gap: 4px;
+  padding: 3px 8px;
   border-radius: 999px;
   border: 1px solid var(--line);
   background: var(--surface);
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 700;
   color: var(--text);
 }
@@ -103,15 +189,23 @@
 }
 
 .ap-radar-feed-row {
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 5px 8px;
-  border-radius: 9px;
+  padding: 4px 8px;
+  border-radius: 8px;
   background: var(--surface);
   border: 1px solid var(--line);
   font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ap-radar-feed-row.selected {
+  border-color: var(--accent);
+  background: var(--rec-bg);
 }
 
 .ap-radar-feed-main {

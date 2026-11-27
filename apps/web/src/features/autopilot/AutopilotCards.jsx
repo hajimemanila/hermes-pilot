@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { api } from '../../api.js'
 import { Sheet } from '../../components/Ui.jsx'
 import { useI18n } from '../../i18n/index.js'
@@ -350,10 +350,27 @@ export function LiveStudioCard({ stage, onSwitchCockpit, onSaveMemo }) {
   const [split, setSplit] = useState(50)
   const [memoOpen, setMemoOpen] = useState(false)
   const [memoText, setMemoText] = useState('')
-  const stepIdx = Math.max(0, Math.min(3, Number(stage?.stepIndex) || 0))
+  const highWaterRef = useRef({ key: '', maxPct: 0, maxStep: 0 })
+
+  const runKey = String(stage?.runKey || stage?.activeJob?.id || stage?.activeTask?.id || 'live')
+  if (highWaterRef.current.key !== runKey) {
+    highWaterRef.current = { key: runKey, maxPct: 0, maxStep: 0 }
+  }
+  const rawStep = Math.max(0, Math.min(3, Number(stage?.stepIndex) || 0))
   const total = Number(stage?.totalCount) || 0
   const done = Number(stage?.doneCount) || 0
-  const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : Math.round(((stepIdx + 1) / 4) * 75)
+  const rawPct =
+    typeof stage?.progressPct === 'number'
+      ? stage.progressPct
+      : total > 0
+        ? Math.min(100, Math.round((done / total) * 100))
+        : Math.round(((rawStep + 1) / 4) * 20)
+
+  highWaterRef.current.maxStep = Math.max(highWaterRef.current.maxStep, rawStep)
+  highWaterRef.current.maxPct = Math.max(highWaterRef.current.maxPct, rawPct)
+  const stepIdx = highWaterRef.current.maxStep
+  const pct = highWaterRef.current.maxPct
+
   const compare = stage?.compareItem
   const afterSrc = compare ? `/api/review/${encodeURIComponent(compare.id)}/image` : null
   const beforeSrc = compare?.review?.hasCompare ? `${afterSrc}?compare=1` : afterSrc
@@ -390,15 +407,18 @@ export function LiveStudioCard({ stage, onSwitchCockpit, onSaveMemo }) {
         </ol>
 
         <div className="ap-progress-rail" aria-hidden="true">
-          <div className="ap-progress-fill" style={{ width: `${Math.max(12, pct)}%` }} />
+          <div className="ap-progress-fill" style={{ width: `${Math.max(8, pct)}%` }} />
         </div>
 
-        <div className="ap-ticker-box" role="status">
+        <div className="ap-ticker-compact" role="status">
           <span className="ap-ticker-text">{t(stage?.activityKey || 'autopilot.live.actWorking')}</span>
-          {stage?.toolLabel && <span className="ap-ticker-sub">{stage.toolLabel}</span>}
         </div>
 
-        <LiveRadarCard initialLive={stage?.live || null} />
+        <LiveRadarCard
+          initialLive={stage?.live || null}
+          tasks={stage?.activeTasks || (stage?.activeTask ? [stage.activeTask] : [])}
+          activeJob={stage?.activeJob || null}
+        />
 
         {afterSrc && (
           <div className="ap-wipe-inline">
