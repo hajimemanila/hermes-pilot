@@ -24,7 +24,7 @@
     "bin/hermes-pilot.mjs": 993,
     "apps/bridge/test/specs.test.js": 496,
     "apps/dashboard/style.css": 928,
-    "apps/bridge/src/specs.js": 613,
+    "apps/bridge/src/specs.js": 603,
     "apps/bridge/test/pipelineWatcher.test.js": 837,
     "apps/bridge/src/qr.js": 799
   }

@@ -86,12 +86,6 @@ export function classifyToolRing(toolName) {
   return 'explore'
 }
 
-const RING_LABEL_KEYS = Object.freeze({
-  core: 'autopilot.radar.ringCore',
-  verify: 'autopilot.radar.ringVerify',
-  explore: 'autopilot.radar.ringExplore',
-})
-
 /** Format tool duration cleanly (`420 ms`, `1.8 s`, `12 s`). */
 export function formatDurationMs(ms) {
   if (ms === null || ms === undefined || ms === '') return ''
@@ -210,7 +204,6 @@ export function projectRadarBlips(liveSnapshot, { tasks = [], activeJob = null, 
       id: `${name}-${idx}`,
       name,
       ring,
-      ringLabelKey: RING_LABEL_KEYS[ring],
       stationId,
       stationCode: station.code,
       stageKey: station.stageKey,
@@ -262,7 +255,6 @@ export function buildRadarSummary({
     id: b.id,
     name: b.name,
     ring: b.ring,
-    ringLabelKey: b.ringLabelKey,
     stationId: b.stationId,
     stationCode: b.stationCode,
     stageKey: b.stageKey,

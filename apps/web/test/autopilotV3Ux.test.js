@@ -55,6 +55,9 @@ test('AP3-3/4 & Panoptes: LiveRadarCard renders 8 stations, interactive Context 
   const radarCss = read('apps/web/src/styles/autopilot-radar.css')
   assert.match(radarCss, /html\[data-vibe='dopamine'\]\s+\.ap-radar-sweep/)
   assert.match(radarCss, /html\[data-vibe='serotonin'\]\s+\.ap-radar-sweep/)
+
+  const cardsSrc = read('apps/web/src/features/autopilot/AutopilotCards.jsx')
+  assert.doesNotMatch(cardsSrc, /ap-wipe-inline/)
 })
 
 test('AP3-3/4 & Panoptes i18n keys exist in both en.json and ja.json', () => {
@@ -62,9 +65,6 @@ test('AP3-3/4 & Panoptes i18n keys exist in both en.json and ja.json', () => {
   const ja = JSON.parse(read('apps/web/src/i18n/ja.json'))
   for (const k of [
     'autopilot.radar.runTokens',
-    'autopilot.radar.ringCore',
-    'autopilot.radar.ringVerify',
-    'autopilot.radar.ringExplore',
     'autopilot.radar.stageYou',
     'autopilot.radar.stageFiles',
     'autopilot.radar.stageShell',
@@ -76,7 +76,6 @@ test('AP3-3/4 & Panoptes i18n keys exist in both en.json and ja.json', () => {
     'autopilot.radar.coreToggleHint',
     'autopilot.radar.browserPeekTitle',
     'autopilot.radar.errorTitle',
-    'autopilot.radar.tapHint',
     'autopilot.radar.parallelBadge',
     'autopilot.live.elapsedAria',
     'autopilot.copy.more',

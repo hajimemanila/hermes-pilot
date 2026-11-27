@@ -515,13 +515,6 @@ html[data-vibe='dopamine'] .ap-launcher-submit { background: var(--vibe-primary-
 .ap-swipe-strip { margin: 6px 0 8px; }
 .ap-swipe-link { width: 100%; min-height: 44px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--accent); background: var(--rec-bg); color: var(--rec-fg); font-size: 12.5px; font-weight: 700; display: flex; align-items: center; justify-content: space-between; gap: 8px; white-space: nowrap; }
 
-.ap-wipe-inline { display: flex; flex-direction: column; gap: 3px; }
-.ap-wipe-stage { position: relative; height: 82px; border-radius: 10px; overflow: hidden; background: var(--bg-elev); }
-.ap-wipe-img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.ap-wipe-before { position: absolute; inset: 0 auto 0 0; overflow: hidden; }
-.ap-wipe-divider { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); }
-.ap-wipe-slider { width: 100%; accent-color: var(--accent); }
-
 .ap-project-bar {
   display: flex;
   align-items: center;

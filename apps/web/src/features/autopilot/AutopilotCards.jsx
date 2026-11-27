@@ -357,7 +357,6 @@ export function LiveStudioCard({
   onSaveMemo,
 }) {
   const { t } = useI18n()
-  const [split, setSplit] = useState(50)
   const [memoOpen, setMemoOpen] = useState(false)
   const [memoText, setMemoText] = useState('')
   const [now, setNow] = useState(() => Date.now())
@@ -392,7 +391,6 @@ export function LiveStudioCard({
 
   const compare = stage?.compareItem
   const afterSrc = compare ? `/api/review/${encodeURIComponent(compare.id)}/image` : null
-  const beforeSrc = compare?.review?.hasCompare ? `${afterSrc}?compare=1` : afterSrc
 
   return (
     <section className="ap-stage-panel ap-live-studio" aria-label={t('autopilot.live.aria')}>
@@ -443,27 +441,6 @@ export function LiveStudioCard({
           previewShotUrl={afterSrc}
           onFocusReview={onFocusReview}
         />
-
-        {afterSrc && (
-          <div className="ap-wipe-inline">
-            <div className="ap-wipe-stage">
-              <img src={afterSrc} alt={t('autopilot.wipe.after')} className="ap-wipe-img" />
-              <div className="ap-wipe-before" style={{ width: `${split}%` }}>
-                <img src={beforeSrc} alt={t('autopilot.wipe.before')} className="ap-wipe-img" />
-              </div>
-              <div className="ap-wipe-divider" style={{ left: `${split}%` }} aria-hidden="true" />
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={split}
-              onChange={(e) => setSplit(Number(e.target.value))}
-              aria-label={t('autopilot.wipe.sliderAria')}
-              className="ap-wipe-slider"
-            />
-          </div>
-        )}
 
         {memoOpen ? (
           <form

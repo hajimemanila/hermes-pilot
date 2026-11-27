@@ -116,6 +116,7 @@ export function shapeArchitectJob(job, at = Date.now()) {
 export function createLive(cfg, kanban, deps = {}) {
   const dbPath = cfg.stateDb ?? path.join(cfg.home ?? '', '.hermes', 'state.db')
   const sinceTotalsBySnap = new WeakMap()
+  const samplesByTurn = new WeakMap()
 
   /**
    * Query cumulative session tokens started since `sinceMs` (epoch ms),
@@ -267,7 +268,7 @@ export function createLive(cfg, kanban, deps = {}) {
             : input + cacheRead > 0
               ? Math.max(1, Math.min(100, Math.round(((input + cacheRead) / DEFAULT_CONTEXT_WINDOW) * 100)))
               : 0
-        return {
+        const turnObj = {
           profile: target.profile || 'default',
           sessionId: r.conversation_id,
           title: r.title || r.conversation_id,
@@ -279,11 +280,12 @@ export function createLive(cfg, kanban, deps = {}) {
           lastActivity: r.last_activity_description ?? null,
           lastTool,
           recentTools,
-          toolSamples,
           toolCount,
           contextPct,
           tokens: { input, output, total: input + output, cacheRead, costUsd },
         }
+        samplesByTurn.set(turnObj, toolSamples)
+        return turnObj
       })
       return { turns, sinceTotals }
     } finally {
@@ -309,13 +311,7 @@ export function createLive(cfg, kanban, deps = {}) {
       activeCacheRead += Number(turn?.tokens?.cacheRead ?? 0) || 0
       activeCostUsd += Number(turn?.tokens?.costUsd ?? 0) || 0
       contextPct = Math.max(contextPct, Number(turn?.contextPct ?? 0) || 0)
-      const list = Array.isArray(turn?.toolSamples)
-        ? turn.toolSamples
-        : Array.isArray(turn?.recentTools)
-          ? turn.recentTools
-          : turn?.lastTool
-            ? [turn.lastTool]
-            : []
+      const list = samplesByTurn.get(turn) ?? (Array.isArray(turn?.recentTools) ? turn.recentTools : turn?.lastTool ? [turn.lastTool] : [])
       for (const tool of list) {
         if (!tool?.name) continue
         toolHistory.push({
