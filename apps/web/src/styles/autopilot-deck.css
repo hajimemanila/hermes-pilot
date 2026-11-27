@@ -559,7 +559,11 @@ html[data-vibe='dopamine'] .ap-launcher-submit { background: var(--vibe-primary-
   .ap-lens-badge { font-size: 10px; padding: 0 4px; }
 }
 @media (max-height: 430px) {
-  .ap-lens-btn::before { height: 40px; }
+  /* 横持ち（高さ 430px 以下）でも当たり判定は 44px を下回らない。
+     以前ここは 40px に絞っていたが、`audit:responsive` の tap は 44px 未満を違反にするため
+     全ゲート実行（CSW3-9）で 844x390 の Tasks タブが 2 件落ちた。見た目は ::before（透明）だけなので
+     高さを戻しても描画は変わらない。重なりが出るなら「縮める」のではなく並びを直す。 */
+  .ap-lens-btn::before { height: 44px; }
 }
 .ap-swipe-strip { margin: 6px 0 8px; }
 .ap-swipe-link { width: 100%; min-height: 44px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--accent); background: var(--rec-bg); color: var(--rec-fg); font-size: 12.5px; font-weight: 700; display: flex; align-items: center; justify-content: space-between; gap: 8px; white-space: nowrap; }

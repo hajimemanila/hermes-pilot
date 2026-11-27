@@ -19,11 +19,51 @@
   （`apps/web/test/stylesManifest.test.js` が manifest・参照先・行数・`:root` の単一性を機械検査）。
 - 分割前後で**ビルド済み CSS バンドルがバイト一致**することを実測して確認した（2026-11-21）。
 
-## チャットの表示パーツ
+## チャットの表示パーツとフック（CSW3-2 〜 CSW3-5）
 
-- `apps/web/src/features/chat/ChatParts.jsx`: 本文 Markdown / ツール行 / 統合レポートカード /
-  過去セッション一覧 / 入力欄の自動伸長。
-- 会話全体の状態（ソケット・送信・スクロール・添付・ドロワー開閉）は `apps/web/src/features/ChatPane.jsx` に残す。
+`features/ChatPane.jsx`（716 行・export は `ChatPane` の 1 つだけ）は **state の所有者と JSX の合流だけ**を持つ。
+中身は次のファイルに切り出してある（移動のみ。`props` のキー集合と `className` は変えない）。
+
+- `chat/ChatTimeline.jsx`: タイムライン本体 `ChatTimeline`・報告カードの帯 `ChatReportBanner`・
+  吹き出しメニュー `ChatBubbleMenu`・`scrollToMessage`。
+- `chat/ChatHeadBar.jsx`: ヘッダ `ChatHead` / 最小ヘッダ `ChatMinimalHead` / プロファイルチップ
+  `ChatChips` / 新規会話シート `ChatNewChatSheet`。
+- `chat/ChatChrome.jsx`: `useChatChrome` — 進行バー・仕様バナー・定型チップ帯の 3 ノードと、その材料
+  （Architect ジョブの取得・起票・アーカイブ・MD プレビュー）。`specJobs` などの state はここが持つ。
+- `chat/ChatComposer.jsx`: 入力欄 `ChatComposer` と添付レール `ChatAttachRail`。
+- `chat/ChatAttachSheets.jsx` / `chat/ChatSheets.jsx` / `chat/ChatDrawer.jsx`: 添付の取り込みシート・
+  スニペット／仕様シート・会話ドロワー（提示専用の葉）。
+- `chat/ChatParts.jsx`: 本文 Markdown `MarkdownBody`・`ToolRows`・`PipelineReportCard`・
+  `ChatSessionList`・`fitComposer`・`commitProgressToBlocks`。
+- フック: `useChatSessions`（会話一覧・transcript・返信の既読）/ `useChatReports`（完了報告の突き合わせと
+  既読・一覧バッジ）/ `useChatComposer`（本文・添付・送信・定型挿入）/ `useChatSession`（会話を開く経路 =
+  新規・resume・`openRequest`）/ `useChatConnection`（ソケット 1 本・`ready` 復帰・イベント反映・
+  検索スクロール・スニペット取得）。
+
+**ソケットを購読するのは `useChatConnection` の 1 か所だけ**（2 本にすると同じメッセージが二重に出る）。
+`useChatSession` / `useChatComposer` は state を持たず setter を受け取る形にしてある（`sid` / `blocks` /
+`readonly` の所有者を 2 つに割らない）。**公開契約は `apps/web/test/paneContract.test.js` が固定**する。
+
+## タスクの表示パーツとフック（CSW3-6 〜 CSW3-7）
+
+- `features/TasksPane.jsx`（756 行・export は `TasksPane` の 1 つだけ）: state の所有者と JSX の合流。
+- `tasks/TaskListView.jsx`: **一覧の見た目だけ**（状態バナー・進行バー・起動チップ・SPEC バー・統計ストリップ・
+  ボード行・整理モードの操作帯・行・空状態・アーカイブ切替）。行の key（`task.id` / `b.id`）と
+  空状態の文言は変えない。
+- `tasks/TaskDetailSheet.jsx`: 詳細シート `TaskDetailSheet` と `STATUS_KEY`。
+- `tasks/SpecPicker.jsx`: SPEC ピッカー `SpecPicker` / `ModePill`。`tasks/BoardPickerSheet.jsx`: ボード選択シート。
+- フック: `useTasksData`（取得・反映・memo・Gateway／緊急停止。**ポーリング間隔は書かない** — 表
+  `lib/syncSources.js` が持ち、ここは受け取った値を反映するだけ）/ `useSpecLaunchpad`（SPEC の選択・
+  バッチ起票・履歴・仕様書プレビュー）。
+
+## 未参照 export を増やさない（`dead-export` ルール）
+
+`npm run check:coherence` の 16 番目のルール `dead-export` は、`apps/web/src` / `apps/bridge/src` が
+`export` している名前を**読者が 1 人もいない**まま残すと hard fail にする（読み手は `apps/web/src` /
+`apps/bridge/src` / 各 `test/` / `apps/dashboard` / `scripts` / `bin` を走査）。
+**バレル（再エクスポート専用ファイル）は読者に数えない**ので、実装を移したら「呼び出し元」か
+「同じファイル内の使用」を数え、どちらも無い `export` はその場で外す（`checkerPending` は CSW3-8 で
+外して常時 hard に戻した）。
 
 ## レビューの表示パーツ
 
@@ -133,3 +173,15 @@ apps/web/src/styles/autopilot-radar.css ← LiveRadarCard SVG ＆ タイムラ�
 
 - 分割前 `0b90f66` と分割後 `c2083af` のデモビルドを同じ手順で 390×844（dpr2・ダーク／ライト）撮影し、`.ap-*` **21 要素の getBoundingClientRect が完全一致**。画素差は `✨ オートパイロット` ピル内の 308px（最大 Δ1/255・0.023%）だけで、他の領域は 0。
 - CSS 側の根拠: `git show 20e19d9^:apps/web/src/styles/autopilot.css` 657 行 と `autopilot-deck.css` + `autopilot-story.css` の連結が `diff` 無出力（＝移動のみ）。以後の差分は `.ap-lens-btn::before` の透明 44px 当たり判定 4 行だけ。
+
+## 分割の見た目が動いていないことの確認（CSW3-9 / 2026-11-28 実測）
+
+- 390×844（dpr2）で **分割前 `4a7dc54` と CSW3 完了時点**のデモビルドを同じ手順にかけ、可視要素の
+  `getBoundingClientRect` を DOM パス（`tag:index` の連なり）で突き合わせて **Tasks 122 / Chat 163 ノード・
+  差分 0**。`documentElement.scrollWidth === clientWidth === 390`（横溢れ 0）。
+- 実画面（ライブ ブリッジ・390×844・ja・Tasks タブ）は
+  `~/.hermes/plugin-data/hermes-pilot/review/shots/csw3-9-tasks-1.png`。
+- `npm run audit:responsive` は 7 viewport × 2 lang × 6 tab = **14 組合せ・違反 0**。
+- 全ゲートで 1 件だけ落ちた: 844×390（横持ち）の `.ap-lens-btn` は `@media (max-height: 430px)` が
+  当たり判定を 40px に絞っていたため tap 44px 未満で 2 件違反。透明な `::before` を 44px に戻して解消した
+  （見た目は 1px も変わらない）。**当たり判定を縮めて監査を避けない** — 並びが重なるなら並びを直す。

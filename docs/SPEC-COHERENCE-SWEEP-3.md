@@ -196,6 +196,14 @@ ChatPane の中身を実測すると、**ロジック（state + ハンドラ）�
 - **受入条件（Verify）**: `npm run verify` が exit 0 かつ `node scripts/check-coherence.mjs --json` の `hardFails` が `[]` かつ `softSignals` が `[]` かつ `npm run build:demo` が exit 0 かつ 390×844 のスクリーンショット 1 枚を `annotation` 経路で受け取り赤を 1 往復する
 - **実装要点**: `check:coherence` の JSON で `ruleCount` が 16・`pending` が 0 であることを確認する。スクショは Chat タブと Tasks タブの**どちらか 1 枚**（レイアウト差分が出たら `git revert` で該当バッチを戻し、切る位置を変える。見た目を直して合わせない）。
 
+**実施記録（CSW3-9・実測）**:
+- `npm run verify` → **exit 0**（`npm test` 1416 pass / 0 fail、`check:dashboard` / `check:pwa` 34 項目 / `check:oauth` / `build` / `audit:responsive` 14 組合せ 0 違反 / `check:term-enter` / `check:coherence` 16 rules 0 hard 0 soft / `check:cold-install` ok）。
+- `node scripts/check-coherence.mjs --json` → `ruleCount` 16・`pending` 0・`hardFails` `[]`・`softSignals` `[]`・`hotspots` `[]`。
+- `node scripts/check-coherence.mjs --update-baseline` は**差分 0**（`ChatPane` 716 / `TasksPane` 756 は CSW3-5・CSW3-7 の時点で既に切り下がっており、これが最終ラチェット）。
+- 全ゲートを初めて通した時点で **1 件だけ実測で落ちた**: 844×390（横持ち）の `.ap-lens-btn` が `@media (max-height: 430px)` で当たり判定を 40px に絞られており、`audit:responsive` の tap（44px 未満）に 2 件引っかかった。透明な `::before` を 44px に戻して解消（描画は不変・重なりも出ない）。40px への「clamp」は 2133319 で入ったが、全ゲートはそれ以降実行されていなかった。
+- 見た目の等価は**実測**で確定: 分割前 `4a7dc54` と CSW3 完了時点のデモビルドを 390×844（dpr2）で同じ手順にかけ、可視要素の `getBoundingClientRect` を DOM パス（`tag:index` の連なり）で突き合わせて **Tasks 122 / Chat 163 ノード・差分 0**。`documentElement.scrollWidth === clientWidth === 390`（横溢れ 0）。
+- 実画面 1 枚: `~/.hermes/plugin-data/hermes-pilot/review/shots/csw3-9-tasks-1.png`（ライブ ブリッジ・390×844・ja・Tasks タブ）。Chat タブも同条件で撮影済み（`csw3-9-chat-1.png`。こちらは「直前の会話を開けませんでした」のトーストが出る＝実行中のセッションは resume 不可という既存仕様で、レイアウト差ではない）。
+
 ---
 
 ## 5. 検証コマンドの一覧（Zero-Stop が使うもの）

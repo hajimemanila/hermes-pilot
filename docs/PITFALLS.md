@@ -189,7 +189,9 @@ blocked からの遷移判断が 5 か所に散っていた。正本を作って
 - `transition-owner` — `review.js` / `review/media.js` の `runKanban(['unblock'`・`runKanban(['complete'`・`runKanban(['request-changes'`・`runKanban(['archive'`
 - `board-tick-owner` — `apps/bridge/src/**/*-watcher.js` の `new DatabaseSync(`・`setInterval(`・`dbPaths`、および `board-tick.js` 以外の 10 秒走査タイマー
 
-`checkerPending` に入っている間はソフト信号（`fatal`）で、`--strict` で回すと落ちる。
+`checker` の 5 ルール（`api-parity` / `event-contract` / `storage-contract` / `docs-scripts-parity` /
+`legacy-reentry`）と、上の 4 つの owner ルールに加えて、CSW3-1 で `dead-export` が入って **16 ルール**。
+`checkerPending` は CSW3-8 で全項目を外したので、いまは pending 0（`--strict` でも同じ判定）。
 
 **対策**: 直すときは**呼び出し側の実装を消して正本を呼ぶ**（別名で包む・再エクスポートは可）。
 新機能は正本の表に 1 行足すだけで済ませ、`setInterval`・独自バックオフ・独自の `unblock` 分岐を増やさない。
@@ -219,6 +221,20 @@ blocked からの遷移判断が 5 か所に散っていた。正本を作って
 
 - **`node -e` / `node -c` はヘッドレス実行で承認待ちブロックに当たり、ワーカーが永久に止まる**。式の比較はテストファイル内の `assert.deepEqual` か `diff` / `rg` / `npm run` で組む。
 - **分割は移動のみ。契約は既存パスのバレル（manifest）で固定する**。呼び出し元の import を 1 行も変えず、字面は `diff <(git show HEAD:<path>) <(cat <新ファイル…>)` が無出力であることで担保する（`architect.js` / `autopilotDeck.js` / `styles/autopilot.css` が同型）。
+
+---
+
+## P12. 分割した直後に腐る 2 か所（テストのパス・バレルの数え方）
+
+- **ソース文字列を読むテストは、分割したそのバッチでパスを直す。** 実測では
+  `chatJumpPill.test.js` / `bannerOpenDraft.test.js` / `tasksView.test.js`（計 4 参照）が
+  `readFileSync('apps/web/src/features/ChatPane.jsx')` のようにパスを直書きしていて、中身を移した瞬間に
+  「まだ緑だが何も検査していない」テストになる。**移動したファイルを開いているテストを `rg <旧パス>` で洗い、
+  同じコミットで向け先を変える**（`paneContract.test.js` は公開契約だけを見るので、これとは別物）。
+- **バレルは読み手に数えない**（`dead-export` ルール）。再エクスポート専用ファイルを「参照」として数えると、
+  実装を移しただけで未使用 export が見えなくなり、死んだコードが残る。逆に、移した先で `export` を付けたまま
+  バレルから出していない名前は「読者 0」で落ちるので、内部共有は `export` を外すのではなく**同じファイル内の
+  使用を数えたうえで**判断する。
 
 ---
 
