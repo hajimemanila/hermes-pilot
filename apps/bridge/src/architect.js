@@ -328,7 +328,7 @@ export function createArchitect(cfg = {}, deps = {}) {
       reviewTitle: null,
       mode: 'kanban',
       prompt: '',
-      autoStart: Boolean(input.autoStart),
+      autoStart: Boolean(input.autoStart), autopilot: Boolean(input.autopilot),
       seedText,
       lang: input.lang === 'en' ? 'en' : 'ja',
       chat: input.chat ? String(input.chat).slice(0, 128) : null,
@@ -574,7 +574,7 @@ export function createArchitect(cfg = {}, deps = {}) {
           specRelPath: job.spec,
           batchIds: pending[0].pending,
           assignee: pilotAssigneeOf(cfg),
-          chat: job.chat ?? undefined, lang: job.lang,
+          chat: job.chat ?? undefined, lang: job.lang, ...(job.autopilot ? { parallelMode: 'wave', maxParallel: 3 } : {}),
         })
         job.status = 'launched'
         job.launched = {

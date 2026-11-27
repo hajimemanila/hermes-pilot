@@ -79,3 +79,60 @@ test('AP2-3: live snapshot includes recentTools (limit 6), toolCount (8), and to
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('AP3-1: live snapshot computes runTokens and cacheHitPct when sessions token columns exist', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-live-runtokens-'))
+  try {
+    const dbPath = path.join(dir, 'state.db')
+    const db = new DatabaseSync(dbPath)
+    db.exec(`
+      CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, source TEXT, chat_type TEXT,
+        last_activity_description TEXT, last_activity_at REAL,
+        input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER, estimated_cost_usd REAL);
+      CREATE TABLE session_turn_leases (conversation_id TEXT, holder TEXT, acquired_at REAL, expires_at REAL);
+      CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT,
+        tool_name TEXT, timestamp REAL);
+    `)
+    const now = Date.now() / 1000
+    db.prepare('INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?)').run(
+      's_tok',
+      'Autopilot Run',
+      'cli',
+      '',
+      'editing UI',
+      now,
+      14200,
+      4200,
+      11600,
+      0.042,
+    )
+    db.prepare('INSERT INTO session_turn_leases VALUES (?,?,?,?)').run(
+      's_tok',
+      'pid=11:turn=t2:platform=local',
+      now - 45,
+      now + 255,
+    )
+    db.prepare('INSERT INTO messages (session_id, role, content, tool_name, timestamp) VALUES (?,?,?,?,?)').run(
+      's_tok',
+      'assistant',
+      'edit',
+      'edit_file',
+      now - 4,
+    )
+    db.close()
+
+    const live = createLive(
+      { home: '/nonexistent', stateDb: dbPath },
+      { boards: () => [], tasks: () => [] },
+    )
+    const snap = live.snapshot()
+    assert.equal(snap.ok, true)
+    assert.equal(snap.turns[0].tokens.total, 18400)
+    assert.equal(snap.telemetry.runTokens, 18400)
+    assert.equal(snap.telemetry.runCacheRead, 11600)
+    assert.equal(snap.telemetry.cacheHitPct, 39)
+    assert.equal(snap.telemetry.activeWorkers, 1)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})

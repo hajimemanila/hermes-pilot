@@ -105,11 +105,23 @@ export function createLive(cfg, kanban, deps = {}) {
    * @param {number} at 現在時刻
    * @returns {Array<object>} ターン一覧
    */
-  function turnsFrom(target, at) {
-    let db
+  function queryLeaseRows(db, threshold) {
     try {
-      db = new DatabaseSync(target.path, { readOnly: true, timeout: 3000 })
-      const rows = db
+      return db
+        .prepare(
+          `SELECT l.conversation_id, l.holder, l.acquired_at, l.expires_at,
+                  s.title, s.source, s.chat_type, s.last_activity_description,
+                  s.last_activity_at, s.input_tokens, s.output_tokens,
+                  s.cache_read_tokens, s.estimated_cost_usd
+             FROM session_turn_leases l
+             LEFT JOIN sessions s ON s.id = l.conversation_id
+            WHERE l.expires_at > ?
+            ORDER BY l.acquired_at DESC`,
+        )
+        .all(threshold)
+    } catch (err) {
+      if (!/no such column/i.test(String(err?.message || ''))) throw err
+      return db
         .prepare(
           `SELECT l.conversation_id, l.holder, l.acquired_at, l.expires_at,
                   s.title, s.source, s.chat_type, s.last_activity_description,
@@ -119,7 +131,15 @@ export function createLive(cfg, kanban, deps = {}) {
             WHERE l.expires_at > ?
             ORDER BY l.acquired_at DESC`,
         )
-        .all(at / 1000 - LEASE_GRACE_SEC)
+        .all(threshold)
+    }
+  }
+
+  function turnsFrom(target, at) {
+    let db
+    try {
+      db = new DatabaseSync(target.path, { readOnly: true, timeout: 3000 })
+      const rows = queryLeaseRows(db, at / 1000 - LEASE_GRACE_SEC)
       const recentToolsStmt = db.prepare(
         `SELECT tool_name, timestamp FROM messages
           WHERE session_id = ? AND tool_name IS NOT NULL
@@ -155,6 +175,10 @@ export function createLive(cfg, kanban, deps = {}) {
         const lastTool = recentTools[0] ?? null
         const acquired = Math.round(Number(r.acquired_at ?? 0) * 1000)
         const expires = Math.round(Number(r.expires_at ?? 0) * 1000)
+        const input = Number(r.input_tokens ?? 0) || 0
+        const output = Number(r.output_tokens ?? 0) || 0
+        const cacheRead = Number(r.cache_read_tokens ?? 0) || 0
+        const costUsd = Number(r.estimated_cost_usd ?? 0) || 0
         return {
           profile: target.profile || 'default',
           sessionId: r.conversation_id,
@@ -168,6 +192,7 @@ export function createLive(cfg, kanban, deps = {}) {
           lastTool,
           recentTools,
           toolCount,
+          tokens: { input, output, total: input + output, cacheRead, costUsd },
         }
       })
     } finally {
@@ -182,8 +207,15 @@ export function createLive(cfg, kanban, deps = {}) {
   function buildTelemetry(turns, tasks, jobs = []) {
     const recentTools = []
     let toolCount = 0
+    let runTokens = 0
+    let runCacheRead = 0
+    let runCostUsd = 0
+    const primaryTaskTitle = tasks[0]?.title || jobs[0]?.seed || null
     for (const turn of turns) {
       toolCount += Number(turn?.toolCount ?? turn?.recentTools?.length ?? (turn?.lastTool ? 1 : 0)) || 0
+      runTokens += Number(turn?.tokens?.total ?? 0) || 0
+      runCacheRead += Number(turn?.tokens?.cacheRead ?? 0) || 0
+      runCostUsd += Number(turn?.tokens?.costUsd ?? 0) || 0
       const list = Array.isArray(turn?.recentTools) ? turn.recentTools : turn?.lastTool ? [turn.lastTool] : []
       for (const tool of list) {
         if (!tool?.name) continue
@@ -192,22 +224,31 @@ export function createLive(cfg, kanban, deps = {}) {
           at: Number(tool.at) || 0,
           sessionId: turn.sessionId ?? null,
           profile: turn.profile || 'default',
+          taskTitle: primaryTaskTitle,
         })
       }
     }
     recentTools.sort((a, b) => b.at - a.at)
     const activeTurns = turns.length
     const activeTasks = tasks.length
+    const activeWorkers = activeTurns + activeTasks
     const activeJob = Array.isArray(jobs)
       ? jobs.find((j) => ARCHITECT_RUNNING_STATUSES.includes(String(j?.status ?? ''))) || jobs[0] || null
       : null
     const phaseLabel =
       activeJob?.phase || (activeTurns > 0 || activeTasks > 0 ? 'running' : 'idle')
+    const cacheDenom = runTokens + runCacheRead
+    const cacheHitPct = cacheDenom > 0 ? Math.round((runCacheRead / cacheDenom) * 100) : 0
     return {
       recentTools: recentTools.slice(0, RECENT_TOOLS_LIMIT),
       toolCount,
+      runTokens,
+      runCacheRead,
+      runCostUsd: Math.round(runCostUsd * 10000) / 10000,
+      cacheHitPct,
       activeTurns,
       activeTasks,
+      activeWorkers,
       phaseLabel,
     }
   }

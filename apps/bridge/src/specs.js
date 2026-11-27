@@ -7,11 +7,9 @@ import { writeFileAtomic } from './lib/atomic.js'
 import { CLOSED_STATUSES, extractExecutionMode, extractRecommendedRole } from './specs/mode.js'
 import { buildTaskBody, buildTaskTitle, findOpenBatchTask, sanitizeSpecChat } from './specs/task-body.js'
 import { appendRun, makeRunId } from './specs/runs.js'
+import { decorateWaveTaskBody, planBatchWaves } from './specs/wave-plan.js'
 
-/*
- * 分割したモジュールの再エクスポート。`./specs.js` からの import 契約は 1 つも変えない
- * （呼び出し側 = `server.js` / `architect.js` / テストは従来どおりこのファイルだけを見る）。
- */
+/* 再エクスポート契約（server.js / architect.js / テストはこの入口のみを見る）。 */
 export {
   ABSTRACT_ROLES,
   BODY_MAX,
@@ -529,46 +527,42 @@ export function createSpecs(cfg = {}, deps = {}) {
       existing = []
     }
 
-    // 既定で先行バッチを `--parent` に繋ぎ、同一 working tree での並列競合を防ぐ（`serial: false` で解除）。
+    // 既定で先行バッチを `--parent` に繋ぎ、同一 working tree での並列競合を防ぐ（Autopilot 限定の wave モード時のみ非重複並列）。
     const chain = input.serial !== false
+    const wavePlan = input.parallelMode === 'wave' && chain
+      ? planBatchWaves(batches, { parallelMode: 'wave', maxParallel: input.maxParallel ?? 3 })
+      : null
+    const taskIdByBatch = new Map()
     let prevTaskId = null
     const created = []
     const skipped = []
     const failed = []
-    for (const batch of batches) {
+    for (let idx = 0; idx < batches.length; idx += 1) {
+      const batch = batches[idx]
+      const waveEntry = wavePlan?.entries[idx] ?? null
+      const parentId = waveEntry ? (waveEntry.parentBatchId ? taskIdByBatch.get(waveEntry.parentBatchId) ?? null : null) : (chain ? prevTaskId : null)
       const open = findOpenBatchTask(existing, batch.id, specRelPath, { specMtime })
       if (open) {
         skipped.push({ id: batch.id, title: batch.title, reason: 'exists', taskId: open.id, status: open.status })
-        if (chain && open.id) prevTaskId = open.id
+        if (open.id) { taskIdByBatch.set(batch.id, open.id); if (chain) prevTaskId = open.id }
         continue
       }
       const title = buildTaskTitle(batch)
-      const body = buildTaskBody({ specRelPath, repoPath, board, batch, chat, lang })
-      if (dryRun) {
-        created.push({ id: batch.id, title, taskId: null, dryRun: true })
-        continue
-      }
+      const body = decorateWaveTaskBody(buildTaskBody({ specRelPath, repoPath, board, batch, chat, lang }), waveEntry)
+      if (dryRun) { created.push({ id: batch.id, title, taskId: null, dryRun: true, ...(waveEntry ? { wave: waveEntry.waveIndex } : {}) }); continue }
       const args = ['kanban', '--board', board, 'create', title, '--json', '--body', body]
       if (assignee) args.push('--assignee', assignee)
-      if (chain && prevTaskId) args.push('--parent', prevTaskId)
+      if (chain && parentId) args.push('--parent', parentId)
       const res = await run(args)
       if (res.code !== 0) {
-        failed.push({
-          id: batch.id,
-          title,
-          code: 'CREATE_FAILED',
-          error: (res.stderr || res.stdout || '').trim().slice(0, 400),
-        })
+        failed.push({ id: batch.id, title, code: 'CREATE_FAILED', error: (res.stderr || res.stdout || '').trim().slice(0, 400) })
         continue
       }
       const task = parseCreatedTask(res.stdout)
-      if (!task?.id) {
-        failed.push({ id: batch.id, title, code: 'TASK_ID_MISSING' })
-        continue
-      }
-      created.push({ id: batch.id, title, taskId: task.id, status: task.status ?? 'ready' })
+      if (!task?.id) { failed.push({ id: batch.id, title, code: 'TASK_ID_MISSING' }); continue }
+      created.push({ id: batch.id, title, taskId: task.id, status: task.status ?? 'ready', ...(waveEntry ? { wave: waveEntry.waveIndex } : {}) })
+      taskIdByBatch.set(batch.id, task.id)
       if (chain) prevTaskId = task.id
-      // 同じバッチを 2 回起票しないよう、今回作った分も既存扱いにする
       existing = [...existing, { id: task.id, title, status: task.status ?? 'ready' }]
     }
 
@@ -598,12 +592,8 @@ export function createSpecs(cfg = {}, deps = {}) {
     }
 
     return {
-      ok,
-      spec: specRelPath,
-      board,
-      created,
-      skipped,
-      failed,
+      ok, spec: specRelPath, board, created, skipped, failed,
+      parallelMode: wavePlan ? 'wave' : (chain ? 'serial' : 'none'),
       runId: runRecord?.id ?? null,
       ...(ok ? {} : { error: failed.map((f) => `${f.id}: ${f.error}`).join(' / ') }),
     }
