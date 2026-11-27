@@ -351,7 +351,10 @@ export function LiveStudioCard({
   runStartedAt = null,
   runId = '',
   persistedMaxTokens = 0,
+  nudges = [],
+  reviewItems = [],
   onObservedTokens = null,
+  onSendNudge = null,
   onFocusReview = null,
   onSwitchCockpit,
   onSaveMemo,
@@ -359,6 +362,7 @@ export function LiveStudioCard({
   const { t } = useI18n()
   const [memoOpen, setMemoOpen] = useState(false)
   const [memoText, setMemoText] = useState('')
+  const [inspectedStep, setInspectedStep] = useState(null)
   const [now, setNow] = useState(() => Date.now())
   const highWaterRef = useRef({ key: '', maxPct: 0, maxStep: 0, fallbackStart: 0 })
 
@@ -391,6 +395,35 @@ export function LiveStudioCard({
 
   const compare = stage?.compareItem
   const afterSrc = compare ? `/api/review/${encodeURIComponent(compare.id)}/image` : null
+  const queuedCount = (Array.isArray(nudges) ? nudges : []).filter((n) => n && n.status !== 'applied').length
+  const fileChanges = stage?.live?.telemetry?.fileChanges || null
+  const answeredReviews = (Array.isArray(reviewItems) ? reviewItems : []).filter(
+    (r) => String(r?.status || '').toLowerCase() === 'done',
+  ).length
+
+  const renderStepDrawerText = (idx) => {
+    if (idx === 0) {
+      const goal = String(stage?.activeJob?.seed || stage?.activeTask?.title || t('autopilot.live.building')).slice(0, 64)
+      return t('autopilot.live.reviewDesign', { goal, n: answeredReviews })
+    }
+    if (idx === 1) {
+      if (fileChanges && fileChanges.fileCount > 0) {
+        return t('autopilot.live.reviewBuild', {
+          files: fileChanges.fileCount,
+          added: fileChanges.totalAdded || 0,
+          removed: fileChanges.totalRemoved || 0,
+        })
+      }
+      return t('autopilot.live.reviewBuildEmpty')
+    }
+    if (idx === 2) {
+      const tools = Number(stage?.live?.telemetry?.toolCount ?? 0) || 0
+      const hasFail = Array.isArray(stage?.live?.telemetry?.failedTools) && stage.live.telemetry.failedTools.length > 0
+      const status = hasFail ? t('autopilot.radar.xrayFail') : t('autopilot.radar.xrayPass')
+      return t('autopilot.live.reviewVerify', { tools, status })
+    }
+    return t('autopilot.live.reviewFinish')
+  }
 
   return (
     <section className="ap-stage-panel ap-live-studio" aria-label={t('autopilot.live.aria')}>
@@ -410,20 +443,49 @@ export function LiveStudioCard({
         </h2>
 
         <ol className="ap-step-track">
-          {LIVE_STEPS.map((key, idx) => (
-            <li
-              key={key}
-              className={`ap-step-node${idx < stepIdx ? ' done' : idx === stepIdx ? ' current' : ''}`}
-            >
-              <span className="ap-step-dot" aria-hidden="true" />
-              <span className="ap-step-label">{t(key)}</span>
-            </li>
-          ))}
+          {LIVE_STEPS.map((key, idx) => {
+            const unlocked = idx <= stepIdx
+            return (
+              <li
+                key={key}
+                className={`ap-step-node${idx < stepIdx ? ' done' : idx === stepIdx ? ' current' : ''}${inspectedStep === idx ? ' inspected' : ''}`}
+              >
+                <button
+                  type="button"
+                  className="ap-step-btn"
+                  disabled={!unlocked}
+                  aria-expanded={inspectedStep === idx}
+                  onClick={() => {
+                    haptic('tap')
+                    setInspectedStep((cur) => (cur === idx ? null : idx))
+                  }}
+                >
+                  <span className="ap-step-dot" aria-hidden="true" />
+                  <span className="ap-step-label">{t(key)}</span>
+                </button>
+              </li>
+            )
+          })}
         </ol>
 
         <div className="ap-progress-rail" aria-hidden="true">
           <div className="ap-progress-fill" style={{ width: `${Math.max(8, pct)}%` }} />
         </div>
+
+        {inspectedStep !== null && (
+          <div className="ap-step-drawer" role="region" aria-live="polite">
+            <span className="ap-step-drawer-text">{renderStepDrawerText(inspectedStep)}</span>
+            {inspectedStep === 1 && fileChanges?.items?.length > 0 && (
+              <div className="ap-step-file-chips">
+                {fileChanges.items.slice(0, 3).map((fc) => (
+                  <span key={fc.file} className="ap-step-file-chip">
+                    {fc.file} +{fc.added}/-{fc.removed}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="ap-ticker-compact" role="status">
           <span className="ap-ticker-text">{t(stage?.activityKey || 'autopilot.live.actWorking')}</span>
@@ -440,6 +502,7 @@ export function LiveStudioCard({
           clockNow={now}
           previewShotUrl={afterSrc}
           onFocusReview={onFocusReview}
+          nudges={nudges}
         />
 
         {memoOpen ? (
@@ -448,7 +511,8 @@ export function LiveStudioCard({
             onSubmit={(e) => {
               e.preventDefault()
               if (memoText.trim()) {
-                onSaveMemo?.(memoText.trim())
+                if (onSendNudge) onSendNudge(memoText.trim())
+                else onSaveMemo?.(memoText.trim())
                 setMemoText('')
                 setMemoOpen(false)
               }
@@ -459,21 +523,24 @@ export function LiveStudioCard({
               className="ap-remix-input"
               value={memoText}
               onChange={(e) => setMemoText(e.target.value)}
-              placeholder={t('autopilot.live.memoPlaceholder')}
+              placeholder={onSendNudge ? t('autopilot.nudge.placeholder') : t('autopilot.live.memoPlaceholder')}
             />
-            <button type="submit" className="ap-remix-send">{t('autopilot.live.memoSend')}</button>
+            <button type="submit" className="ap-remix-send">
+              {onSendNudge ? t('autopilot.nudge.send') : t('autopilot.live.memoSend')}
+            </button>
           </form>
         ) : (
           <footer className="ap-studio-foot">
             <button
               type="button"
-              className="ap-pill-ghost"
+              className="ap-pill-ghost ap-nudge-trigger"
               onClick={() => {
                 haptic('tap')
                 setMemoOpen(true)
               }}
             >
-              💬 {t('autopilot.live.addMemo')}
+              <span>⚡ {onSendNudge ? t('autopilot.nudge.btn') : t('autopilot.live.addMemo')}</span>
+              {queuedCount > 0 && <span className="ap-nudge-badge">{queuedCount}</span>}
             </button>
             {onSwitchCockpit && (
               <button type="button" className="ap-pill-ghost" onClick={onSwitchCockpit}>

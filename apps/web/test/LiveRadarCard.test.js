@@ -11,6 +11,7 @@ import {
   DEMO_RADAR_SEQUENCE,
   RADAR_SIZE,
   RADAR_STATIONS,
+  WORKER_PALETTE,
   buildRadarSummary,
   classifyToolRing,
   computePupilOffset,
@@ -19,6 +20,7 @@ import {
   formatCostUsd,
   formatDurationMs,
   projectRadarBlips,
+  summarizeCommandIntent,
   toolToStation,
 } from '../src/lib/liveRadar.js'
 import { computeStudioProgress, formatElapsedClock, projectStudioStage } from '../src/lib/autopilot/studio.js'
@@ -241,6 +243,55 @@ test('PN-2: toolToStation maps all 8 orbital stations, health ring tones, durati
   assert.equal(step1.eye.activeStationId, 'shell')
   assert.equal(step2.eye.activeStationId, 'browser')
   assert.equal(step3.eye.activeStationId, 'you')
+})
+
+test('XR-2: summarizeCommandIntent, multi-worker separation, fileChanges, and queuedNudges light up YOU pin', () => {
+  assert.equal(WORKER_PALETTE.length, 3)
+  assert.equal(summarizeCommandIntent('npm run build --styles'), 'autopilot.radar.cmdIntentStyle')
+  assert.equal(summarizeCommandIntent('node --test apps/web/test/*.test.js'), 'autopilot.radar.cmdIntentTest')
+  assert.equal(summarizeCommandIntent('npx vite build'), 'autopilot.radar.cmdIntentBuild')
+
+  const summary = buildRadarSummary({
+    now: 20_000,
+    live: {
+      counts: { turns: 2, tasks: 2 },
+      turns: [
+        { sessionId: 's1', title: 'UI', lastTool: { name: 'edit_file' } },
+        { sessionId: 's2', title: 'Check', lastTool: { name: 'render_mocks' } },
+      ],
+      telemetry: {
+        activeWorkers: 2,
+        fileChanges: { items: [{ file: 'detail.css', added: 18, removed: 4 }], fileCount: 1, totalAdded: 18, totalRemoved: 4 },
+        toolHistory: [
+          { name: 'edit_file', at: 19_000, filePath: 'detail.css', addedLines: 18, removedLines: 4 },
+          { name: 'terminal', at: 17_000, command: 'npm run build --styles' },
+        ],
+      },
+    },
+    nudges: [
+      { id: 'n1', text: 'Make header bigger', status: 'queued', at: 18_000 },
+      { id: 'n2', text: 'Old nudge', status: 'applied', at: 10_000 },
+    ],
+  })
+
+  assert.equal(summary.workers.length, 2)
+  assert.equal(summary.workers[0].colorKey, 'w1')
+  assert.equal(summary.workers[0].stationId, 'files')
+  assert.equal(summary.workers[1].colorKey, 'w2')
+  assert.equal(summary.workers[1].stationId, 'browser')
+
+  const youSt = summary.stations.find((s) => s.id === 'you')
+  assert.equal(youSt.hasNudgePin, true)
+  assert.equal(youSt.nudgeCount, 1)
+  assert.equal(youSt.attention, true)
+
+  const filesSt = summary.stations.find((s) => s.id === 'files')
+  assert.equal(filesSt.workerBadge, 'W1')
+  assert.equal(filesSt.latestTool.filePath, 'detail.css')
+  assert.equal(summary.fileChanges.totalAdded, 18)
+
+  const shellSt = summary.stations.find((s) => s.id === 'shell')
+  assert.equal(shellSt.latestTool.commandIntentKey, 'autopilot.radar.cmdIntentStyle')
 })
 
 test('LiveRadarCard & BeforeAfterTimelapse obey sync-owner and zero-chart-lib guards', () => {

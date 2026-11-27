@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { parseToolCalls } from './transcript.js'
 
 /**
  * ライブ進捗（いま何が動いているか）。
@@ -41,6 +42,65 @@ export function detectToolError(content) {
     .filter(Boolean)
   const errorTail = lines.slice(-3).join('\n').slice(0, 220) || null
   return { failed: true, errorTail }
+}
+
+function shortenFilePath(rawPath) {
+  const clean = String(rawPath ?? '').trim().replace(/\\/g, '/')
+  if (!clean) return null
+  const parts = clean.split('/').filter(Boolean)
+  return parts.length >= 2 ? parts.slice(-2).join('/') : parts[0] || null
+}
+
+function lineMultisetDelta(oldStr, newStr) {
+  const oldLines = String(oldStr ?? '').split(/\r?\n/)
+  const newLines = String(newStr ?? '').split(/\r?\n/)
+  const counts = new Map()
+  for (const line of oldLines) counts.set(line, (counts.get(line) || 0) + 1)
+  let shared = 0
+  for (const line of newLines) {
+    const c = counts.get(line) || 0
+    if (c > 0) {
+      shared += 1
+      counts.set(line, c - 1)
+    }
+  }
+  return {
+    addedLines: Math.max(0, newLines.length - shared),
+    removedLines: Math.max(0, oldLines.length - shared),
+  }
+}
+
+/**
+ * Extract lightweight X-Ray metadata (file path, line delta, command) from tool args / output.
+ * @param {string} toolName
+ * @param {object|null} args
+ * @param {string|null} content
+ * @returns {{filePath: string|null, addedLines: number, removedLines: number, command: string|null}}
+ */
+export function extractToolXray(toolName, args = null, content = null) {
+  const a = args && typeof args === 'object' ? args : {}
+  const filePath = shortenFilePath(a.path ?? a.file_path ?? a.Path ?? a.TargetFile ?? a.file ?? null)
+  let addedLines = 0
+  let removedLines = 0
+
+  const oldText = a.Target ?? a.old_string ?? a.old_text ?? a.oldText
+  const newText = a.Replacement ?? a.new_string ?? a.new_text ?? a.newText
+  if (typeof oldText === 'string' && typeof newText === 'string') {
+    const delta = lineMultisetDelta(oldText, newText)
+    addedLines = delta.addedLines
+    removedLines = delta.removedLines
+  } else if (typeof (a.Content ?? a.content) === 'string' && /write|create/i.test(String(toolName || ''))) {
+    addedLines = String(a.Content ?? a.content).split(/\r?\n/).length
+  } else if (typeof content === 'string' && /(?:^|\n)@@\s/.test(content)) {
+    for (const line of content.split(/\r?\n/)) {
+      if (line.startsWith('+') && !line.startsWith('+++')) addedLines += 1
+      else if (line.startsWith('-') && !line.startsWith('---')) removedLines += 1
+    }
+  }
+
+  const rawCmd = a.command ?? a.CommandLine ?? a.cmd ?? a.script ?? null
+  const command = rawCmd ? String(rawCmd).replace(/\s+/g, ' ').trim().slice(0, 120) : null
+  return { filePath, addedLines, removedLines, command }
 }
 
 /** リース期限の猶予（秒）。更新が数秒遅れても「終わった」と誤判定しない。 */
@@ -210,10 +270,19 @@ export function createLive(cfg, kanban, deps = {}) {
       const msgCols = tableCols(db, 'messages')
       const rows = queryLeaseRows(db, at / 1000 - LEASE_GRACE_SEC, sessCols)
       const hasContent = msgCols.has('content')
+      const hasToolCalls = msgCols.has('tool_calls')
+      const hasToolCallId = msgCols.has('tool_call_id')
+      const selectCols = [
+        'tool_name',
+        'timestamp',
+        hasContent ? 'content' : 'NULL AS content',
+        hasToolCalls ? 'tool_calls' : 'NULL AS tool_calls',
+        hasToolCallId ? 'tool_call_id' : 'NULL AS tool_call_id',
+      ].join(', ')
       const timelineStmt = db.prepare(
-        `SELECT tool_name, timestamp${hasContent ? ', content' : ''} FROM messages
+        `SELECT ${selectCols} FROM messages
           WHERE session_id = ?
-          ORDER BY id DESC LIMIT 24`,
+          ORDER BY id DESC LIMIT 32`,
       )
       const toolCountStmt = db.prepare(
         `SELECT COUNT(*) AS n FROM messages
@@ -224,6 +293,15 @@ export function createLive(cfg, kanban, deps = {}) {
         let toolCount = 0
         try {
           const timeline = timelineStmt.all(r.conversation_id)
+          const callArgsById = new Map()
+          const callArgsByName = new Map()
+          for (const msg of timeline) {
+            if (!msg?.tool_calls) continue
+            for (const call of parseToolCalls(msg.tool_calls)) {
+              if (call.id && !callArgsById.has(call.id)) callArgsById.set(call.id, call.args)
+              if (call.name && !callArgsByName.has(call.name)) callArgsByName.set(call.name, call.args)
+            }
+          }
           for (let i = 0; i < timeline.length; i += 1) {
             const msg = timeline[i]
             if (!msg?.tool_name) continue
@@ -232,12 +310,18 @@ export function createLive(cfg, kanban, deps = {}) {
             const nextTs = nextMsg?.timestamp ? Math.round(Number(nextMsg.timestamp) * 1000) : 0
             const diff = nextTs > ts && nextTs - ts <= MAX_TOOL_DURATION_MS ? nextTs - ts : null
             const { failed, errorTail } = hasContent ? detectToolError(msg.content) : { failed: false, errorTail: null }
+            const callArgs =
+              (msg.tool_call_id && callArgsById.get(String(msg.tool_call_id))) ||
+              callArgsByName.get(String(msg.tool_name)) ||
+              null
+            const xray = extractToolXray(String(msg.tool_name), callArgs, msg.content)
             toolSamples.push({
               name: String(msg.tool_name),
               at: ts,
               durationMs: diff,
               failed,
               errorTail,
+              ...xray,
             })
             if (toolSamples.length >= TOOL_SAMPLE_LIMIT) break
           }
@@ -320,6 +404,10 @@ export function createLive(cfg, kanban, deps = {}) {
           durationMs: Number.isFinite(Number(tool.durationMs)) ? Number(tool.durationMs) : null,
           failed: Boolean(tool.failed),
           errorTail: tool.errorTail ?? null,
+          filePath: tool.filePath ?? null,
+          addedLines: Number(tool.addedLines) || 0,
+          removedLines: Number(tool.removedLines) || 0,
+          command: tool.command ?? null,
           sessionId: turn.sessionId ?? null,
           profile: turn.profile || 'default',
           taskTitle: primaryTaskTitle,
@@ -333,6 +421,29 @@ export function createLive(cfg, kanban, deps = {}) {
     toolHistory.sort((a, b) => b.at - a.at)
     const recentTools = toolHistory.slice(0, RECENT_TOOLS_LIMIT)
     const failedTools = toolHistory.filter((t) => t.failed).slice(0, 4)
+
+    const fileMap = new Map()
+    for (const item of toolHistory) {
+      if (!item.filePath) continue
+      const isEdit =
+        item.addedLines > 0 ||
+        item.removedLines > 0 ||
+        /edit|write|create|patch|replace/i.test(item.name)
+      if (!isEdit) continue
+      const prev = fileMap.get(item.filePath) || { file: item.filePath, added: 0, removed: 0, at: 0 }
+      prev.added += item.addedLines
+      prev.removed += item.removedLines
+      prev.at = Math.max(prev.at, item.at)
+      fileMap.set(item.filePath, prev)
+    }
+    const changedItems = [...fileMap.values()].sort((a, b) => b.at - a.at).slice(0, 8)
+    const fileChanges = {
+      items: changedItems,
+      fileCount: fileMap.size,
+      totalAdded: changedItems.reduce((sum, x) => sum + x.added, 0),
+      totalRemoved: changedItems.reduce((sum, x) => sum + x.removed, 0),
+    }
+
     const activeTurns = turns.length
     const activeTasks = tasks.length
     const activeWorkers = activeTurns + activeTasks
@@ -347,6 +458,7 @@ export function createLive(cfg, kanban, deps = {}) {
       recentTools,
       toolHistory: toolHistory.slice(0, TELEMETRY_HISTORY_LIMIT),
       failedTools,
+      fileChanges,
       toolCount,
       contextPct,
       runTokens,

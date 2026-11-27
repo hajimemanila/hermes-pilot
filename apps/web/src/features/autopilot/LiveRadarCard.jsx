@@ -14,7 +14,7 @@ const SHORT_STATION_CODE = {
 }
 
 /**
- * Panoptes 着想の純粋 React + SVG 軌道レーダー BI（SPEC-PANOPTES-RADAR / sync-owner 準拠）。
+ * Panoptes 着想の純粋 React + SVG 軌道レーダー BI（SPEC-PANOPTES-RADAR + SPEC-AUTOPILOT-XRAY）。
  * 独自のタイマー・fetch は持たず、`subscribeSync('live' | 'usage' | 'reviewWaiting')` と親クロックで駆動する。
  */
 export function LiveRadarCard({
@@ -28,6 +28,7 @@ export function LiveRadarCard({
   clockNow = null,
   previewShotUrl = null,
   onFocusReview = null,
+  nudges = [],
 }) {
   const { t } = useI18n()
   const [live, setLive] = useState(initialLive)
@@ -67,6 +68,7 @@ export function LiveRadarCard({
     now: Number(clockNow) || Date.now(),
     runTracked,
     minRunTokens: highWaterRef.current.maxTokens,
+    nudges,
   })
   if (runTracked && summary.runTokens > highWaterRef.current.maxTokens) {
     highWaterRef.current.maxTokens = summary.runTokens
@@ -82,6 +84,8 @@ export function LiveRadarCard({
 
   const gradId = `radar-sweep-${sweepId.replace(/[^a-zA-Z0-9_-]/g, '')}`
   const stations = summary.stations || []
+  const stationById = Object.fromEntries(stations.map((s) => [s.id, s]))
+  const workers = summary.workers || []
   const selectedStation =
     stations.find((s) => s.id === selectedStationId) ||
     stations.find((s) => s.id === summary.eye?.activeStationId) ||
@@ -95,29 +99,41 @@ export function LiveRadarCard({
     Math.round(EYE_RING_C * (1 - Math.max(0, Math.min(100, ringPct)) / 100) * 10) / 10
   const eyeTone = isContextCore ? summary.eye?.tone || 'ok' : 'ok'
 
+  const peekForStation = (st, toggleIfSame = false) => {
+    if (!st) return 'none'
+    let next = 'none'
+    if (st.hasError && st.latestError) next = 'error'
+    else if (st.id === 'browser') next = 'browser'
+    else if (st.id === 'files') next = 'files'
+    else if (st.id === 'shell') next = 'shell'
+    else if (st.id === 'you' && (summary.nudges?.length || st.hasNudgePin)) next = 'nudge'
+    if (toggleIfSame && selectedStationId === st.id && peekMode === next) return 'none'
+    return next
+  }
+
   const handleStationActivate = (st) => {
     haptic('tap')
     setSelectedStationId(st.id)
-    if (st.id === 'you' && (summary.waitingCount > 0 || st.attention)) {
+    if (st.id === 'you' && summary.waitingCount > 0) {
       setPeekMode('none')
       onFocusReview?.()
       return
     }
-    if (st.hasError && st.latestError) {
-      setPeekMode((cur) => (selectedStationId === st.id && cur === 'error' ? 'none' : 'error'))
-      return
-    }
-    if (st.id === 'browser') {
-      setPeekMode((cur) => (selectedStationId === st.id && cur === 'browser' ? 'none' : 'browser'))
-      return
-    }
-    setPeekMode('none')
+    setPeekMode(peekForStation(st, true))
   }
 
   const toggleCoreMode = () => {
     haptic('tap')
     setCoreMode((m) => (m === 'context' ? 'cache' : 'context'))
   }
+
+  const filesPreview = (() => {
+    const lt = selectedStation?.latestTool
+    if (lt?.filePath) {
+      return [{ file: lt.filePath, added: lt.addedLines || 0, removed: lt.removedLines || 0 }]
+    }
+    return (summary.fileChanges?.items || []).slice(0, 2)
+  })()
 
   return (
     <div className="ap-radar-card" aria-label={t('autopilot.radar.aria')}>
@@ -155,30 +171,47 @@ export function LiveRadarCard({
                 x2={st.cx}
                 y2={st.cy}
                 strokeWidth={st.strokeWidth}
-                className={`ap-radar-spoke${st.active ? ' active' : ''}${st.hasError ? ' error' : ''}`}
+                className={`ap-radar-spoke${st.active ? ' active' : ''}${st.workerColorKey ? ` worker-${st.workerColorKey}` : ''}${st.hasError ? ' error' : ''}`}
               />
-              {st.active && (
+              {workers.length < 2 && st.active && (
                 <line
                   x1={RADAR_CENTER}
                   y1={RADAR_CENTER}
                   x2={st.cx}
                   y2={st.cy}
-                  className="ap-radar-pulse-line"
+                  className="ap-radar-pulse-line worker-w1"
                 />
               )}
             </g>
           ))}
 
+          {workers.length >= 2 &&
+            workers.map((w) => {
+              const target = stationById[w.stationId]
+              if (!target) return null
+              return (
+                <line
+                  key={`wpulse-${w.id}`}
+                  x1={RADAR_CENTER}
+                  y1={RADAR_CENTER}
+                  x2={target.cx}
+                  y2={target.cy}
+                  className={`ap-radar-pulse-line worker-${w.colorKey}`}
+                />
+              )
+            })}
+
           {stations.map((st) => {
             const isSelected = selectedStation?.id === st.id
             const shortLbl = SHORT_STATION_CODE[st.code] || st.code
+            const wCls = st.workerColorKey ? ` worker-${st.workerColorKey}` : ''
             return (
               <g
                 key={st.id}
                 role="button"
                 tabIndex={0}
                 data-station={st.id}
-                className={`ap-radar-station-node${st.active ? ' active' : ''}${st.attention ? ' attention' : ''}${isSelected ? ' selected' : ''}${st.hasError ? ' error' : ''}`}
+                className={`ap-radar-station-node${st.active ? ' active' : ''}${st.attention ? ' attention' : ''}${isSelected ? ' selected' : ''}${st.hasError ? ' error' : ''}${wCls}`}
                 aria-label={`${st.code}: ${t(st.stageKey)}`}
                 onClick={() => handleStationActivate(st)}
                 onKeyDown={(e) => {
@@ -190,13 +223,26 @@ export function LiveRadarCard({
               >
                 <circle cx={st.cx} cy={st.cy} r="18" fill="transparent" className="ap-radar-station-hit" />
                 {st.attention && <circle cx={st.cx} cy={st.cy} r="15.5" className="ap-radar-you-pulse" />}
-                {st.active && <circle cx={st.cx} cy={st.cy} r="15" className="ap-radar-ping" />}
+                {st.active && <circle cx={st.cx} cy={st.cy} r="15" className={`ap-radar-ping${wCls}`} />}
                 <circle cx={st.cx} cy={st.cy} r={st.active || isSelected ? 13 : 11} className="ap-radar-station-disc" />
                 <text x={st.cx} y={st.cy + 2.6} textAnchor="middle" className="ap-radar-station-lbl">
                   {shortLbl}
                 </text>
+                {workers.length >= 2 && st.workerBadge && (
+                  <text
+                    x={st.cx}
+                    y={st.cy + (st.cy >= RADAR_CENTER ? 18.5 : -14.5)}
+                    textAnchor="middle"
+                    className={`ap-radar-worker-tag${wCls}`}
+                  >
+                    {st.workerBadge}
+                  </text>
+                )}
                 {st.hasError && (
                   <circle cx={st.cx + 10} cy={st.cy - 10} r="4.2" className="ap-radar-err-dot" />
+                )}
+                {st.hasNudgePin && (
+                  <circle cx={st.cx + 10} cy={st.cy + 10} r="4.2" className="ap-radar-nudge-pin" />
                 )}
               </g>
             )
@@ -226,10 +272,7 @@ export function LiveRadarCard({
               className={`ap-radar-iris-arc tone-${eyeTone}`}
             />
             <circle cx={RADAR_CENTER} cy={RADAR_CENTER} r="21" className="ap-radar-sclera" />
-            <g
-              key={`blink-${summary.eye?.blinkCount || 0}`}
-              className="ap-radar-eye-lid"
-            >
+            <g key={`blink-${summary.eye?.blinkCount || 0}`} className="ap-radar-eye-lid">
               <g
                 className="ap-radar-pupil-track"
                 style={{
@@ -249,6 +292,18 @@ export function LiveRadarCard({
           </g>
         </svg>
       </div>
+
+      {workers.length >= 2 && (
+        <div className="ap-radar-workers-row" aria-label={t('autopilot.radar.parallelBadge', { n: workers.length })}>
+          {workers.map((w) => (
+            <span key={w.id} className={`ap-radar-worker-chip worker-${w.colorKey}`}>
+              <span className="ap-radar-worker-dot" aria-hidden="true" />
+              <span>{w.label}</span>
+              <span className="ap-radar-worker-st">{w.stationId.toUpperCase()}</span>
+            </span>
+          ))}
+        </div>
+      )}
 
       {selectedStation && (
         <div className="ap-radar-inspector" role="status">
@@ -281,6 +336,66 @@ export function LiveRadarCard({
               ) : (
                 <div className="ap-radar-peek-empty">{t('autopilot.radar.browserPeekEmpty')}</div>
               )}
+            </div>
+          )}
+
+          {peekMode === 'files' && (
+            <div className="ap-radar-peek files">
+              {filesPreview.length > 0 ? (
+                filesPreview.map((fc) => {
+                  const total = Math.max(1, (fc.added || 0) + (fc.removed || 0))
+                  const addPct = Math.round(((fc.added || 0) / total) * 100)
+                  return (
+                    <div key={fc.file} className="ap-xray-row">
+                      <span className="ap-xray-file">📄 {fc.file}</span>
+                      <span className="ap-xray-diff">
+                        <span className="add">+{fc.added || 0}</span>
+                        <span className="del">-{fc.removed || 0}</span>
+                      </span>
+                      <span className="ap-xray-diffbar" aria-hidden="true">
+                        <span className="add" style={{ width: `${addPct}%` }} />
+                      </span>
+                    </div>
+                  )
+                })
+              ) : (
+                <div className="ap-radar-peek-empty">{t('autopilot.radar.xrayNoFiles')}</div>
+              )}
+            </div>
+          )}
+
+          {peekMode === 'shell' && (
+            <div className="ap-radar-peek shell">
+              <div className="ap-xray-row">
+                <span className="ap-xray-intent">
+                  {t(selectedStation.latestTool?.commandIntentKey || 'autopilot.radar.cmdIntentGeneric')}
+                </span>
+                <span className={`ap-xray-badge ${selectedStation.hasError ? 'err' : 'ok'}`}>
+                  {selectedStation.hasError ? `✕ ${t('autopilot.radar.xrayFail')}` : `✓ ${t('autopilot.radar.xrayPass')}`}
+                </span>
+              </div>
+              {selectedStation.latestTool?.command ? (
+                <code className="ap-xray-cmd">{selectedStation.latestTool.command}</code>
+              ) : (
+                <div className="ap-radar-peek-empty">{t('autopilot.radar.xrayNoCmd')}</div>
+              )}
+              {selectedStation.latestError?.errorTail && (
+                <pre className="ap-radar-err-tail">{selectedStation.latestError.errorTail}</pre>
+              )}
+            </div>
+          )}
+
+          {peekMode === 'nudge' && (
+            <div className="ap-radar-peek nudge">
+              <div className="ap-radar-peek-title">📌 {t('autopilot.radar.xrayNudgeTitle')}</div>
+              {(summary.nudges || []).slice(-3).reverse().map((n) => (
+                <div key={n.id} className="ap-xray-row">
+                  <span className="ap-xray-file">{n.text}</span>
+                  <span className={`ap-xray-badge ${n.status === 'applied' ? 'ok' : 'warn'}`}>
+                    {n.status === 'applied' ? t('autopilot.radar.xrayApplied') : t('autopilot.radar.xrayQueued')}
+                  </span>
+                </div>
+              ))}
             </div>
           )}
 
@@ -332,7 +447,7 @@ export function LiveRadarCard({
                 onClick={() => {
                   haptic('tap')
                   setSelectedStationId(entry.stationId)
-                  setPeekMode(entry.failed ? 'error' : entry.stationId === 'browser' ? 'browser' : 'none')
+                  setPeekMode(peekForStation(stationById[entry.stationId], false))
                 }}
               >
                 <span className="ap-radar-feed-main">

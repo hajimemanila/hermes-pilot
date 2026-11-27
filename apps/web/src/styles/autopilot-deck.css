@@ -448,12 +448,61 @@ html[data-vibe='dopamine'] .ap-launcher-submit { background: var(--vibe-primary-
 .ap-studio-title, .ap-complete-title { margin: 0; font-size: 15px; font-weight: 800; color: var(--text); overflow-wrap: anywhere; }
 
 .ap-step-track { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
-.ap-step-node { display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 10.5px; color: var(--muted); }
+.ap-step-node { display: flex; flex-direction: column; align-items: center; }
+.ap-step-btn {
+  width: 100%;
+  min-height: 30px;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+.ap-step-btn:disabled { cursor: default; opacity: 0.7; }
 .ap-step-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--line-strong); }
-.ap-step-node.done { color: var(--good); }
+.ap-step-node.done .ap-step-btn { color: var(--good); }
 .ap-step-node.done .ap-step-dot { background: var(--good); }
-.ap-step-node.current { color: var(--accent); font-weight: 800; }
+.ap-step-node.current .ap-step-btn { color: var(--accent); font-weight: 800; }
 .ap-step-node.current .ap-step-dot { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+.ap-step-node.inspected .ap-step-btn { border-color: var(--accent); background: var(--rec-bg); }
+.ap-step-drawer {
+  padding: 6px 9px;
+  border-radius: 10px;
+  background: var(--bg-elev);
+  border: 1px solid var(--accent);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text);
+}
+.ap-step-drawer-text { font-weight: 700; line-height: 1.35; }
+.ap-step-file-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.ap-step-file-chip {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9.5px;
+  color: var(--muted);
+}
+.ap-nudge-trigger { display: inline-flex; align-items: center; gap: 5px; }
+.ap-nudge-badge {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--warn);
+  color: var(--on-warn);
+  font-size: 10px;
+  font-weight: 900;
+}
 
 .ap-progress-rail { height: 7px; border-radius: 999px; background: var(--bg-elev); overflow: hidden; }
 .ap-progress-fill { height: 100%; border-radius: 999px; background: var(--accent); transition: width 0.35s ease; }

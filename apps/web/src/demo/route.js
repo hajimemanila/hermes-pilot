@@ -58,6 +58,7 @@ export function demoRoute(path) {
     if (parts[5] === 'diff') return { name: 'board.taskDiff', id: boardSlug, taskId, params }
     if (parts[5] === 'worker') return { name: 'board.taskWorker', id: boardSlug, taskId, params }
     if (parts[5] === 'abort') return { name: 'board.taskAbort', id: boardSlug, taskId, params }
+    if (parts[5] === 'comment') return { name: 'board.taskComment', id: boardSlug, taskId, params }
     return { name: 'board.task', id: boardSlug, taskId, params }
   }
   if (p === '/api/inbox') return { name: 'inbox', params }

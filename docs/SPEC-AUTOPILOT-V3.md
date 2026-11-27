@@ -1,6 +1,6 @@
 # SPEC-AUTOPILOT-V3 — Compact Interactive Radar, Run Telemetry, Gesture Isolation & Wave Parallelism
 
-> **Status:** Archived (`AP3-1..AP3-4` implemented and deployed)  
+- **Status**: archived  
 > **Batch prefix:** `AP3`  
 > **Extends:** `docs/SPEC-AUTOPILOT-V2.md` (Archived `AP2-1..AP2-6`)  
 > **Target:** Hermes Mobile PWA (`apps/web`, `apps/bridge`, `docs`)

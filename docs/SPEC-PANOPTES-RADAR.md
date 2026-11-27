@@ -1,6 +1,6 @@
 # SPEC-PANOPTES-RADAR — Orbital Context-Eye Radar BI for Autopilot Mobile UI
 
-> **Status:** Archived (`PN-1..PN-3` implemented and deployed)  
+- **Status**: archived  
 > **Batch prefix:** `PN`  
 > **Extends:** `docs/SPEC-AUTOPILOT-V3.md` (Archived `AP3-1..AP3-4`)  
 > **Target:** Hermes Mobile PWA (`apps/web`, `apps/bridge`, `docs`)  

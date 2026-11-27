@@ -44,7 +44,7 @@ function saveAnchorMap(map) {
   }
 }
 
-/** Read persisted Autopilot run anchor (`{ runId, startedAt, maxTokens }`) for a board. */
+/** Read persisted Autopilot run anchor (`{ runId, startedAt, maxTokens, nudges }`) for a board. */
 export function readAutopilotRunAnchor(boardKey) {
   const key = String(boardKey || 'default')
   const map = loadAnchorMap()
@@ -54,10 +54,11 @@ export function readAutopilotRunAnchor(boardKey) {
     runId: String(entry.runId || key),
     startedAt: Number(entry.startedAt),
     maxTokens: Math.max(0, Number(entry.maxTokens) || 0),
+    nudges: Array.isArray(entry.nudges) ? entry.nudges.slice(-10) : [],
   }
 }
 
-/** Persist Autopilot run anchor (`{ runId, startedAt, maxTokens }`) for a board. */
+/** Persist Autopilot run anchor (`{ runId, startedAt, maxTokens, nudges }`) for a board. */
 export function writeAutopilotRunAnchor(boardKey, anchor) {
   const key = String(boardKey || 'default')
   const map = loadAnchorMap()
@@ -68,6 +69,7 @@ export function writeAutopilotRunAnchor(boardKey, anchor) {
       runId: String(anchor.runId || key),
       startedAt: Number(anchor.startedAt),
       maxTokens: Math.max(0, Number(anchor.maxTokens) || 0),
+      nudges: Array.isArray(anchor.nudges) ? anchor.nudges.slice(-10) : [],
     }
   }
   saveAnchorMap(map)

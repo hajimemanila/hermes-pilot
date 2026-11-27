@@ -1,5 +1,5 @@
 /**
- * Pure orbital telemetry projection helpers for LiveRadarCard (SPEC-PANOPTES-RADAR / PN-2).
+ * Pure orbital telemetry projection helpers for LiveRadarCard (SPEC-PANOPTES-RADAR + SPEC-AUTOPILOT-XRAY).
  *
  * Clean-room React + SVG radar layout inspired by the telemetry concepts in
  * `huwhitememes/panoptes` (MIT License) with zero external chart dependencies.
@@ -8,6 +8,8 @@
 export const RADAR_SIZE = 220
 export const RADAR_CENTER = 110
 export const ORBIT_RADIUS = 78
+
+export const WORKER_PALETTE = Object.freeze(['w1', 'w2', 'w3'])
 
 export const RING_RADII = Object.freeze({
   core: 34,
@@ -41,8 +43,8 @@ export const RADAR_STATIONS = Object.freeze(
 const STATION_BY_ID = Object.freeze(Object.fromEntries(RADAR_STATIONS.map((s) => [s.id, s])))
 
 export const DEMO_RADAR_SEQUENCE = Object.freeze([
-  { stationId: 'files', tool: 'edit_file', durationMs: 320 },
-  { stationId: 'shell', tool: 'npm run build', durationMs: 1450 },
+  { stationId: 'files', tool: 'edit_file', durationMs: 320, filePath: 'styles/detail.css', addedLines: 18, removedLines: 4 },
+  { stationId: 'shell', tool: 'terminal', durationMs: 1450, command: 'npm run build && check:pwa --styles' },
   { stationId: 'browser', tool: 'render_mocks', durationMs: 1820 },
   { stationId: 'you', tool: 'quick_review', durationMs: 420 },
 ])
@@ -74,8 +76,21 @@ export function toolToStation(toolName) {
   return 'tools'
 }
 
+/** Classify a shell command into a casual-friendly 1-line intent i18n key. */
+export function summarizeCommandIntent(command, toolName = '') {
+  const s = `${command || ''} ${toolName || ''}`.toLowerCase()
+  if (/css|style|tailwind|theme|layout/.test(s)) return 'autopilot.radar.cmdIntentStyle'
+  if (/test|vitest|pytest|jest|assert|check:pwa|check-coherence/.test(s)) return 'autopilot.radar.cmdIntentTest'
+  if (/build|vite|tsc|bundle|compile|deploy/.test(s)) return 'autopilot.radar.cmdIntentBuild'
+  if (/browser|chrome|playwright|render-mocks|screenshot|cdp/.test(s)) return 'autopilot.radar.cmdIntentPreview'
+  if (/lint|eslint|prettier|format/.test(s)) return 'autopilot.radar.cmdIntentLint'
+  if (/\bgit\b/.test(s)) return 'autopilot.radar.cmdIntentGit'
+  if (/\brg\b|\bgrep\b|\bfind\b|\bls\b|\bcat\b|\bhead\b|\btail\b|\bwc\b/.test(s)) return 'autopilot.radar.cmdIntentInspect'
+  return 'autopilot.radar.cmdIntentGeneric'
+}
+
 /**
- * Classify a tool name onto one of three legacy concentric radar rings.
+ * Classify a tool name onto one of three concentric rings (used for feed color coding).
  * @param {unknown} toolName
  * @returns {'core'|'verify'|'explore'}
  */
@@ -139,6 +154,10 @@ function collectSourceTools(liveSnapshot, tasks, activeJob, now) {
         durationMs: entry.durationMs,
         failed: false,
         errorTail: null,
+        filePath: entry.filePath || null,
+        addedLines: entry.addedLines || 0,
+        removedLines: entry.removedLines || 0,
+        command: entry.command || null,
         taskTitle: fallbackTaskTitle || 'Autopilot Demo Build',
         at: atMs - (i === 0 ? 800 : i * 3200),
       })
@@ -168,7 +187,7 @@ function collectSourceTools(liveSnapshot, tasks, activeJob, now) {
     sourceTools = tasks.map((tk) => ({
       name: tk?.title ? String(tk.title).slice(0, 24) : 'worker',
       taskTitle: tk?.title || null,
-      at: tk?.startedAt || now,
+      at: tk?.startedAt || atMs,
     }))
   }
 
@@ -184,8 +203,9 @@ function collectSourceTools(liveSnapshot, tasks, activeJob, now) {
  * @param {{tasks?: Array<object>, activeJob?: object|null, now?: number, maxBlips?: number}} [opts]
  */
 export function projectRadarBlips(liveSnapshot, { tasks = [], activeJob = null, now = Date.now(), maxBlips = 6 } = {}) {
+  const atMs = now === null || now === undefined ? Date.now() : Number(now)
   const limit = Math.max(1, Math.min(12, Number(maxBlips) || 6))
-  const sourceTools = collectSourceTools(liveSnapshot, tasks, activeJob, now)
+  const sourceTools = collectSourceTools(liveSnapshot, tasks, activeJob, atMs)
 
   return sourceTools.slice(0, limit).map((tool, idx) => {
     const name = String(tool.name)
@@ -197,9 +217,10 @@ export function projectRadarBlips(liveSnapshot, { tasks = [], activeJob = null, 
     const rad = (angleDeg * Math.PI) / 180
     const cx = Math.round(RADAR_CENTER + Math.cos(rad) * radius)
     const cy = Math.round(RADAR_CENTER + Math.sin(rad) * radius)
-    const ageSec = tool.at ? Math.max(0, Math.round((now - Number(tool.at)) / 1000)) : idx * 6
+    const ageSec = tool.at ? Math.max(0, Math.round((atMs - Number(tool.at)) / 1000)) : idx * 6
     const durationMs = Number.isFinite(Number(tool.durationMs)) ? Number(tool.durationMs) : null
     const freshness = Math.max(0.35, Math.min(1, 1 - idx * 0.12))
+    const command = tool.command ? String(tool.command) : null
     return {
       id: `${name}-${idx}`,
       name,
@@ -217,6 +238,11 @@ export function projectRadarBlips(liveSnapshot, { tasks = [], activeJob = null, 
       durationLabel: formatDurationMs(durationMs),
       failed: Boolean(tool.failed),
       errorTail: tool.errorTail ?? null,
+      filePath: tool.filePath ?? null,
+      addedLines: Number(tool.addedLines) || 0,
+      removedLines: Number(tool.removedLines) || 0,
+      command,
+      commandIntentKey: command || stationId === 'shell' ? summarizeCommandIntent(command, name) : null,
       freshness,
       isLatest: idx === 0,
     }
@@ -235,9 +261,60 @@ export function formatCompactTokens(n) {
   return String(Math.round(val))
 }
 
+function deriveWorkers(live, tasks, demoActiveStep, stepIdx) {
+  const list = []
+  if (live?.demo && live?.telemetry?.demoSequence) {
+    const secondStep = DEMO_RADAR_SEQUENCE[(stepIdx + 2) % DEMO_RADAR_SEQUENCE.length]
+    list.push({
+      id: 'demo-w1',
+      label: 'W1',
+      colorKey: WORKER_PALETTE[0],
+      stationId: demoActiveStep.stationId,
+      toolName: demoActiveStep.tool,
+      taskTitle: 'Frontend UI',
+    })
+    list.push({
+      id: 'demo-w2',
+      label: 'W2',
+      colorKey: WORKER_PALETTE[1],
+      stationId: secondStep.stationId,
+      toolName: secondStep.tool,
+      taskTitle: 'Pre-Flight Check',
+    })
+    return list
+  }
+
+  const turns = Array.isArray(live?.turns) ? live.turns : []
+  for (let i = 0; i < Math.min(3, turns.length); i += 1) {
+    const turn = turns[i]
+    const toolName = turn?.lastTool?.name || turn?.recentTools?.[0]?.name || 'worker'
+    list.push({
+      id: String(turn?.sessionId || `turn-${i}`),
+      label: `W${i + 1}`,
+      colorKey: WORKER_PALETTE[i % WORKER_PALETTE.length],
+      stationId: toolToStation(toolName),
+      toolName,
+      taskTitle: turn?.title || null,
+    })
+  }
+  const runningTasks = Array.isArray(tasks) ? tasks : []
+  for (let k = list.length; k < Math.min(3, runningTasks.length); k += 1) {
+    const tk = runningTasks[k]
+    const toolName = String(tk?.title || 'worker')
+    list.push({
+      id: String(tk?.id || `task-${k}`),
+      label: `W${k + 1}`,
+      colorKey: WORKER_PALETTE[k % WORKER_PALETTE.length],
+      stationId: toolToStation(toolName),
+      toolName,
+      taskTitle: tk?.title || null,
+    })
+  }
+  return list
+}
+
 /**
- * Combine `live`, `usage`, and `reviewWaiting` snapshots for LiveRadarCard.
- * Includes orbital 8-station metrics, central Context Eye telemetry, and monotonic 0-based `runTracked` mode.
+ * Combine `live`, `usage`, `reviewWaiting`, and queued `nudges` snapshots for LiveRadarCard.
  */
 export function buildRadarSummary({
   live = null,
@@ -248,9 +325,11 @@ export function buildRadarSummary({
   now = Date.now(),
   runTracked = false,
   minRunTokens = 0,
+  nudges = [],
 } = {}) {
-  const allTools = collectSourceTools(live, tasks, activeJob, now)
-  const blips = projectRadarBlips(live, { tasks, activeJob, now, maxBlips: 6 })
+  const atMs = now === null || now === undefined ? Date.now() : Number(now)
+  const allTools = collectSourceTools(live, tasks, activeJob, atMs)
+  const blips = projectRadarBlips(live, { tasks, activeJob, now: atMs, maxBlips: 6 })
   const feed = blips.slice(0, 4).map((b) => ({
     id: b.id,
     name: b.name,
@@ -264,13 +343,27 @@ export function buildRadarSummary({
     durationLabel: b.durationLabel,
     failed: b.failed,
     errorTail: b.errorTail,
+    filePath: b.filePath,
+    addedLines: b.addedLines,
+    removedLines: b.removedLines,
+    command: b.command,
+    commandIntentKey: b.commandIntentKey,
   }))
-  const activeWorkers =
+  const isDemoSequence = Boolean(live?.demo && live?.telemetry?.demoSequence)
+  const stepIdx = isDemoSequence ? Math.floor(Math.max(0, atMs) / 1500) % DEMO_RADAR_SEQUENCE.length : 0
+  const demoActiveStep = isDemoSequence ? DEMO_RADAR_SEQUENCE[stepIdx] : null
+  const workers = deriveWorkers(live, tasks, demoActiveStep, stepIdx)
+
+  const rawWorkers =
     Number(live?.telemetry?.activeWorkers ?? (Number(live?.counts?.turns) || 0) + (Number(live?.counts?.tasks) || 0)) || 0
+  const activeWorkers = Math.max(rawWorkers, isDemoSequence ? workers.length : rawWorkers)
   const toolCount = Number(live?.telemetry?.toolCount ?? blips.length) || blips.length
   const waitingCount = Array.isArray(reviewItems)
     ? reviewItems.filter((r) => String(r?.status || '').toLowerCase() === 'blocked').length
     : 0
+
+  const nudgeList = Array.isArray(nudges) ? nudges : []
+  const queuedNudges = nudgeList.filter((n) => n && n.status !== 'applied')
 
   const turnTokenSum = Array.isArray(live?.turns)
     ? live.turns.reduce((acc, t) => acc + (Number(t?.tokens?.total ?? 0) || 0), 0)
@@ -289,7 +382,7 @@ export function buildRadarSummary({
   const costUsd = Number(live?.telemetry?.runCostUsd ?? usageTotals.cost ?? 0) || 0
   const contextPct = Math.max(0, Math.min(100, Number(live?.telemetry?.contextPct ?? 0) || 0))
 
-  // Build 8-station aggregation
+  // Build 8-station aggregation + X-Ray tool details
   const stationStats = Object.fromEntries(
     RADAR_STATIONS.map((s) => [
       s.id,
@@ -301,14 +394,20 @@ export function buildRadarSummary({
     const entry = stationStats[sid] || stationStats.tools
     entry.count += 1
     if (!entry.latestTool || (Number(t.at) || 0) >= entry.lastAt) {
+      const command = t.command ? String(t.command) : null
       entry.latestTool = {
         name: String(t.name),
         durationMs: Number.isFinite(Number(t.durationMs)) ? Number(t.durationMs) : null,
         durationLabel: formatDurationMs(t.durationMs),
-        ageSec: t.at ? Math.max(0, Math.round((now - Number(t.at)) / 1000)) : 0,
+        ageSec: t.at ? Math.max(0, Math.round((atMs - Number(t.at)) / 1000)) : 0,
         taskTitle: t.taskTitle || null,
         failed: Boolean(t.failed),
         errorTail: t.errorTail ?? null,
+        filePath: t.filePath ?? null,
+        addedLines: Number(t.addedLines) || 0,
+        removedLines: Number(t.removedLines) || 0,
+        command,
+        commandIntentKey: command || sid === 'shell' ? summarizeCommandIntent(command, t.name) : null,
       }
       entry.lastAt = Number(t.at) || 0
     }
@@ -328,9 +427,31 @@ export function buildRadarSummary({
     }
   }
 
-  const demoActiveStep = live?.demo && live?.telemetry?.demoSequence
-    ? DEMO_RADAR_SEQUENCE[Math.floor(Math.max(0, now === null || now === undefined ? Date.now() : Number(now)) / 1500) % DEMO_RADAR_SEQUENCE.length]
-    : null
+  let fileChanges = live?.telemetry?.fileChanges || null
+  if (!fileChanges || (!fileChanges.fileCount && (!fileChanges.items || fileChanges.items.length === 0))) {
+    const fileMap = new Map()
+    for (const t of allTools) {
+      if (!t.filePath) continue
+      const prev = fileMap.get(t.filePath) || { file: t.filePath, added: 0, removed: 0, at: 0 }
+      prev.added += Number(t.addedLines) || 0
+      prev.removed += Number(t.removedLines) || 0
+      prev.at = Math.max(prev.at, Number(t.at) || 0)
+      fileMap.set(t.filePath, prev)
+    }
+    const items = [...fileMap.values()].sort((a, b) => b.at - a.at).slice(0, 8)
+    fileChanges = {
+      items,
+      fileCount: fileMap.size,
+      totalAdded: items.reduce((sum, x) => sum + x.added, 0),
+      totalRemoved: items.reduce((sum, x) => sum + x.removed, 0),
+    }
+  }
+
+  const workerByStation = new Map()
+  for (const w of workers) {
+    if (!workerByStation.has(w.stationId)) workerByStation.set(w.stationId, w)
+  }
+
   const activeStationId =
     demoActiveStep?.stationId ||
     feed[0]?.stationId ||
@@ -338,8 +459,10 @@ export function buildRadarSummary({
 
   const stations = RADAR_STATIONS.map((s) => {
     const stat = stationStats[s.id]
-    const attention = s.id === 'you' && (waitingCount > 0 || demoActiveStep?.stationId === 'you')
-    const active = activeStationId === s.id || attention
+    const matchedWorker = workerByStation.get(s.id) || null
+    const hasNudgePin = s.id === 'you' && queuedNudges.length > 0
+    const attention = s.id === 'you' && (waitingCount > 0 || hasNudgePin || demoActiveStep?.stationId === 'you')
+    const active = activeStationId === s.id || Boolean(matchedWorker) || attention
     const strokeWidth = stat.count > 0 ? Math.min(4, Math.round((1.2 + stat.count * 0.55) * 10) / 10) : 1
     return {
       ...s,
@@ -347,6 +470,10 @@ export function buildRadarSummary({
       strokeWidth,
       active,
       attention,
+      hasNudgePin,
+      nudgeCount: s.id === 'you' ? queuedNudges.length : 0,
+      workerColorKey: matchedWorker?.colorKey || (active ? WORKER_PALETTE[0] : null),
+      workerBadge: matchedWorker?.label || null,
       hasError: stat.hasError,
       latestError: stat.latestError,
       latestTool: stat.latestTool,
@@ -373,6 +500,10 @@ export function buildRadarSummary({
     blips,
     feed,
     stations,
+    workers,
+    fileChanges,
+    queuedNudges,
+    nudges: nudgeList,
     eye,
     latestError,
     activeWorkers,

@@ -241,17 +241,27 @@ export function AutopilotView({ overview, notify, onSwitchCockpit }) {
     if (hasOpenWork) {
       const inferredStart = Number(stage.runStartedAt || activeJob?.startedAt || activeJob?.createdAt || 0) || Date.now()
       const inferredId = String(activeJob?.id || stage.runKey || `run-${inferredStart}`)
+      const activeTaskId = stage.activeTask?.id ? String(stage.activeTask.id) : null
       setRunAnchor((prev) => {
         if (!prev) {
-          const created = { runId: inferredId, startedAt: inferredStart, maxTokens: 0 }
+          const created = { runId: inferredId, startedAt: inferredStart, maxTokens: 0, nudges: [] }
           writeAutopilotRunAnchor(boardKey, created)
           return created
         }
         const jobCreated = Number(activeJob?.createdAt || 0)
         if (activeJob?.id && activeJob.id !== prev.runId && jobCreated > prev.startedAt + 15_000) {
-          const reset = { runId: activeJob.id, startedAt: jobCreated, maxTokens: 0 }
+          const reset = { runId: activeJob.id, startedAt: jobCreated, maxTokens: 0, nudges: [] }
           writeAutopilotRunAnchor(boardKey, reset)
           return reset
+        }
+        const prevNudges = Array.isArray(prev.nudges) ? prev.nudges : []
+        if (activeTaskId && prevNudges.some((n) => n.status === 'queued' && n.taskId && n.taskId !== activeTaskId)) {
+          const nextNudges = prevNudges.map((n) =>
+            n.status === 'queued' && n.taskId && n.taskId !== activeTaskId ? { ...n, status: 'applied' } : n,
+          )
+          const updated = { ...prev, nudges: nextNudges }
+          writeAutopilotRunAnchor(boardKey, updated)
+          return updated
         }
         return prev
       })
@@ -262,7 +272,7 @@ export function AutopilotView({ overview, notify, onSwitchCockpit }) {
         return null
       })
     }
-  }, [board, overview?.board, stage.act, stage.runStartedAt, stage.runKey, jobs, waiting.length])
+  }, [board, overview?.board, stage.act, stage.runStartedAt, stage.runKey, stage.activeTask?.id, jobs, waiting.length])
 
   const handleFocusReview = useCallback(() => {
     refreshSync('reviewWaiting')
@@ -281,6 +291,58 @@ export function AutopilotView({ overview, notify, onSwitchCockpit }) {
       })
     },
     [board, overview?.board],
+  )
+
+  const handleSendNudge = useCallback(
+    async (text) => {
+      const clean = String(text || '').trim()
+      if (!clean) return
+      const boardKey = board || overview?.board || 'default'
+      const openTaskId =
+        stage.activeTask?.id ||
+        tasks.find((tk) => ['running', 'ready', 'blocked', 'in_progress'].includes(String(tk?.status || '').toLowerCase()))?.id ||
+        null
+
+      try {
+        await api('/api/memos', {
+          method: 'POST',
+          body: { title: clean.slice(0, 48), body: clean, tags: ['autopilot', 'nudge'] },
+        })
+        emitHmEvent(HM_EVENTS.MEMOS_CHANGED)
+      } catch {
+        /* best effort memo persistence */
+      }
+      if (board && openTaskId) {
+        try {
+          await api(`/api/boards/${encodeURIComponent(board)}/tasks/${encodeURIComponent(openTaskId)}/comment`, {
+            method: 'POST',
+            body: { body: `[LIVE NUDGE] ${clean}`, by: 'mobile' },
+          })
+        } catch {
+          /* task comment may fail if task just completed; memo still holds nudge */
+        }
+      }
+      const entry = {
+        id: `n-${Date.now()}`,
+        text: clean,
+        at: Date.now(),
+        taskId: openTaskId,
+        status: 'queued',
+      }
+      setRunAnchor((prev) => {
+        const base = prev || {
+          runId: String(stage.runKey || 'live'),
+          startedAt: Number(stage.runStartedAt) || Date.now(),
+          maxTokens: 0,
+          nudges: [],
+        }
+        const next = { ...base, nudges: [...(base.nudges || []).slice(-9), entry] }
+        writeAutopilotRunAnchor(boardKey, next)
+        return next
+      })
+      notify?.(t('autopilot.nudge.queuedToast'))
+    },
+    [board, overview?.board, stage.activeTask?.id, stage.runKey, stage.runStartedAt, tasks, notify, t],
   )
 
   const handleCommitAction = async (question, action, extra = {}) => {
@@ -389,7 +451,10 @@ export function AutopilotView({ overview, notify, onSwitchCockpit }) {
           runStartedAt={runAnchor?.startedAt || stage.runStartedAt || null}
           runId={runAnchor?.runId || stage.runKey}
           persistedMaxTokens={runAnchor?.maxTokens || 0}
+          nudges={runAnchor?.nudges || []}
+          reviewItems={items}
           onObservedTokens={handleObservedTokens}
+          onSendNudge={handleSendNudge}
           onFocusReview={handleFocusReview}
           onSwitchCockpit={onSwitchCockpit}
           onSaveMemo={handleSaveMemo}

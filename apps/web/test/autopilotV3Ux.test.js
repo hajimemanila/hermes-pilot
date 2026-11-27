@@ -58,9 +58,17 @@ test('AP3-3/4 & Panoptes: LiveRadarCard renders 8 stations, interactive Context 
 
   const cardsSrc = read('apps/web/src/features/autopilot/AutopilotCards.jsx')
   assert.doesNotMatch(cardsSrc, /ap-wipe-inline/)
+  assert.match(cardsSrc, /ap-step-drawer/)
+  assert.match(cardsSrc, /ap-nudge-badge/)
+
+  assert.match(radarSrc, /ap-radar-nudge-pin/)
+  assert.match(radarSrc, /ap-xray-diffbar/)
+  assert.match(radarSrc, /ap-radar-workers-row/)
+  assert.match(radarCss, /\.worker-w1/)
+  assert.match(radarCss, /\.worker-w2/)
 })
 
-test('AP3-3/4 & Panoptes i18n keys exist in both en.json and ja.json', () => {
+test('AP3-3/4 & Panoptes/X-Ray i18n keys exist in both en.json and ja.json', () => {
   const en = JSON.parse(read('apps/web/src/i18n/en.json'))
   const ja = JSON.parse(read('apps/web/src/i18n/ja.json'))
   for (const k of [
@@ -76,7 +84,16 @@ test('AP3-3/4 & Panoptes i18n keys exist in both en.json and ja.json', () => {
     'autopilot.radar.coreToggleHint',
     'autopilot.radar.browserPeekTitle',
     'autopilot.radar.errorTitle',
+    'autopilot.radar.cmdIntentStyle',
+    'autopilot.radar.cmdIntentTest',
+    'autopilot.radar.xrayPass',
+    'autopilot.radar.xrayFail',
+    'autopilot.radar.xrayNudgeTitle',
     'autopilot.radar.parallelBadge',
+    'autopilot.nudge.btn',
+    'autopilot.nudge.queuedToast',
+    'autopilot.live.reviewDesign',
+    'autopilot.live.reviewBuild',
     'autopilot.live.elapsedAria',
     'autopilot.copy.more',
     'autopilot.copy.less',

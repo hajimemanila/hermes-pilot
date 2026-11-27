@@ -221,6 +221,8 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
       }
       return { ok: true, reclaimed: 1, blocked: 0, demo: true }
     }
+    case 'board.taskComment':
+      return { ok: true, id: route.taskId, demo: true }
     case 'inbox':
       return { items: [] }
     case 'specs':
@@ -340,11 +342,37 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
       // 何か動いていればターン 1 本を見せる（Discord / PWA のターンに相当する行）
       const demoRecentTools = [
         { name: 'render_mocks', at: at - 4_000, durationMs: 1820, failed: false, errorTail: null },
-        { name: 'vision_analyze', at: at - 11_000, durationMs: 920, failed: false, errorTail: null },
-        { name: 'edit_file', at: at - 19_000, durationMs: 310, failed: false, errorTail: null },
-        { name: 'read_file', at: at - 27_000, durationMs: 180, failed: false, errorTail: null },
-        { name: 'terminal', at: at - 36_000, durationMs: 1450, failed: false, errorTail: null },
+        {
+          name: 'edit_file',
+          at: at - 9_000,
+          durationMs: 310,
+          failed: false,
+          errorTail: null,
+          filePath: 'styles/detail.css',
+          addedLines: 18,
+          removedLines: 4,
+        },
+        {
+          name: 'terminal',
+          at: at - 16_000,
+          durationMs: 1450,
+          failed: false,
+          errorTail: null,
+          command: 'npm run build && check:pwa --styles',
+        },
+        { name: 'vision_analyze', at: at - 22_000, durationMs: 920, failed: false, errorTail: null },
+        { name: 'read_file', at: at - 28_000, durationMs: 180, failed: false, errorTail: null, filePath: 'src/App.jsx' },
       ]
+      const demoFileChanges = {
+        items: [
+          { file: 'styles/detail.css', added: 18, removed: 4, at: at - 9_000 },
+          { file: 'LiveRadarCard.jsx', added: 24, removed: 5, at: at - 14_000 },
+          { file: 'studio.js', added: 11, removed: 2, at: at - 21_000 },
+        ],
+        fileCount: 3,
+        totalAdded: 53,
+        totalRemoved: 11,
+      }
       const turns =
         tasks.length || architectRunning
           ? [
@@ -379,6 +407,7 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
             }))
           : [],
         toolCount: turns[0] ? 12 : 0,
+        fileChanges: demoFileChanges,
         contextPct: 44,
         demoSequence: true,
         runTokens: runTok,

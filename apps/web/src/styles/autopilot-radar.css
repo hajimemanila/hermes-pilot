@@ -69,6 +69,13 @@
   opacity: 0.9;
 }
 
+.ap-radar-spoke.worker-w1,
+.ap-radar-pulse-line.worker-w1 { stroke: var(--accent); }
+.ap-radar-spoke.worker-w2,
+.ap-radar-pulse-line.worker-w2 { stroke: var(--warn); }
+.ap-radar-spoke.worker-w3,
+.ap-radar-pulse-line.worker-w3 { stroke: #a78bfa; }
+
 .ap-radar-pulse-line {
   stroke: var(--accent);
   stroke-width: 2.2;
@@ -93,6 +100,14 @@
   stroke-width: 1.8;
 }
 
+.ap-radar-station-node.worker-w2.active .ap-radar-station-disc {
+  stroke: var(--warn);
+}
+
+.ap-radar-station-node.worker-w3.active .ap-radar-station-disc {
+  stroke: #a78bfa;
+}
+
 .ap-radar-station-node.attention .ap-radar-station-disc {
   stroke: var(--warn);
   fill: var(--warn-bg, #fff7ed);
@@ -110,8 +125,23 @@
   pointer-events: none;
 }
 
+.ap-radar-worker-tag {
+  font-size: 5.8px;
+  font-weight: 900;
+  fill: var(--accent);
+  pointer-events: none;
+}
+.ap-radar-worker-tag.worker-w2 { fill: var(--warn); }
+.ap-radar-worker-tag.worker-w3 { fill: #a78bfa; }
+
 .ap-radar-err-dot {
   fill: var(--bad);
+  stroke: var(--surface);
+  stroke-width: 1.4;
+}
+
+.ap-radar-nudge-pin {
+  fill: var(--warn);
   stroke: var(--surface);
   stroke-width: 1.4;
 }
@@ -132,6 +162,9 @@
   transform-origin: center;
   opacity: 0;
 }
+
+.ap-radar-ping.worker-w2 { stroke: var(--warn); }
+.ap-radar-ping.worker-w3 { stroke: #a78bfa; }
 
 /* Central Context Eye */
 .ap-radar-eye {
@@ -219,7 +252,8 @@ html[data-vibe='dopamine'] .ap-radar-ping {
   animation: ap-blip-ping 1.8s ease-out infinite;
 }
 
-html[data-vibe='dopamine'] .ap-radar-you-pulse {
+html[data-vibe='dopamine'] .ap-radar-you-pulse,
+html[data-vibe='dopamine'] .ap-radar-nudge-pin {
   animation: ap-blip-ping 1.4s ease-out infinite;
 }
 
@@ -227,8 +261,116 @@ html[data-vibe='serotonin'] .ap-radar-sweep,
 html[data-vibe='serotonin'] .ap-radar-pulse-line,
 html[data-vibe='serotonin'] .ap-radar-eye-lid,
 html[data-vibe='serotonin'] .ap-radar-ping,
-html[data-vibe='serotonin'] .ap-radar-you-pulse {
+html[data-vibe='serotonin'] .ap-radar-you-pulse,
+html[data-vibe='serotonin'] .ap-radar-nudge-pin {
   animation: none !important;
+}
+
+.ap-radar-workers-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.ap-radar-worker-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.ap-radar-worker-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.ap-radar-worker-chip.worker-w2 .ap-radar-worker-dot { background: var(--warn); }
+.ap-radar-worker-chip.worker-w3 .ap-radar-worker-dot { background: #a78bfa; }
+
+.ap-radar-worker-st {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.ap-xray-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 10.5px;
+}
+
+.ap-xray-file {
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
+}
+
+.ap-xray-diff {
+  display: inline-flex;
+  gap: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-weight: 800;
+}
+.ap-xray-diff .add { color: var(--good); }
+.ap-xray-diff .del { color: var(--bad); }
+
+.ap-xray-diffbar {
+  width: 48px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--bad);
+  overflow: hidden;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.ap-xray-diffbar .add {
+  display: block;
+  height: 100%;
+  background: var(--good);
+}
+
+.ap-xray-intent {
+  font-weight: 700;
+  color: var(--text);
+  flex: 1 1 auto;
+}
+
+.ap-xray-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.ap-xray-badge.ok { background: var(--good-bg); color: var(--good-fg); }
+.ap-xray-badge.err { background: var(--danger-bg); color: var(--danger-fg); }
+.ap-xray-badge.warn { background: var(--warn-bg, #fff7ed); color: var(--warn-fg, #9a3412); }
+
+.ap-xray-cmd {
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: var(--bg-elev);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ap-radar-inspector {

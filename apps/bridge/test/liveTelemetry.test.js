@@ -280,3 +280,81 @@ test('PN-1: live snapshot detects failed tools with 3-line errorTail, computes d
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('XR-1: live snapshot extracts filePath, added/removed diff counts, command, and aggregates fileChanges', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-live-xr1-'))
+  try {
+    const dbPath = path.join(dir, 'state.db')
+    const db = new DatabaseSync(dbPath)
+    db.exec(`
+      CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, source TEXT, chat_type TEXT,
+        last_activity_description TEXT, started_at REAL, last_activity_at REAL,
+        input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER, estimated_cost_usd REAL);
+      CREATE TABLE session_turn_leases (conversation_id TEXT, holder TEXT, acquired_at REAL, expires_at REAL);
+      CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT,
+        tool_name TEXT, tool_calls TEXT, tool_call_id TEXT, timestamp REAL);
+    `)
+    const nowSec = Date.now() / 1000
+    db.prepare('INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?)').run(
+      's_xr1',
+      'X-Ray Run',
+      'cli',
+      '',
+      'editing styles',
+      nowSec - 30,
+      nowSec - 1,
+      5000,
+      1200,
+      2000,
+      0.02,
+    )
+    db.prepare('INSERT INTO session_turn_leases VALUES (?,?,?,?)').run(
+      's_xr1',
+      'pid=55:turn=tx:platform=local',
+      nowSec - 30,
+      nowSec + 200,
+    )
+    const calls = JSON.stringify([
+      {
+        id: 'call_edit_1',
+        name: 'edit_file',
+        arguments: {
+          Path: '/repo/apps/web/src/styles/detail.css',
+          Target: '.a { color: red; }\n.b { margin: 0; }',
+          Replacement: '.a { color: cyan; }\n.b { margin: 0; }\n.c { padding: 4px; }',
+        },
+      },
+      {
+        id: 'call_cmd_1',
+        name: 'terminal',
+        arguments: {
+          CommandLine: 'npm run build && npm run check:pwa',
+        },
+      },
+    ])
+    const ins = db.prepare(
+      'INSERT INTO messages (session_id, role, content, tool_name, tool_calls, tool_call_id, timestamp) VALUES (?,?,?,?,?,?,?)',
+    )
+    ins.run('s_xr1', 'assistant', '', null, calls, null, nowSec - 12)
+    ins.run('s_xr1', 'tool', 'ok', 'edit_file', null, 'call_edit_1', nowSec - 10)
+    ins.run('s_xr1', 'tool', 'built cleanly', 'terminal', null, 'call_cmd_1', nowSec - 4)
+    db.close()
+
+    const live = createLive(
+      { home: '/nonexistent', stateDb: dbPath },
+      { boards: () => [], tasks: () => [] },
+    )
+    const snap = live.snapshot()
+    const termEntry = snap.telemetry.recentTools.find((t) => t.name === 'terminal')
+    const editEntry = snap.telemetry.recentTools.find((t) => t.name === 'edit_file')
+    assert.equal(termEntry.command, 'npm run build && npm run check:pwa')
+    assert.equal(editEntry.filePath, 'styles/detail.css')
+    assert.equal(editEntry.addedLines, 2)
+    assert.equal(editEntry.removedLines, 1)
+    assert.equal(snap.telemetry.fileChanges.fileCount, 1)
+    assert.equal(snap.telemetry.fileChanges.totalAdded, 2)
+    assert.equal(snap.telemetry.fileChanges.items[0].file, 'styles/detail.css')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
