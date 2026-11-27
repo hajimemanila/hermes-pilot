@@ -1,10 +1,10 @@
-/* AP2-5: Panoptes-inspired LiveRadarCard SVG & BeforeAfterTimelapse CSS-only transitions */
+/* SPEC-PANOPTES-RADAR: Orbital Context-Eye LiveRadarCard + Vibe Mode & BeforeAfterTimelapse */
 
 .ap-radar-card {
   margin-top: 2px;
   padding: 7px 9px;
   border-radius: 14px;
-  background: radial-gradient(circle at 50% 30%, rgba(34, 211, 238, 0.1), var(--bg-elev));
+  background: radial-gradient(circle at 50% 34%, rgba(34, 211, 238, 0.1), var(--bg-elev));
   border: 1px solid var(--line);
   display: flex;
   flex-direction: column;
@@ -21,16 +21,16 @@
 }
 
 .ap-radar-svg {
-  width: 160px;
-  height: 160px;
+  width: 192px;
+  height: 192px;
   max-width: 100%;
   display: block;
 }
 
 @media (max-width: 400px), (max-height: 760px) {
   .ap-radar-svg {
-    width: 136px;
-    height: 136px;
+    width: 158px;
+    height: 158px;
   }
 }
 
@@ -41,60 +41,199 @@
   stroke-dasharray: 3 3;
 }
 
-.ap-radar-ring-label {
-  font-size: 8px;
-  font-weight: 800;
-  fill: var(--muted);
-  letter-spacing: 0.04em;
-  pointer-events: none;
-}
-
-.ap-radar-axis {
+.ap-radar-ring-inner {
+  fill: none;
   stroke: var(--line);
   stroke-width: 1;
+  stroke-dasharray: 2 4;
 }
 
 .ap-radar-sweep {
   transform-origin: 110px 110px;
-  animation: ap-radar-sweep 4.2s linear infinite;
+  opacity: 0;
 }
 
-.ap-radar-core-dot {
-  fill: var(--accent);
+.ap-radar-spoke {
+  stroke: var(--line-strong);
+  opacity: 0.65;
+  transition: stroke 0.2s ease, stroke-width 0.2s ease;
 }
 
-.ap-radar-blip-node {
+.ap-radar-spoke.active {
+  stroke: var(--accent);
+  opacity: 0.95;
+}
+
+.ap-radar-spoke.error {
+  stroke: var(--bad);
+  opacity: 0.9;
+}
+
+.ap-radar-pulse-line {
+  stroke: var(--accent);
+  stroke-width: 2.2;
+  stroke-dasharray: 12 66;
+  opacity: 0;
+}
+
+.ap-radar-station-node {
   cursor: pointer;
 }
 
-.ap-radar-selected-ring {
-  fill: none;
-  stroke: var(--text);
-  stroke-width: 1.5;
-  stroke-dasharray: 2 2;
+.ap-radar-station-disc {
+  fill: var(--surface);
+  stroke: var(--line-strong);
+  stroke-width: 1.4;
 }
 
-.ap-radar-blip {
+.ap-radar-station-node.active .ap-radar-station-disc,
+.ap-radar-station-node.selected .ap-radar-station-disc {
+  fill: var(--rec-bg);
+  stroke: var(--accent);
+  stroke-width: 1.8;
+}
+
+.ap-radar-station-node.attention .ap-radar-station-disc {
+  stroke: var(--warn);
+  fill: var(--warn-bg, #fff7ed);
+}
+
+.ap-radar-station-node.error .ap-radar-station-disc {
+  stroke: var(--bad);
+}
+
+.ap-radar-station-lbl {
+  font-size: 6.4px;
+  font-weight: 800;
+  fill: var(--text);
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+
+.ap-radar-err-dot {
+  fill: var(--bad);
   stroke: var(--surface);
-  stroke-width: 1.5;
+  stroke-width: 1.4;
 }
 
-.ap-radar-blip-core { fill: var(--accent); }
-.ap-radar-blip-verify { fill: var(--good); }
-.ap-radar-blip-explore { fill: var(--warn); }
+.ap-radar-you-pulse {
+  fill: none;
+  stroke: var(--warn);
+  stroke-width: 1.6;
+  transform-box: fill-box;
+  transform-origin: center;
+}
 
 .ap-radar-ping {
   fill: none;
   stroke: var(--accent);
-  stroke-width: 1.5;
+  stroke-width: 1.4;
   transform-box: fill-box;
   transform-origin: center;
+  opacity: 0;
+}
+
+/* Central Context Eye */
+.ap-radar-eye {
+  cursor: pointer;
+}
+
+.ap-radar-iris-track {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 4.5;
+}
+
+.ap-radar-iris-arc {
+  fill: none;
+  stroke-width: 4.5;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.35s ease, stroke 0.25s ease;
+}
+
+.ap-radar-iris-arc.tone-ok { stroke: var(--accent); }
+.ap-radar-iris-arc.tone-warn { stroke: var(--warn); }
+.ap-radar-iris-arc.tone-danger { stroke: var(--bad); }
+
+.ap-radar-sclera {
+  fill: var(--surface);
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+
+.ap-radar-eye-lid {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.ap-radar-pupil-track {
+  transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.ap-radar-pupil {
+  opacity: 0.22;
+}
+
+.ap-radar-pupil.tone-ok { fill: var(--accent); }
+.ap-radar-pupil.tone-warn { fill: var(--warn); }
+.ap-radar-pupil.tone-danger { fill: var(--bad); }
+
+.ap-radar-glint {
+  fill: #ffffff;
+  opacity: 0.8;
+}
+
+.ap-radar-eye-val {
+  font-size: 11px;
+  font-weight: 900;
+  fill: var(--text);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.ap-radar-eye-sub {
+  font-size: 5.8px;
+  font-weight: 800;
+  fill: var(--muted);
+  letter-spacing: 0.03em;
+  pointer-events: none;
+}
+
+/* Vibe Mode animation gating: live sweep/pulse/blink under Dopamine only */
+html[data-vibe='dopamine'] .ap-radar-sweep {
+  opacity: 1;
+  animation: ap-radar-sweep 4.2s linear infinite;
+}
+
+html[data-vibe='dopamine'] .ap-radar-pulse-line {
+  opacity: 0.95;
+  animation: ap-spoke-pulse 1.2s linear infinite;
+}
+
+html[data-vibe='dopamine'] .ap-radar-eye-lid {
+  animation: ap-eye-blink 0.26s ease-out;
+}
+
+html[data-vibe='dopamine'] .ap-radar-ping {
+  opacity: 1;
   animation: ap-blip-ping 1.8s ease-out infinite;
+}
+
+html[data-vibe='dopamine'] .ap-radar-you-pulse {
+  animation: ap-blip-ping 1.4s ease-out infinite;
+}
+
+html[data-vibe='serotonin'] .ap-radar-sweep,
+html[data-vibe='serotonin'] .ap-radar-pulse-line,
+html[data-vibe='serotonin'] .ap-radar-eye-lid,
+html[data-vibe='serotonin'] .ap-radar-ping,
+html[data-vibe='serotonin'] .ap-radar-you-pulse {
+  animation: none !important;
 }
 
 .ap-radar-inspector {
   width: 100%;
-  padding: 6px 9px;
+  padding: 5px 8px;
   border-radius: 10px;
   background: var(--surface);
   border: 1px solid var(--accent);
@@ -152,6 +291,51 @@
   flex-shrink: 0;
 }
 
+.ap-radar-peek {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ap-radar-peek-title {
+  font-size: 10.5px;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.ap-radar-peek.error .ap-radar-peek-title {
+  color: var(--bad);
+}
+
+.ap-radar-peek-img {
+  width: 100%;
+  max-height: 92px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+
+.ap-radar-peek-empty {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.ap-radar-err-tail {
+  margin: 0;
+  padding: 5px 7px;
+  border-radius: 7px;
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .ap-radar-metrics {
   width: 100%;
   display: flex;
@@ -176,6 +360,10 @@
 .ap-radar-stat.waiting {
   border-color: var(--warn);
   color: var(--warn);
+}
+
+.ap-radar-stat-btn {
+  cursor: pointer;
 }
 
 .ap-radar-feed {
@@ -208,11 +396,22 @@
   background: var(--rec-bg);
 }
 
+.ap-radar-feed-row.error {
+  border-color: var(--bad);
+}
+
 .ap-radar-feed-main {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
+}
+
+.ap-radar-feed-code {
+  font-size: 9.5px;
+  font-weight: 800;
+  color: var(--muted);
+  flex-shrink: 0;
 }
 
 .ap-radar-dot {
@@ -225,6 +424,7 @@
 .ap-radar-dot.core { background: var(--accent); }
 .ap-radar-dot.verify { background: var(--good); }
 .ap-radar-dot.explore { background: var(--warn); }
+.ap-radar-dot.error { background: var(--bad); }
 
 .ap-radar-tool {
   font-weight: 700;
@@ -346,9 +546,20 @@
   to { transform: rotate(360deg); }
 }
 
+@keyframes ap-spoke-pulse {
+  from { stroke-dashoffset: 78; }
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes ap-eye-blink {
+  0% { transform: scaleY(1); }
+  40% { transform: scaleY(0.15); }
+  100% { transform: scaleY(1); }
+}
+
 @keyframes ap-blip-ping {
   0% { transform: scale(0.9); opacity: 0.9; }
-  100% { transform: scale(2.2); opacity: 0; }
+  100% { transform: scale(2.0); opacity: 0; }
 }
 
 @keyframes ap-timelapse-fade {
@@ -358,8 +569,15 @@
 
 @media (prefers-reduced-motion: reduce) {
   .ap-radar-sweep,
+  .ap-radar-pulse-line,
+  .ap-radar-eye-lid,
   .ap-radar-ping,
+  .ap-radar-you-pulse,
   .ap-timelapse-layer-after-fade.playing {
-    animation: none;
+    animation: none !important;
+  }
+  .ap-radar-pupil-track,
+  .ap-radar-iris-arc {
+    transition: none;
   }
 }

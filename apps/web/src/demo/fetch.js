@@ -339,11 +339,11 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
       const architectRunning = architect.filter((j) => ['running', 'awaiting_spec'].includes(String(j.status))).length
       // 何か動いていればターン 1 本を見せる（Discord / PWA のターンに相当する行）
       const demoRecentTools = [
-        { name: 'render_mocks', at: at - 4_000 },
-        { name: 'vision_analyze', at: at - 11_000 },
-        { name: 'edit_file', at: at - 19_000 },
-        { name: 'read_file', at: at - 27_000 },
-        { name: 'terminal', at: at - 36_000 },
+        { name: 'render_mocks', at: at - 4_000, durationMs: 1820, failed: false, errorTail: null },
+        { name: 'vision_analyze', at: at - 11_000, durationMs: 920, failed: false, errorTail: null },
+        { name: 'edit_file', at: at - 19_000, durationMs: 310, failed: false, errorTail: null },
+        { name: 'read_file', at: at - 27_000, durationMs: 180, failed: false, errorTail: null },
+        { name: 'terminal', at: at - 36_000, durationMs: 1450, failed: false, errorTail: null },
       ]
       const turns =
         tasks.length || architectRunning
@@ -361,6 +361,7 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
                 lastTool: demoRecentTools[0],
                 recentTools: demoRecentTools,
                 toolCount: 12,
+                contextPct: 44,
                 tokens: { input: 14200, output: 4200, total: 18400, cacheRead: 11000, costUsd: 0.04 },
               },
             ]
@@ -378,6 +379,8 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
             }))
           : [],
         toolCount: turns[0] ? 12 : 0,
+        contextPct: 44,
+        demoSequence: true,
         runTokens: runTok,
         runCacheRead: runCache,
         runCostUsd: runTok > 0 ? 0.04 : 0,

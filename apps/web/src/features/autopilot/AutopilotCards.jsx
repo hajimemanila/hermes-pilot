@@ -352,6 +352,7 @@ export function LiveStudioCard({
   runId = '',
   persistedMaxTokens = 0,
   onObservedTokens = null,
+  onFocusReview = null,
   onSwitchCockpit,
   onSaveMemo,
 }) {
@@ -438,6 +439,9 @@ export function LiveStudioCard({
           runId={runKey}
           persistedMaxTokens={persistedMaxTokens}
           onObservedTokens={onObservedTokens}
+          clockNow={now}
+          previewShotUrl={afterSrc}
+          onFocusReview={onFocusReview}
         />
 
         {afterSrc && (

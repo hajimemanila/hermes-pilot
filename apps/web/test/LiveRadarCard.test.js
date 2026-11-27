@@ -8,11 +8,18 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  DEMO_RADAR_SEQUENCE,
   RADAR_SIZE,
+  RADAR_STATIONS,
   buildRadarSummary,
   classifyToolRing,
+  computePupilOffset,
+  contextHealthTone,
   formatCompactTokens,
+  formatCostUsd,
+  formatDurationMs,
   projectRadarBlips,
+  toolToStation,
 } from '../src/lib/liveRadar.js'
 import { computeStudioProgress, formatElapsedClock, projectStudioStage } from '../src/lib/autopilot/studio.js'
 
@@ -175,6 +182,65 @@ test('runTracked summary starts at 0 without 24h fallback, keeps minRunTokens ac
   assert.equal(stage.totalCount, 0)
   assert.equal(stage.runStartedAt, runStart)
   assert.ok(stage.progressPct < 20)
+})
+
+test('PN-2: toolToStation maps all 8 orbital stations, health ring tones, durations, pupil offset, errors, and Demo sequence', () => {
+  assert.equal(RADAR_STATIONS.length, 8)
+  assert.equal(toolToStation('quick_review'), 'you')
+  assert.equal(toolToStation('edit_file'), 'files')
+  assert.equal(toolToStation('terminal'), 'shell')
+  assert.equal(toolToStation('web_search'), 'web')
+  assert.equal(toolToStation('render_mocks'), 'browser')
+  assert.equal(toolToStation('kanban_create'), 'agents')
+  assert.equal(toolToStation('memory_recall'), 'memory')
+  assert.equal(toolToStation('custom_tool'), 'tools')
+
+  assert.equal(contextHealthTone(42), 'ok')
+  assert.equal(contextHealthTone(70), 'warn')
+  assert.equal(contextHealthTone(91), 'danger')
+
+  assert.equal(formatDurationMs(420), '420 ms')
+  assert.equal(formatDurationMs(1820), '1.8 s')
+  assert.equal(formatCostUsd(0.08), '$0.08')
+
+  const top = RADAR_STATIONS.find((s) => s.id === 'you')
+  const p = computePupilOffset(top, 7)
+  assert.equal(p.dx, 0)
+  assert.equal(p.dy, -7)
+
+  const errSummary = buildRadarSummary({
+    now: 50_000,
+    live: {
+      counts: { turns: 1, tasks: 1 },
+      telemetry: {
+        contextPct: 75,
+        cacheHitPct: 99,
+        runCostUsd: 0.08,
+        toolHistory: [
+          { name: 'terminal', at: 49_000, durationMs: 1800, failed: true, errorTail: 'exit code 1' },
+          { name: 'edit_file', at: 45_000, durationMs: 320, failed: false },
+          { name: 'read_file', at: 41_000, durationMs: 140, failed: false },
+        ],
+      },
+    },
+  })
+  assert.equal(errSummary.eye.tone, 'warn')
+  assert.equal(errSummary.eye.costLabel, '$0.08')
+  const shellSt = errSummary.stations.find((s) => s.id === 'shell')
+  const filesSt = errSummary.stations.find((s) => s.id === 'files')
+  assert.equal(shellSt.hasError, true)
+  assert.equal(shellSt.latestError.errorTail, 'exit code 1')
+  assert.ok(filesSt.strokeWidth > shellSt.strokeWidth)
+
+  assert.equal(DEMO_RADAR_SEQUENCE.length, 4)
+  const step0 = buildRadarSummary({ now: 0, live: { demo: true, telemetry: { demoSequence: true } } })
+  const step1 = buildRadarSummary({ now: 1500, live: { demo: true, telemetry: { demoSequence: true } } })
+  const step2 = buildRadarSummary({ now: 3000, live: { demo: true, telemetry: { demoSequence: true } } })
+  const step3 = buildRadarSummary({ now: 4500, live: { demo: true, telemetry: { demoSequence: true } } })
+  assert.equal(step0.eye.activeStationId, 'files')
+  assert.equal(step1.eye.activeStationId, 'shell')
+  assert.equal(step2.eye.activeStationId, 'browser')
+  assert.equal(step3.eye.activeStationId, 'you')
 })
 
 test('LiveRadarCard & BeforeAfterTimelapse obey sync-owner and zero-chart-lib guards', () => {

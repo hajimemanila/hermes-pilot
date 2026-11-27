@@ -264,6 +264,11 @@ export function AutopilotView({ overview, notify, onSwitchCockpit }) {
     }
   }, [board, overview?.board, stage.act, stage.runStartedAt, stage.runKey, jobs, waiting.length])
 
+  const handleFocusReview = useCallback(() => {
+    refreshSync('reviewWaiting')
+    if (waiting.length === 0) onSwitchCockpit?.()
+  }, [waiting.length, onSwitchCockpit])
+
   const handleObservedTokens = useCallback(
     (tokens) => {
       const n = Math.max(0, Number(tokens) || 0)
@@ -385,6 +390,7 @@ export function AutopilotView({ overview, notify, onSwitchCockpit }) {
           runId={runAnchor?.runId || stage.runKey}
           persistedMaxTokens={runAnchor?.maxTokens || 0}
           onObservedTokens={handleObservedTokens}
+          onFocusReview={handleFocusReview}
           onSwitchCockpit={onSwitchCockpit}
           onSaveMemo={handleSaveMemo}
         />

@@ -20,6 +20,28 @@ export function platformOf(holder) {
 
 /** `recentTools` 配列に積む直近ツール履歴の上限。 */
 export const RECENT_TOOLS_LIMIT = 6
+const TOOL_SAMPLE_LIMIT = 12
+const TELEMETRY_HISTORY_LIMIT = 24
+const MAX_TOOL_DURATION_MS = 600_000
+const DEFAULT_CONTEXT_WINDOW = 200_000
+
+const HARMLESS_ZERO_ERR_RE = /\b(?:0\s+(?:fail(?:ed|ures?)?|errors?)|failed\s*:\s*0|errors?\s*:\s*0)\b/gi
+const TOOL_ERROR_RE =
+  /(?:\bexit(?:\s+code)?\s+[1-9]\d*\b|\btraceback\b|\bsyntaxerror\b|\btypeerror\b|\breferenceerror\b|\bassertionerror\b|\bcommand failed\b|\benoent\b|\berror\s*:|\bfailed\b)/i
+
+/** Detect tool errors from message content while ignoring `"0 fail"` / `"0 errors"`. */
+export function detectToolError(content) {
+  const raw = String(content ?? '').trim()
+  if (!raw) return { failed: false, errorTail: null }
+  const normalized = raw.replace(HARMLESS_ZERO_ERR_RE, ' ')
+  if (!TOOL_ERROR_RE.test(normalized)) return { failed: false, errorTail: null }
+  const lines = raw
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+  const errorTail = lines.slice(-3).join('\n').slice(0, 220) || null
+  return { failed: true, errorTail }
+}
 
 /** リース期限の猶予（秒）。更新が数秒遅れても「終わった」と誤判定しない。 */
 const LEASE_GRACE_SEC = 60
@@ -149,34 +171,33 @@ export function createLive(cfg, kanban, deps = {}) {
    * @param {number} at 現在時刻
    * @returns {Array<object>} ターン一覧
    */
-  function queryLeaseRows(db, threshold) {
+  function tableCols(db, tableName) {
     try {
-      return db
-        .prepare(
-          `SELECT l.conversation_id, l.holder, l.acquired_at, l.expires_at,
-                  s.title, s.source, s.chat_type, s.last_activity_description,
-                  s.last_activity_at, s.input_tokens, s.output_tokens,
-                  s.cache_read_tokens, s.estimated_cost_usd
-             FROM session_turn_leases l
-             LEFT JOIN sessions s ON s.id = l.conversation_id
-            WHERE l.expires_at > ?
-            ORDER BY l.acquired_at DESC`,
-        )
-        .all(threshold)
-    } catch (err) {
-      if (!/no such column/i.test(String(err?.message || ''))) throw err
-      return db
-        .prepare(
-          `SELECT l.conversation_id, l.holder, l.acquired_at, l.expires_at,
-                  s.title, s.source, s.chat_type, s.last_activity_description,
-                  s.last_activity_at
-             FROM session_turn_leases l
-             LEFT JOIN sessions s ON s.id = l.conversation_id
-            WHERE l.expires_at > ?
-            ORDER BY l.acquired_at DESC`,
-        )
-        .all(threshold)
+      return new Set(db.prepare(`PRAGMA table_info(${tableName})`).all().map((c) => String(c?.name ?? '')))
+    } catch {
+      return new Set()
     }
+  }
+
+  function queryLeaseRows(db, threshold, sessCols) {
+    const hasTokens = sessCols.has('input_tokens') && sessCols.has('output_tokens')
+    const hasContext = sessCols.has('context_tokens') && sessCols.has('max_context_tokens')
+    const extra = [
+      ...(hasTokens ? ['s.input_tokens', 's.output_tokens', 's.cache_read_tokens', 's.estimated_cost_usd'] : []),
+      ...(hasContext ? ['s.context_tokens', 's.max_context_tokens'] : []),
+    ]
+    const extraSql = extra.length ? `, ${extra.join(', ')}` : ''
+    return db
+      .prepare(
+        `SELECT l.conversation_id, l.holder, l.acquired_at, l.expires_at,
+                s.title, s.source, s.chat_type, s.last_activity_description,
+                s.last_activity_at${extraSql}
+           FROM session_turn_leases l
+           LEFT JOIN sessions s ON s.id = l.conversation_id
+          WHERE l.expires_at > ?
+          ORDER BY l.acquired_at DESC`,
+      )
+      .all(threshold)
   }
 
   function turnsFrom(target, at, sinceMs = 0) {
@@ -184,32 +205,46 @@ export function createLive(cfg, kanban, deps = {}) {
     try {
       db = new DatabaseSync(target.path, { readOnly: true, timeout: 3000 })
       const sinceTotals = querySinceTotals(db, sinceMs)
-      const rows = queryLeaseRows(db, at / 1000 - LEASE_GRACE_SEC)
-      const recentToolsStmt = db.prepare(
-        `SELECT tool_name, timestamp FROM messages
-          WHERE session_id = ? AND tool_name IS NOT NULL
-          ORDER BY id DESC LIMIT 6`,
+      const sessCols = tableCols(db, 'sessions')
+      const msgCols = tableCols(db, 'messages')
+      const rows = queryLeaseRows(db, at / 1000 - LEASE_GRACE_SEC, sessCols)
+      const hasContent = msgCols.has('content')
+      const timelineStmt = db.prepare(
+        `SELECT tool_name, timestamp${hasContent ? ', content' : ''} FROM messages
+          WHERE session_id = ?
+          ORDER BY id DESC LIMIT 24`,
       )
       const toolCountStmt = db.prepare(
         `SELECT COUNT(*) AS n FROM messages
           WHERE session_id = ? AND tool_name IS NOT NULL`,
       )
       const turns = rows.map((r) => {
-        let recentTools = []
+        let toolSamples = []
         let toolCount = 0
         try {
-          const list = recentToolsStmt.all(r.conversation_id)
-          recentTools = list
-            .filter((t) => Boolean(t?.tool_name))
-            .slice(0, RECENT_TOOLS_LIMIT)
-            .map((t) => ({
-              name: String(t.tool_name),
-              at: Math.round(Number(t.timestamp) * 1000),
-            }))
+          const timeline = timelineStmt.all(r.conversation_id)
+          for (let i = 0; i < timeline.length; i += 1) {
+            const msg = timeline[i]
+            if (!msg?.tool_name) continue
+            const ts = Math.round(Number(msg.timestamp) * 1000)
+            const nextMsg = i > 0 ? timeline[i - 1] : null
+            const nextTs = nextMsg?.timestamp ? Math.round(Number(nextMsg.timestamp) * 1000) : 0
+            const diff = nextTs > ts && nextTs - ts <= MAX_TOOL_DURATION_MS ? nextTs - ts : null
+            const { failed, errorTail } = hasContent ? detectToolError(msg.content) : { failed: false, errorTail: null }
+            toolSamples.push({
+              name: String(msg.tool_name),
+              at: ts,
+              durationMs: diff,
+              failed,
+              errorTail,
+            })
+            if (toolSamples.length >= TOOL_SAMPLE_LIMIT) break
+          }
         } catch (err) {
           void err
-          recentTools = []
+          toolSamples = []
         }
+        const recentTools = toolSamples.slice(0, RECENT_TOOLS_LIMIT)
         try {
           const cnt = toolCountStmt.get(r.conversation_id)
           toolCount = Number(cnt?.n ?? recentTools.length) || recentTools.length
@@ -224,6 +259,14 @@ export function createLive(cfg, kanban, deps = {}) {
         const output = Number(r.output_tokens ?? 0) || 0
         const cacheRead = Number(r.cache_read_tokens ?? 0) || 0
         const costUsd = Number(r.estimated_cost_usd ?? 0) || 0
+        const ctxTokens = Number(r.context_tokens ?? 0) || 0
+        const maxCtxTokens = Number(r.max_context_tokens ?? 0) || 0
+        const contextPct =
+          ctxTokens > 0 && maxCtxTokens > 0
+            ? Math.max(0, Math.min(100, Math.round((ctxTokens / maxCtxTokens) * 100)))
+            : input + cacheRead > 0
+              ? Math.max(1, Math.min(100, Math.round(((input + cacheRead) / DEFAULT_CONTEXT_WINDOW) * 100)))
+              : 0
         return {
           profile: target.profile || 'default',
           sessionId: r.conversation_id,
@@ -236,7 +279,9 @@ export function createLive(cfg, kanban, deps = {}) {
           lastActivity: r.last_activity_description ?? null,
           lastTool,
           recentTools,
+          toolSamples,
           toolCount,
+          contextPct,
           tokens: { input, output, total: input + output, cacheRead, costUsd },
         }
       })
@@ -251,23 +296,34 @@ export function createLive(cfg, kanban, deps = {}) {
   }
 
   function buildTelemetry(turns, tasks, jobs = [], sinceTotals = null) {
-    const recentTools = []
+    const toolHistory = []
     let toolCount = 0
     let activeTokens = 0
     let activeCacheRead = 0
     let activeCostUsd = 0
+    let contextPct = 0
     const primaryTaskTitle = tasks[0]?.title || jobs[0]?.seed || null
     for (const turn of turns) {
       toolCount += Number(turn?.toolCount ?? turn?.recentTools?.length ?? (turn?.lastTool ? 1 : 0)) || 0
       activeTokens += Number(turn?.tokens?.total ?? 0) || 0
       activeCacheRead += Number(turn?.tokens?.cacheRead ?? 0) || 0
       activeCostUsd += Number(turn?.tokens?.costUsd ?? 0) || 0
-      const list = Array.isArray(turn?.recentTools) ? turn.recentTools : turn?.lastTool ? [turn.lastTool] : []
+      contextPct = Math.max(contextPct, Number(turn?.contextPct ?? 0) || 0)
+      const list = Array.isArray(turn?.toolSamples)
+        ? turn.toolSamples
+        : Array.isArray(turn?.recentTools)
+          ? turn.recentTools
+          : turn?.lastTool
+            ? [turn.lastTool]
+            : []
       for (const tool of list) {
         if (!tool?.name) continue
-        recentTools.push({
+        toolHistory.push({
           name: String(tool.name),
           at: Number(tool.at) || 0,
+          durationMs: Number.isFinite(Number(tool.durationMs)) ? Number(tool.durationMs) : null,
+          failed: Boolean(tool.failed),
+          errorTail: tool.errorTail ?? null,
           sessionId: turn.sessionId ?? null,
           profile: turn.profile || 'default',
           taskTitle: primaryTaskTitle,
@@ -278,7 +334,9 @@ export function createLive(cfg, kanban, deps = {}) {
     const runCacheRead = sinceTotals ? sinceTotals.cacheRead : activeCacheRead
     const runCostUsd = sinceTotals ? sinceTotals.costUsd : activeCostUsd
     const runTokenScope = sinceTotals ? 'since' : 'active'
-    recentTools.sort((a, b) => b.at - a.at)
+    toolHistory.sort((a, b) => b.at - a.at)
+    const recentTools = toolHistory.slice(0, RECENT_TOOLS_LIMIT)
+    const failedTools = toolHistory.filter((t) => t.failed).slice(0, 4)
     const activeTurns = turns.length
     const activeTasks = tasks.length
     const activeWorkers = activeTurns + activeTasks
@@ -290,8 +348,11 @@ export function createLive(cfg, kanban, deps = {}) {
     const cacheDenom = runTokens + runCacheRead
     const cacheHitPct = cacheDenom > 0 ? Math.round((runCacheRead / cacheDenom) * 100) : 0
     return {
-      recentTools: recentTools.slice(0, RECENT_TOOLS_LIMIT),
+      recentTools,
+      toolHistory: toolHistory.slice(0, TELEMETRY_HISTORY_LIMIT),
+      failedTools,
       toolCount,
+      contextPct,
       runTokens,
       runCacheRead,
       runCostUsd: Math.round(runCostUsd * 10000) / 10000,

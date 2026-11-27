@@ -1,14 +1,21 @@
 import React, { useEffect, useId, useRef, useState } from 'react'
 import { useI18n } from '../../i18n/index.js'
-import { RADAR_CENTER, RADAR_SIZE, RING_RADII, buildRadarSummary } from '../../lib/liveRadar.js'
+import { RADAR_CENTER, RADAR_SIZE, buildRadarSummary } from '../../lib/liveRadar.js'
 import { haptic } from '../../lib/haptic.js'
 import { subscribeSync, tickSync } from '../../lib/syncSources.js'
 import '../../styles/autopilot-radar.css'
 
+const EYE_RING_R = 26
+const EYE_RING_C = Math.round(2 * Math.PI * EYE_RING_R * 10) / 10
+const SHORT_STATION_CODE = {
+  BROWSER: 'MOCK',
+  AGENTS: 'AGENT',
+  MEMORY: 'MEM',
+}
+
 /**
- * Panoptes 着想の純粋 React + SVG コンパクト動的レーダー BI（AP3-3 / sync-owner 準拠）。
- * 独自のタイマーポーリングは持たず、subscribeSync('live' | 'usage' | 'reviewWaiting') のみ購読する。
- * 各ドットをタップすると下のインスペクタへツール名・担当タスク・経過時間を表示する。
+ * Panoptes 着想の純粋 React + SVG 軌道レーダー BI（SPEC-PANOPTES-RADAR / sync-owner 準拠）。
+ * 独自のタイマー・fetch は持たず、`subscribeSync('live' | 'usage' | 'reviewWaiting')` と親クロックで駆動する。
  */
 export function LiveRadarCard({
   initialLive = null,
@@ -18,12 +25,17 @@ export function LiveRadarCard({
   runId = '',
   persistedMaxTokens = 0,
   onObservedTokens = null,
+  clockNow = null,
+  previewShotUrl = null,
+  onFocusReview = null,
 }) {
   const { t } = useI18n()
   const [live, setLive] = useState(initialLive)
   const [usage, setUsage] = useState(null)
   const [reviewItems, setReviewItems] = useState([])
-  const [selectedId, setSelectedId] = useState(null)
+  const [coreMode, setCoreMode] = useState('context')
+  const [selectedStationId, setSelectedStationId] = useState(null)
+  const [peekMode, setPeekMode] = useState('none')
   const sweepId = useId()
   const highWaterRef = useRef({ key: '', maxTokens: 0, reported: 0 })
 
@@ -52,6 +64,7 @@ export function LiveRadarCard({
     reviewItems,
     tasks,
     activeJob,
+    now: Number(clockNow) || Date.now(),
     runTracked,
     minRunTokens: highWaterRef.current.maxTokens,
   })
@@ -66,117 +79,217 @@ export function LiveRadarCard({
       onObservedTokens?.(summary.runTokens)
     }
   }, [runTracked, summary.runTokens, onObservedTokens])
+
   const gradId = `radar-sweep-${sweepId.replace(/[^a-zA-Z0-9_-]/g, '')}`
-  const selectedBlip = summary.blips.find((b) => b.id === selectedId) || summary.blips[0] || null
-  const compactFeed = summary.feed.slice(0, 2)
+  const stations = summary.stations || []
+  const selectedStation =
+    stations.find((s) => s.id === selectedStationId) ||
+    stations.find((s) => s.id === summary.eye?.activeStationId) ||
+    stations[0] ||
+    null
+  const compactFeed = (summary.feed || []).slice(0, 3)
+
+  const isContextCore = coreMode === 'context'
+  const ringPct = isContextCore ? summary.eye?.contextPct ?? 0 : summary.eye?.cacheHitPct ?? 0
+  const ringDashOffset =
+    Math.round(EYE_RING_C * (1 - Math.max(0, Math.min(100, ringPct)) / 100) * 10) / 10
+  const eyeTone = isContextCore ? summary.eye?.tone || 'ok' : 'ok'
+
+  const handleStationActivate = (st) => {
+    haptic('tap')
+    setSelectedStationId(st.id)
+    if (st.id === 'you' && (summary.waitingCount > 0 || st.attention)) {
+      setPeekMode('none')
+      onFocusReview?.()
+      return
+    }
+    if (st.hasError && st.latestError) {
+      setPeekMode((cur) => (selectedStationId === st.id && cur === 'error' ? 'none' : 'error'))
+      return
+    }
+    if (st.id === 'browser') {
+      setPeekMode((cur) => (selectedStationId === st.id && cur === 'browser' ? 'none' : 'browser'))
+      return
+    }
+    setPeekMode('none')
+  }
+
+  const toggleCoreMode = () => {
+    haptic('tap')
+    setCoreMode((m) => (m === 'context' ? 'cache' : 'context'))
+  }
 
   return (
     <div className="ap-radar-card" aria-label={t('autopilot.radar.aria')}>
       <div className="ap-radar-stage">
         <svg
           className="ap-radar-svg"
-          width="160"
-          height="160"
+          width="192"
+          height="192"
           viewBox={`0 0 ${RADAR_SIZE} ${RADAR_SIZE}`}
           role="img"
           aria-label={t('autopilot.radar.aria')}
         >
           <defs>
             <linearGradient id={gradId} x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.34" />
+              <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.30" />
               <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
             </linearGradient>
           </defs>
 
-          <circle cx={RADAR_CENTER} cy={RADAR_CENTER} r={RING_RADII.explore} className="ap-radar-ring" />
-          <circle cx={RADAR_CENTER} cy={RADAR_CENTER} r={RING_RADII.verify} className="ap-radar-ring" />
-          <circle cx={RADAR_CENTER} cy={RADAR_CENTER} r={RING_RADII.core} className="ap-radar-ring" />
-
-          <line
-            x1={RADAR_CENTER}
-            y1={RADAR_CENTER - RING_RADII.explore}
-            x2={RADAR_CENTER}
-            y2={RADAR_CENTER + RING_RADII.explore}
-            className="ap-radar-axis"
-          />
-          <line
-            x1={RADAR_CENTER - RING_RADII.explore}
-            y1={RADAR_CENTER}
-            x2={RADAR_CENTER + RING_RADII.explore}
-            y2={RADAR_CENTER}
-            className="ap-radar-axis"
-          />
-
-          <text x={RADAR_CENTER} y={RADAR_CENTER - RING_RADII.explore - 4} textAnchor="middle" className="ap-radar-ring-label">
-            {t('autopilot.radar.ringExplore')}
-          </text>
-          <text x={RADAR_CENTER} y={RADAR_CENTER - RING_RADII.verify - 4} textAnchor="middle" className="ap-radar-ring-label">
-            {t('autopilot.radar.ringVerify')}
-          </text>
-          <text x={RADAR_CENTER} y={RADAR_CENTER - RING_RADII.core - 4} textAnchor="middle" className="ap-radar-ring-label">
-            {t('autopilot.radar.ringCore')}
-          </text>
+          <circle cx={RADAR_CENTER} cy={RADAR_CENTER} r="78" className="ap-radar-ring" />
+          <circle cx={RADAR_CENTER} cy={RADAR_CENTER} r="48" className="ap-radar-ring-inner" />
 
           <g className="ap-radar-sweep">
             <path
-              d={`M ${RADAR_CENTER} ${RADAR_CENTER} L ${RADAR_CENTER} ${RADAR_CENTER - RING_RADII.explore} A ${RING_RADII.explore} ${RING_RADII.explore} 0 0 1 ${RADAR_CENTER + RING_RADII.explore} ${RADAR_CENTER} Z`}
+              d={`M ${RADAR_CENTER} ${RADAR_CENTER} L ${RADAR_CENTER} ${RADAR_CENTER - 78} A 78 78 0 0 1 ${RADAR_CENTER + 78} ${RADAR_CENTER} Z`}
               fill={`url(#${gradId})`}
             />
           </g>
 
-          <circle cx={RADAR_CENTER} cy={RADAR_CENTER} r="4.5" className="ap-radar-core-dot" />
+          {stations.map((st) => (
+            <g key={`spoke-${st.id}`}>
+              <line
+                x1={RADAR_CENTER}
+                y1={RADAR_CENTER}
+                x2={st.cx}
+                y2={st.cy}
+                strokeWidth={st.strokeWidth}
+                className={`ap-radar-spoke${st.active ? ' active' : ''}${st.hasError ? ' error' : ''}`}
+              />
+              {st.active && (
+                <line
+                  x1={RADAR_CENTER}
+                  y1={RADAR_CENTER}
+                  x2={st.cx}
+                  y2={st.cy}
+                  className="ap-radar-pulse-line"
+                />
+              )}
+            </g>
+          ))}
 
-          {summary.blips.map((b) => {
-            const isSelected = selectedBlip?.id === b.id
+          {stations.map((st) => {
+            const isSelected = selectedStation?.id === st.id
+            const shortLbl = SHORT_STATION_CODE[st.code] || st.code
             return (
               <g
-                key={b.id}
+                key={st.id}
                 role="button"
                 tabIndex={0}
-                className="ap-radar-blip-node"
-                aria-label={`${t(b.ringLabelKey)}: ${b.name}`}
-                onClick={() => {
-                  haptic('tap')
-                  setSelectedId(b.id)
-                }}
+                data-station={st.id}
+                className={`ap-radar-station-node${st.active ? ' active' : ''}${st.attention ? ' attention' : ''}${isSelected ? ' selected' : ''}${st.hasError ? ' error' : ''}`}
+                aria-label={`${st.code}: ${t(st.stageKey)}`}
+                onClick={() => handleStationActivate(st)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault()
-                    haptic('tap')
-                    setSelectedId(b.id)
+                    handleStationActivate(st)
                   }
                 }}
               >
-                <circle cx={b.cx} cy={b.cy} r="18" fill="transparent" className="ap-radar-blip-hit" />
-                {b.isLatest && <circle cx={b.cx} cy={b.cy} r="8" className="ap-radar-ping" />}
-                {isSelected && <circle cx={b.cx} cy={b.cy} r="9" className="ap-radar-selected-ring" />}
-                <circle
-                  cx={b.cx}
-                  cy={b.cy}
-                  r={isSelected ? 6 : b.isLatest ? 5 : 4}
-                  opacity={isSelected ? 1 : b.freshness}
-                  className={`ap-radar-blip ap-radar-blip-${b.ring}`}
-                >
-                  <title>{`${b.name} (${b.ageSec}s)`}</title>
-                </circle>
+                <circle cx={st.cx} cy={st.cy} r="18" fill="transparent" className="ap-radar-station-hit" />
+                {st.attention && <circle cx={st.cx} cy={st.cy} r="15.5" className="ap-radar-you-pulse" />}
+                {st.active && <circle cx={st.cx} cy={st.cy} r="15" className="ap-radar-ping" />}
+                <circle cx={st.cx} cy={st.cy} r={st.active || isSelected ? 13 : 11} className="ap-radar-station-disc" />
+                <text x={st.cx} y={st.cy + 2.6} textAnchor="middle" className="ap-radar-station-lbl">
+                  {shortLbl}
+                </text>
+                {st.hasError && (
+                  <circle cx={st.cx + 10} cy={st.cy - 10} r="4.2" className="ap-radar-err-dot" />
+                )}
               </g>
             )
           })}
+
+          <g
+            role="button"
+            tabIndex={0}
+            className="ap-radar-eye"
+            aria-label={t('autopilot.radar.coreToggleHint')}
+            onClick={toggleCoreMode}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                toggleCoreMode()
+              }
+            }}
+          >
+            <circle cx={RADAR_CENTER} cy={RADAR_CENTER} r={EYE_RING_R} className="ap-radar-iris-track" />
+            <circle
+              cx={RADAR_CENTER}
+              cy={RADAR_CENTER}
+              r={EYE_RING_R}
+              transform={`rotate(-90 ${RADAR_CENTER} ${RADAR_CENTER})`}
+              strokeDasharray={EYE_RING_C}
+              strokeDashoffset={ringDashOffset}
+              className={`ap-radar-iris-arc tone-${eyeTone}`}
+            />
+            <circle cx={RADAR_CENTER} cy={RADAR_CENTER} r="21" className="ap-radar-sclera" />
+            <g
+              key={`blink-${summary.eye?.blinkCount || 0}`}
+              className="ap-radar-eye-lid"
+            >
+              <g
+                className="ap-radar-pupil-track"
+                style={{
+                  transform: `translate(${summary.eye?.pupilDx ?? 0}px, ${summary.eye?.pupilDy ?? 0}px)`,
+                }}
+              >
+                <circle cx={RADAR_CENTER} cy={RADAR_CENTER} r="9" className={`ap-radar-pupil tone-${eyeTone}`} />
+                <circle cx={RADAR_CENTER - 2.5} cy={RADAR_CENTER - 2.5} r="2" className="ap-radar-glint" />
+              </g>
+            </g>
+            <text x={RADAR_CENTER} y={RADAR_CENTER - 1} textAnchor="middle" className="ap-radar-eye-val">
+              {isContextCore ? `${summary.eye?.contextPct ?? 0}%` : `${summary.eye?.cacheHitPct ?? 0}%`}
+            </text>
+            <text x={RADAR_CENTER} y={RADAR_CENTER + 9.5} textAnchor="middle" className="ap-radar-eye-sub">
+              {isContextCore ? t('autopilot.radar.ctxLabel') : summary.eye?.costLabel || '$0.00'}
+            </text>
+          </g>
         </svg>
       </div>
 
-      {selectedBlip && (
+      {selectedStation && (
         <div className="ap-radar-inspector" role="status">
           <div className="ap-radar-insp-top">
-            <span className={`ap-radar-dot ${selectedBlip.ring}`} aria-hidden="true" />
-            <span className="ap-radar-insp-ring">{t(selectedBlip.ringLabelKey)}</span>
-            <span className="ap-radar-insp-tool">{selectedBlip.name}</span>
-            <span className="ap-radar-age">{t('autopilot.radar.ago', { s: selectedBlip.ageSec })}</span>
+            <span className={`ap-radar-dot${selectedStation.hasError ? ' error' : selectedStation.active ? ' core' : ' explore'}`} aria-hidden="true" />
+            <span className="ap-radar-insp-ring">{selectedStation.code}</span>
+            <span className="ap-radar-insp-tool">
+              {selectedStation.latestTool?.name || t(selectedStation.stageKey)}
+            </span>
+            {selectedStation.latestTool?.durationLabel ? (
+              <span className="ap-radar-age">{selectedStation.latestTool.durationLabel}</span>
+            ) : selectedStation.count > 0 ? (
+              <span className="ap-radar-age">{t('autopilot.radar.callsLabel', { n: selectedStation.count })}</span>
+            ) : null}
           </div>
-          {(selectedBlip.taskTitle || summary.blips.length > 1) && (
-            <div className="ap-radar-insp-sub">
-              <span className="ap-radar-insp-task">{selectedBlip.taskTitle || t('autopilot.live.building')}</span>
-              {summary.blips.length > 1 && <span className="ap-radar-insp-hint">{t('autopilot.radar.tapHint')}</span>}
+          <div className="ap-radar-insp-sub">
+            <span className="ap-radar-insp-task">{t(selectedStation.stageKey)}</span>
+            <span className="ap-radar-insp-hint">
+              {selectedStation.id === 'you' && summary.waitingCount > 0
+                ? t('autopilot.radar.youFocusHint')
+                : t('autopilot.radar.coreToggleHint')}
+            </span>
+          </div>
+
+          {peekMode === 'browser' && (
+            <div className="ap-radar-peek">
+              <div className="ap-radar-peek-title">🖼 {t('autopilot.radar.browserPeekTitle')}</div>
+              {previewShotUrl ? (
+                <img src={previewShotUrl} alt={t('autopilot.radar.browserPeekTitle')} className="ap-radar-peek-img" />
+              ) : (
+                <div className="ap-radar-peek-empty">{t('autopilot.radar.browserPeekEmpty')}</div>
+              )}
+            </div>
+          )}
+
+          {peekMode === 'error' && selectedStation.latestError?.errorTail && (
+            <div className="ap-radar-peek error">
+              <div className="ap-radar-peek-title">
+                ⚠ {t('autopilot.radar.errorTitle')}: {selectedStation.latestError.name}
+              </div>
+              <pre className="ap-radar-err-tail">{selectedStation.latestError.errorTail}</pre>
             </div>
           )}
         </div>
@@ -196,9 +309,16 @@ export function LiveRadarCard({
           {summary.tokenLabel}
         </span>
         {summary.waitingCount > 0 && (
-          <span className="ap-radar-stat waiting">
+          <button
+            type="button"
+            className="ap-radar-stat waiting ap-radar-stat-btn"
+            onClick={() => {
+              haptic('tap')
+              onFocusReview?.()
+            }}
+          >
             🔔 {t('autopilot.radar.waiting', { n: summary.waitingCount })}
-          </span>
+          </button>
         )}
       </div>
 
@@ -208,17 +328,21 @@ export function LiveRadarCard({
             <li key={entry.id}>
               <button
                 type="button"
-                className={`ap-radar-feed-row${selectedBlip?.id === entry.id ? ' selected' : ''}`}
+                className={`ap-radar-feed-row${selectedStation?.id === entry.stationId ? ' selected' : ''}${entry.failed ? ' error' : ''}`}
                 onClick={() => {
                   haptic('tap')
-                  setSelectedId(entry.id)
+                  setSelectedStationId(entry.stationId)
+                  setPeekMode(entry.failed ? 'error' : entry.stationId === 'browser' ? 'browser' : 'none')
                 }}
               >
                 <span className="ap-radar-feed-main">
-                  <span className={`ap-radar-dot ${entry.ring}`} aria-hidden="true" />
+                  <span className={`ap-radar-dot${entry.failed ? ' error' : ` ${entry.ring}`}`} aria-hidden="true" />
+                  <span className="ap-radar-feed-code">{entry.stationCode}</span>
                   <span className="ap-radar-tool">{entry.name}</span>
                 </span>
-                <span className="ap-radar-age">{t('autopilot.radar.ago', { s: entry.ageSec })}</span>
+                <span className="ap-radar-age">
+                  {entry.durationLabel || t('autopilot.radar.ago', { s: entry.ageSec })}
+                </span>
               </button>
             </li>
           ))}

@@ -42,18 +42,22 @@ test('AP3-4: AutopilotDeck excludes .ap-card-copy and locks swipe to horizontalO
   assert.match(stageSrc, /ap-copy-more-btn/)
 })
 
-test('AP3-3/4: LiveRadarCard renders ring labels, interactive blips, inspector, and zero timers', () => {
+test('AP3-3/4 & Panoptes: LiveRadarCard renders 8 stations, interactive Context Eye, inspector, and Vibe gating without timers', () => {
   const radarSrc = read('apps/web/src/features/autopilot/LiveRadarCard.jsx')
-  assert.match(radarSrc, /autopilot\.radar\.ringExplore/)
-  assert.match(radarSrc, /autopilot\.radar\.ringVerify/)
-  assert.match(radarSrc, /autopilot\.radar\.ringCore/)
-  assert.match(radarSrc, /ap-radar-blip-hit/)
+  assert.match(radarSrc, /ap-radar-station-node/)
+  assert.match(radarSrc, /ap-radar-station-hit/)
+  assert.match(radarSrc, /ap-radar-eye/)
   assert.match(radarSrc, /ap-radar-inspector/)
+  assert.match(radarSrc, /ap-radar-peek/)
   assert.doesNotMatch(radarSrc, /setInterval/)
   assert.doesNotMatch(radarSrc, /\bfetch\s*\(/)
+
+  const radarCss = read('apps/web/src/styles/autopilot-radar.css')
+  assert.match(radarCss, /html\[data-vibe='dopamine'\]\s+\.ap-radar-sweep/)
+  assert.match(radarCss, /html\[data-vibe='serotonin'\]\s+\.ap-radar-sweep/)
 })
 
-test('AP3-3/4 i18n keys exist in both en.json and ja.json', () => {
+test('AP3-3/4 & Panoptes i18n keys exist in both en.json and ja.json', () => {
   const en = JSON.parse(read('apps/web/src/i18n/en.json'))
   const ja = JSON.parse(read('apps/web/src/i18n/ja.json'))
   for (const k of [
@@ -61,6 +65,17 @@ test('AP3-3/4 i18n keys exist in both en.json and ja.json', () => {
     'autopilot.radar.ringCore',
     'autopilot.radar.ringVerify',
     'autopilot.radar.ringExplore',
+    'autopilot.radar.stageYou',
+    'autopilot.radar.stageFiles',
+    'autopilot.radar.stageShell',
+    'autopilot.radar.stageWeb',
+    'autopilot.radar.stageBrowser',
+    'autopilot.radar.stageAgents',
+    'autopilot.radar.stageMemory',
+    'autopilot.radar.stageTools',
+    'autopilot.radar.coreToggleHint',
+    'autopilot.radar.browserPeekTitle',
+    'autopilot.radar.errorTitle',
     'autopilot.radar.tapHint',
     'autopilot.radar.parallelBadge',
     'autopilot.live.elapsedAria',

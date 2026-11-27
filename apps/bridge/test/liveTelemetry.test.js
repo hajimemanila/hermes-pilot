@@ -220,3 +220,63 @@ test('live snapshot with since accumulates finished and active sessions since Au
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('PN-1: live snapshot detects failed tools with 3-line errorTail, computes durationMs, and reports contextPct', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-live-pn1-'))
+  try {
+    const dbPath = path.join(dir, 'state.db')
+    const db = new DatabaseSync(dbPath)
+    db.exec(`
+      CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, source TEXT, chat_type TEXT,
+        last_activity_description TEXT, started_at REAL, last_activity_at REAL,
+        input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER, estimated_cost_usd REAL,
+        context_tokens INTEGER, max_context_tokens INTEGER);
+      CREATE TABLE session_turn_leases (conversation_id TEXT, holder TEXT, acquired_at REAL, expires_at REAL);
+      CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT,
+        tool_name TEXT, timestamp REAL);
+    `)
+    const nowSec = Date.now() / 1000
+    db.prepare('INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)').run(
+      's_pn1',
+      'Panoptes Telemetry',
+      'cli',
+      '',
+      'running tests',
+      nowSec - 60,
+      nowSec - 1,
+      20000,
+      5000,
+      10000,
+      0.08,
+      152000,
+      200000,
+    )
+    db.prepare('INSERT INTO session_turn_leases VALUES (?,?,?,?)').run(
+      's_pn1',
+      'pid=99:turn=t9:platform=local',
+      nowSec - 60,
+      nowSec + 240,
+    )
+    const ins = db.prepare('INSERT INTO messages (session_id, role, content, tool_name, timestamp) VALUES (?,?,?,?,?)')
+    ins.run('s_pn1', 'assistant', 'tests: 12 pass, 0 fail', 'terminal', nowSec - 15)
+    ins.run('s_pn1', 'assistant', 'line 1 ok\nError: ENOENT missing file\nat step 2\nexit code 1', 'terminal', nowSec - 10)
+    ins.run('s_pn1', 'assistant', 'captured screenshot ok', 'render_mocks', nowSec - 8.2)
+    db.close()
+
+    const live = createLive(
+      { home: '/nonexistent', stateDb: dbPath },
+      { boards: () => [], tasks: () => [] },
+    )
+    const snap = live.snapshot()
+    assert.equal(snap.telemetry.contextPct, 76)
+    assert.equal(snap.telemetry.failedTools.length, 1)
+    assert.equal(snap.telemetry.failedTools[0].name, 'terminal')
+    assert.equal(snap.telemetry.failedTools[0].errorTail, 'Error: ENOENT missing file\nat step 2\nexit code 1')
+    assert.equal(snap.telemetry.recentTools[0].name, 'render_mocks')
+    assert.equal(snap.telemetry.recentTools[1].failed, true)
+    assert.equal(snap.telemetry.recentTools[1].durationMs, 1800)
+    assert.equal(snap.telemetry.recentTools[2].failed, false)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
