@@ -340,15 +340,15 @@ test('detail: null のイベントは required を持たず、素通りが維持
   }
 })
 
-test('HM_STORAGE は 23 種で、値がすべて一意な hm. キー', () => {
+test('HM_STORAGE は 24 種で、値がすべて一意な hm. キー', () => {
   const values = Object.values(HM_STORAGE)
-  assert.equal(values.length, 23)
-  assert.equal(new Set(values).size, 23, '同じキーが 2 回定義されている')
+  assert.equal(values.length, 24)
+  assert.equal(new Set(values).size, 24, '同じキーが 2 回定義されている')
   for (const key of values) assert.match(key, /^hm\.[A-Za-z0-9.]+$/)
   assert.ok(Object.isFrozen(HM_STORAGE))
 })
 
-test('HM_STORAGE は既存 21 キーと Coherence 系キーを集約している', () => {
+test('HM_STORAGE は既存 21 キーと Coherence / Autopilot 系キーを集約している', () => {
   const expected = [
     'hm.board',
     'hm.storedSid',
@@ -373,6 +373,7 @@ test('HM_STORAGE は既存 21 キーと Coherence 系キーを集約している
     'hm.memosView',
     'hm.coherenceDismissed',
     'hm.coherenceAck',
+    'hm.autopilotRun.v1',
   ]
   assert.deepEqual([...Object.values(HM_STORAGE)].sort(), expected.sort())
 })

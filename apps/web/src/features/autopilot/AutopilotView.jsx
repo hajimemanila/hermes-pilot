@@ -9,6 +9,11 @@ import {
   buildDeckFromSheet,
   projectStudioStage,
 } from '../../lib/autopilotDeck.js'
+import {
+  clearAutopilotRunAnchor,
+  readAutopilotRunAnchor,
+  writeAutopilotRunAnchor,
+} from '../../lib/autopilot/studio.js'
 import { readActiveChatId } from '../../lib/chatReports.js'
 import { haptic } from '../../lib/haptic.js'
 import { buildSeedPayload } from '../../lib/specSeed.js'
@@ -100,6 +105,7 @@ export function AutopilotView({ overview, notify, onSwitchCockpit }) {
   const [decisions, setDecisions] = useState({})
   const [dismissedCompleteId, setDismissedCompleteId] = useState(null)
   const [receiptOpen, setReceiptOpen] = useState(false)
+  const [runAnchor, setRunAnchor] = useState(() => readAutopilotRunAnchor(board || overview?.board || 'default'))
 
   const selectBoard = useCallback((slug) => {
     const next = slug || null
@@ -109,6 +115,7 @@ export function AutopilotView({ overview, notify, onSwitchCockpit }) {
     setSpecReports([])
     setDecisions({})
     setDismissedCompleteId(null)
+    setRunAnchor(readAutopilotRunAnchor(next || 'default'))
     try {
       if (next) localStorage.setItem(AP_BOARD_KEY, next)
     } catch {
@@ -139,6 +146,12 @@ export function AutopilotView({ overview, notify, onSwitchCockpit }) {
     tickSync('architectJobs')
     return undefined
   }, [board])
+
+  useEffect(() => {
+    setSyncParams({ liveSince: runAnchor?.startedAt || null })
+    if (runAnchor?.startedAt) refreshSync('live')
+    return () => setSyncParams({ liveSince: null })
+  }, [runAnchor?.startedAt])
 
   useEffect(() => {
     if (!board) return undefined
@@ -213,8 +226,56 @@ export function AutopilotView({ overview, notify, onSwitchCockpit }) {
         reviewItems: items,
         preview,
         dismissedCompleteId,
+        runStartedAt: runAnchor?.startedAt || null,
       }),
-    [cards, jobs, live, tasks, specReports, items, preview, dismissedCompleteId],
+    [cards, jobs, live, tasks, specReports, items, preview, dismissedCompleteId, runAnchor?.startedAt],
+  )
+
+  useEffect(() => {
+    const boardKey = board || overview?.board || 'default'
+    const jobList = (Array.isArray(jobs) ? jobs : []).filter((j) => j && !j.dismissed)
+    const activeJob =
+      jobList.find((j) => ['running', 'awaiting_spec', 'awaiting_review', 'spec_ready'].includes(String(j.status))) || null
+    const hasOpenWork = stage.act === 'live' || Boolean(activeJob) || waiting.length > 0
+
+    if (hasOpenWork) {
+      const inferredStart = Number(stage.runStartedAt || activeJob?.startedAt || activeJob?.createdAt || 0) || Date.now()
+      const inferredId = String(activeJob?.id || stage.runKey || `run-${inferredStart}`)
+      setRunAnchor((prev) => {
+        if (!prev) {
+          const created = { runId: inferredId, startedAt: inferredStart, maxTokens: 0 }
+          writeAutopilotRunAnchor(boardKey, created)
+          return created
+        }
+        const jobCreated = Number(activeJob?.createdAt || 0)
+        if (activeJob?.id && activeJob.id !== prev.runId && jobCreated > prev.startedAt + 15_000) {
+          const reset = { runId: activeJob.id, startedAt: jobCreated, maxTokens: 0 }
+          writeAutopilotRunAnchor(boardKey, reset)
+          return reset
+        }
+        return prev
+      })
+    } else if (stage.act === 'complete' || stage.act === 'start') {
+      setRunAnchor((prev) => {
+        if (!prev) return prev
+        clearAutopilotRunAnchor(boardKey)
+        return null
+      })
+    }
+  }, [board, overview?.board, stage.act, stage.runStartedAt, stage.runKey, jobs, waiting.length])
+
+  const handleObservedTokens = useCallback(
+    (tokens) => {
+      const n = Math.max(0, Number(tokens) || 0)
+      const boardKey = board || overview?.board || 'default'
+      setRunAnchor((prev) => {
+        if (!prev || n <= (prev.maxTokens || 0)) return prev
+        const next = { ...prev, maxTokens: n }
+        writeAutopilotRunAnchor(boardKey, next)
+        return next
+      })
+    },
+    [board, overview?.board],
   )
 
   const handleCommitAction = async (question, action, extra = {}) => {
@@ -262,6 +323,8 @@ export function AutopilotView({ overview, notify, onSwitchCockpit }) {
   }
 
   const handleStartSeed = async (seedText) => {
+    const boardKey = board || overview?.board || 'default'
+    const seedStart = Date.now()
     const res = await api('/api/architect/seed', {
       method: 'POST',
       body: buildSeedPayload({
@@ -275,6 +338,11 @@ export function AutopilotView({ overview, notify, onSwitchCockpit }) {
         lang,
       }),
     })
+    const startedAt = Number(res?.job?.createdAt) || seedStart
+    const nextAnchor = { runId: String(res?.job?.id || `seed-${startedAt}`), startedAt, maxTokens: 0 }
+    writeAutopilotRunAnchor(boardKey, nextAnchor)
+    setRunAnchor(nextAnchor)
+    setSyncParams({ liveSince: startedAt })
     try {
       celebrate('launch')
     } catch {
@@ -283,6 +351,7 @@ export function AutopilotView({ overview, notify, onSwitchCockpit }) {
     notify?.(t('seed.toast'))
     refreshSync('architectJobs')
     refreshSync('reviewWaiting')
+    refreshSync('live')
     return res
   }
 
@@ -312,6 +381,10 @@ export function AutopilotView({ overview, notify, onSwitchCockpit }) {
       {stage.act === 'live' && (
         <LiveStudioCard
           stage={stage}
+          runStartedAt={runAnchor?.startedAt || stage.runStartedAt || null}
+          runId={runAnchor?.runId || stage.runKey}
+          persistedMaxTokens={runAnchor?.maxTokens || 0}
+          onObservedTokens={handleObservedTokens}
           onSwitchCockpit={onSwitchCockpit}
           onSaveMemo={handleSaveMemo}
         />

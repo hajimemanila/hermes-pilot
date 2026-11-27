@@ -353,7 +353,7 @@ async function handleApi(req, res, url) {
     } catch {
       archJobs = []
     }
-    const r = live.snapshot({ dbs: await listStateDbs(), architect: archJobs })
+    const r = live.snapshot({ dbs: await listStateDbs(), architect: archJobs, since: Number(url.searchParams.get('since') ?? 0) || 0 })
     // Discord 由来のターンにはスレッドリンクを添える
     for (const t of r.turns) {
       const link = discord.forSession(t.sessionId)

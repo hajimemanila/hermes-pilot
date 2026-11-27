@@ -365,6 +365,9 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
               },
             ]
           : []
+      const hasSince = Number(route.params?.get?.('since') ?? 0) > 0
+      const runTok = turns[0] || (hasSince && state.progress.batches) ? 18400 : 0
+      const runCache = turns[0] || (hasSince && state.progress.batches) ? 11000 : 0
       const telemetry = {
         recentTools: turns[0]
           ? demoRecentTools.map((rt) => ({
@@ -375,10 +378,11 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
             }))
           : [],
         toolCount: turns[0] ? 12 : 0,
-        runTokens: turns[0] ? 18400 : 0,
-        runCacheRead: turns[0] ? 11000 : 0,
-        runCostUsd: turns[0] ? 0.04 : 0,
-        cacheHitPct: turns[0] ? 37 : 0,
+        runTokens: runTok,
+        runCacheRead: runCache,
+        runCostUsd: runTok > 0 ? 0.04 : 0,
+        runTokenScope: hasSince ? 'since' : 'active',
+        cacheHitPct: runTok > 0 ? 37 : 0,
         activeTurns: turns.length,
         activeTasks: tasks.length,
         activeWorkers: turns.length + tasks.length,

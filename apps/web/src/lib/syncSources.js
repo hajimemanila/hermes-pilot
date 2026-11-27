@@ -24,6 +24,7 @@ export const SYNC_PARAMS = {
   taskDetail: null,
   reviewDetailId: null,
   workerFeedId: null,
+  liveSince: null,
 }
 
 const enc = encodeURIComponent
@@ -50,7 +51,7 @@ export function createSyncSources({ apiFn = api, params = {} } = {}) {
     reviewFeed: () => api('/api/review/feed?limit=20'),
     usage: () => api('/api/usage?hours=24'),
     inbox: () => api('/api/inbox'),
-    live: () => api('/api/live'),
+    live: () => (p.liveSince ? api(`/api/live?since=${enc(String(p.liveSince))}`) : api('/api/live')),
     tasks: () => (board() ? api(`/api/boards/${enc(board())}/tasks?limit=60`) : Promise.resolve(null)),
     boards: () => api('/api/boards'),
     specs: () => (board() ? api(`/api/specs?board=${enc(board())}`) : Promise.resolve(null)),

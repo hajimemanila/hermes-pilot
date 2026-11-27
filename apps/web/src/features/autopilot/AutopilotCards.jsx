@@ -3,6 +3,7 @@ import { api } from '../../api.js'
 import { Sheet } from '../../components/Ui.jsx'
 import { useI18n } from '../../i18n/index.js'
 import { haptic } from '../../lib/haptic.js'
+import { formatElapsedClock } from '../../lib/autopilot/studio.js'
 import { repoLabel } from '../../lib/repoPicker.js'
 import { SEED_MAX, canSubmit } from '../../lib/specSeed.js'
 import { celebrateAction } from '../../lib/vibe.js'
@@ -343,19 +344,36 @@ const LIVE_STEPS = [
 ]
 
 /**
- * 第3幕: 自走実装中のライブ制作スタジオカード（4段階ゲージ＋AI実況＋ワイプ比較）。
+ * 第3幕: 自走実装中のライブ制作スタジオカード（開始からの稼働時間＋4段階ゲージ＋レーダー）。
  */
-export function LiveStudioCard({ stage, onSwitchCockpit, onSaveMemo }) {
+export function LiveStudioCard({
+  stage,
+  runStartedAt = null,
+  runId = '',
+  persistedMaxTokens = 0,
+  onObservedTokens = null,
+  onSwitchCockpit,
+  onSaveMemo,
+}) {
   const { t } = useI18n()
   const [split, setSplit] = useState(50)
   const [memoOpen, setMemoOpen] = useState(false)
   const [memoText, setMemoText] = useState('')
-  const highWaterRef = useRef({ key: '', maxPct: 0, maxStep: 0 })
+  const [now, setNow] = useState(() => Date.now())
+  const highWaterRef = useRef({ key: '', maxPct: 0, maxStep: 0, fallbackStart: 0 })
 
-  const runKey = String(stage?.runKey || stage?.activeJob?.id || stage?.activeTask?.id || 'live')
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  const runKey = String(runId || stage?.runKey || stage?.activeJob?.id || stage?.activeTask?.id || 'live')
   if (highWaterRef.current.key !== runKey) {
-    highWaterRef.current = { key: runKey, maxPct: 0, maxStep: 0 }
+    highWaterRef.current = { key: runKey, maxPct: 0, maxStep: 0, fallbackStart: Date.now() }
   }
+  const effectiveStart = Number(runStartedAt || stage?.runStartedAt || highWaterRef.current.fallbackStart) || now
+  const elapsedMs = Math.max(0, now - effectiveStart)
+
   const rawStep = Math.max(0, Math.min(3, Number(stage?.stepIndex) || 0))
   const total = Number(stage?.totalCount) || 0
   const done = Number(stage?.doneCount) || 0
@@ -383,11 +401,9 @@ export function LiveStudioCard({ stage, onSwitchCockpit, onSaveMemo }) {
             <span className="ap-live-dot" aria-hidden="true" />
             {t('autopilot.live.badge')}
           </span>
-          {total > 0 && (
-            <span className="ap-batch-pill">
-              {done} / {total}
-            </span>
-          )}
+          <span className="ap-elapsed-pill" aria-label={t('autopilot.live.elapsedAria')}>
+            ⏱ {formatElapsedClock(elapsedMs)}
+          </span>
         </header>
 
         <h2 className="ap-studio-title">
@@ -418,6 +434,10 @@ export function LiveStudioCard({ stage, onSwitchCockpit, onSaveMemo }) {
           initialLive={stage?.live || null}
           tasks={stage?.activeTasks || (stage?.activeTask ? [stage.activeTask] : [])}
           activeJob={stage?.activeJob || null}
+          runStartedAt={effectiveStart}
+          runId={runKey}
+          persistedMaxTokens={persistedMaxTokens}
+          onObservedTokens={onObservedTokens}
         />
 
         {afterSrc && (

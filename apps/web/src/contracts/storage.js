@@ -56,4 +56,6 @@ export const HM_STORAGE = Object.freeze({
   COHERENCE_DISMISSED: 'hm.coherenceDismissed',
   /** リポジトリごとの退避済みソフトシグナル（`{ [repoKey]: { [signalKey]: { value, at } } }` の JSON）。 */
   COHERENCE_ACK: 'hm.coherenceAck',
+  /** Autopilot 実行セッションの開始基準時刻・累計トークン高水位（ボード単位の JSON）。 */
+  AUTOPILOT_RUN: 'hm.autopilotRun.v1',
 })

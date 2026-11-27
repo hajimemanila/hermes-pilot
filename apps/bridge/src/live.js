@@ -93,6 +93,50 @@ export function shapeArchitectJob(job, at = Date.now()) {
 
 export function createLive(cfg, kanban, deps = {}) {
   const dbPath = cfg.stateDb ?? path.join(cfg.home ?? '', '.hermes', 'state.db')
+  const sinceTotalsBySnap = new WeakMap()
+
+  /**
+   * Query cumulative session tokens started since `sinceMs` (epoch ms),
+   * covering finished Round 1 / child worker sessions as well as active ones.
+   *
+   * @param {DatabaseSync} db
+   * @param {number} sinceMs
+   * @returns {{total: number, cacheRead: number, costUsd: number}|null}
+   */
+  function querySinceTotals(db, sinceMs) {
+    if (!Number.isFinite(sinceMs) || sinceMs <= 0) return null
+    const sinceSec = sinceMs / 1000
+    const runQuery = (col) =>
+      db
+        .prepare(
+          `SELECT COALESCE(SUM(input_tokens), 0) AS input,
+                  COALESCE(SUM(output_tokens), 0) AS output,
+                  COALESCE(SUM(cache_read_tokens), 0) AS cacheRead,
+                  COALESCE(SUM(estimated_cost_usd), 0) AS costUsd
+             FROM sessions
+            WHERE ${col} >= ?`,
+        )
+        .get(sinceSec)
+    let row
+    try {
+      row = runQuery('started_at')
+    } catch (err) {
+      if (!/no such column/i.test(String(err?.message || ''))) throw err
+      try {
+        row = runQuery('last_activity_at')
+      } catch (err2) {
+        if (!/no such column/i.test(String(err2?.message || ''))) throw err2
+        return { total: 0, cacheRead: 0, costUsd: 0 }
+      }
+    }
+    const input = Number(row?.input ?? 0) || 0
+    const output = Number(row?.output ?? 0) || 0
+    return {
+      total: input + output,
+      cacheRead: Number(row?.cacheRead ?? 0) || 0,
+      costUsd: Number(row?.costUsd ?? 0) || 0,
+    }
+  }
 
   /**
    * 1つの DB から実行中ターンを読む。
@@ -135,10 +179,11 @@ export function createLive(cfg, kanban, deps = {}) {
     }
   }
 
-  function turnsFrom(target, at) {
+  function turnsFrom(target, at, sinceMs = 0) {
     let db
     try {
       db = new DatabaseSync(target.path, { readOnly: true, timeout: 3000 })
+      const sinceTotals = querySinceTotals(db, sinceMs)
       const rows = queryLeaseRows(db, at / 1000 - LEASE_GRACE_SEC)
       const recentToolsStmt = db.prepare(
         `SELECT tool_name, timestamp FROM messages
@@ -149,7 +194,7 @@ export function createLive(cfg, kanban, deps = {}) {
         `SELECT COUNT(*) AS n FROM messages
           WHERE session_id = ? AND tool_name IS NOT NULL`,
       )
-      return rows.map((r) => {
+      const turns = rows.map((r) => {
         let recentTools = []
         let toolCount = 0
         try {
@@ -195,6 +240,7 @@ export function createLive(cfg, kanban, deps = {}) {
           tokens: { input, output, total: input + output, cacheRead, costUsd },
         }
       })
+      return { turns, sinceTotals }
     } finally {
       try {
         db?.close()
@@ -204,18 +250,18 @@ export function createLive(cfg, kanban, deps = {}) {
     }
   }
 
-  function buildTelemetry(turns, tasks, jobs = []) {
+  function buildTelemetry(turns, tasks, jobs = [], sinceTotals = null) {
     const recentTools = []
     let toolCount = 0
-    let runTokens = 0
-    let runCacheRead = 0
-    let runCostUsd = 0
+    let activeTokens = 0
+    let activeCacheRead = 0
+    let activeCostUsd = 0
     const primaryTaskTitle = tasks[0]?.title || jobs[0]?.seed || null
     for (const turn of turns) {
       toolCount += Number(turn?.toolCount ?? turn?.recentTools?.length ?? (turn?.lastTool ? 1 : 0)) || 0
-      runTokens += Number(turn?.tokens?.total ?? 0) || 0
-      runCacheRead += Number(turn?.tokens?.cacheRead ?? 0) || 0
-      runCostUsd += Number(turn?.tokens?.costUsd ?? 0) || 0
+      activeTokens += Number(turn?.tokens?.total ?? 0) || 0
+      activeCacheRead += Number(turn?.tokens?.cacheRead ?? 0) || 0
+      activeCostUsd += Number(turn?.tokens?.costUsd ?? 0) || 0
       const list = Array.isArray(turn?.recentTools) ? turn.recentTools : turn?.lastTool ? [turn.lastTool] : []
       for (const tool of list) {
         if (!tool?.name) continue
@@ -228,6 +274,10 @@ export function createLive(cfg, kanban, deps = {}) {
         })
       }
     }
+    const runTokens = sinceTotals ? sinceTotals.total : activeTokens
+    const runCacheRead = sinceTotals ? sinceTotals.cacheRead : activeCacheRead
+    const runCostUsd = sinceTotals ? sinceTotals.costUsd : activeCostUsd
+    const runTokenScope = sinceTotals ? 'since' : 'active'
     recentTools.sort((a, b) => b.at - a.at)
     const activeTurns = turns.length
     const activeTasks = tasks.length
@@ -245,6 +295,7 @@ export function createLive(cfg, kanban, deps = {}) {
       runTokens,
       runCacheRead,
       runCostUsd: Math.round(runCostUsd * 10000) / 10000,
+      runTokenScope,
       cacheHitPct,
       activeTurns,
       activeTasks,
@@ -301,12 +352,20 @@ export function createLive(cfg, kanban, deps = {}) {
       out.reason = 'Hermes state.db was not found'
       return out
     }
+    const sinceMs = Number(opts.since ?? 0) || 0
     const turns = []
+    let sinceTotals = sinceMs > 0 ? { total: 0, cacheRead: 0, costUsd: 0 } : null
     let firstErr = null
     let succeeded = 0
     for (const target of targets) {
       try {
-        turns.push(...turnsFrom(target, at))
+        const res = turnsFrom(target, at, sinceMs)
+        turns.push(...res.turns)
+        if (sinceTotals && res.sinceTotals) {
+          sinceTotals.total += res.sinceTotals.total
+          sinceTotals.cacheRead += res.sinceTotals.cacheRead
+          sinceTotals.costUsd += res.sinceTotals.costUsd
+        }
         succeeded++
       } catch (e) {
         if (!firstErr) firstErr = e
@@ -321,7 +380,8 @@ export function createLive(cfg, kanban, deps = {}) {
     turns.sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))
     out.turns = turns
     out.counts.turns = turns.length
-    out.telemetry = buildTelemetry(out.turns, out.tasks, out.architect)
+    if (sinceTotals) sinceTotalsBySnap.set(out, sinceTotals)
+    out.telemetry = buildTelemetry(out.turns, out.tasks, out.architect, sinceTotals)
     return out
   }
 
@@ -351,7 +411,7 @@ export function createLive(cfg, kanban, deps = {}) {
       ...(out.counts ?? {}),
       architect: jobs.filter((j) => ARCHITECT_RUNNING_STATUSES.includes(j.status)).length,
     }
-    out.telemetry = buildTelemetry(out.turns ?? [], out.tasks ?? [], out.architect)
+    out.telemetry = buildTelemetry(out.turns ?? [], out.tasks ?? [], out.architect, sinceTotalsBySnap.get(out) ?? null)
     return out
   }
 

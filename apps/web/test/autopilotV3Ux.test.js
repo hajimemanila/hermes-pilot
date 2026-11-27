@@ -63,10 +63,27 @@ test('AP3-3/4 i18n keys exist in both en.json and ja.json', () => {
     'autopilot.radar.ringExplore',
     'autopilot.radar.tapHint',
     'autopilot.radar.parallelBadge',
+    'autopilot.live.elapsedAria',
     'autopilot.copy.more',
     'autopilot.copy.less',
   ]) {
     assert.ok(typeof en[k] === 'string' && en[k].length > 0, `Missing en.json key: ${k}`)
     assert.ok(typeof ja[k] === 'string' && ja[k].length > 0, `Missing ja.json key: ${k}`)
   }
+  assert.equal(ja['autopilot.radar.runTokens'], 'トークン')
+  assert.equal(en['autopilot.radar.runTokens'], 'Tokens')
+})
+
+test('AutopilotDeck axis-locks vertical scroll and CSS enables scrollable .ap-view with sticky action bar & elapsed pill', () => {
+  const deckSrc = read('apps/web/src/features/autopilot/AutopilotDeck.jsx')
+  assert.match(deckSrc, /g\.locked\s*=\s*'v'/)
+  assert.match(deckSrc, /g\.locked\s*=\s*'h'/)
+
+  const deckCss = read('apps/web/src/styles/autopilot-deck.css')
+  assert.match(deckCss, /\.ap-view\s*\{[^}]*height:\s*100%[^}]*overflow-y:\s*auto/s)
+  assert.match(deckCss, /\.ap-action-bar\s*\{[^}]*position:\s*sticky/s)
+
+  const cardsSrc = read('apps/web/src/features/autopilot/AutopilotCards.jsx')
+  assert.match(cardsSrc, /ap-elapsed-pill/)
+  assert.doesNotMatch(cardsSrc, /ap-batch-pill/)
 })

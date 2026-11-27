@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useState } from 'react'
+import React, { useEffect, useId, useRef, useState } from 'react'
 import { useI18n } from '../../i18n/index.js'
 import { RADAR_CENTER, RADAR_SIZE, RING_RADII, buildRadarSummary } from '../../lib/liveRadar.js'
 import { haptic } from '../../lib/haptic.js'
@@ -10,13 +10,22 @@ import '../../styles/autopilot-radar.css'
  * 独自のタイマーポーリングは持たず、subscribeSync('live' | 'usage' | 'reviewWaiting') のみ購読する。
  * 各ドットをタップすると下のインスペクタへツール名・担当タスク・経過時間を表示する。
  */
-export function LiveRadarCard({ initialLive = null, tasks = [], activeJob = null }) {
+export function LiveRadarCard({
+  initialLive = null,
+  tasks = [],
+  activeJob = null,
+  runStartedAt = null,
+  runId = '',
+  persistedMaxTokens = 0,
+  onObservedTokens = null,
+}) {
   const { t } = useI18n()
   const [live, setLive] = useState(initialLive)
   const [usage, setUsage] = useState(null)
   const [reviewItems, setReviewItems] = useState([])
   const [selectedId, setSelectedId] = useState(null)
   const sweepId = useId()
+  const highWaterRef = useRef({ key: '', maxTokens: 0, reported: 0 })
 
   useEffect(() => {
     const offs = [
@@ -28,13 +37,35 @@ export function LiveRadarCard({ initialLive = null, tasks = [], activeJob = null
     return () => offs.forEach((off) => off?.())
   }, [])
 
+  const runTracked = Boolean(runStartedAt) || Number(persistedMaxTokens) > 0
+  const hwKey = String(runId || activeJob?.id || (runStartedAt ? String(runStartedAt) : 'default'))
+  if (highWaterRef.current.key !== hwKey) {
+    const initialFloor = Math.max(0, Number(persistedMaxTokens) || 0)
+    highWaterRef.current = { key: hwKey, maxTokens: initialFloor, reported: initialFloor }
+  } else if (Number(persistedMaxTokens) > highWaterRef.current.maxTokens) {
+    highWaterRef.current.maxTokens = Number(persistedMaxTokens)
+  }
+
   const summary = buildRadarSummary({
     live: live ?? initialLive,
     usage,
     reviewItems,
     tasks,
     activeJob,
+    runTracked,
+    minRunTokens: highWaterRef.current.maxTokens,
   })
+  if (runTracked && summary.runTokens > highWaterRef.current.maxTokens) {
+    highWaterRef.current.maxTokens = summary.runTokens
+  }
+
+  useEffect(() => {
+    if (!runTracked) return
+    if (summary.runTokens > highWaterRef.current.reported) {
+      highWaterRef.current.reported = summary.runTokens
+      onObservedTokens?.(summary.runTokens)
+    }
+  }, [runTracked, summary.runTokens, onObservedTokens])
   const gradId = `radar-sweep-${sweepId.replace(/[^a-zA-Z0-9_-]/g, '')}`
   const selectedBlip = summary.blips.find((b) => b.id === selectedId) || summary.blips[0] || null
   const compactFeed = summary.feed.slice(0, 2)

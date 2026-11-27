@@ -14,7 +14,7 @@ import {
   formatCompactTokens,
   projectRadarBlips,
 } from '../src/lib/liveRadar.js'
-import { computeStudioProgress } from '../src/lib/autopilot/studio.js'
+import { computeStudioProgress, formatElapsedClock, projectStudioStage } from '../src/lib/autopilot/studio.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
 
@@ -133,6 +133,48 @@ test('AP3-2: computeStudioProgress progresses monotonically from Design to Finis
   assert.equal(p5.stepIndex, 2)
   assert.equal(p6.stepIndex, 3)
   assert.equal(p6.progressPct, 92)
+})
+
+test('runTracked summary starts at 0 without 24h fallback, keeps minRunTokens across gaps, and scopes stage progress to current run', () => {
+  const atStart = buildRadarSummary({
+    live: { counts: { turns: 0, tasks: 0 }, telemetry: { runTokens: 0 } },
+    usage: { totals: { input: 900_000, output: 300_000 } },
+    runTracked: true,
+    minRunTokens: 0,
+  })
+  assert.equal(atStart.tokenMode, 'run')
+  assert.equal(atStart.runTokens, 0)
+  assert.equal(atStart.tokenLabel, '0')
+
+  const afterInterviewGap = buildRadarSummary({
+    live: { counts: { turns: 0, tasks: 0 }, telemetry: { runTokens: 0 } },
+    usage: { totals: { input: 900_000, output: 300_000 } },
+    runTracked: true,
+    minRunTokens: 18400,
+  })
+  assert.equal(afterInterviewGap.tokenMode, 'run')
+  assert.equal(afterInterviewGap.runTokens, 18400)
+  assert.equal(afterInterviewGap.tokenLabel, '18.4k')
+
+  assert.equal(formatElapsedClock(0), '00:00')
+  assert.equal(formatElapsedClock(261_000), '04:21')
+  assert.equal(formatElapsedClock(3_735_000), '1:02:15')
+
+  const runStart = 1_700_000_000_000
+  const stage = projectStudioStage({
+    runStartedAt: runStart,
+    jobs: [{ id: 'j1', status: 'running', phase: 'spawning', createdAt: runStart }],
+    tasks: [
+      { id: 'old1', title: 'Old done 1', status: 'done', createdAt: runStart - 3_600_000 },
+      { id: 'old2', title: 'Old done 2', status: 'done', createdAt: runStart - 1_800_000 },
+      { id: 'arch1', title: '[ARCH] New app', status: 'running', assignee: 'architect', createdAt: runStart },
+    ],
+  })
+  assert.equal(stage.act, 'live')
+  assert.equal(stage.doneCount, 0)
+  assert.equal(stage.totalCount, 0)
+  assert.equal(stage.runStartedAt, runStart)
+  assert.ok(stage.progressPct < 20)
 })
 
 test('LiveRadarCard & BeforeAfterTimelapse obey sync-owner and zero-chart-lib guards', () => {

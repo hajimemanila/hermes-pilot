@@ -125,8 +125,9 @@ export function formatCompactTokens(n) {
 
 /**
  * Combine `live`, `usage`, and `reviewWaiting` snapshots for LiveRadarCard.
- * Prefers per-run `runTokens` from active turns and fixes `usage.totals` (`input + output`) aggregation.
- * @param {{live?: object|null, usage?: object|null, reviewItems?: Array<object>, tasks?: Array<object>, activeJob?: object|null, now?: number}} [opts]
+ * When `runTracked` is true (active Autopilot run), always renders cumulative run tokens from 0
+ * using monotonic `minRunTokens` floor without falling back to unrelated 24h usage totals.
+ * @param {{live?: object|null, usage?: object|null, reviewItems?: Array<object>, tasks?: Array<object>, activeJob?: object|null, now?: number, runTracked?: boolean, minRunTokens?: number}} [opts]
  */
 export function buildRadarSummary({
   live = null,
@@ -135,6 +136,8 @@ export function buildRadarSummary({
   tasks = [],
   activeJob = null,
   now = Date.now(),
+  runTracked = false,
+  minRunTokens = 0,
 } = {}) {
   const blips = projectRadarBlips(live, { tasks, activeJob, now, maxBlips: 6 })
   const feed = blips.slice(0, 4).map((b) => ({
@@ -155,13 +158,15 @@ export function buildRadarSummary({
   const turnTokenSum = Array.isArray(live?.turns)
     ? live.turns.reduce((acc, t) => acc + (Number(t?.tokens?.total ?? 0) || 0), 0)
     : 0
-  const runTokens = Number(live?.telemetry?.runTokens ?? turnTokenSum) || 0
+  const rawRunTokens = Number(live?.telemetry?.runTokens ?? turnTokenSum) || 0
+  const floorTokens = Math.max(0, Number(minRunTokens) || 0)
+  const runTokens = runTracked ? Math.max(floorTokens, rawRunTokens) : rawRunTokens
   const usageTotals = usage?.totals || {}
   const usageSum = (Number(usageTotals.input ?? 0) || 0) + (Number(usageTotals.output ?? 0) || 0)
   const tokenTotal =
     Number(usageTotals.totalTokens ?? usageTotals.tokens ?? (usageSum > 0 ? usageSum : usageTotals.inputTokens) ?? 0) || 0
-  const tokenMode = runTokens > 0 ? 'run' : '24h'
-  const effectiveTokens = runTokens > 0 ? runTokens : tokenTotal
+  const tokenMode = runTracked || runTokens > 0 ? 'run' : '24h'
+  const effectiveTokens = runTracked ? runTokens : runTokens > 0 ? runTokens : tokenTotal
   const phaseLabel = String(live?.telemetry?.phaseLabel || (activeWorkers > 0 ? 'running' : 'idle'))
   const cacheHitPct = Number(live?.telemetry?.cacheHitPct ?? 0) || 0
 

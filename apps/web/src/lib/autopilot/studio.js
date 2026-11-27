@@ -2,6 +2,81 @@
  * Autopilot v2 の 4 幕スタジオ投影・成果物抽出（純関数・自己完結。deck-core の定数は参照しない）。
  * 旧 `lib/autopilotDeck.js` の :330-492 を移動したもの。公開契約は `lib/autopilotDeck.js`（バレル）が固定する。
  */
+import { HM_STORAGE } from '../../contracts/storage.js'
+
+const RUN_ANCHOR_KEY = HM_STORAGE.AUTOPILOT_RUN
+
+function toMs(ts) {
+  const n = Number(ts)
+  if (!Number.isFinite(n) || n <= 0) return 0
+  return n < 1e12 ? Math.round(n * 1000) : Math.round(n)
+}
+
+/**
+ * Format elapsed milliseconds as `MM:SS` (or `H:MM:SS` when >= 1 hour).
+ * @param {unknown} elapsedMs
+ * @returns {string}
+ */
+export function formatElapsedClock(elapsedMs) {
+  const totalSec = Math.max(0, Math.floor((Number(elapsedMs) || 0) / 1000))
+  const hours = Math.floor(totalSec / 3600)
+  const mins = Math.floor((totalSec % 3600) / 60)
+  const secs = totalSec % 60
+  const pad = (v) => String(v).padStart(2, '0')
+  return hours > 0 ? `${hours}:${pad(mins)}:${pad(secs)}` : `${pad(mins)}:${pad(secs)}`
+}
+
+function loadAnchorMap() {
+  try {
+    const raw = globalThis.localStorage?.getItem(RUN_ANCHOR_KEY)
+    const parsed = raw ? JSON.parse(raw) : null
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function saveAnchorMap(map) {
+  try {
+    globalThis.localStorage?.setItem(RUN_ANCHOR_KEY, JSON.stringify(map))
+  } catch {
+    /* ignore storage quota/privacy restrictions */
+  }
+}
+
+/** Read persisted Autopilot run anchor (`{ runId, startedAt, maxTokens }`) for a board. */
+export function readAutopilotRunAnchor(boardKey) {
+  const key = String(boardKey || 'default')
+  const map = loadAnchorMap()
+  const entry = map[key]
+  if (!entry || !Number(entry.startedAt)) return null
+  return {
+    runId: String(entry.runId || key),
+    startedAt: Number(entry.startedAt),
+    maxTokens: Math.max(0, Number(entry.maxTokens) || 0),
+  }
+}
+
+/** Persist Autopilot run anchor (`{ runId, startedAt, maxTokens }`) for a board. */
+export function writeAutopilotRunAnchor(boardKey, anchor) {
+  const key = String(boardKey || 'default')
+  const map = loadAnchorMap()
+  if (!anchor || !Number(anchor.startedAt)) {
+    delete map[key]
+  } else {
+    map[key] = {
+      runId: String(anchor.runId || key),
+      startedAt: Number(anchor.startedAt),
+      maxTokens: Math.max(0, Number(anchor.maxTokens) || 0),
+    }
+  }
+  saveAnchorMap(map)
+}
+
+/** Clear persisted Autopilot run anchor for a board. */
+export function clearAutopilotRunAnchor(boardKey) {
+  writeAutopilotRunAnchor(boardKey, null)
+}
 
 /** 生ツール名を初心者向けの親しみやすい実況 i18n キーへ変換する。 */
 export function translateActivity(toolName, fallbackTitle = '') {
@@ -150,6 +225,7 @@ export function projectStudioStage({
   reviewItems = [],
   preview = null,
   dismissedCompleteId = null,
+  runStartedAt = null,
 } = {}) {
   if (Array.isArray(cards) && cards.length > 0) {
     return { act: 'deck', cards }
@@ -166,8 +242,31 @@ export function projectStudioStage({
   const liveTurn = turns[0] || null
 
   if (activeJob || openTasks.length > 0 || liveTurn) {
-    const doneCount = taskList.filter((t) => String(t?.status || '').toLowerCase() === 'done').length
-    const totalCount = taskList.length
+    const openStarts = openTasks
+      .map((t) => toMs(t?.startedAt ?? t?.createdAt ?? t?.created_at ?? t?.started_at))
+      .filter((ms) => ms > 0)
+    const effectiveRunStart =
+      toMs(runStartedAt) ||
+      toMs(activeJob?.startedAt ?? activeJob?.createdAt) ||
+      (openStarts.length ? Math.min(...openStarts) : 0) ||
+      toMs(liveTurn?.startedAt) ||
+      null
+
+    const runTasks = effectiveRunStart
+      ? taskList.filter((t) => {
+          const st = String(t?.status || '').toLowerCase()
+          if (OPEN_STATUSES.has(st)) return true
+          const ts = toMs(t?.createdAt ?? t?.created_at ?? t?.startedAt ?? t?.started_at)
+          return ts > 0 && ts >= effectiveRunStart - 10_000
+        })
+      : taskList
+    const batchTasks = runTasks.filter((t) => {
+      const title = String(t?.title || '').trim()
+      const assignee = String(t?.assignee || '').toLowerCase()
+      return !/^\[(arch|review)\]/i.test(title) && assignee !== 'architect'
+    })
+    const doneCount = batchTasks.filter((t) => String(t?.status || '').toLowerCase() === 'done').length
+    const totalCount = batchTasks.length
     const runningCount = Math.max(activeTasks.length, liveTurn ? 1 : 0)
     const phase = String(activeJob?.phase || '')
     const rawTool = liveTurn?.lastTool?.name || liveTurn?.lastActivity || ''
@@ -190,6 +289,7 @@ export function projectStudioStage({
       stepIndex,
       progressPct,
       runKey,
+      runStartedAt: effectiveRunStart,
       doneCount,
       runningCount,
       totalCount,

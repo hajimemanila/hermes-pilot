@@ -44,7 +44,7 @@ export function AutopilotDeck({
   const [liveSandbox, setLiveSandbox] = useState(false)
   const [annotationsByVariant, setAnnotationsByVariant] = useState({})
   const [gachaCountByCard, setGachaCountByCard] = useState({})
-  const gestureRef = useRef({ active: false, startX: 0, startY: 0, pointerId: null })
+  const gestureRef = useRef({ active: false, locked: null, startX: 0, startY: 0, pointerId: null })
   const flyTimerRef = useRef(null)
 
   const question = cards[index] || null
@@ -180,30 +180,43 @@ export function AutopilotDeck({
     if (isInEdgeDeadZone(e.clientX, typeof window !== 'undefined' ? window.innerWidth : 0)) return
     gestureRef.current = {
       active: true,
+      locked: null,
       startX: e.clientX,
       startY: e.clientY,
       pointerId: e.pointerId,
     }
-    e.currentTarget?.setPointerCapture?.(e.pointerId)
-    setDrag({ active: true, dx: 0, dy: 0, gx: 50, gy: 35 })
   }
 
   const handlePointerMove = (e) => {
     const g = gestureRef.current
     if (!g.active || g.pointerId !== e.pointerId) return
     const dx = e.clientX - g.startX
+    const dy = e.clientY - g.startY
+    if (!g.locked) {
+      if (Math.hypot(dx, dy) < 10) return
+      if (Math.abs(dy) >= Math.abs(dx)) {
+        g.active = false
+        g.locked = 'v'
+        return
+      }
+      g.locked = 'h'
+      e.currentTarget?.setPointerCapture?.(e.pointerId)
+    }
     const gx = Math.max(10, Math.min(90, Math.round(50 + dx / 5)))
     setDrag({ active: true, dx, dy: 0, gx, gy: 35 })
   }
 
   const handlePointerEnd = (e) => {
     const g = gestureRef.current
-    if (!g.active || g.pointerId !== e.pointerId) return
-    gestureRef.current.active = false
+    if (g.pointerId !== e.pointerId) return
+    const wasHorizontal = g.active && g.locked === 'h'
+    g.active = false
+    g.locked = null
+    if (!wasHorizontal) return
     const finalSwipe = classifySwipe(e.clientX - g.startX, e.clientY - g.startY, undefined, { horizontalOnly: true })
     const rect = e.currentTarget?.getBoundingClientRect?.()
     setDrag({ active: false, dx: 0, dy: 0, gx: 50, gy: 35 })
-    if (finalSwipe.committed && finalSwipe.direction) {
+    if (e.type !== 'pointercancel' && finalSwipe.committed && finalSwipe.direction) {
       applyOutcome(finalSwipe.direction, rect)
     }
   }

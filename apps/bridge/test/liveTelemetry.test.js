@@ -136,3 +136,87 @@ test('AP3-1: live snapshot computes runTokens and cacheHitPct when sessions toke
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('live snapshot with since accumulates finished and active sessions since Autopilot start and starts at 0 before sessions exist', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-live-since-'))
+  try {
+    const dbPath = path.join(dir, 'state.db')
+    const db = new DatabaseSync(dbPath)
+    db.exec(`
+      CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, source TEXT, chat_type TEXT,
+        last_activity_description TEXT, started_at REAL, last_activity_at REAL,
+        input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER, estimated_cost_usd REAL);
+      CREATE TABLE session_turn_leases (conversation_id TEXT, holder TEXT, acquired_at REAL, expires_at REAL);
+      CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT,
+        tool_name TEXT, timestamp REAL);
+    `)
+    const nowSec = Date.now() / 1000
+    const runStartMs = Math.round((nowSec - 120) * 1000)
+
+    // Pre-run historical session (must be excluded)
+    db.prepare('INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?)').run(
+      's_old',
+      'Old Run',
+      'cli',
+      '',
+      'old',
+      nowSec - 3600,
+      nowSec - 3500,
+      50000,
+      10000,
+      20000,
+      0.5,
+    )
+    // Finished Round 1 session after run start (no lease anymore)
+    db.prepare('INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?)').run(
+      's_r1',
+      'Round 1',
+      'cli',
+      '',
+      'done',
+      nowSec - 110,
+      nowSec - 80,
+      6000,
+      2000,
+      4000,
+      0.02,
+    )
+    // Active worker session with lease
+    db.prepare('INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?)').run(
+      's_w1',
+      'Worker 1',
+      'cli',
+      '',
+      'building',
+      nowSec - 40,
+      nowSec - 2,
+      8000,
+      2500,
+      5000,
+      0.03,
+    )
+    db.prepare('INSERT INTO session_turn_leases VALUES (?,?,?,?)').run(
+      's_w1',
+      'pid=12:turn=t3:platform=local',
+      nowSec - 40,
+      nowSec + 260,
+    )
+    db.close()
+
+    const live = createLive(
+      { home: '/nonexistent', stateDb: dbPath },
+      { boards: () => [], tasks: () => [] },
+    )
+    const snap = live.snapshot({ since: runStartMs })
+    assert.equal(snap.telemetry.runTokenScope, 'since')
+    assert.equal(snap.telemetry.runTokens, 18500)
+    assert.equal(snap.telemetry.runCacheRead, 9000)
+
+    // Future `since` before any post-start session yields strictly 0 (pre-start sessions excluded)
+    const futureSnap = live.snapshot({ since: Date.now() + 60_000 })
+    assert.equal(futureSnap.telemetry.runTokenScope, 'since')
+    assert.equal(futureSnap.telemetry.runTokens, 0)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
