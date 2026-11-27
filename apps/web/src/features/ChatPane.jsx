@@ -4,12 +4,11 @@ import { useChatSessions } from './chat/useChatSessions.js'
 import { useChatReports } from './chat/useChatReports.js'
 import { DEFAULT_PROFILE, STORED_PROFILE_KEY, applyDefaultProfile, subscribePilotProfile } from '../lib/profile.js'
 import { boardSummary, defaultBoard, matchRepoByCwd, pinnedRepos, readLastRepo, readPendingRepo, readRecent, rememberRepo, repoLabel, writePendingRepo } from '../lib/repoPicker.js'
-import { pickResumeTarget, recentSessions } from '../lib/chatResume.js'
+import { pickResumeTarget } from '../lib/chatResume.js'
 import { useSplitLayout } from '../lib/useSplitLayout.js'
 import { chatSplitChrome } from '../lib/chatSplit.js'
 import { orderProfiles } from '../lib/profileOrder.js'
-import { foldTranscriptMessages, mergeProgress, shortenPath } from '../lib/toolProgress.js'
-import { isWaiting } from '../lib/reviewView.js'
+import { foldTranscriptMessages, mergeProgress } from '../lib/toolProgress.js'
 import { api } from '../api.js'
 import { readSnippetBars, subscribeSnippetBars } from '../lib/snippetBars.js'
 import { MissionReceiptSheet } from './MissionReceiptSheet.jsx'
@@ -19,8 +18,8 @@ import { SpecMarkdownSheet } from '../components/SpecMarkdownSheet.jsx'
 import { ArchitectJobBar } from '../components/ArchitectJobBar.jsx'
 import { pickActiveArchitectJob, pickSpecBanner } from '../lib/specSeed.js'
 import { celebrate } from '../lib/vibe.js'
-import { LATEST_REPORT_ID, LAST_CHAT_KEY, followUpPromptFor, isPipelineReport, reportSummaryLine, toEpochMs } from '../lib/chatReports.js'
-import { Icon, Loader, RefreshButton, Sheet, fmtBytes, fmtDateTime, relTime } from '../components/Ui.jsx'
+import { LATEST_REPORT_ID, LAST_CHAT_KEY, followUpPromptFor, toEpochMs } from '../lib/chatReports.js'
+import { Icon, RefreshButton, Sheet } from '../components/Ui.jsx'
 import { haptic } from '../lib/haptic.js'
 import { useI18n } from '../i18n/index.js'
 import { localizeError, t } from '../i18n/lang.js'
@@ -30,11 +29,12 @@ import { HM_STORAGE } from '../contracts/storage.js'
 import { isOfflineError, shouldReconnectToast } from '../lib/netRecovery.js'
 import { refreshSync, setSyncParams, setSyncState, subscribeSync, tickSync } from '../lib/syncSources.js'
 import { useWakeSync } from '../lib/useWakeSync.js'
-import { ChatSessionList, DRAWER_REFRESH_THROTTLE_MS, MarkdownBody, PipelineReportCard, ToolRows, commitProgressToBlocks, fitComposer } from './chat/ChatParts.jsx'
+import { ChatSessionList, DRAWER_REFRESH_THROTTLE_MS, commitProgressToBlocks, fitComposer } from './chat/ChatParts.jsx'
 import { ChatDrawer } from './chat/ChatDrawer.jsx'
 import { useChatComposer } from './chat/useChatComposer.js'
 import { ChatAttachRail, ChatComposer } from './chat/ChatComposer.jsx'
 import { ChatAttachSheets } from './chat/ChatAttachSheets.jsx'
+import { ChatBubbleMenu, ChatReportBanner, ChatTimeline, scrollToMessage } from './chat/ChatTimeline.jsx'
 
 // 820px 以上のチャットを 2 カラムにする判定（境界の正本は lib/layout.js）
 // 左カラム下端へ移す 4 グループの名前（JSX とテストで二重管理しない）
@@ -65,7 +65,6 @@ export function ChatPane({
   const [progress, setProgress] = useState([])
   const [expandedTools, setExpandedTools] = useState({})
   const [thinkingExpanded, setThinkingExpanded] = useState(false)
-  const [atBottom, setAtBottom] = useState(true)
   const [workerFeed, setWorkerFeed] = useState(null)
   const [usage, setUsage] = useState(null)
   const [drawer, setDrawer] = useState(false)
@@ -126,11 +125,6 @@ export function ChatPane({
   const drawerRefreshAtRef = useRef(0)
   // 稼働中ターン数の前回値（減少＝ワーカー完了で一覧を取り直す・D22②）
   const prevLiveCountRef = useRef(0)
-  // 配列添字ではなく「ブロック実体ごとに一意で安定した key」を作るための記録。
-  // mid が無い（ライブ生成中・resume 直後）ブロックは `at` が同値になることがあり、
-  // 素朴な `at-<at>` だと key 衝突で React が古い DOM を残す（実測: state 43 件 / DOM 45 件）。
-  const blockKeysRef = useRef(new WeakMap())
-  const blockKeySeqRef = useRef(0)
   const stickRef = useRef(true)
   const progressRef = useRef([])
   progressRef.current = progress
@@ -784,15 +778,8 @@ export function ChatPane({
     if (stickRef.current) el.scrollTop = el.scrollHeight
   }, [blocks, isWorking, progress, thinking, linkedReview, workerFeed, readonly?.focusId, lastReportKey])
 
-  /** ヒットした発言を画面の上寄りに出す（offsetTop ではなく実測差分で合わせる）。 */
-  const scrollToHit = useCallback((mid) => {
-    const sc = listRef.current
-    if (!sc || !mid) return
-    const el = sc.querySelector(`[data-mid="${mid}"]`)
-    if (!el) return
-    const delta = el.getBoundingClientRect().top - sc.getBoundingClientRect().top
-    sc.scrollTop = Math.max(0, sc.scrollTop + delta - 10)
-  }, [])
+  /** ヒットした発言を画面の上寄りに出す（位置の計算は `chat/ChatTimeline.jsx`）。 */
+  const scrollToHit = useCallback((mid) => scrollToMessage(listRef, mid), [])
 
   // ヒットした発言が見える位置までスクロール（レイアウト確定後に2回）
   useEffect(() => {
@@ -1383,436 +1370,34 @@ export function ChatPane({
     </div>
   )
 
-  /* オフライン・完了レポート・読み取り専用のバナー（Q1=A: 2 カラムでは左の下端へ） */
+  /* オフライン・完了レポート・読み取り専用のバナー（Q1=A: 2 カラムでは左の下端へ）。中身は `chat/ChatTimeline.jsx` */
   const bannerNode = (
-    <>
-      {/* 切断直後（4秒未満）は出さない */}
-      {showBanner ? <div className="banner">{t('chat.recovering')}</div> : null}
-      {otherUnreads.length ? (
-        <div className="chat-report-banner" role="status">
-          <span className="chat-report-banner-text">
-            {t('chat.otherReport', {
-              label:
-                otherUnreads[0].label ||
-                otherUnreads[0].taskId ||
-                reportSummaryLine(otherUnreads[0], 40) ||
-                String(otherUnreads[0].text ?? '').slice(0, 28),
-            })}
-          </span>
-          <button
-            type="button"
-            className="chat-report-btn primary"
-            onClick={() => {
-              haptic('tap')
-              const u = otherUnreads[0]
-              /*
-               * 宛先の会話が決まらなかった統合レポート（`__latest__`・§3.2 ②）:
-               *  - すでに通常会話を開いている → そのタイムラインへ合流（`reportIdsFor` が載せる）
-               *  - まだ開いていない → repo を突き合わせて新しい会話を作る
-               * 会話 ID が分かっている通常の報告は従来どおりその会話を開く。
-               * **`Open` は移動だけ**（SPEC-enter-enter-discuss-next-ste Q3=A）。相談文を置くのは
-               * 到着先のレポートカードの「💬 次の一手を相談」= `discussReport` の役目で、
-               * ここで prefill すると「ラベルと動作が違う」「入力欄が勝手に埋まる」になる。
-               */
-              if (u.sessionId === LATEST_REPORT_ID) {
-                const target = storedRef.current ?? sidRef.current
-                if (target) {
-                  markReportsSeen(LATEST_REPORT_ID)
-                  requestAnimationFrame(() => {
-                    const el = listRef.current
-                    if (el) el.scrollTop = el.scrollHeight
-                  })
-                  return
-                }
-                markReportsSeen(LATEST_REPORT_ID)
-                findRepoByPath(u.repoPath).then((matched) => {
-                  startSession(profile || pilotDefault, matched ?? null, u.board ? { slug: u.board } : null)
-                })
-                return
-              }
-              const found = sessions.find((s) => String(s.id) === u.sessionId)
-              openSessionSafe(u.sessionId, null, found?.profile || profile || pilotDefault)
-            }}
-          >
-            {t('chat.open')}
-          </button>
-          <button
-            type="button"
-            className="chat-report-btn"
-            onClick={() => {
-              haptic('tap')
-              markReportsSeen(otherUnreads[0].sessionId)
-            }}
-          >
-            {t('chat.seen')}
-          </button>
-        </div>
-      ) : null}
-      {readonly ? (
-        <div className="banner ro">
-          {t('chat.readonly')}
-          {readonly.profile
-            ? t('chat.readonlyProfileSuffix', { profile: readonly.profile })
-            : t('chat.readonlyBoardSuffix')}
-        </div>
-      ) : null}
-    </>
+    <ChatReportBanner
+      showBanner={showBanner}
+      otherUnreads={otherUnreads}
+      readonly={readonly}
+      storedRef={storedRef}
+      sidRef={sidRef}
+      listRef={listRef}
+      markReportsSeen={markReportsSeen}
+      findRepoByPath={findRepoByPath}
+      startSession={startSession}
+      sessions={sessions}
+      openSessionSafe={openSessionSafe}
+      profile={profile}
+      pilotDefault={pilotDefault}
+    />
   )
 
-  /* タイムライン（両レイアウト共通。右カラムではこれが縦を全部使う） */
+  /* タイムライン（両レイアウト共通。右カラムではこれが縦を全部使う）。中身は `chat/ChatTimeline.jsx` */
   const timelineNode = (
-    <>
-      {/* 「↓ 最新へ」ピルをスクロール領域の下端に留める箱（spec-chat-jump-pos Q1=A）。
-          .chat-scroll の伸長はこの箱が持ち、ピルはこの箱の下端 8px を基準に置く。 */}
-      <div className="chat-body">
-        <div
-          className="chat-scroll"
-          ref={listRef}
-          onScroll={() => {
-            const el = listRef.current
-            if (!el) return
-            const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80
-            stickRef.current = near
-            setAtBottom(near)
-          }}
-        >
-          {!blocks.length && (loadingChat || connState === 'connecting') ? (
-            <Loader label={connState === 'connecting' ? t('chat.connecting') : t('chat.loadingChat')} />
-          ) : !blocks.length ? (
-            <div className="empty">
-              <div>{t('chat.sendToStart')}</div>
-              {recentSessions(sessions, profile, 2).length ? (
-                <div className="empty-recent" aria-label={t('chat.recentAria')}>
-                  <div className="empty-recent-head">{t('chat.recentHead')}</div>
-                  {recentSessions(sessions, profile, 2).map((x) => (
-                    <button
-                      key={x.id}
-                      type="button"
-                      className="empty-recent-row"
-                      title={x.title || x.id}
-                      onClick={async () => {
-                        const ok = await resumeInto(sockRef.current?.rpc, x.id, x.profile || profile)
-                        if (ok?.ok) setStoredSid(x.id)
-                      }}
-                    >
-                      <span className="empty-recent-title">{x.title || x.id}</span>
-                      <span className="empty-recent-when">
-                        {relTime(toEpochMs(x.updated_at ?? x.started_at))}
-                      </span>
-                      <span className="empty-recent-mark" aria-hidden="true">
-                        ›
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-          {transcriptMeta?.hasMore && transcriptMeta?.oldestId ? (
-            <button
-              type="button"
-              className="chat-older"
-              disabled={transcriptMeta.loadingMore}
-              onClick={() => {
-                haptic('tap')
-                loadOlderTranscript()
-              }}
-            >
-              {transcriptMeta.loadingMore ? t('chat.loadingOlder') : t('chat.loadOlder')}
-            </button>
-          ) : null}
-          {timeline.map((item, itemIdx) => {
-            if (item.kind === 'report') {
-              const r = item.report
-              if (isPipelineReport(r)) {
-                // 統合レポートはリッチカード（§3.3 ②）。既定は最新 1 件だけ展開する。
-                const ri = reports.findIndex((x) => x.key === r.key)
-                const isNewest = ri === reports.length - 1
-                const isOpen = r.key in reportOpen ? Boolean(reportOpen[r.key]) : isNewest
-                return (
-                  <PipelineReportCard
-                    key={r.key}
-                    report={r}
-                    open={isOpen}
-                    onToggle={() => {
-                      haptic('tap')
-                      setReportOpen((prev) => ({ ...prev, [r.key]: !isOpen }))
-                    }}
-                    onDiscuss={() => discussReport(r)}
-                    onReceipt={() => openReportReceipt(r)}
-                    onOpenBoard={() => openReportBoard(r)}
-                    onCopyCode={copyCode}
-                  />
-                )
-              }
-              return (
-                <div key={r.key} className="msg report" title={fmtDateTime(r.at)}>
-                  <span className="report-body">🖊 {r.text}</span>
-                  <button
-                    type="button"
-                    className="report-link"
-                    onClick={() => {
-                      haptic('tap')
-                      window.dispatchEvent(
-                        new CustomEvent(HM_EVENTS.OPEN_REVIEW, {
-                          detail: { taskId: r.taskId, label: r.label },
-                        }),
-                      )
-                    }}
-                  >
-                    {t('chat.reviewAndAnnotate')}
-                  </button>
-                </div>
-              )
-            }
-            const b = item.block
-            const i = item.index
-            // 配列添字だと履歴を先頭に足したとき開閉状態（expandedTools）がズレる。
-            // mid が無いブロックは実体ごとに採番した key を使い、衝突（= 幽霊 DOM）を防ぐ。
-            let blockKey = b.mid != null && b.mid !== '' ? `mid-${b.mid}` : blockKeysRef.current.get(b)
-            if (!blockKey) {
-              blockKeySeqRef.current += 1
-              blockKey = `at-${b.at || i}-${blockKeySeqRef.current}`
-              blockKeysRef.current.set(b, blockKey)
-            }
-            return b.role === 'user' ? (
-              <div
-                key={blockKey}
-                data-mid={b.mid}
-                className={`msg user${readonly?.focusId && b.mid === readonly.focusId ? ' hit' : ''}`}
-              >
-                <div className="bubble">
-                  {b.images?.length ? (
-                    <div className="bubble-imgs">
-                      {b.images.map((img, k) =>
-                        img.url ? (
-                          <span className="bubble-img" key={k}>
-                            <img src={img.url} alt={img.name ?? t('chat.attachedImage')} />
-                          </span>
-                        ) : null,
-                      )}
-                    </div>
-                  ) : null}
-                  {b.files?.length ? (
-                    <div className="bubble-files">
-                      {b.files.map((f, k) => (
-                        <span className="file-chip" key={k}>
-                          📎 {f.name}
-                          {f.bytes ? <span className="file-size">{fmtBytes(f.bytes)}</span> : null}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-                  {b.text}
-                  {b.text ? (
-                    <button
-                      type="button"
-                      className="bubble-menu-btn"
-                      aria-label={t('chat.bubbleMenuAria')}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        haptic('tap')
-                        setBubbleMenu({ text: b.text, role: 'user', mid: b.mid ?? null })
-                      }}
-                    >
-                      <Icon name="more" size={14} />
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-            ) : b.role === 'assistant' ? (
-              <div
-                key={blockKey}
-                data-mid={b.mid}
-                className={`msg bot${readonly?.focusId && b.mid === readonly.focusId ? ' hit' : ''}`}
-              >
-                <div className={`bubble${justSettled && itemIdx === timeline.length - 1 ? ' vibe-settle-flash' : ''}`}>
-                  {b.tools?.length ? (
-                    <details className="msg-tools">
-                      <summary>{t('chat.toolsRan', { count: b.tools.length })}</summary>
-                      <ToolRows
-                        rows={b.tools}
-                        prefix={blockKey}
-                        expandedMap={expandedTools}
-                        onToggle={toggleToolExpand}
-                      />
-                    </details>
-                  ) : null}
-                  {b.text ? (
-                    <>
-                      <MarkdownBody text={b.text} onCopyCode={copyCode} copyLabel={t('chat.copy')} />
-                      <button
-                        type="button"
-                        className="bubble-menu-btn"
-                        aria-label={t('chat.bubbleMenuAria')}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          haptic('tap')
-                          setBubbleMenu({ text: b.text, role: 'assistant', mid: b.mid ?? null })
-                        }}
-                      >
-                        <Icon name="more" size={14} />
-                      </button>
-                    </>
-                  ) : b.open ? (
-                    <span className="dots">…</span>
-                  ) : (
-                    ''
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div key={blockKey} className="msg notice">
-                {b.text}
-              </div>
-            )
-          })}
-          {isWorking ? (() => {
-            const started = runStartedAt || activeLiveTurn?.startedAt
-            const sec = started ? Math.max(0, Math.floor((nowTick - started) / 1000)) : 0
-            const mm = String(Math.floor(sec / 60)).padStart(2, '0')
-            const ss = String(sec % 60).padStart(2, '0')
-            const liveFallbackRows =
-              !progress.length && activeLiveTurn?.lastTool?.name
-                ? [{ id: 'live-last', name: activeLiveTurn.lastTool.name, detail: activeLiveTurn.lastActivity || '', full: activeLiveTurn.lastActivity || '', done: false }]
-                : []
-            const rowsToShow = progress.length ? progress : liveFallbackRows
-            const thinkingLines = thinking ? thinking.trim().split('\n') : []
-            const thinkingShown = thinkingExpanded ? thinking.trim() : thinkingLines.slice(-3).join('\n')
-            return (
-              <div className="thinking thinking-card" data-heat={sec >= 30 ? 'high' : 'normal'} role="status">
-                <div className="working-head">
-                  <span className="working-dot" aria-hidden="true" />
-                  <b className="working-shimmer">Working… {mm}:{ss}</b>
-                  <span className="working-meta">
-                    {progress.length
-                      ? t('chat.toolProgress', { n: progress.length })
-                      : activeLiveTurn?.lastTool?.name
-                        ? t('chat.lastTool', { name: activeLiveTurn.lastTool.name })
-                        : t('chat.thinking')}
-                  </span>
-                </div>
-                {rowsToShow.length ? (
-                  <ToolRows
-                    rows={rowsToShow}
-                    prefix="live"
-                    expandedMap={expandedTools}
-                    onToggle={toggleToolExpand}
-                  />
-                ) : null}
-                {thinkingShown ? (
-                  <div
-                    className={`thinking-text${thinkingExpanded ? ' expanded' : ''}`}
-                    onClick={() => setThinkingExpanded((v) => !v)}
-                  >
-                    {thinkingShown}
-                  </div>
-                ) : null}
-              </div>
-            )
-          })() : null}
-          {linkedReview ? (
-            isWaiting(linkedReview) ? (
-              <div className="chat-live-card warn" role="status">
-                <div className="chat-live-head">
-                  <span className="chat-live-title">
-                    {t('chat.reviewLabel', { title: linkedReview.review?.title || linkedReview.title })}
-                  </span>
-                  <button
-                    type="button"
-                    className="chat-report-btn primary"
-                    onClick={() => {
-                      haptic('tap')
-                      window.dispatchEvent(
-                        new CustomEvent(HM_EVENTS.OPEN_REVIEW, {
-                          detail: { taskId: linkedReview.id, label: linkedReview.review?.label },
-                        }),
-                      )
-                    }}
-                  >
-                    {t('chat.openInReview')}
-                  </button>
-                </div>
-                <div className="chat-live-sub">
-                  {t('chat.linkedWaiting')}
-                </div>
-              </div>
-            ) : (
-              <div className="chat-live-card running" data-heat={linkedReview.status === 'running' ? 'high' : 'normal'} role="status">
-                <div className="chat-live-head">
-                  <span className="working-dot" aria-hidden="true" />
-                  <b className="working-shimmer">
-                    {linkedReview.status === 'running' ? t('chat.workerRunning') : t('chat.workerQueued')}
-                  </b>
-                  <button
-                    type="button"
-                    className="chat-report-btn"
-                    onClick={() => {
-                      haptic('tap')
-                      window.dispatchEvent(
-                        new CustomEvent(HM_EVENTS.OPEN_REVIEW, {
-                          detail: { taskId: linkedReview.id, label: linkedReview.review?.label },
-                        }),
-                      )
-                    }}
-                  >
-                    {t('chat.watchProgress')}
-                  </button>
-                </div>
-                <div className="chat-live-sub">{linkedReview.review?.title || linkedReview.title}</div>
-                {(() => {
-                  const steps = (workerFeed?.feed?.messages || [])
-                    .filter((m) => m.role !== 'user')
-                    .slice(-4)
-                  if (!steps.length) return null
-                  return (
-                    <ToolRows
-                      rows={steps.map((m, idx) => {
-                        const raw = String(m.text || '').replace(/\s+/g, ' ').trim()
-                        return {
-                          id: String(m.id ?? idx),
-                          name: m.role === 'tool' ? m.toolName || 'tool' : 'agent',
-                          detail: shortenPath(raw, 56),
-                          full: raw.slice(0, 300),
-                          done: idx < steps.length - 1,
-                        }
-                      })}
-                      prefix={`worker-${linkedReview.id}`}
-                      expandedMap={expandedTools}
-                      onToggle={toggleToolExpand}
-                    />
-                  )
-                })()}
-              </div>
-            )
-          ) : null}
-          {usage ? (
-            <div className="usage">
-              in {usage.input ?? 0} / out {usage.output ?? 0}
-              {usage.cache_read ? ` / cache ${usage.cache_read}` : ''}
-            </div>
-          ) : null}
-        </div>
-
-        {!atBottom && timeline.length > 0 ? (
-          <button
-            type="button"
-            className={`chat-jump-bottom${isWorking || linkedReview ? ' active' : ''}`}
-            onClick={() => {
-              haptic('tap')
-              const el = listRef.current
-              if (el) {
-                el.scrollTop = el.scrollHeight
-                stickRef.current = true
-                setAtBottom(true)
-              }
-            }}
-          >
-            {isWorking || linkedReview ? t('chat.jumpLatest') : t('chat.jumpBottomPlain')}
-          </button>
-        ) : null}
-      </div>
-    </>
+    <ChatTimeline
+      scroll={{ listRef, stickRef }}
+      session={{ blocks, loadingChat, connState, sessions, profile, resumeInto, sockRef, setStoredSid, transcriptMeta, loadOlderTranscript }}
+      feed={{ timeline, reports, reportOpen, setReportOpen, isWorking, nowTick, runStartedAt, activeLiveTurn, progress, thinking, thinkingExpanded, setThinkingExpanded, linkedReview, workerFeed, usage, justSettled }}
+      handlers={{ discussReport, openReportReceipt, openReportBoard, copyCode, toggleToolExpand, onOpenBubbleMenu: setBubbleMenu }}
+      ui={{ readonly, expandedTools }}
+    />
   )
 
   /* 添付レール（入力欄のすぐ上）。中身は `chat/ChatComposer.jsx` */
@@ -2228,120 +1813,18 @@ export function ChatPane({
       ) : null}
 
       {bubbleMenu ? (
-        <Sheet title={t('chat.bubbleMenuTitle')} onClose={() => setBubbleMenu(null)}>
-          <div className="bubble-menu-preview">{bubbleMenu.text.slice(0, 180)}</div>
-          <div className="pick-list">
-            <button
-              type="button"
-              className="pick-item"
-              onClick={async () => {
-                try {
-                  await navigator.clipboard?.writeText?.(bubbleMenu.text)
-                  notify?.(t('chat.bubbleCopied'))
-                } catch {
-                  notify?.(t('chat.bubbleCopied'))
-                }
-                setBubbleMenu(null)
-              }}
-            >
-              <span className="pick-main">
-                <span className="pick-title">{t('chat.bubbleCopy')}</span>
-              </span>
-            </button>
-            <button
-              type="button"
-              className="pick-item"
-              onClick={async () => {
-                const firstLine = bubbleMenu.text.split('\n').map((s) => s.trim()).find(Boolean) || ''
-                await api('/api/memos', {
-                  method: 'POST',
-                  body: {
-                    title: firstLine.slice(0, 60),
-                    body: bubbleMenu.text,
-                    tags: ['clip'],
-                    kind: 'clip',
-                    color: bubbleMenu.role === 'user' ? 'teal' : 'default',
-                    source: {
-                      chatId: sid || undefined,
-                      chatTitle: title || undefined,
-                      board: repo?.board || undefined,
-                      repo: repo?.id || undefined,
-                      mid: bubbleMenu.mid ? String(bubbleMenu.mid) : undefined,
-                    },
-                  },
-                })
-                emitHmEvent(HM_EVENTS.MEMOS_CHANGED)
-                celebrate('approve')
-                notify?.(t('chat.bubbleSavedMemo'))
-                setBubbleMenu(null)
-              }}
-            >
-              <span className="pick-main">
-                <span className="pick-title">{t('chat.bubbleSaveMemo')}</span>
-              </span>
-            </button>
-            <button
-              type="button"
-              className="pick-item"
-              onClick={() => {
-                const seed = bubbleMenu.text.slice(0, 600)
-                setBubbleMenu(null)
-                window.dispatchEvent(
-                  new CustomEvent(HM_EVENTS.OPEN_SEED, {
-                    detail: { seed, repo: repo?.path, board: repo?.board },
-                  }),
-                )
-              }}
-            >
-              <span className="pick-main">
-                <span className="pick-title">{t('chat.bubbleToSeed')}</span>
-              </span>
-            </button>
-          </div>
-          {!readonly ? (
-            <>
-              <div className="list-head" style={{ marginTop: 12 }}>
-                {t('chat.bubbleContinueHead')}
-              </div>
-              <div className="pick-list">
-                {[
-                  { label: t('chat.bubbleSummarize'), key: 'chat.bubbleSummarizePrompt' },
-                  { label: t('chat.bubbleBrainstorm'), key: 'chat.bubbleBrainstormPrompt' },
-                  { label: t('chat.bubbleDig'), key: 'chat.bubbleDigPrompt' },
-                ].map((act) => (
-                  <button
-                    key={act.key}
-                    type="button"
-                    className="pick-item"
-                    onClick={() => {
-                      const quote = bubbleMenu.text.slice(0, 600).replace(/\n+/g, '\n> ')
-                      setBubbleMenu(null)
-                      sendText(t(act.key, { quote }))
-                    }}
-                  >
-                    <span className="pick-main">
-                      <span className="pick-title">{act.label}</span>
-                    </span>
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  className="pick-item"
-                  onClick={() => {
-                    const quote = bubbleMenu.text.slice(0, 320).replace(/\n+/g, '\n> ')
-                    setText((cur) => (cur ? `${cur}\n> ${quote}\n\n` : `> ${quote}\n\n`))
-                    setBubbleMenu(null)
-                    setTimeout(() => taRef.current?.focus(), 60)
-                  }}
-                >
-                  <span className="pick-main">
-                    <span className="pick-title">{t('chat.bubbleQuote')}</span>
-                  </span>
-                </button>
-              </div>
-            </>
-          ) : null}
-        </Sheet>
+        <ChatBubbleMenu
+          menu={bubbleMenu}
+          onClose={() => setBubbleMenu(null)}
+          notify={notify}
+          sid={sid}
+          title={title}
+          repo={repo}
+          readonly={readonly}
+          sendText={sendText}
+          setText={setText}
+          taRef={taRef}
+        />
       ) : null}
     </div>
   )

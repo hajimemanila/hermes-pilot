@@ -16,7 +16,10 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 
-const SRC = fs.readFileSync(path.resolve(import.meta.dirname, '../src/features/ChatPane.jsx'), 'utf8')
+const SRC = fs.readFileSync(path.resolve(import.meta.dirname, '../src/features/chat/ChatTimeline.jsx'), 'utf8')
+// バナーは CSW3-3 で `chat/ChatTimeline.jsx`（`ChatReportBanner`）へ移った。
+// `discussReport` は `ChatPane.jsx` に残る（タイムラインへコールバックで渡す）ので別に読む。
+const PANE = fs.readFileSync(path.resolve(import.meta.dirname, '../src/features/ChatPane.jsx'), 'utf8')
 
 /** バナーの `Open` ボタン（className からラベルまで）のソース。 */
 function openButtonBlock() {
@@ -29,11 +32,11 @@ function openButtonBlock() {
 
 /** レポートカードの「💬 次の一手を相談」のコールバック本体。 */
 function discussCallbackBlock() {
-  const at = SRC.indexOf('const discussReport = useCallback(')
+  const at = PANE.indexOf('const discussReport = useCallback(')
   assert.ok(at > 0, 'discussReport が見つからない')
-  const end = SRC.indexOf('[prefillComposer],', at)
+  const end = PANE.indexOf('[prefillComposer],', at)
   assert.ok(end > at, 'discussReport の依存配列が見つからない')
-  return SRC.slice(at, end)
+  return PANE.slice(at, end)
 }
 
 test('バナーの Open は移動だけで、相談文を入力欄へ置かない', () => {

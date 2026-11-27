@@ -22,6 +22,8 @@ import { readStyles } from './helpers/styles.js'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const jsx = fs.readFileSync(path.join(ROOT, 'src/features/ChatPane.jsx'), 'utf8')
+// タイムラインの中身（`.chat-body` と「↓ 最新へ」）は CSW3-3 で切り出した先にある
+const timelineSrc = fs.readFileSync(path.join(ROOT, 'src/features/chat/ChatTimeline.jsx'), 'utf8')
 const css = readStyles().replace(/\/\*[\s\S]*?\*\//g, '')
 const splitSrc = fs.readFileSync(path.join(ROOT, 'src/lib/chatSplit.js'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
 
@@ -127,7 +129,8 @@ test('JSX: 右カラムは最小ヘッダ＋タイムラインだけで、バナ
   )
 
   const head = constBlock(jsx, 'minimalHeadNode')
-  const timeline = constBlock(jsx, 'timelineNode')
+  // タイムラインは `ChatTimeline`（`features/chat/ChatTimeline.jsx`）の中身まで見る
+  const timeline = `${constBlock(jsx, 'timelineNode')}\n${timelineSrc.slice(timelineSrc.indexOf('export function ChatTimeline('))}`
 
   // 右カラムの中身に、左へ移す 4 グループの印が 1 つも無い
   const marks = CHAT_SPLIT_STACK.flatMap((g) => chatGroupMarks(g))

@@ -3,7 +3,7 @@
   "maxLines": 800,
   "files": {
     "apps/web/src/styles.css": 31,
-    "apps/web/src/features/ChatPane.jsx": 2348,
+    "apps/web/src/features/ChatPane.jsx": 1831,
     "apps/web/src/demo/mockApi.js": 96,
     "apps/web/src/features/TasksPane.jsx": 1962,
     "apps/dashboard/index.js": 1991,

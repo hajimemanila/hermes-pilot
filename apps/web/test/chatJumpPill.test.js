@@ -7,6 +7,9 @@
  * いまは `.chat-body`（スクロール領域を包む相対配置の箱）の中にピルが居るので、
  * 下端に何が積まれても位置が変わらない。**その DOM の入れ子をここで固定する**:
  * ピルが `.chat-scroll` の外・`.chat-body` の中に戻ったら落ちる。
+ *
+ * タイムラインは CSW3-3 で `features/chat/ChatTimeline.jsx` へ移った（ソースの読み先だけ
+ * 変えて、期待値は変えない）。
  */
 
 import test from 'node:test'
@@ -15,7 +18,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { readStyles } from './helpers/styles.js'
 
-const SRC = path.resolve(import.meta.dirname, '../src/features/ChatPane.jsx')
+const SRC = path.resolve(import.meta.dirname, '../src/features/chat/ChatTimeline.jsx')
 
 const jsx = fs.readFileSync(SRC, 'utf8')
 const css = readStyles().replace(/\/\*[\s\S]*?\*\//g, '')
