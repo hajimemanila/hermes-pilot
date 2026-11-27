@@ -402,11 +402,16 @@ html[data-vibe='dopamine'] .ap-launcher-submit { background: var(--vibe-primary-
 .ap-remix-input { flex: 1 1 auto; min-width: 0; min-height: 44px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--bg-elev); color: var(--text); padding: 0 10px; }
 .ap-remix-send { min-height: 44px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--accent); background: var(--rec-bg); color: var(--accent); font-weight: 700; }
 
-.ap-lens-toggle { display: inline-flex; align-items: center; padding: 2px; border-radius: 999px; background: var(--bg-elev); border: 1px solid var(--line-strong); gap: 2px; }
-.ap-lens-btn { min-height: 34px; padding: 0 10px; border-radius: 999px; border: 0; background: transparent; color: var(--muted); font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px; }
+.ap-lens-toggle { display: inline-flex; align-items: center; flex: 0 1 auto; min-width: 0; max-width: 100%; padding: 2px; border-radius: 999px; background: var(--bg-elev); border: 1px solid var(--line-strong); gap: 2px; }
+.ap-lens-btn { min-height: 34px; padding: 0 10px; border-radius: 999px; border: 0; background: transparent; color: var(--muted); font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; flex-shrink: 0; line-height: 1; }
 .ap-lens-btn.active { background: var(--accent); color: var(--on-accent); }
 .ap-lens-badge { font-size: 11px; padding: 0 5px; border-radius: 999px; background: var(--warn); color: var(--on-warn); }
-.ap-swipe-link { min-height: 44px; padding: 0 10px; border-radius: 10px; border: 1px solid var(--accent); background: var(--rec-bg); color: var(--rec-fg); font-size: 12px; font-weight: 700; }
+@media (max-width: 430px) {
+  .ap-lens-btn { min-height: 30px; padding: 0 6px; font-size: 10.5px; gap: 2px; }
+  .ap-lens-badge { font-size: 10px; padding: 0 4px; }
+}
+.ap-swipe-strip { margin: 6px 0 8px; }
+.ap-swipe-link { width: 100%; min-height: 44px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--accent); background: var(--rec-bg); color: var(--rec-fg); font-size: 12.5px; font-weight: 700; display: flex; align-items: center; justify-content: space-between; gap: 8px; white-space: nowrap; }
 
 .ap-wipe-inline { display: flex; flex-direction: column; gap: 6px; }
 .ap-wipe-stage { position: relative; height: 140px; border-radius: 12px; overflow: hidden; background: var(--bg-elev); }

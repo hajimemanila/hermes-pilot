@@ -5,6 +5,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
   /* 中の `.link` が 44px の当たり判定を持つので、行の高さはその分だけ詰める
      （以前の見た目のリズムを保つ） */
   padding: 2px 2px 0;
@@ -13,6 +15,7 @@
   color: var(--muted);
   text-transform: uppercase;
 }
+.list-head > span:first-child { white-space: nowrap; flex-shrink: 0; }
 
 .link {
   border: none;

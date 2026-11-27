@@ -159,7 +159,7 @@
   border: 1px solid var(--line-strong); background: var(--surface); color: var(--text); font-size: 14px;
 }
 .ak-anno-more-chev { flex: none; color: var(--muted); font-size: 16px; }
-.ak-head-actions { display: flex; gap: 6px; flex: none; }
+.ak-head-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: none; max-width: 100%; }
 
 /* --- Quick Review: 一括承認（⚡）と 1 / N プログレス（SPEC §5.1） --- */
 .ak-wait-bar { display: flex; justify-content: flex-start; margin: -2px 0 8px; }

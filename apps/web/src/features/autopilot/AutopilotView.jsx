@@ -71,6 +71,7 @@ export function AutopilotSwipeLink({ count = 0 }) {
       }}
     >
       <span>✨ {t('autopilot.swipeLink', { n: count })}</span>
+      <span aria-hidden="true">→</span>
     </button>
   )
 }

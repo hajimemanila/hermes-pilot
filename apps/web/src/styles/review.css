@@ -2,8 +2,8 @@
    (split from the former monolithic src/styles.css) */
 /* ------------------------------------------------------------------ レビュー */
 .ak-page { padding-bottom: 24px; }
-.ak-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 12px 2px 6px; }
-.ak-head > div { flex: 1 1 auto; min-width: 0; }
+.ak-head { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 12px 2px 6px; }
+.ak-head > div { flex: 1 1 auto; min-width: 120px; }
 /*
  * 狭い左ペイン（680–819px の 280px マスター）では、題名の右に「注釈」「再読み込み」を
  * 並べると題名の箱が 51–56px まで潰れ、`レビュー` が「レビュ／ー」に割れて見切れる（実測・744×1024）。
@@ -14,7 +14,7 @@
 .ak-tabs { padding: 7px 0; }
 .ak-readonly { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
 .ak-head .btn { width: auto; flex: 0 0 auto; padding: 6px 14px; }
-.ak-title { font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: .02em; }
+.ak-title { font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: .02em; white-space: nowrap; }
 .ak-sub { font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.45; }
 
 /* 作業フィード（監視 cron の 1 行）: 完了・停止をレビュータブの上端に出す。

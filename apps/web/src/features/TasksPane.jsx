@@ -1651,10 +1651,12 @@ export function TasksPane({ overview, refresh, notify, initialInbox = null, pend
         />
       ) : null}
 
+      {(overview?.counts?.reviewWaiting ?? 0) > 0 && (
+        <div className="ap-swipe-strip"><AutopilotSwipeLink count={overview.counts.reviewWaiting} /></div>
+      )}
       <div className="list-head">
         <span>{t('tasks.tasks')}</span>
         <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          {(overview?.counts?.reviewWaiting ?? 0) > 0 && <AutopilotSwipeLink count={overview.counts.reviewWaiting} />}
           <button className="link" onClick={() => { haptic('tap'); setCaptureOpen(true) }}>{t('tasks.newTask')}</button>
           {/* 整理モードの入り口（D92）。ON の間は行がチェックボックスになる */}
           <button

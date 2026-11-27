@@ -538,11 +538,11 @@ export function ReviewPane({ notify, focusRequest = null, onConsumedFocus, activ
           </div>
         </div>
         <span className="ak-head-actions">
-          {counts.waiting > 0 && <AutopilotSwipeLink count={counts.waiting} />}
           <button className="btn ak-new-btn" type="button" onClick={() => { haptic('tap'); setShowNew(true) }}>{t('review.newAnnotation')}</button>
           <RefreshButton onRefresh={refreshReview} />
         </span>
       </div>
+      {counts.waiting > 0 && <div className="ap-swipe-strip"><AutopilotSwipeLink count={counts.waiting} /></div>}
 
       {/* 全件完了（最後の判断待ちを送り終えたときだけ出す） */}
       {allClear ? (
