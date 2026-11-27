@@ -27,6 +27,7 @@
     "skills/quick-review/",
     "skills/annotation/",
     "skills/spec-architect/",
+    "skills/autopilot-fastlane/",
     "scripts/postinstall.mjs",
     "scripts/deploy.mjs",
     "scripts/check-coherence.mjs",

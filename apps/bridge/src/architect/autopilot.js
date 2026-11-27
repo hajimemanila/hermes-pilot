@@ -18,8 +18,11 @@ export function buildAutopilotRound1Lines({ slug }) {
   const s = String(slug || 'spec').trim() || 'spec'
   return [
     `Autopilot Visual-First Round 1 — write \`review/sheets/spec-${s}-1.json\` with \`"mode": "standard"\`, \`"deck": true\`, and 2-3 visual design decisions.`,
-    'For EACH option (A, B, C) of every question, attach a distinct `visualMock` (`shot` under `shots/` or `thumbs/`, optional lightweight static `html` under `sheets/`, plus `layoutVariant`, `theme`, `tagline`) so the phone shows Option A as card 1 and flips to Option B / C on left-swipe.',
-    'Generate lightweight static HTML mockups or thumbnails sized to the target repository’s declared mobile viewport (locate only the relevant entry files first; skip running full test or build suites in Round 1), then file the blocked `[review]` task whose machine line reads:',
+    `Fast-Lane Sandbox: output lightweight static HTML mock variants inside \`.hermes-pilot/sandbox/${s}/\` without editing production code or running full test suites, then batch-render via \`render-mocks\` and fix any Pre-Flight Visual Gate failure (\`horizontal_overflow\`, \`broken_images\`, \`interactive_overlap\`, \`low_contrast\`) before surfacing cards.`,
+    'Safe Auto-Resolve: silently settle reversible non-visual technical defaults (`file_layout`, `temp_flag_cleanup`, `i18n_key_naming`, `css_token_naming`) and skip deck cards for them; always ask the human on visual UX choices or any irreversible action (`destructive_data`, `public_publish`, `billing_cost`).',
+    'For EACH option (A, B, C) of every question, attach a distinct `visualMock` (`shot` under `shots/` or `thumbs/`, optional lightweight static `html` under `.hermes-pilot/sandbox/` or `sheets/`, optional clipped `snippetSelector` preview for layout/label questions, plus `layoutVariant`, `theme`, `tagline`) so the phone shows Option A as card 1 and flips to Option B / C on flick/swipe.',
+    'Style Gacha & Promote: when `.remix.json` includes `stylePreset` (`minimal`, `neon`, `retro`, `editorial`, `bento`), regenerate the variant in that aesthetic; when the human approves a final variant, promote `{ chosenVariantId, mockHtmlPath, screenshotPath, styleTag, annotations }` into the production Cockpit SPEC.',
+    'Generate mockups sized to the target repository\'s declared mobile viewport (locate only relevant entry files first), then file the blocked `[review]` task whose machine line reads:',
     `\`[review] label=spec-${s} round=1 mode=standard sheet=sheets/spec-${s}-1.json target=<repo>\` and wait.`,
   ]
 }
