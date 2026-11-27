@@ -3,12 +3,12 @@ import { useChatSocket } from '../lib/useChatSocket.js'
 import { useChatSessions } from './chat/useChatSessions.js'
 import { useChatReports } from './chat/useChatReports.js'
 import { DEFAULT_PROFILE, STORED_PROFILE_KEY, applyDefaultProfile, subscribePilotProfile } from '../lib/profile.js'
-import { boardSummary, defaultBoard, matchRepoByCwd, pinnedRepos, readLastRepo, readPendingRepo, readRecent, rememberRepo, repoLabel, writePendingRepo } from '../lib/repoPicker.js'
+import { pinnedRepos, readLastRepo, readPendingRepo, readRecent } from '../lib/repoPicker.js'
 import { pickResumeTarget } from '../lib/chatResume.js'
 import { useSplitLayout } from '../lib/useSplitLayout.js'
 import { chatSplitChrome } from '../lib/chatSplit.js'
 import { orderProfiles } from '../lib/profileOrder.js'
-import { foldTranscriptMessages, mergeProgress } from '../lib/toolProgress.js'
+import { mergeProgress } from '../lib/toolProgress.js'
 import { api } from '../api.js'
 import { readSnippetBars, subscribeSnippetBars } from '../lib/snippetBars.js'
 import { MissionReceiptSheet } from './MissionReceiptSheet.jsx'
@@ -18,12 +18,10 @@ import { SpecMarkdownSheet } from '../components/SpecMarkdownSheet.jsx'
 import { ArchitectJobBar } from '../components/ArchitectJobBar.jsx'
 import { pickActiveArchitectJob, pickSpecBanner } from '../lib/specSeed.js'
 import { celebrate } from '../lib/vibe.js'
-import { LATEST_REPORT_ID, LAST_CHAT_KEY, followUpPromptFor, toEpochMs } from '../lib/chatReports.js'
-import { Icon, RefreshButton, Sheet } from '../components/Ui.jsx'
+import { LAST_CHAT_KEY, followUpPromptFor } from '../lib/chatReports.js'
 import { haptic } from '../lib/haptic.js'
 import { useI18n } from '../i18n/index.js'
-import { localizeError, t } from '../i18n/lang.js'
-import { sep } from '../lib/format.js'
+import { t } from '../i18n/lang.js'
 import { HM_EVENTS, emitHmEvent } from '../contracts/events.js'
 import { HM_STORAGE } from '../contracts/storage.js'
 import { isOfflineError, shouldReconnectToast } from '../lib/netRecovery.js'
@@ -32,9 +30,11 @@ import { useWakeSync } from '../lib/useWakeSync.js'
 import { ChatSessionList, DRAWER_REFRESH_THROTTLE_MS, commitProgressToBlocks, fitComposer } from './chat/ChatParts.jsx'
 import { ChatDrawer } from './chat/ChatDrawer.jsx'
 import { useChatComposer } from './chat/useChatComposer.js'
+import { useChatSession } from './chat/useChatSession.js'
 import { ChatAttachRail, ChatComposer } from './chat/ChatComposer.jsx'
 import { ChatAttachSheets } from './chat/ChatAttachSheets.jsx'
 import { ChatBubbleMenu, ChatReportBanner, ChatTimeline, scrollToMessage } from './chat/ChatTimeline.jsx'
+import { ChatChips, ChatHead, ChatMinimalHead, ChatNewChatSheet } from './chat/ChatHeadBar.jsx'
 
 // 820px 以上のチャットを 2 カラムにする判定（境界の正本は lib/layout.js）
 // 左カラム下端へ移す 4 グループの名前（JSX とテストで二重管理しない）
@@ -175,45 +175,6 @@ export function ChatPane({
     markSessionRead,
     markAllSessionsRead,
   } = useChatSessions({ notify, isCurrentSession, listRef, stickRef, active, activeDrawerSid })
-
-  /** リポジトリ一覧（`force` で最新スキャン、通常はキャッシュ）。 */
-  const ensureRepos = useCallback(async ({ force = false } = {}) => {
-    if (!force && reposRef.current.length) return reposRef.current
-    try {
-      const d = await api(force ? '/api/repos?fresh=1' : '/api/repos')
-      const list = Array.isArray(d?.repos) ? d.repos : []
-      setRepos(list)
-      return list
-    } catch {
-      return force ? reposRef.current : []
-    }
-  }, [])
-
-  /**
-   * 統合レポートの `repoPath` から、その会話を作るべきリポジトリを探す。
-   *
-   * リポジトリ一覧は遅延取得（`ensureRepos`）なので、まだ取れていなければここで取りに行く。
-   * これをしないと、Tasks タブのバナーから相談を始めてもリポジトリが決まらず、
-   * `'__latest__'` 宛のレポートがタイムラインに合流しない（実測）。
-   */
-  const findRepoByPath = useCallback(
-    async (repoPath) => {
-      const path = String(repoPath ?? '').trim().toLowerCase()
-      if (!path) return null
-      const pick = (list) =>
-        (Array.isArray(list) ? list : []).find(
-          (x) => x?.path && String(x.path).trim().toLowerCase() === path,
-        ) ?? null
-      const hit = pick(reposRef.current)
-      if (hit) return hit
-      try {
-        return pick(await ensureRepos())
-      } catch {
-        return null
-      }
-    },
-    [ensureRepos],
-  )
 
   /** 定型スニペットを読み込む（言語を URL に明示する・SPEC §3.1）。 */
   const langRef = useRef(lang)
@@ -370,63 +331,6 @@ export function ChatPane({
     [seedBoard, repo?.id, notify, t, loadSpecJobs],
   )
 
-  /** サーバのセッションに繋ぎ直す（履歴も置き換える）。`prof` は他プロファイルの時だけ渡す。 */
-  const resumeInto = useCallback(
-    async (rpc, target, prof = 'default') => {
-      setLoadingChat(true)
-      try {
-        const r = await rpc('session.resume', {
-          session_id: target,
-          ...(prof && prof !== 'default' ? { profile: prof } : {}),
-        })
-        const res = r?.result
-        if (!res?.session_id) return { ok: false, sid: null, error: r?.error ?? null }
-        writePendingRepo(globalThis.localStorage, null)
-        setSid(res.session_id)
-        const resolvedSid = res.resumed ?? target
-        setStoredSid(resolvedSid)
-        setProfile(prof || 'default')
-        const cwd = res.info?.cwd ?? res.cwd ?? ''
-        if (cwd) {
-          ensureRepos().then((list) => {
-            if (sidRef.current === res.session_id) setRepo(matchRepoByCwd(list, cwd))
-          })
-        } else {
-          setRepo(null)
-        }
-        const msgs = Array.isArray(res.messages) ? res.messages : []
-        /*
-         * 開いた＝見た（返信新着のピルを消す・D16② / SPEC-PILOT-V4 §3.1 D22①）。
-         * 一覧の `message_count` はドロワーを開いた時点で古いことがある（I9②）ので、
-         * **実際に読んだメッセージ数**との大きい方を記録する。小さい方を書くと直後の
-         * ポーリングで差分が新着として再点灯する。
-         */
-        markSessionRead(
-          resolvedSid,
-          Math.max(
-            Number(sessionsRef.current.find((s) => String(s.id) === String(resolvedSid))?.message_count) || 0,
-            msgs.length,
-          ),
-        )
-        setBlocks(
-          msgs
-            .filter((m) => m.role === 'user' || m.role === 'assistant')
-            .map((m) => ({
-              role: m.role === 'user' ? 'user' : 'assistant',
-              text: String(m.text ?? ''),
-              at: toEpochMs(m.at ?? m.timestamp ?? m.created_at),
-            }))
-            .filter((m) => m.text.trim().length > 0),
-        )
-        hydrateTranscriptTools(resolvedSid, prof)
-        return { ok: true, sid: res.session_id }
-      } finally {
-        setLoadingChat(false)
-      }
-    },
-    [ensureRepos, hydrateTranscriptTools],
-  )
-
   /** 通知の処理。 */
   const onEvent = useCallback((msg) => {
     const type = msg?.params?.type
@@ -529,6 +433,14 @@ export function ChatPane({
   const openRef = useRef(null)
   const pendingOpenRef = useRef(null)
   const connRef = useRef('idle')
+  // `useChatSession`（この位置より後で呼ぶ）が返す `resumeInto` を、それより前で組み立てる
+  // `onReady` と入力欄（`useChatComposer`）から呼ぶための入口。呼び出しは必ずマウント後なので、
+  // ref から最新の実装を読む（identity は空依存で固定し、フックの再生成を招かない）。
+  const resumeRef = useRef(null)
+  const resumeInto = useCallback(
+    (rpcNow, target, prof) => resumeRef.current?.(rpcNow, target, prof) ?? { ok: false },
+    [],
+  )
 
   /** 接続が ready になったとき（初回・再接続の両方）。 */
   const onReady = useCallback(async () => {
@@ -744,6 +656,91 @@ export function ChatPane({
     activeDrawerSid,
   })
 
+  /** ヒットした発言を画面の上寄りに出す（位置の計算は `chat/ChatTimeline.jsx`）。 */
+  const scrollToHit = useCallback((mid) => scrollToMessage(listRef, mid), [])
+
+  /**
+   * 相談文を入力欄へ下書きセットする（**送信はしない**・SPEC-PILOT-V4 §3.3 ② / D20③）。
+   *
+   * 誤送信を避けるため `prompt.submit` は呼ばず、ユーザーが読んで 1 タップで送れる状態にする。
+   * オートリサイズとフォーカスまで済ませるので、続けて書き足せる。
+   */
+  const prefillComposer = useCallback((prompt) => {
+    const body = String(prompt ?? '').trim()
+    if (!body) return
+    setText(body)
+    const focus = () => {
+      const el = taRef.current
+      if (!el) return
+      try {
+        el.focus({ preventScroll: false })
+      } catch {
+        el.focus()
+      }
+      el.style.height = 'auto'
+      fitComposer(el)
+      try {
+        el.setSelectionRange(body.length, body.length)
+      } catch {
+        /* selection API の無い環境でも入力欄には入っている */
+      }
+    }
+    // タブ切替・新規会話の直後は入力欄がまだ出ていないことがある。rAF と少し後の 2 回試す
+    // （実測: 1 回目だけだとフォーカスが body のまま残った）。
+    requestAnimationFrame(focus)
+    setTimeout(focus, 150)
+  }, [])
+
+  /*
+   * 会話を開く経路（新規会話・resume・`openRequest` の消費・更新・ボード作成・
+   * リポジトリ選択）は `chat/useChatSession.js`（CSW3-4）。
+   * state の持ち主はこの pane のまま: フックへは setter と、その時点の値を渡すだけ。
+   */
+  const {
+    ensureRepos,
+    findRepoByPath,
+    resumeInto: resumeIntoImpl,
+    startSession,
+    openSessionSafe,
+    refreshChat,
+    openProfileSheet,
+    pickRepo,
+    createRepoBoard,
+  } = useChatSession({
+    notify,
+    rpc,
+    sessions,
+    sessionsRef,
+    storedRef,
+    sidRef,
+    connRef,
+    sockRef,
+    openRef,
+    pendingOpenRef,
+    reposRef,
+    repoStep,
+    repoBusy,
+    repoPick,
+    profile,
+    pilotDefault,
+    streaming,
+    readonly,
+    openRequest,
+    onConsumedOpen,
+    discussRequest,
+    onConsumedDiscuss,
+    prefillComposer,
+    scrollToHit,
+    markReportsSeen,
+    markSessionRead,
+    hydrateTranscriptTools,
+    loadSessions,
+    setSid, setStoredSid, setTitle, setBlocks, setTranscriptMeta, setUsage, setReadonly,
+    setProfile, setStoredProfile, setRepo, setRepos, setRepoPick, setRepoStep, setRepoBusy,
+    setDrawer, setProfileSheet, setLoadingChat,
+  })
+  resumeRef.current = resumeIntoImpl
+
   useEffect(() => {
     if (!isWorking) return undefined
     const id = setInterval(() => setNowTick(Date.now()), 1000)
@@ -777,9 +774,6 @@ export function ChatPane({
     // ツール行が増えてもスクロールせず、最後の行が下端（入力欄の裏）に隠れる（実測）。
     if (stickRef.current) el.scrollTop = el.scrollHeight
   }, [blocks, isWorking, progress, thinking, linkedReview, workerFeed, readonly?.focusId, lastReportKey])
-
-  /** ヒットした発言を画面の上寄りに出す（位置の計算は `chat/ChatTimeline.jsx`）。 */
-  const scrollToHit = useCallback((mid) => scrollToMessage(listRef, mid), [])
 
   // ヒットした発言が見える位置までスクロール（レイアウト確定後に2回）
   useEffect(() => {
@@ -909,38 +903,6 @@ export function ChatPane({
     [notify],
   )
 
-  /**
-   * 相談文を入力欄へ下書きセットする（**送信はしない**・SPEC-PILOT-V4 §3.3 ② / D20③）。
-   *
-   * 誤送信を避けるため `prompt.submit` は呼ばず、ユーザーが読んで 1 タップで送れる状態にする。
-   * オートリサイズとフォーカスまで済ませるので、続けて書き足せる。
-   */
-  const prefillComposer = useCallback((prompt) => {
-    const body = String(prompt ?? '').trim()
-    if (!body) return
-    setText(body)
-    const focus = () => {
-      const el = taRef.current
-      if (!el) return
-      try {
-        el.focus({ preventScroll: false })
-      } catch {
-        el.focus()
-      }
-      el.style.height = 'auto'
-      fitComposer(el)
-      try {
-        el.setSelectionRange(body.length, body.length)
-      } catch {
-        /* selection API の無い環境でも入力欄には入っている */
-      }
-    }
-    // タブ切替・新規会話の直後は入力欄がまだ出ていないことがある。rAF と少し後の 2 回試す
-    // （実測: 1 回目だけだとフォーカスが body のまま残った）。
-    requestAnimationFrame(focus)
-    setTimeout(focus, 150)
-  }, [])
-
   /** 統合レポートカードの「💬 次の一手を相談」。 */
   const discussReport = useCallback(
     (report) => {
@@ -1007,268 +969,6 @@ export function ChatPane({
     }
   }, [active, currentIds, unreadIds, markReportsSeen])
 
-  /** 新しい会話を始める（プロファイル + リポジトリ + ボード）。 */
-  const startSession = useCallback(
-    (prof = pilotDefault, pick = null, board = null) => {
-      const next = prof || pilotDefault
-      const chosen = pick?.path ? pick : null
-      const boardSlug = board?.slug ?? ''
-      setSid(null)
-      setStoredSid(null)
-      setTitle('')
-      setBlocks([])
-      setTranscriptMeta(null)
-      setUsage(null)
-      setReadonly(null)
-      setProfile(next)
-      setStoredProfile(next)
-      setRepo(chosen)
-      setRepoStep(null)
-      setDrawer(false)
-      setProfileSheet(false)
-      if (chosen) {
-        rememberRepo(globalThis.localStorage, { id: chosen.id, board: boardSlug ? { slug: boardSlug } : null })
-        writePendingRepo(globalThis.localStorage, { repoId: chosen.id, profile: next })
-        notify(t('chat.newChatWith', { target: `${repoLabel(chosen)}${boardSlug ? ` ${sep()} ${boardSlug}` : ''}` }))
-      } else {
-        writePendingRepo(globalThis.localStorage, null)
-      }
-    },
-    [notify, pilotDefault],
-  )
-
-  /** resume できない会話を読み取り専用で開く（カンバン作業ログなど）。 */
-  const loadTranscript = useCallback(
-    async (sessionId, focusId, title, profile = null) => {
-      setLoadingChat(true)
-      try {
-        const q = new URLSearchParams({ limit: '300', tools: '1' })
-        // 他プロファイルの会話は state.db が別なので profile を渡す（読み取り専用で開く）
-        if (profile && profile !== 'default') q.set('profile', profile)
-        const d = await api(`/api/sessions/${encodeURIComponent(sessionId)}/transcript?${q}`)
-        if (!d.ok) {
-          notify(localizeError(d) || t('chat.cannotOpen'))
-          return false
-        }
-        setSid(null)
-        setReadonly({
-          sessionId,
-          focusId: focusId ?? null,
-          title: d.title ?? title ?? '',
-          profile: profile && profile !== 'default' ? profile : null,
-        })
-        // 読み取り専用でも開いた＝見た（D16②）。ここで親チャット `storedSid` は触らない
-        // （リロード時は最後の通常会話へ戻る既存挙動を保つための境界）。
-        // 一覧の `message_count` が古い場合に備え、実際に読んだ数との大きい方を記録する（D22①）。
-        const { blocks: folded } = foldTranscriptMessages(d.messages ?? [], toEpochMs)
-        markSessionRead(
-          sessionId,
-          Math.max(
-            Number(sessionsRef.current.find((s) => String(s.id) === String(sessionId))?.message_count) || 0,
-            Array.isArray(d.messages) ? d.messages.length : 0,
-          ),
-        )
-        setBlocks(folded)
-        setTranscriptMeta({
-          sessionId,
-          profile: profile && profile !== 'default' ? profile : null,
-          hasMore: Boolean(d.hasMore),
-          oldestId: d.oldestId ?? null,
-          loadingMore: false,
-        })
-        if (d.title || title) setTitle(d.title || title)
-        if (focusId) {
-          requestAnimationFrame(() => scrollToHit(focusId))
-        }
-        return true
-      } catch (e) {
-        notify(e.message)
-        return false
-      } finally {
-        setLoadingChat(false)
-      }
-    },
-    [notify, scrollToHit],
-  )
-
-  const openSession = useCallback(
-    async (storedTarget, focusId = null, prof = 'default') => {
-      setDrawer(false)
-      setBlocks([])
-      setTranscriptMeta(null)
-      setUsage(null)
-      setReadonly(null)
-      setProfile(prof || 'default')
-      const found = sessions.find((s) => s.id === storedTarget && (s.profile ?? 'default') === (prof || 'default'))
-      const foundTitle = found?.title ?? sessions.find((s) => s.id === storedTarget)?.title ?? ''
-      setTitle(foundTitle)
-      const resumed = await resumeInto(rpc, storedTarget, prof)
-      if (!resumed.ok) {
-        const err = resumed.error
-        // カンバン作業ログは Hermes が resume を拒否する（4132）。読むだけなら開ける
-        if (err?.code === 4132 || /Kanban worker transcript/i.test(err?.message ?? '')) {
-          await loadTranscript(storedTarget, focusId, foundTitle, prof)
-          return
-        }
-        setSid(null)
-        setStoredSid(null)
-        notify(err?.message ? t('chat.openFailed', { message: err.message }) : t('chat.resumeFailed'))
-      }
-    },
-    [rpc, resumeInto, sessions, notify, loadTranscript],
-  )
-
-  // openSession の最新版を ref に持つ（onReady / イベントから使う）
-  openRef.current = openSession
-
-  /** 接続前なら予約して、ready になったら開く。 */
-  const openSessionSafe = useCallback(
-    (id, focusId = null, prof = 'default') => {
-      if (!id) return
-      // 開いた会話の新着（レビューの完了報告）は見た扱いにする（行の点を消す）
-      markReportsSeen(id)
-      if (connRef.current === 'ready') openRef.current?.(id, focusId, prof)
-      else pendingOpenRef.current = { id, focusId, profile: prof }
-    },
-    [markReportsSeen],
-  )
-
-  // 検索結果など外側から「このセッションを開く」と指示された場合
-  useEffect(() => {
-    const onOpen = (e) => openSessionSafe(e?.detail?.id, e?.detail?.messageId ?? null, e?.detail?.profile || 'default')
-    window.addEventListener(HM_EVENTS.OPEN_SESSION, onOpen)
-    return () => window.removeEventListener(HM_EVENTS.OPEN_SESSION, onOpen)
-  }, [openSessionSafe])
-
-  useEffect(() => {
-    if (!openRequest?.id) return
-    openSessionSafe(openRequest.id, openRequest.messageId ?? null, openRequest.profile || 'default')
-    onConsumedOpen?.()
-  }, [openRequest, openSessionSafe, onConsumedOpen])
-
-  /*
-   * Tasks タブの完走サマリバナー「💬 チャットで次の一手を相談」からの依頼
-   * （SPEC-PILOT-V4 §3.3 ③ / D20③）。App が `hm:discuss-pipeline` を受けて渡す。
-   *
-   *  - 有効なセッション ID … その会話を開いて相談文を置く
-   *  - `'__latest__'` / 空 … repo が一致する新しい会話を作って相談文を置く
-   * どちらも送信はしない（ユーザーが読んでから 1 タップ）。
-   */
-  useEffect(() => {
-    if (!discussRequest) return undefined
-    let alive = true
-    const target = String(discussRequest.sessionId ?? '').trim()
-    const run = async () => {
-      if (target && target !== LATEST_REPORT_ID) {
-        const found = sessionsRef.current.find((s) => String(s.id) === target)
-        openSessionSafe(target, null, found?.profile || profile || pilotDefault)
-      } else {
-        const matched = await findRepoByPath(discussRequest.repoPath)
-        if (!alive) return
-        startSession(
-          profile || pilotDefault,
-          matched ?? null,
-          discussRequest.board ? { slug: discussRequest.board } : null,
-        )
-      }
-      // 送り手（Tasks / レポート一覧）が既に UI 言語で組み立てた文面。ここで言語判定はしない
-      prefillComposer(String(discussRequest.prompt ?? '').trim() || t('chat.discussFallback'))
-      onConsumedDiscuss?.()
-    }
-    run()
-    return () => {
-      alive = false
-    }
-  }, [
-    discussRequest,
-    openSessionSafe,
-    startSession,
-    prefillComposer,
-    onConsumedDiscuss,
-    profile,
-    pilotDefault,
-    findRepoByPath,
-  ])
-
-  /** チャットタブの「更新」: 会話一覧・完了報告・現在開いている会話を最新化する。 */
-  const refreshChat = useCallback(async () => {
-    emitHmEvent(HM_EVENTS.REFRESH_REPORTS)
-    if (connRef.current !== 'ready') {
-      sockRef.current?.reconnectNow?.()
-      return true
-    }
-    const rpcFn = sockRef.current?.rpc
-    if (!rpcFn) return false
-    await loadSessions(rpcFn)
-    if (streaming) return true
-    if (readonly?.sessionId) {
-      return await loadTranscript(readonly.sessionId, readonly.focusId, readonly.title, readonly.profile || 'default')
-    }
-    const target = storedRef.current ?? sidRef.current
-    if (target) {
-      const r = await resumeInto(rpcFn, target, profile || pilotDefault)
-      if (!r?.ok) {
-        notify(r?.error?.message ? t('chat.updateFailed', { message: r.error.message }) : t('chat.updateChatFailed'))
-        return false
-      }
-    }
-    return true
-  }, [loadSessions, streaming, readonly, loadTranscript, resumeInto, profile, pilotDefault, notify])
-
-  const openProfileSheet = useCallback(() => {
-    setDrawer(false)
-    setProfileSheet(true)
-    setRepoStep(null)
-    setRepoPick(profile || pilotDefault)
-    // 開くたびに最新リポ一覧を再取得（裏で git init したリポも即反映）
-    ensureRepos({ force: true })
-  }, [profile, pilotDefault, ensureRepos])
-
-  /**
-   * リポジトリを選んだ（Q2=A）。板が無ければ確認、複数なら次の段、1 つならそのまま開始。
-   * @param {object} r 選んだリポジトリ
-   */
-  const pickRepo = useCallback(
-    (r) => {
-      if (!r) return
-      if (!r.boards?.length) {
-        setRepoStep({ kind: 'create', repo: r })
-        return
-      }
-      if (r.boards.length > 1) {
-        setRepoStep({ kind: 'board', repo: r })
-        return
-      }
-      startSession(repoPick, r, defaultBoard(r.boards))
-    },
-    // startSession は下で useCallback 済み（依存は毎回同じ）
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [repoPick],
-  )
-
-  /** 板が無いリポジトリにボードを作る（Q3=A: 確認してから作る）。 */
-  const createRepoBoard = useCallback(async () => {
-    const r = repoStep?.repo
-    if (!r || repoBusy) return
-    setRepoBusy(true)
-    try {
-      const res = await api(`/api/repos/${encodeURIComponent(r.id)}/board`, { method: 'POST', body: {} })
-      if (!res?.ok || !res.board) {
-        notify(res?.error ?? t('chat.boardCreateFailed'))
-        return
-      }
-      notify(t('chat.boardCreated', { slug: res.board.slug }))
-      // 作った板を一覧に反映してから開始（次の会話では「ボード 1 つ」と出る）
-      setRepos((prev) =>
-        prev.map((x) => (x.id === r.id ? { ...x, boards: [{ slug: res.board.slug, name: res.board.name ?? res.board.slug }] } : x)),
-      )
-      startSession(repoPick, r, { slug: res.board.slug, name: res.board.name ?? res.board.slug })
-    } catch (e) {
-      notify(e.message)
-    } finally {
-      setRepoBusy(false)
-    }
-  }, [repoStep, repoBusy, repoPick, notify, startSession])
 
   const hotSnippets = snippets.filter((s) => s.hot).slice(0, 8)
 
@@ -1297,77 +997,23 @@ export function ChatPane({
    */
   const splitChat = wide
 
-  /* プロファイル札・リポジトリ札（1 ペインはヘッダ内・2 カラムは左の下端スタック） */
+  /* プロファイル札・リポジトリ札（1 ペインはヘッダ内・2 カラムは左の下端スタック）。中身は `chat/ChatHeadBar.jsx` */
   const chipsNode = (
-    <>
-      <span
-        className={`prof-chip${profile !== pilotDefault ? ' on' : ''}`}
-        title={t('chat.profileTitle', { profile })}
-      >
-        {profile}
-      </span>
-      {repo ? (
-        <button
-          className="prof-chip repo-chip"
-          title={t('chat.repoTitle', { id: repo.id, path: repo.path })}
-          aria-label={t('chat.repoTitleShort', { id: repo.id })}
-          onClick={() => {
-            haptic('tap')
-            openProfileSheet()
-          }}
-        >
-          {repo.id}
-        </button>
-      ) : null}
-    </>
+    <ChatChips profile={profile} pilotDefault={pilotDefault} repo={repo} onOpenProfileSheet={openProfileSheet} />
   )
 
-  /* 1 ペインのヘッダ（2 カラムでは出さない: 一覧は左カラムが持つ） */
+  /* 1 ペインのヘッダ（2 カラムでは出さない: 一覧は左カラムが持つ）。中身は `chat/ChatHeadBar.jsx` */
   const chatHeadNode = (
-    <div className="chat-head">
-      <button
-        className="icon-btn"
-        onClick={() => {
-          haptic('tap')
-          openDrawer()
-        }}
-        aria-label={drawerUnread ? t('chat.sessionsAria', { n: drawerUnread }) : t('chat.sessions')}
-      >
-        <Icon name="grid" size={18} />
-        {drawerUnread ? (
-          <span className="drawer-btn-badge" aria-hidden="true">
-            {drawerUnread}
-          </span>
-        ) : null}
-        {!drawerUnread && otherUnreads.length ? <span className="nav-dot done" aria-hidden="true" /> : null}
-      </button>
-      <span className="chat-title">{title || t('chat.title')}</span>
-      {chipsNode}
-      {dcLink?.url ? (
-        <button
-          className="icon-btn dc-icon"
-          title={`Discord: ${dcLink.chatName ?? ''}`}
-          aria-label={t('chat.discordAria')}
-          onClick={() => {
-            haptic('tap')
-            window.open(dcLink.url, '_blank', 'noopener')
-          }}
-        >
-          <span aria-hidden="true">#</span>
-        </button>
-      ) : null}
-      <RefreshButton variant="icon" ariaLabel={t('chat.refreshChatAria')} onRefresh={refreshChat} />
-      <button
-        className="icon-btn"
-        onClick={() => {
-          haptic('tap')
-          openProfileSheet()
-        }}
-        aria-label={t('chat.newChatAria')}
-      >
-        <Icon name="plus" size={18} />
-      </button>
-    </div>
+    <ChatHead
+      title={title}
+      drawerUnread={drawerUnread}
+      otherUnreads={otherUnreads}
+      dcLink={dcLink}
+      chips={chipsNode}
+      onOpenDrawer={openDrawer}
+      onNewChat={openProfileSheet}
+      onRefresh={refreshChat}
+    />
   )
 
   /* オフライン・完了レポート・読み取り専用のバナー（Q1=A: 2 カラムでは左の下端へ）。中身は `chat/ChatTimeline.jsx` */
@@ -1502,22 +1148,9 @@ export function ChatPane({
     />
   )
 
-  /* 右カラムの最小ヘッダ（タイトル・↻・＋だけ。バナーもチップも置かない） */
+  /* 右カラムの最小ヘッダ（タイトル・↻・＋だけ。バナーもチップも置かない）。中身は `chat/ChatHeadBar.jsx` */
   const minimalHeadNode = (
-    <div className="chat-split-head">
-      <span className="chat-title">{title || t('chat.title')}</span>
-      <RefreshButton variant="icon" ariaLabel={t('chat.refreshChatAria')} onRefresh={refreshChat} />
-      <button
-        className="icon-btn"
-        onClick={() => {
-          haptic('tap')
-          openProfileSheet()
-        }}
-        aria-label={t('chat.newChatAria')}
-      >
-        <Icon name="plus" size={18} />
-      </button>
-    </div>
+    <ChatMinimalHead title={title} onNewChat={openProfileSheet} onRefresh={refreshChat} />
   )
 
   /*
@@ -1634,167 +1267,23 @@ export function ChatPane({
         />
       ) : null}
 
-      {profileSheet ? (
-        <Sheet
-          title={
-            repoStep?.kind === 'board'
-              ? t('chat.chooseBoard')
-              : repoStep?.kind === 'create'
-                ? t('chat.createBoard')
-                : repoStep?.kind === 'all'
-                  ? t('chat.allRepos')
-                  : t('chat.newChat')
-          }
-          onClose={() => (repoStep ? setRepoStep(null) : setProfileSheet(false))}
-        >
-          {!repoStep ? (
-            <>
-              {orderedProfiles.map((p) => (
-                <button
-                  key={p}
-                  className={`row${repoPick === p ? ' on' : ''}`}
-                  onClick={() => setRepoPick(p)}
-                  aria-pressed={repoPick === p}
-                >
-                  <span className="row-main">
-                    <span className="row-title">
-                      {p}
-                      {p === pilotDefault ? <span className="prof-chip">{t('chat.defaultChip')}</span> : null}
-                      {repoPick === p ? <span className="prof-chip on">{t('chat.selectedChip')}</span> : null}
-                    </span>
-                    <span className="row-sub">
-                      {p === 'default'
-                        ? t('chat.usualWork')
-                        : p === pilotDefault
-                          ? t('chat.thisDeviceDefault')
-                          : t('chat.profileSuffix', { p })}
-                    </span>
-                  </span>
-                  <Icon name={repoPick === p ? 'check' : 'chevron'} size={16} />
-                </button>
-              ))}
-
-              <div className="sec">{t('chat.repoSection')}</div>
-              {pinned.rows.map((r) => (
-                <button
-                  key={r.id}
-                  className={`row${lastRepo === r.id ? ' on' : ''}`}
-                  onClick={() => pickRepo(r)}
-                  title={t('chat.repoRowTitle', { label: r.label, path: r.path })}
-                >
-                  <span className="row-main">
-                    <span className="row-title">
-                      {repoLabel(r)}
-                      {lastRepo === r.id ? <span className="prof-chip">{t('chat.lastChip')}</span> : null}
-                    </span>
-                    <span className="row-sub">
-                      {boardSummary(r.boards)}
-                      {r.boards.length > 1 ? ' ›' : ''}
-                    </span>
-                  </span>
-                  <Icon name="chevron" size={16} />
-                </button>
-              ))}
-              {!repos.length ? (
-                <div className="row-sub" style={{ padding: '6px 6px 10px', lineHeight: 1.7 }}>
-                  {t('chat.reposLoading')}
-                </div>
-              ) : null}
-              {pinned.hidden > 0 ? (
-                <button className="row" onClick={() => setRepoStep({ kind: 'all' })}>
-                  <span className="row-main">
-                    <span className="row-title">{t('chat.allReposRow')}</span>
-                    <span className="row-sub">
-                      {t('chat.reposHidden', { n: pinned.hidden, total: pinned.total })}
-                    </span>
-                  </span>
-                  <Icon name="chevron" size={16} />
-                </button>
-              ) : null}
-              <button className="row" onClick={() => startSession(repoPick, null, null)}>
-                <span className="row-main">
-                  <span className="row-title">{t('chat.noRepo')}</span>
-                  <span className="row-sub">{t('chat.noRepoSub')}</span>
-                </span>
-                <Icon name="chevron" size={16} />
-              </button>
-              <div className="row-sub" style={{ padding: '10px 6px 18px', lineHeight: 1.7 }}>
-                {t('chat.pickProfileThenRepo')}
-                {t('chat.boardBecomesDefault')}
-              </div>
-            </>
-          ) : null}
-
-          {repoStep?.kind === 'all' ? (
-            <>
-              <div className="sec">{t('chat.allReposSection', { n: repos.length })}</div>
-              {repos.map((r) => (
-                <button
-                  key={r.id}
-                  className="row"
-                  onClick={() => pickRepo(r)}
-                  title={t('chat.repoRowTitle', { label: r.label, path: r.path })}
-                >
-                  <span className="row-main">
-                    <span className="row-title">{repoLabel(r)}</span>
-                    <span className="row-sub">
-                      {boardSummary(r.boards)}
-                      {r.boards.length > 1 ? ' ›' : ''}
-                    </span>
-                  </span>
-                  <Icon name="chevron" size={16} />
-                </button>
-              ))}
-            </>
-          ) : null}
-
-          {repoStep?.kind === 'board' ? (
-            <>
-              <div className="sec">{t('chat.repoBoards', { repo: repoLabel(repoStep.repo) })}</div>
-              {(repoStep.repo.boards ?? []).map((b) => (
-                <button key={b.slug} className="row" onClick={() => startSession(repoPick, repoStep.repo, b)}>
-                  <span className="row-main">
-                    <span className="row-title">{b.name || b.slug}</span>
-                    <span className="row-sub">
-                      {b.slug}
-                      {b.current ? t('chat.currentBoard') : ''}
-                    </span>
-                  </span>
-                  <Icon name="chevron" size={16} />
-                </button>
-              ))}
-              <div className="row-sub" style={{ padding: '10px 6px 18px', lineHeight: 1.7 }}>
-                {t('chat.boardPickNote', { n: repoStep.repo.boards.length })}
-              </div>
-            </>
-          ) : null}
-
-          {repoStep?.kind === 'create' ? (
-            <>
-              <div className="sec">{t('chat.noBoardsSection')}</div>
-              <div className="row-sub" style={{ padding: '6px 6px 12px', lineHeight: 1.7 }}>
-                {t('chat.noBoardsBody', { repo: repoLabel(repoStep.repo) })}
-              </div>
-              <button className="row" onClick={createRepoBoard} disabled={repoBusy} aria-busy={repoBusy}>
-                <span className="row-main">
-                  <span className="row-title">
-                    {repoBusy ? t('chat.creating') : t('chat.createBoardRow', { id: repoStep.repo.id })}
-                  </span>
-                  <span className="row-sub">{repoStep.repo.path}</span>
-                </span>
-                <Icon name="check" size={16} />
-              </button>
-              <button className="row" onClick={() => setRepoStep(null)}>
-                <span className="row-main">
-                  <span className="row-title">{t('chat.dontCreate')}</span>
-                  <span className="row-sub">{t('chat.dontCreateSub')}</span>
-                </span>
-                <Icon name="chevron" size={16} />
-              </button>
-            </>
-          ) : null}
-        </Sheet>
-      ) : null}
+      <ChatNewChatSheet
+        open={profileSheet}
+        repoStep={repoStep}
+        setRepoStep={setRepoStep}
+        onClose={() => (repoStep ? setRepoStep(null) : setProfileSheet(false))}
+        repoPick={repoPick}
+        setRepoPick={setRepoPick}
+        orderedProfiles={orderedProfiles}
+        pilotDefault={pilotDefault}
+        pinned={pinned}
+        lastRepo={lastRepo}
+        onPickRepo={pickRepo}
+        repos={repos}
+        onStart={startSession}
+        onCreateBoard={createRepoBoard}
+        boardBusy={repoBusy}
+      />
 
       <ChatDrawer
         open={drawer}
