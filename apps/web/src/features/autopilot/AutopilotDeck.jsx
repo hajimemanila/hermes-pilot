@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from 'react'
 import { api } from '../../api.js'
 import { useI18n } from '../../i18n/index.js'
 import {
-  REMIX_CHIPS,
   buildRemixPayload,
   classifySwipe,
   createRemixPending,
@@ -15,8 +14,9 @@ import {
 import { haptic } from '../../lib/haptic.js'
 import { celebrateAction } from '../../lib/vibe.js'
 import { AnnotationEditor } from '../AnnotationEditor.jsx'
-import { MockCompareStage } from './MockCompareStage.jsx'
-import { StyleGachaBar } from './StyleGachaBar.jsx'
+import { DeckActionBar } from './DeckActionBar.jsx'
+import { DeckCardStage } from './DeckCardStage.jsx'
+import { DeckRemixBar } from './DeckRemixBar.jsx'
 
 const FLY_MS = 220
 
@@ -237,229 +237,89 @@ export function AutopilotDeck({
   const glowCls = swipe.direction ? ` glow-${swipe.direction}` : ''
   const flyCls = flying ? ` fly-${flying}` : ''
   const shotUrl = shotUrlFor(cardView.shot, question.taskId)
+  const undoActive = isUndoActive(undo)
+  // 葉（DeckActionBar）へ渡す訳文。i18n キーは親に残す（SPEC §3.2）。
+  const actionLabels = {
+    aria: t('autopilot.actionsAria'),
+    remix: t('autopilot.btn.remix'),
+    nextOpt: t('autopilot.btn.nextOpt'),
+    hold: t('autopilot.btn.hold'),
+    annotate: t('autopilot.btn.annotate'),
+    go: t('autopilot.btn.go'),
+  }
 
   return (
     <section className="ap-deck-shell" aria-label={t('autopilot.deckAria')}>
-      <div className="ap-deck-stage">
-        {thirdQuestion && (
-          <div className="ap-card ap-stack-back ap-stack-3" aria-hidden="true" />
-        )}
-        {nextOptionView && (
-          <div
-            className="ap-card ap-stack-back ap-stack-2"
-            style={{
-              transform: `scale(${0.94 + stackLift * 0.04}) translate3d(0, ${14 - stackLift * 10}px, 0)`,
-            }}
-            aria-hidden="true"
-          >
-            <header className="ap-card-head">
-              <span className="ap-opt-pill">{nextOptionView.option.id}</span>
-              <span className="ap-card-topic">{nextOptionView.option.label}</span>
-            </header>
-          </div>
-        )}
+      <DeckCardStage
+        thirdQuestion={thirdQuestion}
+        nextOptionView={nextOptionView}
+        cardView={cardView}
+        question={question}
+        index={index}
+        cards={cards}
+        optIndex={optIndex}
+        drag={drag}
+        swipe={swipe}
+        stackLift={stackLift}
+        frontStyle={frontStyle}
+        glowCls={glowCls}
+        flyCls={flyCls}
+        shotUrl={shotUrl}
+        annotationsByVariant={annotationsByVariant}
+        liveSandbox={liveSandbox}
+        remixPending={remixPending}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerEnd={handlePointerEnd}
+        onSelectOption={setOptIndex}
+        onPickVariant={(idx) => {
+          haptic('tap')
+          setOptIndex(idx)
+        }}
+        onToggleSandbox={() => setLiveSandbox((v) => !v)}
+        onToggleGacha={() => {
+          haptic('tap')
+          setRemixNoteMode(false)
+          setRemixPending((cur) =>
+            cur && cur.cardKey === question.key ? null : createRemixPending(question, Date.now(), 60_000, false),
+          )
+        }}
+        t={t}
+      />
 
-        <article
-          className={`ap-card ap-card-front${drag.active ? ' dragging' : ''}${glowCls}${flyCls}`}
-          style={frontStyle}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerEnd}
-          onPointerCancel={handlePointerEnd}
-        >
-          <div className="ap-card-glint" aria-hidden="true" />
+      <DeckRemixBar
+        pending={remixPending}
+        noteMode={remixNoteMode}
+        noteText={remixNoteText}
+        onNoteText={setRemixNoteText}
+        onBackToFirst={() => {
+          haptic('tap')
+          setRemixPending(null)
+          setOptIndex(0)
+        }}
+        onChip={(chipId) => {
+          if (chipId === 'note') setRemixNoteMode(true)
+          else sendRemix(remixPending.card, chipId, '')
+        }}
+        onSubmitNote={(text) => sendRemix(remixPending.card, 'note', text)}
+        onRollStyle={(presetId) => {
+          const key = remixPending.card.key
+          setGachaCountByCard((prev) => ({ ...prev, [key]: (prev[key] || 0) + 1 }))
+          sendRemix(remixPending.card, 'style_gacha', presetId, presetId)
+        }}
+        gachaCount={gachaCountByCard[remixPending?.card?.key] || 0}
+        t={t}
+      />
 
-          {swipe.stamp && (
-            <div
-              className={`ap-stamp ap-stamp-${swipe.direction}`}
-              style={{ opacity: Math.min(1, 0.3 + swipe.progress * 0.7) }}
-            >
-              {swipe.direction === 'left' && !cardView.isLastOption
-                ? `${t('autopilot.btn.nextOpt')} ${question.options[optIndex + 1]?.id || ''}`
-                : swipe.stamp}
-            </div>
-          )}
-
-          <header className="ap-card-head">
-            <span className="ap-card-counter">
-              Q{index + 1} / {cards.length}
-            </span>
-            <div className="ap-variant-dots" role="tablist" aria-label={t('autopilot.variantAria')}>
-              {question.options.map((opt, idx) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={idx === optIndex}
-                  className={`ap-var-pill${idx === optIndex ? ' active' : ''}`}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    haptic('tap')
-                    setOptIndex(idx)
-                  }}
-                >
-                  {opt.id}
-                </button>
-              ))}
-            </div>
-            {cardView.option.recommended && (
-              <span className="ap-rec-badge">★ {t('review.recommended')}</span>
-            )}
-            <button
-              type="button"
-              className={`ap-gacha-btn${remixPending ? ' active' : ''}`}
-              aria-label={t('autopilot.gacha.title')}
-              title={t('autopilot.gacha.title')}
-              onClick={(e) => {
-                e.stopPropagation()
-                haptic('tap')
-                setRemixNoteMode(false)
-                setRemixPending((cur) =>
-                  cur && cur.cardKey === question.key ? null : createRemixPending(question, Date.now(), 60_000, false),
-                )
-              }}
-            >
-              🎲
-            </button>
-          </header>
-
-          <div className="ap-card-media">
-            <MockCompareStage
-              question={question}
-              cardView={cardView}
-              optIndex={optIndex}
-              shotUrl={shotUrl}
-              mockUrl={cardView.mockUrl}
-              annotationCount={(() => {
-                const ann = annotationsByVariant[`${question.key}:${cardView.option.id}`]
-                if (!ann) return 0
-                return Array.isArray(ann.marks) && ann.marks.length > 0 ? ann.marks.length : 1
-              })()}
-              onSelectOption={(nextIdx) => setOptIndex(nextIdx)}
-              onToggleSandbox={() => setLiveSandbox((v) => !v)}
-              liveSandbox={liveSandbox}
-              t={t}
-            />
-          </div>
-
-          <div className="ap-card-copy">
-            <p className="ap-card-q-sub">{question.text}</p>
-            <h2 className="ap-card-opt-hero">
-              <span className="ap-opt-id-chip">{cardView.option.id}</span>
-              <span>{cardView.option.label}</span>
-            </h2>
-            {cardView.option.detail && <p className="ap-card-opt-detail">{cardView.option.detail}</p>}
-          </div>
-        </article>
-      </div>
-
-      {remixPending && (
-        <div className="ap-remix-bar" role="region" aria-label={t('autopilot.btn.remix')}>
-          {remixNoteMode ? (
-            <form
-              className="ap-remix-note-row"
-              onSubmit={(e) => {
-                e.preventDefault()
-                sendRemix(remixPending.card, 'note', remixNoteText)
-              }}
-            >
-              <input
-                type="text"
-                className="ap-remix-input"
-                value={remixNoteText}
-                onChange={(e) => setRemixNoteText(e.target.value)}
-                placeholder={t('autopilot.remix.note')}
-              />
-              <button type="submit" className="ap-remix-send">{t('autopilot.btn.go')}</button>
-            </form>
-          ) : (
-            <>
-              <div className="ap-remix-chips">
-                <button
-                  type="button"
-                  className="ap-remix-chip"
-                  onClick={() => {
-                    haptic('tap')
-                    setRemixPending(null)
-                    setOptIndex(0)
-                  }}
-                >
-                  ↺ {t('autopilot.remix.backToFirst')}
-                </button>
-                {REMIX_CHIPS.map((chip) => (
-                  <button
-                    key={chip.id}
-                    type="button"
-                    className="ap-remix-chip"
-                    onClick={() => {
-                      if (chip.id === 'note') setRemixNoteMode(true)
-                      else sendRemix(remixPending.card, chip.id, '')
-                    }}
-                  >
-                    <span>{chip.icon}</span>
-                    <span>{t(chip.labelKey)}</span>
-                  </button>
-                ))}
-              </div>
-              <StyleGachaBar
-                usedCount={gachaCountByCard[remixPending.card.key] || 0}
-                onRollStyle={(presetId) => {
-                  const key = remixPending.card.key
-                  setGachaCountByCard((prev) => ({ ...prev, [key]: (prev[key] || 0) + 1 }))
-                  sendRemix(remixPending.card, 'style_gacha', presetId, presetId)
-                }}
-                t={t}
-              />
-            </>
-          )}
-        </div>
-      )}
-
-      {isUndoActive(undo) && (
-        <div className="ap-undo-pill" role="status">
-          <span className="ap-undo-label">{t('autopilot.undoPrompt', { action: undo.action.toUpperCase() })}</span>
-          <button type="button" className="ap-undo-btn" onClick={handleUndo}>
-            {t('autopilot.undo')}
-          </button>
-        </div>
-      )}
-
-      <footer className="ap-action-bar" aria-label={t('autopilot.actionsAria')}>
-        <button
-          type="button"
-          className="ap-act-btn ap-act-remix"
-          onClick={(e) => applyOutcome('left', e.currentTarget.getBoundingClientRect())}
-        >
-          <span className="ap-act-ico">✕</span>
-          <span className="ap-act-lbl">
-            {cardView.isLastOption ? t('autopilot.btn.remix') : t('autopilot.btn.nextOpt')}
-          </span>
-        </button>
-        <button
-          type="button"
-          className="ap-act-btn ap-act-hold"
-          onClick={(e) => applyOutcome('down', e.currentTarget.getBoundingClientRect())}
-        >
-          <span className="ap-act-ico">⏸</span>
-          <span className="ap-act-lbl">{t('autopilot.btn.hold')}</span>
-        </button>
-        <button
-          type="button"
-          className="ap-act-btn ap-act-annotate"
-          onClick={(e) => applyOutcome('up', e.currentTarget.getBoundingClientRect())}
-        >
-          <span className="ap-act-ico">🖍</span>
-          <span className="ap-act-lbl">{t('autopilot.btn.annotate')}</span>
-        </button>
-        <button
-          type="button"
-          className="ap-act-btn ap-act-go"
-          onClick={(e) => applyOutcome('right', e.currentTarget.getBoundingClientRect())}
-        >
-          <span className="ap-act-ico">♥</span>
-          <span className="ap-act-lbl">{t('autopilot.btn.go')}</span>
-        </button>
-      </footer>
+      <DeckActionBar
+        undo={undoActive ? undo : null}
+        undoLabel={undoActive ? t('autopilot.undoPrompt', { action: undo.action.toUpperCase() }) : ''}
+        undoActionLabel={t('autopilot.undo')}
+        isLastOption={cardView.isLastOption}
+        labels={actionLabels}
+        onOutcome={applyOutcome}
+        onUndo={handleUndo}
+      />
 
       {annotating && (
         <AnnotationEditor

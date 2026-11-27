@@ -95,7 +95,10 @@ apps/web/src/features/
   review/ReviewDetail.jsx    ← ReadOnlyDetail
   review/AnnotationCreate.jsx← downscaleFile / prefetchAnnotationData / findTarget / NewAnnotationSheet
   autopilot/
-    AutopilotDeck.jsx        ← スワイプデッキ UI（24px デッドゾーン・90px 閾値・REMIX チップ・Undo）
+    AutopilotDeck.jsx        ← デッキの状態・副作用・スワイプ物理を束ねる親（葉は下の 3 枚）
+    DeckCardStage.jsx        ← 提示専用の葉: スタック 3 枚＋前面カード（状態なし）
+    DeckRemixBar.jsx         ← 提示専用の葉: remix バー・注記フォーム・StyleGachaBar 差し込み
+    DeckActionBar.jsx        ← 提示専用の葉: undo ピル＋アクションバー（✕ ⏸ 🖍 ♥）
     AutopilotCards.jsx       ← StarterStage / LiveStudioCard / CompletionCard / OptionMockPreview
     AutopilotView.jsx        ← Zero-Fork レンズ投影・AutopilotLensToggle・AutopilotSwipeLink
     MockCompareStage.jsx     ← 0.1秒フリック比較・長押し Peek・▶ 触ってみる iframe（sandbox 強制）
