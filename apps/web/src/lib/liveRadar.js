@@ -36,13 +36,26 @@ export function classifyToolRing(toolName) {
   return 'explore'
 }
 
+const RING_LABEL_KEYS = Object.freeze({
+  core: 'autopilot.radar.ringCore',
+  verify: 'autopilot.radar.ringVerify',
+  explore: 'autopilot.radar.ringExplore',
+})
+
 /**
  * Extract recent tool invocations from `/api/live` snapshot and place them on concentric radar coordinates.
  * @param {object|null} liveSnapshot
- * @param {{now?: number, maxBlips?: number}} [opts]
+ * @param {{tasks?: Array<object>, activeJob?: object|null, now?: number, maxBlips?: number}} [opts]
  */
-export function projectRadarBlips(liveSnapshot, { now = Date.now(), maxBlips = 6 } = {}) {
+export function projectRadarBlips(liveSnapshot, { tasks = [], activeJob = null, now = Date.now(), maxBlips = 6 } = {}) {
   const limit = Math.max(1, Math.min(12, Number(maxBlips) || 6))
+  const fallbackTaskTitle =
+    (Array.isArray(tasks) && tasks[0]?.title) ||
+    liveSnapshot?.tasks?.[0]?.title ||
+    activeJob?.seed ||
+    liveSnapshot?.architect?.[0]?.seed ||
+    null
+
   let sourceTools = []
 
   if (Array.isArray(liveSnapshot?.telemetry?.recentTools) && liveSnapshot.telemetry.recentTools.length > 0) {
@@ -58,6 +71,14 @@ export function projectRadarBlips(liveSnapshot, { now = Date.now(), maxBlips = 6
     }
     flattened.sort((a, b) => (Number(b?.at) || 0) - (Number(a?.at) || 0))
     sourceTools = flattened
+  }
+
+  if (sourceTools.length === 0 && Array.isArray(tasks) && tasks.length > 0) {
+    sourceTools = tasks.map((tk) => ({
+      name: tk?.title ? String(tk.title).slice(0, 24) : 'worker',
+      taskTitle: tk?.title || null,
+      at: tk?.startedAt || now,
+    }))
   }
 
   return sourceTools
@@ -77,6 +98,10 @@ export function projectRadarBlips(liveSnapshot, { now = Date.now(), maxBlips = 6
         id: `${name}-${idx}`,
         name,
         ring,
+        ringLabelKey: RING_LABEL_KEYS[ring],
+        taskTitle: tool.taskTitle || fallbackTaskTitle,
+        sessionId: tool.sessionId || null,
+        profile: tool.profile || 'default',
         cx,
         cy,
         ageSec,
@@ -100,24 +125,45 @@ export function formatCompactTokens(n) {
 
 /**
  * Combine `live`, `usage`, and `reviewWaiting` snapshots for LiveRadarCard.
- * @param {{live?: object|null, usage?: object|null, reviewItems?: Array<object>, now?: number}} [opts]
+ * Prefers per-run `runTokens` from active turns and fixes `usage.totals` (`input + output`) aggregation.
+ * @param {{live?: object|null, usage?: object|null, reviewItems?: Array<object>, tasks?: Array<object>, activeJob?: object|null, now?: number}} [opts]
  */
-export function buildRadarSummary({ live = null, usage = null, reviewItems = [], now = Date.now() } = {}) {
-  const blips = projectRadarBlips(live, { now, maxBlips: 6 })
+export function buildRadarSummary({
+  live = null,
+  usage = null,
+  reviewItems = [],
+  tasks = [],
+  activeJob = null,
+  now = Date.now(),
+} = {}) {
+  const blips = projectRadarBlips(live, { tasks, activeJob, now, maxBlips: 6 })
   const feed = blips.slice(0, 4).map((b) => ({
     id: b.id,
     name: b.name,
     ring: b.ring,
+    ringLabelKey: b.ringLabelKey,
+    taskTitle: b.taskTitle,
     ageSec: b.ageSec,
   }))
-  const activeWorkers = (Number(live?.counts?.turns) || 0) + (Number(live?.counts?.tasks) || 0)
+  const activeWorkers =
+    Number(live?.telemetry?.activeWorkers ?? (Number(live?.counts?.turns) || 0) + (Number(live?.counts?.tasks) || 0)) || 0
   const toolCount = Number(live?.telemetry?.toolCount ?? blips.length) || blips.length
   const waitingCount = Array.isArray(reviewItems)
     ? reviewItems.filter((r) => String(r?.status || '').toLowerCase() === 'blocked').length
     : 0
+
+  const turnTokenSum = Array.isArray(live?.turns)
+    ? live.turns.reduce((acc, t) => acc + (Number(t?.tokens?.total ?? 0) || 0), 0)
+    : 0
+  const runTokens = Number(live?.telemetry?.runTokens ?? turnTokenSum) || 0
+  const usageTotals = usage?.totals || {}
+  const usageSum = (Number(usageTotals.input ?? 0) || 0) + (Number(usageTotals.output ?? 0) || 0)
   const tokenTotal =
-    Number(usage?.totals?.totalTokens ?? usage?.totals?.tokens ?? usage?.totals?.inputTokens ?? 0) || 0
+    Number(usageTotals.totalTokens ?? usageTotals.tokens ?? (usageSum > 0 ? usageSum : usageTotals.inputTokens) ?? 0) || 0
+  const tokenMode = runTokens > 0 ? 'run' : '24h'
+  const effectiveTokens = runTokens > 0 ? runTokens : tokenTotal
   const phaseLabel = String(live?.telemetry?.phaseLabel || (activeWorkers > 0 ? 'running' : 'idle'))
+  const cacheHitPct = Number(live?.telemetry?.cacheHitPct ?? 0) || 0
 
   return {
     blips,
@@ -125,8 +171,12 @@ export function buildRadarSummary({ live = null, usage = null, reviewItems = [],
     activeWorkers,
     toolCount,
     waitingCount,
+    runTokens,
+    runTokenLabel: formatCompactTokens(runTokens),
     tokenTotal,
-    tokenLabel: formatCompactTokens(tokenTotal),
+    tokenMode,
+    tokenLabel: formatCompactTokens(effectiveTokens),
+    cacheHitPct,
     phaseLabel,
   }
 }

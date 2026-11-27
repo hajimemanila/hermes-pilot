@@ -361,16 +361,27 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
                 lastTool: demoRecentTools[0],
                 recentTools: demoRecentTools,
                 toolCount: 12,
+                tokens: { input: 14200, output: 4200, total: 18400, cacheRead: 11000, costUsd: 0.04 },
               },
             ]
           : []
       const telemetry = {
         recentTools: turns[0]
-          ? demoRecentTools.map((rt) => ({ ...rt, sessionId: DEMO_SESSION, profile: 'default' }))
+          ? demoRecentTools.map((rt) => ({
+              ...rt,
+              sessionId: DEMO_SESSION,
+              profile: 'default',
+              taskTitle: tasks[0]?.title || architect[0]?.seed || 'Autopilot Demo Build',
+            }))
           : [],
         toolCount: turns[0] ? 12 : 0,
+        runTokens: turns[0] ? 18400 : 0,
+        runCacheRead: turns[0] ? 11000 : 0,
+        runCostUsd: turns[0] ? 0.04 : 0,
+        cacheHitPct: turns[0] ? 37 : 0,
         activeTurns: turns.length,
         activeTasks: tasks.length,
+        activeWorkers: turns.length + tasks.length,
         phaseLabel: architect[0]?.phase || (tasks.length || turns.length ? 'running' : 'idle'),
       }
       return {

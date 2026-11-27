@@ -14,6 +14,7 @@ import {
   formatCompactTokens,
   projectRadarBlips,
 } from '../src/lib/liveRadar.js'
+import { computeStudioProgress } from '../src/lib/autopilot/studio.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
 
@@ -90,6 +91,48 @@ test('buildRadarSummary aggregates live, usage, and reviewWaiting snapshots', ()
   assert.equal(summary.phaseLabel, 'running')
   assert.equal(summary.blips.length, 5)
   assert.equal(summary.feed.length, 4)
+})
+
+test('AP3-2: buildRadarSummary aggregates usage.totals.input+output and prioritizes runTokens', () => {
+  const fromUsage = buildRadarSummary({
+    usage: { totals: { input: 12000, output: 3000, cacheRead: 5000 } },
+  })
+  assert.equal(fromUsage.tokenMode, '24h')
+  assert.equal(fromUsage.tokenTotal, 15000)
+  assert.equal(fromUsage.tokenLabel, '15.0k')
+
+  const fromRun = buildRadarSummary({
+    live: {
+      counts: { turns: 1, tasks: 1 },
+      telemetry: { runTokens: 18400, cacheHitPct: 37, recentTools: [{ name: 'edit_file', at: 1000 }] },
+    },
+    usage: { totals: { input: 12000, output: 3000 } },
+    now: 5000,
+  })
+  assert.equal(fromRun.tokenMode, 'run')
+  assert.equal(fromRun.runTokens, 18400)
+  assert.equal(fromRun.tokenLabel, '18.4k')
+  assert.equal(fromRun.cacheHitPct, 37)
+})
+
+test('AP3-2: computeStudioProgress progresses monotonically from Design to Finish', () => {
+  const p0 = computeStudioProgress({ phase: 'spawning', totalCount: 0 })
+  const p1 = computeStudioProgress({ phase: 'round1_sheet', totalCount: 0 })
+  const p2 = computeStudioProgress({ phase: 'round2_spec', totalCount: 0 })
+  const p3 = computeStudioProgress({ phase: 'launched', doneCount: 0, runningCount: 1, totalCount: 4 })
+  const p4 = computeStudioProgress({ phase: 'launched', doneCount: 2, runningCount: 1, totalCount: 4 })
+  const p5 = computeStudioProgress({ phase: 'launched', doneCount: 3, runningCount: 1, totalCount: 4 })
+  const p6 = computeStudioProgress({ phase: 'launched', doneCount: 4, runningCount: 0, totalCount: 4 })
+
+  const seq = [p0.progressPct, p1.progressPct, p2.progressPct, p3.progressPct, p4.progressPct, p5.progressPct, p6.progressPct]
+  for (let i = 1; i < seq.length; i += 1) {
+    assert.ok(seq[i] >= seq[i - 1], `Progress dropped from ${seq[i - 1]} to ${seq[i]} at index ${i}`)
+  }
+  assert.equal(p0.stepIndex, 0)
+  assert.equal(p3.stepIndex, 1)
+  assert.equal(p5.stepIndex, 2)
+  assert.equal(p6.stepIndex, 3)
+  assert.equal(p6.progressPct, 92)
 })
 
 test('LiveRadarCard & BeforeAfterTimelapse obey sync-owner and zero-chart-lib guards', () => {

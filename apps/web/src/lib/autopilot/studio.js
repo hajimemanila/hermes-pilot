@@ -100,6 +100,43 @@ export function extractDeliverable({ report = null, tasks = [], reviewItems = []
 }
 
 const OPEN_STATUSES = new Set(['running', 'ready', 'blocked', 'review', 'in_progress', 'claimed'])
+const RUNNING_STATUSES = new Set(['running', 'in_progress', 'claimed'])
+
+/**
+ * Phase-weighted monotonic progress (0..100) that never drops when SPEC batches are filed
+ * or when a test failure loops back to an edit tool.
+ * @param {{phase?: string, doneCount?: number, runningCount?: number, totalCount?: number}} [opts]
+ * @returns {{stepIndex: number, progressPct: number}}
+ */
+export function computeStudioProgress({
+  phase = '',
+  doneCount = 0,
+  runningCount = 0,
+  totalCount = 0,
+} = {}) {
+  const done = Math.max(0, Number(doneCount) || 0)
+  const total = Math.max(0, Number(totalCount) || 0)
+  const running = Math.max(0, Number(runningCount) || 0)
+
+  if (total === 0) {
+    let progressPct = 12
+    if (phase === 'spawning') progressPct = 8
+    else if (phase === 'round1_sheet') progressPct = 14
+    else if (phase === 'awaiting_review') progressPct = 18
+    else if (phase === 'round2_spec') progressPct = 20
+    else if (phase === 'spec_ready' || phase === 'launched') progressPct = 20
+    return { stepIndex: 0, progressPct }
+  }
+
+  if (done >= total || phase === 'spec_ready') {
+    return { stepIndex: 3, progressPct: 92 }
+  }
+
+  const partial = Math.min(running, Math.max(0, total - done)) * 0.35
+  const progressPct = Math.min(85, Math.max(20, 20 + Math.round(((done + partial) / total) * 65)))
+  const stepIndex = progressPct >= 60 || done >= Math.ceil(total / 2) ? 2 : 1
+  return { stepIndex, progressPct }
+}
 
 /**
  * 現在のボード／ジョブ状態から Autopilot の 4 幕ステージを判定する純関数。
@@ -123,33 +160,38 @@ export function projectStudioStage({
     jobList.find((j) => ['running', 'awaiting_spec', 'awaiting_review', 'spec_ready'].includes(String(j.status))) || null
   const taskList = Array.isArray(tasks) ? tasks : []
   const openTasks = taskList.filter((t) => OPEN_STATUSES.has(String(t?.status || '').toLowerCase()))
-  const runningTask = openTasks.find((t) => ['running', 'in_progress', 'claimed'].includes(String(t?.status || '').toLowerCase())) || openTasks[0] || null
+  const activeTasks = openTasks.filter((t) => RUNNING_STATUSES.has(String(t?.status || '').toLowerCase()))
+  const runningTask = activeTasks[0] || openTasks[0] || null
   const turns = Array.isArray(live?.turns) ? live.turns : []
   const liveTurn = turns[0] || null
 
   if (activeJob || openTasks.length > 0 || liveTurn) {
     const doneCount = taskList.filter((t) => String(t?.status || '').toLowerCase() === 'done').length
     const totalCount = taskList.length
+    const runningCount = Math.max(activeTasks.length, liveTurn ? 1 : 0)
     const phase = String(activeJob?.phase || '')
     const rawTool = liveTurn?.lastTool?.name || liveTurn?.lastActivity || ''
     const activityKey = translateActivity(rawTool, runningTask?.title || activeJob?.seed || '')
-    let stepIndex = 1
-    if (['spawning', 'round1_sheet', 'awaiting_review'].includes(phase) || totalCount === 0) {
-      stepIndex = 0
-    } else if (activityKey === 'autopilot.live.actTest' || activityKey === 'autopilot.live.actPreview') {
-      stepIndex = 2
-    } else if (phase === 'spec_ready' || (totalCount > 0 && doneCount >= totalCount)) {
-      stepIndex = 3
-    }
+    const { stepIndex, progressPct } = computeStudioProgress({
+      phase,
+      doneCount,
+      runningCount,
+      totalCount,
+    })
+    const runKey = String(activeJob?.id || activeTaskSpec(runningTask) || runningTask?.id || liveTurn?.sessionId || 'live')
     const compareItem = (Array.isArray(reviewItems) ? reviewItems : []).find((r) => r?.review?.image) || null
     return {
       act: 'live',
       activeJob,
       activeTask: runningTask,
+      activeTasks,
       liveTurn,
       live,
       stepIndex,
+      progressPct,
+      runKey,
       doneCount,
+      runningCount,
       totalCount,
       activityKey,
       toolLabel: rawTool || runningTask?.title || activeJob?.seed || '',
@@ -165,4 +207,8 @@ export function projectStudioStage({
   }
 
   return { act: 'start' }
+}
+
+function activeTaskSpec(task) {
+  return task?.spec || null
 }
