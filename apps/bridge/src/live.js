@@ -18,6 +18,9 @@ export function platformOf(holder) {
   return m ? m[1] : null
 }
 
+/** `recentTools` 配列に積む直近ツール履歴の上限。 */
+export const RECENT_TOOLS_LIMIT = 6
+
 /** リース期限の猶予（秒）。更新が数秒遅れても「終わった」と誤判定しない。 */
 const LEASE_GRACE_SEC = 60
 
@@ -117,19 +120,39 @@ export function createLive(cfg, kanban, deps = {}) {
             ORDER BY l.acquired_at DESC`,
         )
         .all(at / 1000 - LEASE_GRACE_SEC)
-      const lastToolStmt = db.prepare(
+      const recentToolsStmt = db.prepare(
         `SELECT tool_name, timestamp FROM messages
           WHERE session_id = ? AND tool_name IS NOT NULL
-          ORDER BY id DESC LIMIT 1`,
+          ORDER BY id DESC LIMIT 6`,
+      )
+      const toolCountStmt = db.prepare(
+        `SELECT COUNT(*) AS n FROM messages
+          WHERE session_id = ? AND tool_name IS NOT NULL`,
       )
       return rows.map((r) => {
-        let lastTool = null
+        let recentTools = []
+        let toolCount = 0
         try {
-          const t = lastToolStmt.get(r.conversation_id)
-          if (t?.tool_name) lastTool = { name: t.tool_name, at: Math.round(Number(t.timestamp) * 1000) }
-        } catch {
-          /* noop */
+          const list = recentToolsStmt.all(r.conversation_id)
+          recentTools = list
+            .filter((t) => Boolean(t?.tool_name))
+            .slice(0, RECENT_TOOLS_LIMIT)
+            .map((t) => ({
+              name: String(t.tool_name),
+              at: Math.round(Number(t.timestamp) * 1000),
+            }))
+        } catch (err) {
+          void err
+          recentTools = []
         }
+        try {
+          const cnt = toolCountStmt.get(r.conversation_id)
+          toolCount = Number(cnt?.n ?? recentTools.length) || recentTools.length
+        } catch (err) {
+          void err
+          toolCount = recentTools.length
+        }
+        const lastTool = recentTools[0] ?? null
         const acquired = Math.round(Number(r.acquired_at ?? 0) * 1000)
         const expires = Math.round(Number(r.expires_at ?? 0) * 1000)
         return {
@@ -143,6 +166,8 @@ export function createLive(cfg, kanban, deps = {}) {
           expiresInSec: expires ? Math.round((expires - at) / 1000) : null,
           lastActivity: r.last_activity_description ?? null,
           lastTool,
+          recentTools,
+          toolCount,
         }
       })
     } finally {
@@ -154,6 +179,39 @@ export function createLive(cfg, kanban, deps = {}) {
     }
   }
 
+  function buildTelemetry(turns, tasks, jobs = []) {
+    const recentTools = []
+    let toolCount = 0
+    for (const turn of turns) {
+      toolCount += Number(turn?.toolCount ?? turn?.recentTools?.length ?? (turn?.lastTool ? 1 : 0)) || 0
+      const list = Array.isArray(turn?.recentTools) ? turn.recentTools : turn?.lastTool ? [turn.lastTool] : []
+      for (const tool of list) {
+        if (!tool?.name) continue
+        recentTools.push({
+          name: String(tool.name),
+          at: Number(tool.at) || 0,
+          sessionId: turn.sessionId ?? null,
+          profile: turn.profile || 'default',
+        })
+      }
+    }
+    recentTools.sort((a, b) => b.at - a.at)
+    const activeTurns = turns.length
+    const activeTasks = tasks.length
+    const activeJob = Array.isArray(jobs)
+      ? jobs.find((j) => ARCHITECT_RUNNING_STATUSES.includes(String(j?.status ?? ''))) || jobs[0] || null
+      : null
+    const phaseLabel =
+      activeJob?.phase || (activeTurns > 0 || activeTasks > 0 ? 'running' : 'idle')
+    return {
+      recentTools: recentTools.slice(0, RECENT_TOOLS_LIMIT),
+      toolCount,
+      activeTurns,
+      activeTasks,
+      phaseLabel,
+    }
+  }
+
   /**
    * いま動いているもの。
    * @param {{dbs?: Array<{profile: string, path: string}>}} [opts] 条件
@@ -161,7 +219,15 @@ export function createLive(cfg, kanban, deps = {}) {
    */
   function baseSnapshot(opts = {}) {
     const at = Date.now()
-    const out = { ok: true, at, turns: [], tasks: [], architect: [], counts: { turns: 0, tasks: 0, architect: 0 } }
+    const out = {
+      ok: true,
+      at,
+      turns: [],
+      tasks: [],
+      architect: [],
+      counts: { turns: 0, tasks: 0, architect: 0 },
+      telemetry: { recentTools: [], toolCount: 0, activeTurns: 0, activeTasks: 0, phaseLabel: 'idle' },
+    }
 
     // 実行中タスク（ボード横断）
     try {
@@ -214,6 +280,7 @@ export function createLive(cfg, kanban, deps = {}) {
     turns.sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))
     out.turns = turns
     out.counts.turns = turns.length
+    out.telemetry = buildTelemetry(out.turns, out.tasks, out.architect)
     return out
   }
 
@@ -243,6 +310,7 @@ export function createLive(cfg, kanban, deps = {}) {
       ...(out.counts ?? {}),
       architect: jobs.filter((j) => ARCHITECT_RUNNING_STATUSES.includes(j.status)).length,
     }
+    out.telemetry = buildTelemetry(out.turns ?? [], out.tasks ?? [], out.architect)
     return out
   }
 

@@ -4,7 +4,7 @@
  * `server.js` の `handleApi` から**そのまま**切り出した（ルート条件・応答形・404 の位置は変えない）。
  * 依存（cfg・各クライアント・送信ヘルパ）は `ctx` で受け取る。
  */
-import { injectReviewBridge, reviewSheetHeaders, reviewViewHeaders, reviewViewHtml } from '../review.js'
+import { injectReviewBridge, reviewMockHeaders, reviewSheetHeaders, reviewViewHeaders, reviewViewHtml } from '../review.js'
 import { detectProjectPreview, readPreviewFile } from '../preview.js'
 
 export function createBoardsApi(ctx = {}) {
@@ -381,6 +381,23 @@ export function createBoardsApi(ctx = {}) {
       // 回答は postMessage で親（PWA の iframe / :id/view ラッパー）へ渡し、親が POST する。
       res.writeHead(200, reviewSheetHeaders())
       return res.end(injectReviewBridge(r.html, b, lang))
+    }
+    if (c === 'mock' && req.method === 'GET') {
+      const r = review.mockHtml(b, {
+        variant: url.searchParams.get('variant') || '',
+        file: url.searchParams.get('file') || '',
+      })
+      if (!r.ok) {
+        const status =
+          r.code === 'BAD_MOCK_PATH'
+            ? 403
+            : r.code === 'NOT_FOUND' || r.code === 'MOCK_MISSING' || r.code === 'NO_MOCK'
+              ? 404
+              : 400
+        return sendFailure(res, status, r)
+      }
+      res.writeHead(200, reviewMockHeaders())
+      return res.end(r.html)
     }
     // /api/review/:id/view … 単体タブ用のラッパー（D57）。
     // シートを sandbox iframe で囲み、postMessage を受けて same-origin で回答を POST する。

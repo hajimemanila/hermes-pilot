@@ -218,6 +218,25 @@ export function reviewSheetHeaders() {
 }
 
 /**
+ * `/api/review/:id/mock`（Autopilot 触れるモック）用の厳格 CSP（AP2-3）。
+ * `sandbox allow-scripts allow-forms` のみを許可し、`allow-same-origin` は絶対に付けない。
+ */
+export const REVIEW_MOCK_CSP =
+  "sandbox allow-scripts allow-forms; default-src 'none'; style-src 'unsafe-inline'; " +
+  "img-src data: blob:; script-src 'unsafe-inline'; font-src data:"
+
+/** `/api/review/:id/mock` のレスポンスヘッダ（不透明オリジン＋no-referrer）。 */
+export function reviewMockHeaders() {
+  return {
+    'content-type': 'text/html; charset=utf-8',
+    'content-security-policy': REVIEW_MOCK_CSP,
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+    'referrer-policy': 'no-referrer',
+  }
+}
+
+/**
  * `/api/review/:id/view` ラッパー自身の CSP。
  *
  * ラッパーはブリッジが生成する最小 HTML なので same-origin を許可する必要がある

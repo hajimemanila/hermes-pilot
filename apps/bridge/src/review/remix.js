@@ -4,6 +4,7 @@
  */
 import path from 'node:path'
 import { writeJsonAtomic } from '../lib/atomic.js'
+import { getStylePreset } from './autopilot-contract.js'
 import { parseReviewLine, sheetPaths } from './parse.js'
 import { opsText } from './text.js'
 
@@ -46,6 +47,7 @@ export function createReviewRemix(ctx) {
     const questionId = String(payload?.questionId ?? '').trim().slice(0, 64)
     const reason = String(payload?.reason ?? '').trim().slice(0, 80)
     const hint = String(payload?.hint ?? '').trim().slice(0, 400)
+    const stylePreset = getStylePreset(payload?.stylePreset)?.id ?? null
     const by = String(payload?.by ?? 'mobile').slice(0, 40)
 
     const { dataRel } = sheetPaths(ak.sheet)
@@ -61,13 +63,15 @@ export function createReviewRemix(ctx) {
       task_id: id,
       questionId: questionId || null,
       reason: reason || 'alternative',
+      stylePreset,
       hint,
       requested_by: by,
       requested_at: new Date().toISOString(),
     }
     writeJsonAtomic(remixFile, record)
 
-    const summary = ops.remixSummary(questionId, reason, hint, remixRel)
+    const summaryHint = hint || (stylePreset ? `style:${stylePreset}` : '')
+    const summary = ops.remixSummary(questionId, reason, summaryHint, remixRel)
     await runKanban(['comment', id, summary, '--author', by])
     const moved = await transitions.apply('answer.fresh', { id, reason: ops.remixRequested })
     const status = moved.code === 0 ? moved.status || b.status : b.status

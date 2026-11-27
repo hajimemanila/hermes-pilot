@@ -107,6 +107,7 @@ export const API_ROUTES = [
   { method: 'GET', pattern: '/api/review/:id/image', demo: 'bridge-only', note: 'PNG バイト列（img 直参照）' },
   { method: 'GET', pattern: '/api/review/:id/thumb/*', demo: 'bridge-only', note: 'サムネイル画像（img 直参照）' },
   { method: 'GET', pattern: '/api/review/:id/sheet', demo: 'bridge-only', note: 'シート HTML（iframe 直参照）' },
+  { method: 'GET', pattern: '/api/review/:id/mock', demo: 'bridge-only', note: 'Autopilot 触れるモック HTML（厳格 sandbox CSP）' },
   { method: 'GET', pattern: '/api/review/:id/view', demo: 'bridge-only', note: '単体タブ用ラッパー HTML' },
   { method: 'GET', pattern: '/api/review/:id/data', demo: 'mocked', note: 'sheet.json（ネイティブフォーム用）' },
   { method: 'GET', pattern: '/api/review/:id/annotation', demo: 'mocked' },

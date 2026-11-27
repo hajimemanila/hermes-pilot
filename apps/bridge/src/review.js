@@ -64,7 +64,7 @@ import {
  * 分割したモジュールの再エクスポート。`./review.js` からの import 契約は 1 つも変えない。
  */
 export { answerHash, answeredAtForReview, compareCandidates, isSafeRel, isSafeVisualMockRel, parseReplyText, parseReviewLine, sanitizeVisualMock, sheetPaths, toReplyText } from './review/parse.js'
-export { HTML_TEXT, REVIEW_SHEET_CSP, REVIEW_VIEW_CSP, escapeHtmlText, htmlText, injectReviewBridge, renderSheetHtmlFromData, reviewSheetHeaders, reviewViewHeaders, reviewViewHtml } from './review/sheet-html.js'
+export { HTML_TEXT, REVIEW_SHEET_CSP, REVIEW_MOCK_CSP, REVIEW_VIEW_CSP, escapeHtmlText, htmlText, injectReviewBridge, renderSheetHtmlFromData, reviewMockHeaders, reviewSheetHeaders, reviewViewHeaders, reviewViewHtml } from './review/sheet-html.js'
 export { opsText, reopenTextOf, replyTextOf } from './review/text.js'
 
 export function createReview(cfg, opts = {}) {
@@ -682,7 +682,7 @@ export function createReview(cfg, opts = {}) {
     listBoardDbs,
   }
   const media = createReviewMedia(surfaceCtx)
-  const { thumb, image, annotation, saveAnnotation, targets, resolveTarget, repoForTarget, imageRepos, labelTarget, library } =
+  const { thumb, mockHtml, image, annotation, saveAnnotation, targets, resolveTarget, repoForTarget, imageRepos, labelTarget, library } =
     media
   const feeds = createReviewFeeds({
     ...surfaceCtx,
@@ -707,7 +707,7 @@ export function createReview(cfg, opts = {}) {
     reviewRoot,
     chatFor,
     list,
-    sheetHtml,
+    sheetHtml, mockHtml,
     sheetData,
     answer,
     remix,

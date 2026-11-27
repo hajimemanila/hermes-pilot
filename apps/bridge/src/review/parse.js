@@ -38,11 +38,11 @@ export function isSafeRel(rel) {
   return /^[A-Za-z0-9._/-]+$/.test(s)
 }
 
-/** `visualMock.shot` / `visualMock.html` 用: `thumbs/`・`shots/`・`sheets/` 配下のみ許可する。 */
+/** `visualMock.shot` / `visualMock.html` 用: `thumbs/`・`shots/`・`sheets/`・`.hermes-pilot/sandbox/` 配下のみ許可する。 */
 export function isSafeVisualMockRel(rel) {
   const s = String(rel || '')
   if (!isSafeRel(s)) return false
-  return /^(?:thumbs|shots|sheets)\//.test(s)
+  return /^(?:thumbs|shots|sheets|\.hermes-pilot\/sandbox)\//.test(s)
 }
 
 /** `visualMock` オブジェクトの安全化（不正パスを除去し、非破壊に返す）。 */

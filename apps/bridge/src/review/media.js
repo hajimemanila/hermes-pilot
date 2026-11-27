@@ -30,6 +30,7 @@ export function createReviewMedia(ctx = {}) {
     compareRelOf,
     rememberTaskChat,
     reviewAssignee,
+    sheetData,
     queryReviewBodies,
     listBoardDbs,
     runKanban,
@@ -46,6 +47,59 @@ export function createReviewMedia(ctx = {}) {
     const ext = path.extname(abs).toLowerCase()
     const type = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
     return { ok: true, data: fs.readFileSync(abs), type }
+  }
+
+  /** Autopilot「触れるモック」用 HTML をパストラバーサル検証・サイズ制限付きで読み出す。 */
+  function mockHtml(id, opts = {}) {
+    const b = bodyOf(id)
+    if (!b) return { ok: false, code: 'NOT_FOUND' }
+    const extras = b.workdir ? [b.workdir] : []
+    let rel = ''
+    const requestedFile = opts?.file !== undefined ? String(opts.file).trim() : ''
+    if (requestedFile) {
+      if (!isSafeVisualMockRel(requestedFile) || !/\.html?$/i.test(requestedFile)) {
+        return { ok: false, code: 'BAD_MOCK_PATH' }
+      }
+      rel = requestedFile
+    } else {
+      const sd = typeof sheetData === 'function' ? sheetData(id) : null
+      const data = sd?.data ?? null
+      const want = String(opts?.variant ?? '').trim().toLowerCase()
+      const qs = Array.isArray(data?.questions) ? data.questions : []
+      let found = ''
+      for (const q of qs) {
+        if (!q || typeof q !== 'object') continue
+        const qid = String(q.id ?? '').toLowerCase()
+        const options = Array.isArray(q.options) ? q.options : []
+        for (const o of options) {
+          const oid = String(o?.id ?? '').toLowerCase()
+          const htmlRel = o?.visualMock?.html
+          if (!htmlRel) continue
+          if (!want || want === `${qid}:${oid}` || want === oid) {
+            found = String(htmlRel)
+            break
+          }
+        }
+        if (found) break
+        if (q.visualMock?.html && (!want || want === qid)) {
+          found = String(q.visualMock.html)
+          break
+        }
+      }
+      if (!found && !want && data?.visualMock?.html) {
+        found = String(data.visualMock.html)
+      }
+      if (!found) return { ok: false, code: 'NO_MOCK' }
+      if (!isSafeVisualMockRel(found) || !/\.html?$/i.test(found)) {
+        return { ok: false, code: 'BAD_MOCK_PATH' }
+      }
+      rel = found
+    }
+
+    const abs = resolveInside(rel, extras)
+    if (!abs) return { ok: false, code: 'MOCK_MISSING' }
+    if (fs.statSync(abs).size > 2 * 1024 * 1024) return { ok: false, code: 'TOO_LARGE' }
+    return { ok: true, html: fs.readFileSync(abs, 'utf8'), rel, path: abs }
   }
 
 
@@ -355,5 +409,5 @@ export function createReviewMedia(ctx = {}) {
    * @returns {Array<{at: number, text: string}>} 古い順
    */
 
-  return { thumb, image, annotation, saveAnnotation, targets, resolveTarget, repoForTarget, imageRepos, labelTarget, library }
+  return { thumb, mockHtml, image, annotation, saveAnnotation, targets, resolveTarget, repoForTarget, imageRepos, labelTarget, library }
 }
