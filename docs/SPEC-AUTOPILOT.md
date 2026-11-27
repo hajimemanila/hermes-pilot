@@ -102,8 +102,8 @@
 - **目的**: `spec-architect` と `quick-review` に、3 枚デッキ（`deck: true`, `visualMock`）および「モックへの赤入れ座標→SPEC `Objective` / `Verify` 注入→実装後 `Visual-Gate` 重点検証」のプロトコルを追加する。
 - **変更・新規ファイル**:
   - Changed: `skills/spec-architect/SKILL.md` / `skills/quick-review/SKILL.md`
-  - Changed: `apps/bridge/test/skillsGeneric.test.js` / `apps/bridge/test/architectJob.test.js`（汎用性チェック維持＋デッキ／赤入れ注入契約のテスト追加）
-- **Verify**: `node --test apps/bridge/test/skillsGeneric.test.js apps/bridge/test/architectJob.test.js && npm test && npm run check:coherence`
+  - Changed: `apps/bridge/test/skillsGeneric.test.js` / `apps/bridge/test/architectJobView.test.js`（汎用性チェック維持＋デッキ／赤入れ注入契約のテスト追加）
+- **Verify**: `node --test apps/bridge/test/skillsGeneric.test.js apps/bridge/test/architectJobView.test.js && npm test && npm run check:coherence`
 
 ### Batch AP-3: DECK-UI — `AutopilotDeck.jsx` / `autopilot.css` スワイプ基盤と誤スワイプ防止
 

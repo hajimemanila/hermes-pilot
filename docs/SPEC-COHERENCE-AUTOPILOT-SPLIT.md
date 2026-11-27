@@ -26,7 +26,7 @@
 | `apps/web/src/lib/autopilotDeck.js` | **492 行 / 27 export / import 元 6 ファイル** | 上限 800。ラチェット未登録 |
 | `apps/web/src/features/autopilot/AutopilotDeck.jsx` | **489 行 / export 1**（`AutopilotDeck`） | `AutopilotView.jsx` は 360 行で対象外 |
 | `apps/web/src/styles/autopilot.css` | **657 行 / `var(--)` 142 / 生の色 4 種 6 行** | 上限 800。**`styles.css` は 31 行でラチェット登録済み＝1 行も増やせない** |
-| `apps/bridge/test/architectJob.test.js` | **811 行 / test 28 本 / describe 0**（→ `file-bloat` 対象） | 上限 800。ラチェット未登録 |
+| 旧 `architectJob` テスト（分割前の 1 本） | **811 行 / test 28 本 / describe 0**（→ `file-bloat` 対象） | 上限 800。ラチェット未登録 |
 | 死んだコード | **未参照 export 0 件**（autopilotDeck 27・`features/autopilot/*.jsx` 12・`bridge/src/architect/*.js` 24 を全数 `rg`）／**未参照 `.ap-*` クラス 0 件**（133 クラス中） | 削る対象が存在しない |
 
 import 元 6 ファイル（**この 6 本を 1 行も変えないことが公開契約**）:
@@ -46,7 +46,7 @@ import 元 6 ファイル（**この 6 本を 1 行も変えないことが公�
 | :--- | :--- | :--- | :--- |
 | **Q1** | `autopilotDeck.js` の分割方式 | **純関数を 3 分割＋既存パスは再エクスポート専用バレル** | import 元 6 ファイルとテスト 20 シンボルを無変更にでき、`architect.js` と同じ型。衝突面が最小 |
 | **Q2** | 見た目を動かさない保証 | **規則・JSX の移動のみ。画面確認は最終バッチで 1 回だけ**（`build:demo` ＋ `audit:responsive` ＋ 390×844 スクショ 1 枚 ＋ `annotation`） | 値も順序も変えないので、途中バッチは `diff` と `npm run build` で機械的に担保できる。生の色 4 種の正規化（Q2-C）は**見た目が動く**のでこの SPEC では**やらない** |
-| **Q3** | `architectJob.test.js` の分割粒度 | **3 分割（job-view / task / batch）＋既存ヘルパー再利用**（`test/helpers/architectFixtures.js` は既にある） | ファイル先頭コメントが既に対象 3 モジュールを名指ししている。test 28 本を維持したまま `file-bloat` が消える。新規ヘルパーは作らない |
+| **Q3** | 旧 `architectJob` テスト（811 行 / 28 本）の分割粒度 | **3 分割（job-view / task / batch）＋既存ヘルパー再利用**（`test/helpers/architectFixtures.js` は既にある） | ファイル先頭コメントが既に対象 3 モジュールを名指ししている。test 28 本を維持したまま `file-bloat` が消える。新規ヘルパーは作らない |
 | **Q4** | バッチ接頭辞 | **`SEMM-6` から継続**（`### Batch SEMM-<n>: <Title>`） | 委譲契約の見出し規約に一致。`duplicate-batch-id` は ID 全体比較なので `SEMM-6` は衝突しない（`SEMM-1`〜`5` は使用中） |
 
 ## 3. 詳細設計
@@ -104,9 +104,9 @@ Targets: `apps/web/src/styles/autopilot.css`（657 行）/ `apps/web/src/styles.
 - **入れ子 manifest は既存テストの範囲内**: `apps/web/test/stylesManifest.test.js` は「`styles.css` が manifest であること」「直接 import した先が実在し ≤800 行」「`:root` は `tokens.css` だけ」を見る。`readStyles()`（`test/helpers/styles.js`）は `@import` を再帰展開するので、入れ子 manifest でも全規則は 1 本に展開される。`autopilot.css` は 3 行 manifest になり `:root` を持たない。
 - 宣言・セレクタ・空白・コメントは 1 文字も変えない（生の色 4 種 6 行も**この SPEC では触らない**）。
 
-### 3.4 `architectJob.test.js`（811 行 / 28 本）→ 3 本
+### 3.4 旧 `architectJob` テスト（811 行 / 28 本）→ 3 本
 
-Targets: `apps/bridge/test/architectJob.test.js`
+Targets: `apps/bridge/test/architectJobView.test.js` / `apps/bridge/test/architectTask.test.js` / `apps/bridge/test/architectBatch.test.js`（分割元の 1 本は削除）
 
 振り分け（先頭コメントが名指ししている 3 モジュールに合わせる。**テスト名・アサーション・アサート順は 1 文字も変えない**）:
 
@@ -118,7 +118,7 @@ Targets: `apps/bridge/test/architectJob.test.js`
 
 - 既存の `apps/bridge/test/helpers/architectFixtures.js`（`SPEC_TEXT` / `makeKanbanBoard` / `makeRepo` / `seedInput` / `settle` / `writeSpec`）をそのまま使う。**新しいヘルパーは作らない**。
 - 各ファイルに `const here = path.dirname(fileURLToPath(import.meta.url))` と `SRC` の 2 行を複製する（`here` は `helpers/` ではなく各テストの位置を指す必要があるため、`SRC` の解決は `..`/`src` のまま）。
-- 28 本の合計を保つ（1 本も落とさない・増やさない）。`apps/bridge/test/architectJob.test.js` は削除する（`npm test` の glob `apps/bridge/test/*.test.js` が新 3 本を拾う）。
+- 28 本の合計を保つ（1 本も落とさない・増やさない）。分割元の旧 1 本は削除する（`npm test` の glob `apps/bridge/test/*.test.js` が新 3 本を拾う）。
 
 ### 3.5 死んだコードの扱い（実測 0 件なので削らない）
 
@@ -179,14 +179,14 @@ Targets: `apps/bridge/test/architectJob.test.js`
   - `node --test apps/web/test/stylesManifest.test.js` → pass / fail 0（直接 import の上限、`:root` の単一性、展開順）
   - `npm run check:coherence` → hard 0（`baseline-ratchet` が `styles.css` の grow を出さない）
 
-### Batch SEMM-9: ARCH-TEST-SPLIT — `architectJob.test.js` 811 行を 3 本へ割る
+### Batch SEMM-9: ARCH-TEST-SPLIT — 811 行の旧 `architectJob` テストを 3 本へ割る
 
 - **Execution Mode**: `[Mode: Zero-Stop]`
 - **Recommended Role**: `role:builder`
 - **目的**: 上限 800 を超えている唯一のテストを、対象モジュール（`job-view` / `task` / `batch`）の 3 本に割る。test 28 本を 1 本も落とさず、`file-bloat` を消す。
 - **変更・新規ファイル**:
   - 新規: `apps/bridge/test/architectJobView.test.js`, `apps/bridge/test/architectTask.test.js`, `apps/bridge/test/architectBatch.test.js`
-  - 削除: `apps/bridge/test/architectJob.test.js`（中身は 3 本へ移設）
+  - 削除: 分割元の旧 1 本（中身は 3 本へ移設）
   - **不変更**: `apps/bridge/test/helpers/architectFixtures.js`（既存を再利用。新規ヘルパーを作らない）
 - **実装要点**: §3.4 の振り分け表。テスト名・アサーション・順序を 1 文字も変えない（`assert` の引数も同じ）。各ファイルに `here` / `SRC` の 2 行を複製する。
 - **受入条件（Verify）**:
@@ -194,7 +194,7 @@ Targets: `apps/bridge/test/architectJob.test.js`
   - `npm test` exit 0（総件数は変化なし。新 3 本が glob で拾われる）
   - `wc -l` が 3 本とも **800 行以下**（`architectJobView` は約 540）
   - `npm run check:coherence --json` の `hardFails` に `file-bloat` が無い
-  - `git grep -n "architectJob.test.js"` が 0 件（古いパスを参照する設定・文書が残っていない）
+  - 旧パス（`architectJob` + `.test.js`）への参照が `git grep` で 0 件（古いパスを参照する設定・文書が残っていない）
 
 ### Batch SEMM-10: INTEGRITY + VISUAL GATE — ラチェット締め・0 hard / 0 soft・390px 実画面 1 枚
 

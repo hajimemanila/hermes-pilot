@@ -1,8 +1,10 @@
 /**
- * Architect の「ジョブ表示 / Review 検知 / 破棄・停止判定」まわりのテスト。
- * `architect.test.js` の後半を分割したもの（対象は `apps/bridge/src/architect/job-view.js`・
- * `task.js`・`batch.js`）。
+ * Architect のジョブ表示（`jobsFor` / `publicJob` / `computePhase` / `isJobStalled` /
+ * `findRecentSheet` / `findJobReviewTask` / `findJobSpec` / `dismiss` / ランナー設定）と
+ * Review 検知のテスト。811 行だった 1 本を対象モジュール別に 3 分割したうちの 1 本。
+ * 対象: `apps/bridge/src/architect/job-view.js`。
  */
+
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -56,6 +58,7 @@ import {
 const here = path.dirname(fileURLToPath(import.meta.url))
 const SRC = path.join(here, '..', 'src')
 
+
 test('jobsFor は blocked の [review] タスクを awaiting_review として返す（D28）', async () => {
   const repo = makeRepo()
   const clock = 1_700_000_000_000
@@ -102,51 +105,6 @@ test('findJobReviewTask は [review] の blocked タスクだけを拾う（純�
     findJobReviewTask(job, [{ id: 't_arch', title: '[ARCH] x', body: '[review]', status: 'blocked', createdAt: 0 }])?.taskId,
     't_arch',
   )
-})
-
-test('buildArchitectTaskTitle / buildKanbanCreateArgs / findJobReviewTask の境界', () => {
-  assert.equal(buildArchitectTaskTitle({ seedText: '\n\n  通知まとめ  \n次の行' }), '[ARCH] 通知まとめ')
-  assert.equal(buildArchitectTaskTitle({ seedText: 'x'.repeat(200) }).length, '[ARCH] '.length + 80)
-  assert.deepEqual(buildKanbanCreateArgs({ board: 'demo', title: 'T', body: 'B' }), [
-    'kanban',
-    '--board',
-    'demo',
-    'create',
-    'T',
-    '--json',
-    '--body',
-    'B',
-    '--assignee',
-    'mobile',
-  ])
-  assert.match(buildArchitectTaskBody({ prompt: 'P', board: 'demo', repoPath: '/tmp/x', jobId: 'arch-1' }), /Round 2/)
-})
-
-test('buildArchitectTaskBody は Round 1 を JSON ファーストにし、既定でブラウザ撮影をさせない', () => {
-  const body = buildArchitectTaskBody({ prompt: 'P', board: 'demo', repoPath: '/tmp/x', jobId: 'arch-1' })
-  // Round 1 の主成果物は review/sheets/ 配下の JSON シート
-  assert.match(body, /Round 1/)
-  assert.match(body, /review\/sheets\//)
-  assert.match(body, /spec-<slug>-1\.json/)
-  assert.match(body, /"mode": "standard"/)
-  assert.match(body, /--idempotency-key\s+review:spec-<slug>:round-1/)
-  assert.match(body, /mode=standard sheet=sheets\/spec-<slug>-1\.json/)
-  // 手書き HTML・ヘッドレスブラウザ撮影は視覚比較が主題のときだけ
-  assert.match(body, /bespoke HTML/)
-  assert.match(body, /headless browser/)
-  assert.match(body, /visual UI layout comparison/)
-  // 既存契約は維持される
-  assert.match(body, /Round 2/)
-  assert.match(body, /Mode: zero-stop/)
-  assert.match(body, /Execution Policy: /)
-  assert.match(body, /Board: demo/)
-  assert.match(body, /Repository: \/tmp\/x/)
-  assert.match(body, /### Batch [A-Z]+-<n>: <Title>/)
-  // D91: 大文字スラッグ前置 ID と、使用済み接頭辞の注意書きを必ず入れる
-  assert.match(body, /Batch ID rule: every batch heading MUST read/)
-  assert.match(body, /Batch ID prefixes already used by active SPECs:/)
-  // 既定は en（SPEC-i18n-gen §3.1）。ja の見出しは lang='ja' のときだけ（下部の GEN-3 テスト）
-  assert.match(body, /\*\*Objective\*\*.*\*\*Files\*\*.*\*\*Verify\*\*/)
 })
 
 test('ランナー設定は dataDir に保存され、壊れた JSON も未知の値も既定へ戻る', async () => {
@@ -212,73 +170,6 @@ test('findJobSpec / pendingSpecs は猶予と既存タスクを見る', () => {
     [{ id: 't_cat', title: '[C1] Catalog', status: 'done', spec: 'docs/SPEC-CATALOG-ADMISSION.md' }],
   )
   assert.deepEqual(colliding[0].pending, ['C1', 'C2'])
-})
-
-test('batchIdPrefixForSlug / batchIdPrefixOf / usedBatchIdPrefixes は大文字スラッグ接頭辞を揃える（D91）', () => {
-  assert.equal(batchIdPrefixForSlug('reliability-guard'), 'RG')
-  assert.equal(batchIdPrefixForSlug('coherence'), 'COH')
-  assert.equal(batchIdPrefixForSlug('v5'), 'V5')
-  assert.equal(batchIdPrefixForSlug(''), 'B')
-  assert.equal(batchIdPrefixOf('RG-1'), 'RG')
-  assert.equal(batchIdPrefixOf('C1'), 'C')
-  assert.equal(batchIdPrefixOf(''), '')
-
-  const specs = [
-    { path: 'docs/SPEC-RELIABILITY-GUARD.md', archived: false, batches: [{ id: 'RG-1' }, { id: 'RG-2' }] },
-    { path: 'docs/SPEC-COHERENCE.md', archived: false, batches: [{ id: 'COH-1' }] },
-    { path: 'docs/SPEC-OLD.md', archived: true, batches: [{ id: 'ZZ-1' }] },
-  ]
-  // 退避済み SPEC の接頭辞は数えない（再び使える）
-  assert.deepEqual(usedBatchIdPrefixes(specs), ['COH', 'RG'])
-})
-
-test('buildSeedPrompt / buildArchitectTaskBody は使用済み接頭辞を渡して ID 衝突を防ぐ（D91）', () => {
-  const seed = buildSeedPrompt({
-    jobId: 'arch-1',
-    seedText: 's',
-    board: 'demo',
-    repoPath: '/tmp/x',
-    suggestedSlug: 'reliability-guard',
-    usedBatchPrefixes: ['COH'],
-  })
-  assert.match(seed, /### Batch RG-<n>: <Title>/)
-  assert.match(seed, /Batch ID rule: every batch heading MUST read/)
-  assert.match(seed, /Batch ID prefixes already used by active SPECs: COH/)
-
-  const body = buildArchitectTaskBody({
-    prompt: 'P',
-    board: 'demo',
-    repoPath: '/tmp/x',
-    jobId: 'arch-1',
-    suggestedSlug: 'coherence',
-    usedBatchPrefixes: [],
-  })
-  assert.match(body, /### Batch COH-<n>: <Title>/)
-  assert.match(body, /none \(the COH prefix above is free\)/)
-  // `specs.BATCH_ID_RE` の 16 文字制限に収まる長さに保つ
-  assert.ok(batchIdPrefixForSlug('reliability-guard').length <= 4)
-})
-
-test('filedBatchIdsForSpec は archived を未起票に戻し、無印タスクに時刻ガードを掛ける（D91/D92）', () => {
-  const specMtime = 1_700_000_000_000
-  const tasks = [
-    { id: 't1', title: '[RG-1] done', status: 'done', spec: 'docs/SPEC-RG.md' },
-    { id: 't2', title: '[RG-2] archived', status: 'archived', spec: 'docs/SPEC-RG.md' },
-    { id: 't3', title: '[RG-3] legacy old', status: 'running', createdAt: specMtime - 600_000 },
-    { id: 't4', title: '[RG-4] legacy fresh', status: 'running', createdAt: specMtime - 1000 },
-    { id: 't5', title: '[RG-5] other spec', status: 'running', spec: 'docs/SPEC-OTHER.md' },
-  ]
-  assert.deepEqual([...filedBatchIdsForSpec(tasks, 'docs/SPEC-RG.md', { specMtime })].sort(), ['RG-1', 'RG-4'])
-  // specMtime を渡さなければ無印は従来どおり（後方互換）
-  assert.deepEqual([...filedBatchIdsForSpec(tasks, 'docs/SPEC-RG.md')].sort(), ['RG-1', 'RG-3', 'RG-4'])
-  // 未スコープは archived だけを除外する
-  assert.deepEqual([...filedBatchIds(tasks)].sort(), ['RG-1', 'RG-3', 'RG-4', 'RG-5'])
-  // archived バッチは未起票に戻る＝再起票できる
-  const pending = pendingSpecs(
-    [{ path: 'docs/SPEC-RG.md', mtime: specMtime, batches: [{ id: 'RG-1' }, { id: 'RG-2' }] }],
-    tasks,
-  )
-  assert.deepEqual(pending[0].pending, ['RG-2'])
 })
 
 test('publicJob は機密を落とし、種を 400 字で切る', () => {
@@ -384,15 +275,6 @@ test('親 [ARCH] が done / archived なら jobsFor は awaiting_spec で残さ�
   }
 })
 
-test('queueStateOf は ready と実行中を分ける（純関数）', () => {
-  assert.equal(queueStateOf('ready'), 'queued')
-  assert.equal(queueStateOf('todo'), 'queued')
-  assert.equal(queueStateOf('running'), 'running')
-  assert.equal(queueStateOf('claimed'), 'running')
-  assert.equal(queueStateOf('done'), null)
-  assert.equal(queueStateOf(undefined), null)
-})
-
 test('dismiss は破棄を永続化し、再取得でも再起動でもアクティブ一覧に出さない（§3.1②）', async () => {
   const repo = makeRepo()
   const clock = 1_700_000_000_000
@@ -440,76 +322,6 @@ test('dismiss は破棄を永続化し、再取得でも再起動でもアクテ
   fs.writeFileSync(file, '{not json')
   const broken = make()
   assert.equal(broken.dismiss(seeded.jobId).code, 'JOB_NOT_FOUND')
-})
-
-test('executionPolicy は zero-stop 既定で正規化され、プロンプトと公開ジョブに載る（§3.1③）', async () => {
-  assert.deepEqual(EXECUTION_POLICIES, ['zero-stop', 'visual-gate'])
-  assert.equal(normalizeExecutionPolicy(undefined), 'zero-stop')
-  assert.equal(normalizeExecutionPolicy('VISUAL-GATE'), 'visual-gate')
-  assert.equal(normalizeExecutionPolicy('visual_gate'), 'visual-gate')
-  assert.equal(normalizeExecutionPolicy('nope'), 'zero-stop')
-  assert.equal(executionModeLabel('visual-gate'), '[Mode: Visual Gate]')
-  assert.equal(executionModeLabel(undefined), '[Mode: Zero-Stop]')
-
-  const base = { jobId: 'arch-1', seedText: '通知をまとめる', board: 'demo', repoPath: '/tmp/x' }
-  const zero = buildSeedPrompt(base)
-  assert.match(zero, /Round 1 Quick Review interview is mandatory under both policies/)
-  assert.match(zero, /Execution policy chosen by the user: `zero-stop`/)
-  assert.match(zero, /\[Mode: Zero-Stop\]/)
-
-  const gate = buildSeedPrompt({ ...base, executionPolicy: 'visual-gate' })
-  assert.match(gate, /Round 1 Quick Review interview is mandatory under both policies/, '両方針ともインタビューは維持')
-  assert.match(gate, /Execution policy chosen by the user: `visual-gate`/)
-  assert.match(gate, /\[Mode: Visual Gate\]/)
-  assert.doesNotMatch(gate, /\[Mode: Zero-Stop\]/, 'バッチ既定は Visual Gate に切り替わる')
-
-  // [ARCH] タスク本文（カンバン起票）にも方針が載る
-  const bodyArgs = { prompt: 'P', board: 'demo', repoPath: '/tmp/x', jobId: 'arch-1' }
-  assert.match(buildArchitectTaskBody(bodyArgs), /Execution Policy: zero-stop/)
-  assert.match(buildArchitectTaskBody({ ...bodyArgs, executionPolicy: 'visual-gate' }), /\[Mode: Visual Gate\]/)
-
-  // seed → ランナー → 公開ジョブまで通しで保持される
-  const repo = makeRepo()
-  const calls = []
-  const arch = createArchitect(
-    {},
-    {
-      now: () => 1_700_000_000_000,
-      readTasks: () => [],
-      runner: async (args) => {
-        calls.push(args)
-        return { code: 0, stdout: '{"id":"t_arch"}', stderr: '' }
-      },
-    },
-  )
-  const seeded = await arch.seed(seedInput(repo, { executionPolicy: 'visual-gate' }))
-  assert.equal(seeded.executionPolicy, 'visual-gate')
-  await settle()
-  assert.equal(calls[0].executionPolicy, 'visual-gate', 'ランナーへ渡る')
-  assert.match(String(calls[0].prompt), /\[Mode: Visual Gate\]/)
-  const job = (await arch.jobs({ board: 'demo' })).jobs[0]
-  assert.equal(job.executionPolicy, 'visual-gate')
-  assert.equal(job.id, seeded.jobId)
-
-  // 未指定は既定（zero-stop）に正規化される
-  const plain = await arch.seed(seedInput(repo, { executionPolicy: 'bogus' }))
-  assert.equal(plain.executionPolicy, 'zero-stop')
-  assert.equal(publicJob({ id: 'x', board: 'demo', status: 'running' }).executionPolicy, 'zero-stop')
-})
-
-
-// ---------------------------------------------------------------------------
-// SPEC V9 D41 / D42 — Agy Opt-in の重複起票防止とボード横断 Review・フェーズ検知
-// ---------------------------------------------------------------------------
-
-test('reviewBoardsFor は [job.board, mobile] を重複除去して返す（D42）', () => {
-  assert.equal(DEFAULT_REVIEW_BOARD, 'mobile')
-  assert.deepEqual(reviewBoardsFor('hermes-pilot'), ['hermes-pilot', 'mobile'])
-  assert.deepEqual(reviewBoardsFor('mobile'), ['mobile'], '重複させない')
-  assert.deepEqual(reviewBoardsFor('  demo  '), ['demo', 'mobile'])
-  assert.deepEqual(reviewBoardsFor(''), ['mobile'])
-  assert.deepEqual(reviewBoardsFor(undefined), ['mobile'])
-  assert.deepEqual(ACTIVE_JOB_STATUSES, ['running', 'awaiting_spec', 'awaiting_review', 'failed'])
 })
 
 test('computePhase は status / reviewSeenOnce / sheetPath から phase を決める（D42）', () => {
@@ -680,43 +492,6 @@ test('publicJob は phase / stalled / sheetPath / reviewBoard を返す（D42）
   assert.equal(fresh.reviewBoard, null)
 })
 
-// ── 出力言語の規則（SPEC-i18n-gen §3.4 / Batch GEN-3） ──────────────────────
-
-test('buildSeedPrompt は lang に合った言語規則を差し込み、Round 2 の見出しを切り替える', () => {
-  const base = { jobId: 'arch-1', seedText: '通知をまとめる', board: 'demo', repoPath: '/tmp/x' }
-
-  const en = buildSeedPrompt({ ...base, lang: 'en' })
-  assert.ok(en.includes(LANGUAGE_RULE_MARKER), 'en の seed プロンプトに marker が無い（「その言語で書け」が抜けている）')
-  assert.ok(en.includes(LANGUAGE_RULE_EN), 'en は EN 規則の全文を持つ')
-  assert.match(en, /UI language: en/)
-  assert.match(en, /- \*\*Objective\*\*: one paragraph of intent/)
-  assert.doesNotMatch(en, /\*\*目的\*\*/, 'en に ja の見出しが残っている')
-
-  const ja = buildSeedPrompt({ ...base, lang: 'ja' })
-  assert.ok(ja.includes(LANGUAGE_RULE_JA), 'ja の seed プロンプトに JA 規則文が無い')
-  assert.match(ja, /UI language: ja/)
-  assert.match(ja, /- \*\*目的\*\*: /)
-  // JA 規則文は機械トークンの一覧（**Objective** 等）を保つので、見出し行だけで判定する
-  assert.doesNotMatch(ja, /- \*\*Objective\*\*: one paragraph/, 'ja に en の見出しが混ざっている')
-
-  // 未指定は既定 en（ja へは戻さない・§3.1）
-  const fallback = buildSeedPrompt(base)
-  assert.ok(fallback.includes(LANGUAGE_RULE_EN))
-  assert.doesNotMatch(fallback, /\*\*目的\*\*/)
-})
-
-test('[ARCH] タスク本文も lang で Round 2 の見出しを切り替える', () => {
-  const base = { prompt: 'P', board: 'demo', repoPath: '/tmp/x', jobId: 'arch-1' }
-  assert.match(
-    buildArchitectTaskBody({ ...base, lang: 'en' }),
-    /\*\*Execution Mode\*\* \/ \*\*Objective\*\* \/ \*\*Files\*\* \/ \*\*Verify\*\*/,
-  )
-  assert.match(
-    buildArchitectTaskBody({ ...base, lang: 'ja' }),
-    /\*\*目的\*\* \/ \*\*変更・新規ファイル\*\* \/ \*\*受入条件（Verify）\*\*/,
-  )
-})
-
 test('親 [ARCH] が done でも別タスクの [review] が blocked / ready / running なら追い続ける', async () => {
   const repo = makeRepo()
   const clock = 1_700_000_000_000
@@ -773,39 +548,4 @@ test('親 [ARCH] が done でも別タスクの [review] が blocked / ready / r
   byBoard.mobile[0].status = 'done'
   snap = await arch.jobs({ board: 'demo' })
   assert.equal(snap.jobs.length, 0)
-})
-
-test('pendingSpecs は archived: true の過去 SPEC を mtime が新しくても未起票通知に出さない', () => {
-  const specs = [
-    {
-      path: 'docs/SPEC-PILOT-V9.md',
-      title: 'Pilot V9',
-      mtime: 50_000,
-      archived: true,
-      batches: [{ id: 'D42' }],
-    },
-    {
-      path: 'docs/SPEC-ACTIVE.md',
-      title: 'Active Spec',
-      mtime: 40_000,
-      archived: false,
-      batches: [{ id: 'ACT-1' }],
-    },
-  ]
-  const tasks = [{ id: 't_old', title: '[D42] Old legacy task', status: 'done', createdAt: 10_000 }]
-  const out = pendingSpecs(specs, tasks)
-  assert.deepEqual(
-    out.map((s) => s.path),
-    ['docs/SPEC-ACTIVE.md'],
-  )
-})
-
-test('spec-architect SKILL.md はモバイル可読性・冪等キー・Round 2 自己点検を含む', () => {
-  const skill = fs.readFileSync(path.resolve(import.meta.dirname, '../../../skills/spec-architect/SKILL.md'), 'utf8')
-  assert.match(skill, /--idempotency-key\s+"?review:spec-<slug>:round-1"?/)
-  assert.match(skill, /Round 2 self-check/)
-  assert.match(skill, /Guard scope/)
-  assert.match(skill, /Line-count baselines/)
-  assert.match(skill, /mobile readability/)
-  assert.match(skill, /Fast intermediate Verify/)
 })

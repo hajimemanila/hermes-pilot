@@ -138,7 +138,7 @@ export function makeJobId(ms, rand, seedHash) // arch-<base36 ms>-<hash8>-<rand4
 - `createCapture` の `seen` は起動時に `capture-state.json` を読み、`create()` 成功時に `writeJsonAtomic` で書く。キーは `sha1(board|title|body|priority|assignee)`（**バケットを外す**）。TTL は `DEDUPE_MS` を初回起票時刻から数え、ヒットでは延長しない（同じ内容が 10 分後に再投入されたら新しいタスクを作る＝現行の仕様を保つ）。
 - `capture-state.json` は `dataDir` 直下・`0600`・最大 500 エントリ（古い順に落とす）。`dataDir` 未設定（テスト）ではメモリのみ。
 - `dismissed` は `{ ids: string[], seeds: string[] }` を保存し、`isDismissed(job)` は `job.id ∈ ids || job.seedHash ∈ seeds`。`DISMISSED_MAX` は両方に適用。
-- ジョブ ID を読む経路（`architect/task.js` のタイトル、`architect/seed.js` のプロンプト行、`pipeline-watcher` のジョブ照合）は ID を**正規表現でなく文字列一致**で扱っているため、形の変更で壊れないことをテストで固定する（`architectJob.test.js` に 1 ケース追加）。
+- ジョブ ID を読む経路（`architect/task.js` のタイトル、`architect/seed.js` のプロンプト行、`pipeline-watcher` のジョブ照合）は ID を**正規表現でなく文字列一致**で扱っているため、形の変更で壊れないことをテストで固定する（architect ジョブのテストに 1 ケース追加）。
 
 ---
 
@@ -171,9 +171,9 @@ export function makeJobId(ms, rand, seedHash) // arch-<base36 ms>-<hash8>-<rand4
 - **Execution Mode**: `[Mode: Zero-Stop]`
 - **推奨ロール**: `role:builder`
 - **目的**: 同じ種が独立ジョブとして何度も入る構造を止め、再起動や 10 分境界で冪等性が消えないようにする。
-- **変更**: `architect/seed.js` の `makeJobId` / `buildSeedPrompt`、`architect.js` の `makeJobId(startedAt)` 呼び出しと `saveDismissed` / `isDismissed`、`capture.js` の `dedupeKey` / `seen`（`capture-state.json`）、関連テスト（`architect.test.js` / `architectJob.test.js` / `capture.test.js`）。
+- **変更**: `architect/seed.js` の `makeJobId` / `buildSeedPrompt`、`architect.js` の `makeJobId(startedAt)` 呼び出しと `saveDismissed` / `isDismissed`、`capture.js` の `dedupeKey` / `seen`（`capture-state.json`）、関連テスト（`architect.test.js` / `architectJobView.test.js` / `capture.test.js`）。
 - **受け入れ**: 同じ種で 2 回 `makeJobId` を呼ぶと中盤セグメントが一致する。`dedupeKey` の出力に時刻が入らない（同じ入力で 1 時間後も同じ値）。`createCapture` を作り直しても同じ入力の 2 回目は CLI を呼ばない（`capture-state.json` 経由）。`capture-state.json` が `0600` で、壊れた JSON を読んだら空で立ち上がる（throw しない）。
-- **検証**: `npm run verify` / `node --test apps/bridge/test/capture.test.js apps/bridge/test/architect.test.js apps/bridge/test/architectJob.test.js`。
+- **検証**: `npm run verify` / `node --test apps/bridge/test/capture.test.js apps/bridge/test/architect.test.js apps/bridge/test/architectJobView.test.js`。
 - **非対象**: 既存ジョブ ID の移行（過去 ID はそのまま読める）。`[ARCH]` の自動再投入（採用しない）。
 
 ### Batch COA2-3: SWALLOW-GUARD — 失敗を「0 件」と区別できるようにする（D103）

@@ -1,5 +1,6 @@
 /**
- * architect テストの共用フィクスチャ（`architect.test.js` / `architectJob.test.js`）。
+ * architect テストの共用フィクスチャ（`architect.test.js` / `architectJobView.test.js` /
+ * `architectTask.test.js` / `architectBatch.test.js`）。
  */
 import fs from 'node:fs'
 import os from 'node:os'
