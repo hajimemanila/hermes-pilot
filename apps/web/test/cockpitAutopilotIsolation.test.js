@@ -25,9 +25,13 @@ test('AutopilotSwipeLink is NOT nested inside .ak-head-actions or .list-head', (
   )
   assert.match(reviewSrc, /<div className="ap-swipe-strip">\s*<AutopilotSwipeLink/)
 
-  const tasksSrc = read('apps/web/src/features/TasksPane.jsx')
+  // 分割後: 一覧の見出し（`.list-head`）と `.ap-swipe-strip` は features/tasks/TaskListView.jsx が持つ（CSW3-7）
+  const tasksSrc = [
+    read('apps/web/src/features/TasksPane.jsx'),
+    read('apps/web/src/features/tasks/TaskListView.jsx'),
+  ].join('\n')
   const listHeadBlock = /<div className="list-head">[\s\S]*?<\/div>/.exec(tasksSrc)
-  assert.ok(listHeadBlock, 'list-head block must exist in TasksPane.jsx')
+  assert.ok(listHeadBlock, 'list-head block must exist in the tasks view')
   assert.doesNotMatch(
     listHeadBlock[0],
     /AutopilotSwipeLink/,
