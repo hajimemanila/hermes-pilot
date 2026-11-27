@@ -1352,5 +1352,7 @@
   "autopilot.timelapse.before": "初期モック",
   "autopilot.timelapse.after": "完成画面",
   "autopilot.timelapse.play": "タイムラプス",
-  "autopilot.timelapse.pause": "停止"
+  "autopilot.timelapse.pause": "停止",
+  "autopilot.copy.more": "全文を読む",
+  "autopilot.copy.less": "閉じる"
 }

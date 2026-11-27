@@ -54,7 +54,7 @@ export function AutopilotDeck({
     ? currentOptionCard(nextQuestion, !cardView?.isLastOption ? optIndex + 1 : 0)
     : null
   const thirdQuestion = cards[index + (!cardView?.isLastOption ? 1 : 2)] || null
-  const swipe = classifySwipe(drag.dx, drag.dy)
+  const swipe = classifySwipe(drag.dx, drag.dy, undefined, { horizontalOnly: true })
 
   useEffect(() => {
     setOptIndex(0)
@@ -176,7 +176,7 @@ export function AutopilotDeck({
 
   const handlePointerDown = (e) => {
     if (!cardView || flying || e.button > 0) return
-    if (e.target?.closest?.('button, a, input, textarea, iframe, .ap-sandbox-active, .ap-stage-ctl')) return
+    if (e.target?.closest?.('button, a, input, textarea, iframe, .ap-sandbox-active, .ap-stage-ctl, .ap-card-copy')) return
     if (isInEdgeDeadZone(e.clientX, typeof window !== 'undefined' ? window.innerWidth : 0)) return
     gestureRef.current = {
       active: true,
@@ -192,17 +192,15 @@ export function AutopilotDeck({
     const g = gestureRef.current
     if (!g.active || g.pointerId !== e.pointerId) return
     const dx = e.clientX - g.startX
-    const dy = e.clientY - g.startY
     const gx = Math.max(10, Math.min(90, Math.round(50 + dx / 5)))
-    const gy = Math.max(10, Math.min(90, Math.round(35 + dy / 5)))
-    setDrag({ active: true, dx, dy, gx, gy })
+    setDrag({ active: true, dx, dy: 0, gx, gy: 35 })
   }
 
   const handlePointerEnd = (e) => {
     const g = gestureRef.current
     if (!g.active || g.pointerId !== e.pointerId) return
     gestureRef.current.active = false
-    const finalSwipe = classifySwipe(e.clientX - g.startX, e.clientY - g.startY)
+    const finalSwipe = classifySwipe(e.clientX - g.startX, e.clientY - g.startY, undefined, { horizontalOnly: true })
     const rect = e.currentTarget?.getBoundingClientRect?.()
     setDrag({ active: false, dx: 0, dy: 0, gx: 50, gy: 35 })
     if (finalSwipe.committed && finalSwipe.direction) {

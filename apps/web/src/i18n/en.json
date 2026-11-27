@@ -1352,5 +1352,7 @@
   "autopilot.timelapse.before": "Before",
   "autopilot.timelapse.after": "After",
   "autopilot.timelapse.play": "Timelapse",
-  "autopilot.timelapse.pause": "Stop"
+  "autopilot.timelapse.pause": "Stop",
+  "autopilot.copy.more": "Read more",
+  "autopilot.copy.less": "Show less"
 }

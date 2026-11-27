@@ -99,7 +99,7 @@ export function isInEdgeDeadZone(startX, viewportWidth, edgePx = EDGE_DEAD_ZONE_
   return false
 }
 
-export function classifySwipe(dx, dy, thresholdPx = SWIPE_THRESHOLD_PX) {
+export function classifySwipe(dx, dy, thresholdPx = SWIPE_THRESHOLD_PX, opts = {}) {
   const x = Number(dx) || 0
   const y = Number(dy) || 0
   const ax = Math.abs(x)
@@ -109,7 +109,14 @@ export function classifySwipe(dx, dy, thresholdPx = SWIPE_THRESHOLD_PX) {
   }
   let direction = null
   let dominant = 0
-  if (ax >= ay * 1.1) {
+  if (opts?.horizontalOnly) {
+    if (ax >= 12 && ax >= ay * 1.15) {
+      direction = x > 0 ? 'right' : 'left'
+      dominant = ax
+    } else {
+      return { direction: null, stamp: null, progress: 0, committed: false }
+    }
+  } else if (ax >= ay * 1.1) {
     direction = x > 0 ? 'right' : 'left'
     dominant = ax
   } else if (ay >= ax * 1.1) {

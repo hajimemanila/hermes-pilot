@@ -2,14 +2,14 @@
 
 .ap-radar-card {
   margin-top: 2px;
-  padding: 9px 10px;
+  padding: 7px 9px;
   border-radius: 14px;
   background: radial-gradient(circle at 50% 30%, rgba(34, 211, 238, 0.1), var(--bg-elev));
   border: 1px solid var(--line);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 7px;
+  gap: 5px;
 }
 
 .ap-radar-stage {
@@ -29,8 +29,8 @@
 
 @media (max-width: 400px), (max-height: 760px) {
   .ap-radar-svg {
-    width: 148px;
-    height: 148px;
+    width: 136px;
+    height: 136px;
   }
 }
 
@@ -185,7 +185,7 @@
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .ap-radar-feed-row {
@@ -194,7 +194,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 4px 8px;
+  padding: 3px 8px;
   border-radius: 8px;
   background: var(--surface);
   border: 1px solid var(--line);

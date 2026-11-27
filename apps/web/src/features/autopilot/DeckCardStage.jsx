@@ -1,10 +1,10 @@
-import React from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { MockCompareStage } from './MockCompareStage.jsx'
 
 /**
  * デッキのステージ（スタック 3 枚 ＋ 前面カード）だけを持つ提示専用の葉。
- * 状態・副作用は親（AutopilotDeck.jsx）に残し、ここは受け取った view 値を
- * そのまま描く。DOM は旧 AutopilotDeck.jsx と同一。
+ * 下部テキスト領域（`.ap-card-copy`）は独立縦スクロール＋可視スクロールノブを持ち、
+ * 横スワイプと干渉せず快適に全文を読める（AP3-4）。
  */
 export function DeckCardStage({
   thirdQuestion,
@@ -33,6 +33,35 @@ export function DeckCardStage({
   onToggleGacha,
   t,
 }) {
+  const copyRef = useRef(null)
+  const [expanded, setExpanded] = useState(false)
+  const [scrollState, setScrollState] = useState({ hasOverflow: false, thumbPct: 0, ratioPct: 40 })
+
+  const syncScrollMetrics = () => {
+    const el = copyRef.current
+    if (!el) return
+    const sh = el.scrollHeight
+    const ch = el.clientHeight
+    const maxScroll = Math.max(0, sh - ch)
+    const hasOverflow = maxScroll > 2
+    const ratioPct = sh > 0 ? Math.max(22, Math.min(85, Math.round((ch / sh) * 100))) : 100
+    const thumbPct = maxScroll > 0 ? Math.round((el.scrollTop / maxScroll) * (100 - ratioPct)) : 0
+    setScrollState({ hasOverflow, thumbPct, ratioPct })
+  }
+
+  useEffect(() => {
+    setExpanded(false)
+    if (copyRef.current) copyRef.current.scrollTop = 0
+    const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(syncScrollMetrics) : 0
+    return () => {
+      if (raf && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(raf)
+    }
+  }, [question?.key, optIndex])
+
+  useEffect(() => {
+    syncScrollMetrics()
+  }, [expanded])
+
   return (
     <div className="ap-deck-stage">
       {thirdQuestion && (
@@ -131,13 +160,53 @@ export function DeckCardStage({
           />
         </div>
 
-        <div className="ap-card-copy">
-          <p className="ap-card-q-sub">{question.text}</p>
-          <h2 className="ap-card-opt-hero">
-            <span className="ap-opt-id-chip">{cardView.option.id}</span>
-            <span>{cardView.option.label}</span>
-          </h2>
-          {cardView.option.detail && <p className="ap-card-opt-detail">{cardView.option.detail}</p>}
+        <div className="ap-card-copy-wrap">
+          <div
+            ref={copyRef}
+            className={`ap-card-copy${expanded ? ' expanded' : ''}`}
+            onScroll={syncScrollMetrics}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <p className="ap-card-q-sub">{question.text}</p>
+            <h2 className="ap-card-opt-hero">
+              <span className="ap-opt-id-chip">{cardView.option.id}</span>
+              <span>{cardView.option.label}</span>
+            </h2>
+            {cardView.option.detail && <p className="ap-card-opt-detail">{cardView.option.detail}</p>}
+          </div>
+
+          {scrollState.hasOverflow && (
+            <div
+              className="ap-copy-scrollbar"
+              aria-hidden="true"
+              onClick={(e) => {
+                e.stopPropagation()
+                const el = copyRef.current
+                if (!el) return
+                const rect = e.currentTarget.getBoundingClientRect()
+                const ratio = rect.height > 0 ? Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height)) : 0
+                el.scrollTop = ratio * Math.max(0, el.scrollHeight - el.clientHeight)
+              }}
+            >
+              <span
+                className="ap-copy-thumb"
+                style={{ top: `${scrollState.thumbPct}%`, height: `${scrollState.ratioPct}%` }}
+              />
+            </div>
+          )}
+
+          {(scrollState.hasOverflow || expanded) && (
+            <button
+              type="button"
+              className="ap-copy-more-btn"
+              onClick={(e) => {
+                e.stopPropagation()
+                setExpanded((v) => !v)
+              }}
+            >
+              {expanded ? t('autopilot.copy.less') : t('autopilot.copy.more')}
+            </button>
+          )}
         </div>
       </article>
     </div>
