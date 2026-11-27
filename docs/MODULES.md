@@ -128,3 +128,8 @@ apps/web/src/styles/autopilot-radar.css ← LiveRadarCard SVG ＆ タイムラ�
 - `rg` 参照ゼロ export **0 件**（分割で生まれた 20 ファイル・133 export を全数。`lib/autopilot/*.js` ・`lib/autopilotDeck.js` ・`features/autopilot/*` ・`bridge/src/architect/*`）・未参照 `.ap-*` クラス **0 件**（autopilot 系 CSS 4 枚の 164 クラス全数）。削る対象は無い。
 - 再測定で 1 件だけ出た `architect/task.js` の `findTerminalJobReviewTask`（同一ファイル内でしか使われず、バレルからも出していない）は `export` を落として内部関数にした。
 - 注意: `ap-stamp-{left,right,up,down}` `ap-theme-{cyan,emerald,amber,violet}` `ap-radar-blip-{core,verify,explore}` の 11 個は**文字列で書かれていない**（`ap-stamp-${swipe.direction}` / `ap-theme-${theme}` / `ap-radar-blip-${b.ring}` のテンプレート結合）。リテラル検索だけで判定すると誤って「未参照」に見えるので、動的結合の接頭辞まで見る。
+
+## 分割の見た目が動いていないことの確認（SEMM-10 / 2026-11-27 実測）
+
+- 分割前 `0b90f66` と分割後 `c2083af` のデモビルドを同じ手順で 390×844（dpr2・ダーク／ライト）撮影し、`.ap-*` **21 要素の getBoundingClientRect が完全一致**。画素差は `✨ オートパイロット` ピル内の 308px（最大 Δ1/255・0.023%）だけで、他の領域は 0。
+- CSS 側の根拠: `git show 20e19d9^:apps/web/src/styles/autopilot.css` 657 行 と `autopilot-deck.css` + `autopilot-story.css` の連結が `diff` 無出力（＝移動のみ）。以後の差分は `.ap-lens-btn::before` の透明 44px 当たり判定 4 行だけ。
