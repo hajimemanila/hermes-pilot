@@ -37,8 +37,9 @@ test('@import はすべて実在し、順序どおりに展開される', () => 
   }
   const css = readStyles()
   // 先頭のトークン定義が最初、末尾のファイルが最後に来る（カスケード順の担保）
-  const first = fs.readFileSync(path.resolve(SRC, imports[0]), 'utf8')
-  const last = fs.readFileSync(path.resolve(SRC, imports[imports.length - 1]), 'utf8')
+  const first = readStyles(imports[0])
+  // 末尾は入れ子 manifest かもしれない（styles/autopilot.css）ので、生のファイルではなく展開後で比べる
+  const last = readStyles(imports[imports.length - 1])
   assert.ok(css.indexOf(first.slice(-200)) < css.indexOf(last.slice(-200)), '展開順が manifest と違う')
 })
 

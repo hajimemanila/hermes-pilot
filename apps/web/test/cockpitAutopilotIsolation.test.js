@@ -9,6 +9,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { readStyles } from './helpers/styles.js'
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8')
 
@@ -35,7 +37,8 @@ test('AutopilotSwipeLink is NOT nested inside .ak-head-actions or .list-head', (
 })
 
 test('Cockpit headers and topbar CSS prevent wrapping and crushing on 390px screens', () => {
-  const autopilotCss = read('apps/web/src/styles/autopilot.css')
+  // autopilot.css は入れ子 manifest なので、展開後（どのファイルに書かれていても）で規則を見る
+  const autopilotCss = readStyles('styles/autopilot.css')
   assert.match(autopilotCss, /\.ap-lens-btn\s*\{[^}]*white-space:\s*nowrap/)
   assert.match(autopilotCss, /\.ap-swipe-link\s*\{[^}]*white-space:\s*nowrap/)
 
