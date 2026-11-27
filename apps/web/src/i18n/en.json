@@ -1334,5 +1334,17 @@
   "autopilot.gacha.neon": "Neon",
   "autopilot.gacha.retro": "Retro",
   "autopilot.gacha.editorial": "Editorial",
-  "autopilot.gacha.bento": "Bento"
+  "autopilot.gacha.bento": "Bento",
+  "autopilot.radar.aria": "Live activity radar",
+  "autopilot.radar.workers": "Workers",
+  "autopilot.radar.tools": "Tools",
+  "autopilot.radar.tokens": "24h Tokens",
+  "autopilot.radar.waiting": "{n} waiting",
+  "autopilot.radar.scanning": "Scanning workspace activity…",
+  "autopilot.radar.ago": "{s}s ago",
+  "autopilot.timelapse.aria": "Before and after timelapse",
+  "autopilot.timelapse.before": "Before",
+  "autopilot.timelapse.after": "After",
+  "autopilot.timelapse.play": "Timelapse",
+  "autopilot.timelapse.pause": "Stop"
 }

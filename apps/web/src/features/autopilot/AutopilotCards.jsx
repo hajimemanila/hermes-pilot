@@ -6,6 +6,8 @@ import { haptic } from '../../lib/haptic.js'
 import { repoLabel } from '../../lib/repoPicker.js'
 import { SEED_MAX, canSubmit } from '../../lib/specSeed.js'
 import { celebrateAction } from '../../lib/vibe.js'
+import { BeforeAfterTimelapse } from './BeforeAfterTimelapse.jsx'
+import { LiveRadarCard } from './LiveRadarCard.jsx'
 
 /**
  * Autopilot 上部常設のプロジェクト切替＋同一オリジン成果物プレビューバー。
@@ -396,6 +398,8 @@ export function LiveStudioCard({ stage, onSwitchCockpit, onSaveMemo }) {
           {stage?.toolLabel && <span className="ap-ticker-sub">{stage.toolLabel}</span>}
         </div>
 
+        <LiveRadarCard initialLive={stage?.live || null} />
+
         {afterSrc && (
           <div className="ap-wipe-inline">
             <div className="ap-wipe-stage">
@@ -490,9 +494,12 @@ export function CompletionCard({ deliverable, onOpenReceipt, onStartNew, onSwitc
         {deliverable?.summary && <p className="ap-complete-summary">{deliverable.summary}</p>}
 
         {deliverable?.shotUrl && (
-          <div className="ap-complete-shot">
-            <img src={deliverable.shotUrl} alt={deliverable.title} className="ap-card-shot" />
-          </div>
+          <BeforeAfterTimelapse
+            beforeUrl={deliverable.beforeShotUrl}
+            afterUrl={deliverable.shotUrl}
+            title={deliverable.title}
+            t={t}
+          />
         )}
 
         <div className="ap-deliverable-actions">

@@ -1334,5 +1334,17 @@
   "autopilot.gacha.neon": "ネオン",
   "autopilot.gacha.retro": "レトロ",
   "autopilot.gacha.editorial": "エディトリアル",
-  "autopilot.gacha.bento": "ベントー"
+  "autopilot.gacha.bento": "ベントー",
+  "autopilot.radar.aria": "ライブ稼働レーダー",
+  "autopilot.radar.workers": "稼働",
+  "autopilot.radar.tools": "ツール",
+  "autopilot.radar.tokens": "24h消費",
+  "autopilot.radar.waiting": "判断待ち {n}",
+  "autopilot.radar.scanning": "作業アクティビティを観測中…",
+  "autopilot.radar.ago": "{s}秒前",
+  "autopilot.timelapse.aria": "ビフォー・アフター比較",
+  "autopilot.timelapse.before": "初期モック",
+  "autopilot.timelapse.after": "完成画面",
+  "autopilot.timelapse.play": "タイムラプス",
+  "autopilot.timelapse.pause": "停止"
 }

@@ -397,8 +397,15 @@ export function extractDeliverable({ report = null, tasks = [], reviewItems = []
   const launchMatch = LAUNCH_CMD_RE.exec(merged)
   const launchCmd = (launchMatch ? launchMatch[1].trim().slice(0, 160) : null) || preview?.launchCmd || null
 
-  const latestVisual = (Array.isArray(reviewItems) ? reviewItems : []).find((r) => r?.review?.image)
+  const reviewList = Array.isArray(reviewItems) ? reviewItems : []
+  const latestVisual = reviewList.find((r) => r?.review?.image) || null
   const shotUrl = latestVisual ? `/api/review/${encodeURIComponent(latestVisual.id)}/image` : null
+  const earlierVisual = reviewList.find((r) => r?.review?.image && r.id !== latestVisual?.id) || null
+  const beforeShotUrl = latestVisual?.review?.hasCompare
+    ? `${shotUrl}?compare=1`
+    : earlierVisual
+      ? `/api/review/${encodeURIComponent(earlierVisual.id)}/image`
+      : null
   const topTask = doneTasks[0] || null
   const id = String(report?.taskId || report?.at || topTask?.id || preview?.updatedAt || 'done')
   return {
@@ -409,6 +416,7 @@ export function extractDeliverable({ report = null, tasks = [], reviewItems = []
     entryPath,
     launchCmd,
     shotUrl,
+    beforeShotUrl,
     completedAt: Number(report?.at || (topTask?.completed_at ? topTask.completed_at * 1000 : 0)) || null,
     board: report?.board || preview?.board || null,
     spec: report?.spec || topTask?.spec || null,
@@ -463,6 +471,7 @@ export function projectStudioStage({
       activeJob,
       activeTask: runningTask,
       liveTurn,
+      live,
       stepIndex,
       doneCount,
       totalCount,
