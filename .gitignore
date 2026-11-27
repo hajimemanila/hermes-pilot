@@ -18,3 +18,6 @@ __pycache__/
 # 永続置き場は library（`~/.hermes/plugin-data/hermes-pilot/review/shots/`）なので追跡しない。
 shots/
 
+# Autopilot Fast-Lane sandbox outputs (ephemeral HTML mocks / screenshots / reports)
+.hermes-pilot/
+

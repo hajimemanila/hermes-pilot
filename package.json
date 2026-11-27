@@ -30,6 +30,7 @@
     "scripts/postinstall.mjs",
     "scripts/deploy.mjs",
     "scripts/check-coherence.mjs",
+    "scripts/render-mocks.mjs",
     "scripts/lib/",
     "scripts/smoke-live.mjs",
     "scripts/migrate-to-hermes-pilot.mjs",
