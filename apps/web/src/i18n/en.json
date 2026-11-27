@@ -1320,5 +1320,19 @@
   "autopilot.project.newBtn": "Create",
   "autopilot.project.newOrSwitch": "New / Switch Project",
   "autopilot.project.created": "Created project {name}",
-  "autopilot.project.createFailed": "Could not create project"
+  "autopilot.project.createFailed": "Could not create project",
+  "autopilot.sandbox.tryLive": "Try Live",
+  "autopilot.sandbox.backToShot": "Back to Preview",
+  "autopilot.sandbox.iframeTitle": "Interactive sandbox mockup",
+  "autopilot.flick.peek": "Comparing {id}",
+  "autopilot.flick.prevAria": "Previous option",
+  "autopilot.flick.nextAria": "Next option",
+  "autopilot.gacha.title": "Style Gacha",
+  "autopilot.gacha.remaining": "{left}/{max} left",
+  "autopilot.gacha.limitReached": "Gacha limit reached",
+  "autopilot.gacha.minimal": "Minimal",
+  "autopilot.gacha.neon": "Neon",
+  "autopilot.gacha.retro": "Retro",
+  "autopilot.gacha.editorial": "Editorial",
+  "autopilot.gacha.bento": "Bento"
 }

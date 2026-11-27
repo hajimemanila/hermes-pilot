@@ -1320,5 +1320,19 @@
   "autopilot.project.newBtn": "新規作成",
   "autopilot.project.newOrSwitch": "新規プロジェクト・切替",
   "autopilot.project.created": "新規プロジェクト {name} を作成しました",
-  "autopilot.project.createFailed": "プロジェクトの作成に失敗しました"
+  "autopilot.project.createFailed": "プロジェクトの作成に失敗しました",
+  "autopilot.sandbox.tryLive": "触ってみる",
+  "autopilot.sandbox.backToShot": "画像に戻す",
+  "autopilot.sandbox.iframeTitle": "操作可能なサンドボックスモック",
+  "autopilot.flick.peek": "比較中: {id}",
+  "autopilot.flick.prevAria": "前の案へ",
+  "autopilot.flick.nextAria": "次の案へ",
+  "autopilot.gacha.title": "スタイル・ガチャ",
+  "autopilot.gacha.remaining": "残り {left}/{max}回",
+  "autopilot.gacha.limitReached": "ガチャ上限に達しました",
+  "autopilot.gacha.minimal": "ミニマル",
+  "autopilot.gacha.neon": "ネオン",
+  "autopilot.gacha.retro": "レトロ",
+  "autopilot.gacha.editorial": "エディトリアル",
+  "autopilot.gacha.bento": "ベントー"
 }

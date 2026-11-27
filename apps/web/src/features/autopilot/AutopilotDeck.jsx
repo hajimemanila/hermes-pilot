@@ -15,7 +15,8 @@ import {
 import { haptic } from '../../lib/haptic.js'
 import { celebrateAction } from '../../lib/vibe.js'
 import { AnnotationEditor } from '../AnnotationEditor.jsx'
-import { OptionMockPreview } from './AutopilotCards.jsx'
+import { MockCompareStage } from './MockCompareStage.jsx'
+import { StyleGachaBar } from './StyleGachaBar.jsx'
 
 const FLY_MS = 220
 
@@ -40,6 +41,9 @@ export function AutopilotDeck({
   const [remixNoteMode, setRemixNoteMode] = useState(false)
   const [remixNoteText, setRemixNoteText] = useState('')
   const [annotating, setAnnotating] = useState(null)
+  const [liveSandbox, setLiveSandbox] = useState(false)
+  const [annotationsByVariant, setAnnotationsByVariant] = useState({})
+  const [gachaCountByCard, setGachaCountByCard] = useState({})
   const gestureRef = useRef({ active: false, startX: 0, startY: 0, pointerId: null })
   const flyTimerRef = useRef(null)
 
@@ -56,6 +60,10 @@ export function AutopilotDeck({
     setOptIndex(0)
   }, [question?.key])
 
+  useEffect(() => {
+    setLiveSandbox(false)
+  }, [question?.key, optIndex])
+
   useEffect(() => () => {
     if (flyTimerRef.current) clearTimeout(flyTimerRef.current)
   }, [])
@@ -67,11 +75,11 @@ export function AutopilotDeck({
     return () => clearTimeout(id)
   }, [undo])
 
-  const sendRemix = async (targetCard, reason, hint = '') => {
+  const sendRemix = async (targetCard, reason, hint = '', stylePreset = null) => {
     setRemixPending(null)
     setRemixNoteMode(false)
     setRemixNoteText('')
-    const payload = buildRemixPayload(targetCard, reason, hint)
+    const payload = buildRemixPayload(targetCard, reason, hint, stylePreset)
     if (onRemixCard) {
       await onRemixCard(targetCard, payload)
       return
@@ -85,7 +93,7 @@ export function AutopilotDeck({
   }
 
   useEffect(() => {
-    if (!remixPending || remixNoteMode) return undefined
+    if (!remixPending || remixNoteMode || !remixPending.autoFire) return undefined
     const ms = Math.max(0, remixPending.expiresAt - Date.now())
     const id = setTimeout(() => {
       sendRemix(remixPending.card, 'alternative', '')
@@ -144,6 +152,8 @@ export function AutopilotDeck({
     }
 
     // 右スワイプ（採用）
+    const activeVariantKey = `${question.key}:${res.choice}`
+    const savedAnnotation = annotationsByVariant[activeVariantKey] || null
     haptic('success')
     celebrateAction('approve', {
       x: rect ? Math.round(rect.left + rect.width / 2) : null,
@@ -156,13 +166,17 @@ export function AutopilotDeck({
       setUndo(createUndoEntry(question, 'go', Date.now(), 3000, optIndex))
       setIndex((i) => i + 1)
       setOptIndex(0)
-      onCommitAction?.(question, 'go', { choice: res.choice, shot: cardView.shot })
+      onCommitAction?.(question, savedAnnotation ? 'annotate' : 'go', {
+        choice: res.choice,
+        shot: cardView.shot,
+        ...(savedAnnotation ? { annotation: savedAnnotation } : {}),
+      })
     }, FLY_MS)
   }
 
   const handlePointerDown = (e) => {
     if (!cardView || flying || e.button > 0) return
-    if (e.target?.closest?.('button, a, input, textarea')) return
+    if (e.target?.closest?.('button, a, input, textarea, iframe, .ap-sandbox-active, .ap-stage-ctl')) return
     if (isInEdgeDeadZone(e.clientX, typeof window !== 'undefined' ? window.innerWidth : 0)) return
     gestureRef.current = {
       active: true,
@@ -291,15 +305,39 @@ export function AutopilotDeck({
             {cardView.option.recommended && (
               <span className="ap-rec-badge">★ {t('review.recommended')}</span>
             )}
+            <button
+              type="button"
+              className={`ap-gacha-btn${remixPending ? ' active' : ''}`}
+              aria-label={t('autopilot.gacha.title')}
+              title={t('autopilot.gacha.title')}
+              onClick={(e) => {
+                e.stopPropagation()
+                haptic('tap')
+                setRemixNoteMode(false)
+                setRemixPending((cur) =>
+                  cur && cur.cardKey === question.key ? null : createRemixPending(question, Date.now(), 60_000, false),
+                )
+              }}
+            >
+              🎲
+            </button>
           </header>
 
           <div className="ap-card-media">
-            <OptionMockPreview
-              option={cardView.option}
+            <MockCompareStage
               question={question}
+              cardView={cardView}
+              optIndex={optIndex}
               shotUrl={shotUrl}
-              layoutVariant={cardView.layoutVariant}
-              theme={cardView.theme}
+              mockUrl={cardView.mockUrl}
+              annotationCount={(() => {
+                const ann = annotationsByVariant[`${question.key}:${cardView.option.id}`]
+                if (!ann) return 0
+                return Array.isArray(ann.marks) && ann.marks.length > 0 ? ann.marks.length : 1
+              })()}
+              onSelectOption={(nextIdx) => setOptIndex(nextIdx)}
+              onToggleSandbox={() => setLiveSandbox((v) => !v)}
+              liveSandbox={liveSandbox}
               t={t}
             />
           </div>
@@ -335,33 +373,44 @@ export function AutopilotDeck({
               <button type="submit" className="ap-remix-send">{t('autopilot.btn.go')}</button>
             </form>
           ) : (
-            <div className="ap-remix-chips">
-              <button
-                type="button"
-                className="ap-remix-chip"
-                onClick={() => {
-                  haptic('tap')
-                  setRemixPending(null)
-                  setOptIndex(0)
-                }}
-              >
-                ↺ {t('autopilot.remix.backToFirst')}
-              </button>
-              {REMIX_CHIPS.map((chip) => (
+            <>
+              <div className="ap-remix-chips">
                 <button
-                  key={chip.id}
                   type="button"
                   className="ap-remix-chip"
                   onClick={() => {
-                    if (chip.id === 'note') setRemixNoteMode(true)
-                    else sendRemix(remixPending.card, chip.id, '')
+                    haptic('tap')
+                    setRemixPending(null)
+                    setOptIndex(0)
                   }}
                 >
-                  <span>{chip.icon}</span>
-                  <span>{t(chip.labelKey)}</span>
+                  ↺ {t('autopilot.remix.backToFirst')}
                 </button>
-              ))}
-            </div>
+                {REMIX_CHIPS.map((chip) => (
+                  <button
+                    key={chip.id}
+                    type="button"
+                    className="ap-remix-chip"
+                    onClick={() => {
+                      if (chip.id === 'note') setRemixNoteMode(true)
+                      else sendRemix(remixPending.card, chip.id, '')
+                    }}
+                  >
+                    <span>{chip.icon}</span>
+                    <span>{t(chip.labelKey)}</span>
+                  </button>
+                ))}
+              </div>
+              <StyleGachaBar
+                usedCount={gachaCountByCard[remixPending.card.key] || 0}
+                onRollStyle={(presetId) => {
+                  const key = remixPending.card.key
+                  setGachaCountByCard((prev) => ({ ...prev, [key]: (prev[key] || 0) + 1 }))
+                  sendRemix(remixPending.card, 'style_gacha', presetId, presetId)
+                }}
+                t={t}
+              />
+            </>
           )}
         </div>
       )}
@@ -419,6 +468,8 @@ export function AutopilotDeck({
           onClose={() => setAnnotating(null)}
           onCollectAnnotation={(ann) => {
             const target = annotating
+            const variantKey = `${target.question.key}:${target.option?.id || 'A'}`
+            setAnnotationsByVariant((prev) => ({ ...prev, [variantKey]: ann }))
             setAnnotating(null)
             celebrateAction('approve', { sfx: true })
             setUndo(createUndoEntry(target.question, 'annotate', Date.now(), 3000, optIndex))

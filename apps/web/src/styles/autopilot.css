@@ -472,6 +472,175 @@ html[data-vibe='dopamine'] .ap-launcher-submit { background: var(--vibe-primary-
 
 .ap-new-proj-title { font-size: 13px; font-weight: 800; color: var(--text); }
 
+/* --- AP2-4: Story Flick Compare, Live Sandbox & Style Gacha --- */
+.ap-media-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  user-select: none;
+  touch-action: pan-y;
+}
+
+.ap-story-bars {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  right: 10px;
+  z-index: 4;
+  display: flex;
+  gap: 5px;
+}
+
+.ap-story-seg {
+  flex: 1 1 0;
+  height: 4px;
+  min-height: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.35);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+}
+
+.ap-story-seg.active {
+  background: var(--accent);
+}
+
+.ap-peek-badge {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--glass-strong);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 800;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.ap-ann-badge {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  z-index: 5;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--warn-bg, #fff7ed);
+  border: 1px solid var(--warn, #ea580c);
+  color: var(--warn-fg, #9a3412);
+  font-size: 11px;
+  font-weight: 800;
+  pointer-events: none;
+}
+
+.ap-sandbox-toggle {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 5;
+  min-height: 36px;
+  padding: 0 11px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--glass-strong);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 800;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.16);
+}
+
+.ap-sandbox-toggle.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.ap-sandbox-wrap {
+  width: 100%;
+  height: 100%;
+  min-height: 195px;
+  background: #ffffff;
+  display: flex;
+}
+
+.ap-sandbox-frame {
+  width: 100%;
+  height: 100%;
+  min-height: 195px;
+  border: 0;
+  display: block;
+}
+
+.ap-gacha-btn {
+  min-width: 34px;
+  min-height: 30px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-elev);
+  font-size: 13px;
+}
+
+.ap-gacha-btn.active {
+  border-color: var(--accent);
+  background: var(--rec-bg);
+}
+
+.ap-gacha-bar {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ap-gacha-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.ap-gacha-title { color: var(--text); }
+.ap-gacha-count { color: var(--accent); }
+.ap-gacha-count.exhausted { color: var(--muted); }
+
+.ap-gacha-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ap-gacha-chip {
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ap-gacha-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 @keyframes ap-pulse {
   0%, 100% { transform: scale(1); opacity: 1; }
   50% { transform: scale(1.35); opacity: 0.55; }

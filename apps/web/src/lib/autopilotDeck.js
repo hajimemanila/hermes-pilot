@@ -7,6 +7,38 @@ export const EDGE_DEAD_ZONE_PX = 24
 export const SWIPE_THRESHOLD_PX = 90
 export const UNDO_WINDOW_MS = 3000
 export const REMIX_CHIP_WINDOW_MS = 2000
+export const MAX_STYLE_GACHA = 3
+
+export const STYLE_GACHA_PRESETS = [
+  { id: 'minimal', icon: '◻', labelKey: 'autopilot.gacha.minimal' },
+  { id: 'neon', icon: '⚡', labelKey: 'autopilot.gacha.neon' },
+  { id: 'retro', icon: '📼', labelKey: 'autopilot.gacha.retro' },
+  { id: 'editorial', icon: '📰', labelKey: 'autopilot.gacha.editorial' },
+  { id: 'bento', icon: '🍱', labelKey: 'autopilot.gacha.bento' },
+]
+
+/** Instagram ストーリー風フリック比較のタップ領域判定（左45%: 前案 / 右45%: 次案）。 */
+export function resolveStoryTapZone(clientX, rect) {
+  const x = Number(clientX)
+  const left = Number(rect?.left)
+  const width = Number(rect?.width)
+  if (!Number.isFinite(x) || !Number.isFinite(left) || !Number.isFinite(width) || width <= 0) {
+    return 'center'
+  }
+  const ratio = (x - left) / width
+  if (ratio <= 0.45) return 'prev'
+  if (ratio >= 0.55) return 'next'
+  return 'center'
+}
+
+/** 選択肢添字の循環移動（`0 .. totalCount - 1`）。 */
+export function nextOptionIndex(currentIdx, totalCount, delta = 1) {
+  const total = Number(totalCount) || 0
+  if (total <= 1) return 0
+  const cur = (((Number(currentIdx) || 0) % total) + total) % total
+  const step = Number(delta) || 0
+  return (((cur + step) % total) + total) % total
+}
 
 export const SWIPE_STAMPS = {
   right: 'GO',
@@ -175,6 +207,11 @@ export function currentOptionCard(card, optionIndex = 0) {
   const option = opts[safeIdx]
   const vm = option?.visualMock || card.visualMock || null
   const shot = vm?.shot || option?.thumb || null
+  const mockHtml = vm?.html ? String(vm.html) : null
+  const mockUrl =
+    mockHtml && card.taskId
+      ? `/api/review/${encodeURIComponent(card.taskId)}/mock?file=${encodeURIComponent(mockHtml)}`
+      : null
   return {
     question: card,
     option,
@@ -182,6 +219,8 @@ export function currentOptionCard(card, optionIndex = 0) {
     optionCount: opts.length,
     isLastOption: safeIdx >= opts.length - 1,
     shot,
+    mockHtml,
+    mockUrl,
     layoutVariant: vm?.layoutVariant || String(option?.id || 'A'),
     theme: vm?.theme || (safeIdx === 0 ? 'cyan' : safeIdx === 1 ? 'amber' : 'violet'),
     templateKind: vm?.template || card.templateKind || 'layout-card',
@@ -267,22 +306,25 @@ export function resolveHoldOutcome(card) {
   }
 }
 
-export function createRemixPending(card, now = Date.now(), windowMs = REMIX_CHIP_WINDOW_MS) {
+export function createRemixPending(card, now = Date.now(), windowMs = REMIX_CHIP_WINDOW_MS, autoFire = true) {
   return {
     card,
     cardKey: String(card?.key ?? ''),
     taskId: String(card?.taskId ?? ''),
     questionId: String(card?.questionId ?? ''),
     expiresAt: now + windowMs,
+    autoFire: Boolean(autoFire),
   }
 }
 
-export function buildRemixPayload(card, reason = 'alternative', hint = '') {
-  return {
+export function buildRemixPayload(card, reason = 'alternative', hint = '', stylePreset = null) {
+  const payload = {
     questionId: String(card?.questionId ?? ''),
     reason: String(reason || 'alternative'),
     hint: String(hint || '').trim(),
   }
+  if (stylePreset) payload.stylePreset = String(stylePreset)
+  return payload
 }
 
 /** 生ツール名を初心者向けの親しみやすい実況 i18n キーへ変換する。 */
