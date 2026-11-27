@@ -176,9 +176,11 @@ test('JSX: セッション一覧は 1 つだけ定義し、ドロワーと左カ
   // 一覧の実体は 1 ペインのドロワーと 2 カラムの左で同じものを使う（材料は親が 1 回だけ組む）
   const listUses = jsx.match(/<ChatSessionList \{\.\.\.sessionListProps\} \/>/g) ?? []
   assert.equal(listUses.length, 1, `左カラムの一覧が ${listUses.length} 箇所（1 箇所のはず）`)
+  // ドロワーの描画は CSW3-5 で `features/chat/ChatSheets.jsx` へ移った（材料は同じ 1 束）
+  const sheets = fs.readFileSync(path.join(ROOT, 'src/features/chat/ChatSheets.jsx'), 'utf8')
   assert.match(
-    jsx,
-    /<ChatDrawer\s+open=\{drawer\}\s+onClose=\{\(\) => setDrawer\(false\)\}\s+title=\{t\('chat\.drawerTitle'\)\}\s+listProps=\{sessionListProps\}\s+\/>/,
+    sheets,
+    /<ChatDrawer open=\{drawerOpen\} onClose=\{onCloseDrawer\} title=\{drawerTitle\} listProps=\{listProps\} \/>/,
     'ドロワー（ChatDrawer）へ一覧の材料が渡っていない',
   )
 })

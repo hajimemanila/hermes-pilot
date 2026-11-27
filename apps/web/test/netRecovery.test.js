@@ -150,8 +150,9 @@ test('回線復帰の契約が App・全主要ペイン・WebSocket に入って
   for (const rel of ['features/MemosPane.jsx', 'features/SettingsPane.jsx', 'features/PipelinePanel.jsx', 'features/ChatPane.jsx']) {
     assert.match(readCode(rel), /useWakeSync\(/, `${rel} が useWakeSync を使っていない`)
   }
-  const chatPane = readCode('features/ChatPane.jsx')
-  assert.match(chatPane, /shouldReconnectToast\(/)
+  // 再接続トーストの判定は CSW3-5 で `chat/useChatConnection.js`（`onReady`）へ移った。
+  const chatConn = readCode('features/chat/useChatConnection.js')
+  assert.match(chatConn, /shouldReconnectToast\(/)
 
   const chatSock = readCode('lib/useChatSocket.js')
   assert.match(chatSock, /if\s*\(wsRef\.current\s*!==\s*ws\)\s*return/)
