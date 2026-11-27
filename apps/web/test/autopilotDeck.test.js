@@ -221,3 +221,36 @@ test('AP-6: デモモードで Autopilot デッキ（visualMock / remix / annota
   })
   assert.equal(answered.ok, true)
 })
+
+test('DECK-SPLIT: バレルは 27 名の公開契約を維持する', async () => {
+  const barrel = await import('../src/lib/autopilotDeck.js')
+  assert.deepEqual(Object.keys(barrel).sort(), [
+    'AUTOPILOT_RECIPES',
+    'EDGE_DEAD_ZONE_PX',
+    'MAX_STYLE_GACHA',
+    'REMIX_CHIPS',
+    'REMIX_CHIP_WINDOW_MS',
+    'STYLE_GACHA_PRESETS',
+    'SWIPE_STAMPS',
+    'SWIPE_THRESHOLD_PX',
+    'UNDO_WINDOW_MS',
+    'buildAnswerPayload',
+    'buildDeckFromSheet',
+    'buildRemixPayload',
+    'classifySwipe',
+    'createRemixPending',
+    'createUndoEntry',
+    'currentOptionCard',
+    'extractDeliverable',
+    'isInEdgeDeadZone',
+    'isReachablePublicUrl',
+    'isSameOriginPreviewUrl',
+    'isUndoActive',
+    'nextOptionIndex',
+    'projectStudioStage',
+    'resolveHoldOutcome',
+    'resolveOptionSwipe',
+    'resolveStoryTapZone',
+    'translateActivity',
+  ])
+})

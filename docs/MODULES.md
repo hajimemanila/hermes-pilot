@@ -103,7 +103,11 @@ apps/web/src/features/
     LiveRadarCard.jsx        ← Panoptes 着想・純粋 React+SVG レーダー BI（subscribeSync のみ）
     BeforeAfterTimelapse.jsx ← 完了カード用ビフォー・アフター タイムラプス比較
 
-apps/web/src/lib/autopilotDeck.js  ← スワイプ分類・デッキ構築・フリック判定・REMIX/HOLD 純関数
+apps/web/src/lib/autopilotDeck.js  ← 再エクスポート専用バレル（公開契約 27 名をここで固定）
+apps/web/src/lib/autopilot/
+  deck-core.js                     ← 定数・データ・ジェスチャ判定（13 export）
+  deck-flow.js                     ← デッキ構築・カード切替・回答/undo/remix 進行（9 export）
+  studio.js                        ← 4 幕ステージ判定・成果物抽出・実況 i18n（5 export）
 apps/web/src/lib/liveRadar.js      ← LiveRadarCard 座標投影・トークン集計純関数
 apps/web/src/styles/autopilot.css  ← Autopilot 専用スタイル（tokens.css トークンのみ使用）
 apps/web/src/styles/autopilot-radar.css ← LiveRadarCard SVG ＆ タイムラプス専用 CSS
