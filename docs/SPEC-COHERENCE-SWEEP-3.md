@@ -120,6 +120,11 @@ ChatPane の中身を実測すると、**ロジック（state + ハンドラ）�
 - **受入条件（Verify）**: `node --test apps/bridge/test/coherence.rules.test.js apps/web/test/paneContract.test.js` が exit 0 かつ `npm run build` が exit 0 かつ `npm run check:coherence` が exit 0（`hardFails` 0・`dead-export` の 66 件は pending の soft として並ぶ）
 - **実装要点**: `deadExportProblems()` はバレルを読み手から外す。`--allow-grow` の理由（ルール追加で `scripts/check-coherence.mjs` が約 20 行増える）を commit message と本 SPEC に残し、以後のバッチは shrink-only に戻す。
 
+**実施記録（CSW3-1・実測）**:
+- `--allow-grow` は 1 回だけ実行し、`scripts/check-coherence.mjs` の baseline を **1591 → 1638**（+47）へ上げた。内訳はルール 16 本目（`ruleDeadExport`）・`.hermes-coherence.json` の読み取り・対象/読み手モジュールの読み込み。その後 `process.exit` による出力切り詰め（下記）を直して **1636 行**になり、grow なしの `--update-baseline` で 1636 に締め直した（以後は shrink-only）。
+- 実測値: `ruleCount` 16 / `pending` 1 / `hardFails` 0 / `dead-export` の soft 66 件（63 件は同一ファイル内使用・3 件は完全未使用）。走査は 199 モジュール、読み手は `apps/web/src` + `apps/bridge/src` + 両テスト + `apps/dashboard` + `scripts` + `bin`。
+- 発見した不具合: 66 件を soft として並べると `--json` の出力が 8 KB を超え、末尾の `process.exit(code)` がパイプの書き込みを打ち切って JSON が壊れた（`apps/bridge/test/coherence.test.js` の 2 本が赤）。`process.exitCode = code` に変えて解消。**大量の指摘を出すルールは `process.exit` を使わない。**
+
 ### Batch CSW3-2: CHAT-COMPOSER — 添付・送信・スニペットを `features/chat/` へ
 
 - **Execution Mode**: [Mode: Zero-Stop]

@@ -713,7 +713,7 @@ test('board-tick-owner: a watcher that opens the board or keeps a timer is a har
 })
 
 test('the recurrence guards are registered rules and stay ASCII', () => {
-  assert.equal(RULES.length, 15)
+  assert.equal(RULES.length, 16)
   for (const rule of [
     'cli-invocation-guard',
     'silent-failure-guard',
@@ -725,6 +725,7 @@ test('the recurrence guards are registered rules and stay ASCII', () => {
     'cli-owner',
     'swallow-owner',
     'board-tick-owner',
+    'dead-export',
   ]) {
     assert.ok(RULES.includes(rule), `${rule} must be registered`)
     assert.equal(containsCJK(rule), false)
@@ -742,4 +743,55 @@ test('silent-failure-guard: non-branching auth.audit({ ok: out.ok }) does not sa
   const problems = silentServerProblems(auditedButSilent)
   assert.equal(problems.length, 1)
   assert.equal(problems[0].route, 'close')
+})
+
+/* dead-export (SPEC-COHERENCE-SWEEP-3 / CSW3-1): a name only its own file uses is dead,
+ * a barrel is not a reader, and deadExportIgnore is the declared escape hatch. */
+
+/** Dead-export findings of one fixture report. */
+function deadHits(report) {
+  return report.hardFails.filter((issue) => issue.rule === 'dead-export')
+}
+
+test('dead-export: an export no reader module mentions is a hard fail', async () => {
+  const report = await analyzeRepo(
+    ruleFixture({
+      'apps/web/src/lib/x.js': 'export const foo = 1\nexport const used = 2\n',
+      'apps/web/src/lib/y.js': "import { used } from './x.js'\nglobalThis.n = used\n",
+    }),
+  )
+  assert.deepEqual(deadHits(report).map((issue) => issue.name), ['foo'])
+  assert.equal(deadHits(report)[0].file, 'apps/web/src/lib/x.js')
+  assert.equal(deadHits(report)[0].line, 1)
+})
+
+test('dead-export: an export another module imports stays alive', async () => {
+  const report = await analyzeRepo(
+    ruleFixture({
+      'apps/web/src/lib/x.js': 'export const foo = 1\n',
+      'apps/web/src/lib/y.js': "import { foo } from './x.js'\nglobalThis.n = foo\n",
+    }),
+  )
+  assert.deepEqual(deadHits(report), [])
+})
+
+test('dead-export: a barrel is not a reader, so the export behind it stays dead', async () => {
+  const report = await analyzeRepo(
+    ruleFixture({
+      'apps/web/src/lib/x.js': 'export const foo = 1\n',
+      'apps/web/src/lib/barrel.js': "export { foo } from './x.js'\n",
+    }),
+  )
+  assert.deepEqual(deadHits(report).map((issue) => issue.name), ['foo'])
+  assert.equal(deadHits(report)[0].file, 'apps/web/src/lib/x.js')
+})
+
+test('dead-export: deadExportIgnore suppresses one export by path#name', async () => {
+  const report = await analyzeRepo(
+    ruleFixture({
+      'apps/web/src/lib/x.js': 'export const foo = 1\n',
+      '.hermes-coherence.json': JSON.stringify({ deadExportIgnore: ['apps/web/src/lib/x.js#foo'] }),
+    }),
+  )
+  assert.deepEqual(deadHits(report), [])
 })

@@ -431,3 +431,118 @@ export function boardTickOwnerProblems(rel, text) {
   }
   return problems
 }
+
+/* ------------------------------------------------------------------ */
+/* (16) dead exports (Q4 / CSW3-1)                                      */
+/* ------------------------------------------------------------------ */
+
+/** Modules whose exports must have a reader. */
+export const DEAD_EXPORT_DIRS = Object.freeze(['apps/web/src', 'apps/bridge/src'])
+
+/** Modules that count as readers. Tests count: a name only a test uses is alive. */
+export const DEAD_EXPORT_READER_DIRS = Object.freeze([
+  'apps/web/src',
+  'apps/bridge/src',
+  'apps/web/test',
+  'apps/bridge/test',
+  'apps/dashboard',
+  'scripts',
+  'bin',
+])
+
+/** `export (async )?(function|const|let|var|class) NAME`. */
+const EXPORT_DECL_RE = /^[ \t]*export\s+(?:async\s+)?(?:function\s*\*?|const|let|var|class)\s+([A-Za-z_$][\w$]*)/gm
+
+/** `export { A, B as C }`. */
+const EXPORT_LIST_RE = /^[ \t]*export\s*\{([^}]*)\}/gm
+
+/** One identifier token. */
+const IDENT_RE = /[A-Za-z_$][\w$]*/g
+
+/** A line that only re-exports (`export {...} from` / `export * from`). */
+const REEXPORT_RE = /^[ \t]*export\s+(?:\*(?:\s+as\s+[A-Za-z_$][\w$]*)?|\{[^}]*\})\s*from\s*['"]/
+
+/**
+ * Names a module exports.
+ *
+ * @param {string} text module source
+ * @returns {{name: string, line: number}[]} exported names in source order
+ */
+export function exportedNames(text) {
+  const src = String(text ?? '')
+  const out = []
+  for (const m of src.matchAll(EXPORT_DECL_RE)) out.push({ name: m[1], line: lineOf(src, m.index) })
+  for (const m of src.matchAll(EXPORT_LIST_RE)) {
+    for (const part of m[1].split(',')) {
+      const one = /^\s*([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?\s*$/.exec(part)
+      if (one) out.push({ name: one[2] ?? one[1], line: lineOf(src, m.index) })
+    }
+  }
+  return out
+}
+
+/**
+ * True when a module is only re-exports.
+ *
+ * A barrel mentions every name it passes through, so counting it as a reader would
+ * hide exactly the exports that died behind the barrel.
+ *
+ * @param {string} text module source
+ * @returns {boolean} true for a pure barrel
+ */
+export function isBarrelModule(text) {
+  const lines = stripComments(String(text ?? ''))
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+  return lines.length > 0 && lines.every((line) => REEXPORT_RE.test(line))
+}
+
+/** Identifier set of one module (what a reader can see). */
+function identifiersOf(text) {
+  const set = new Set()
+  for (const m of String(text ?? '').matchAll(IDENT_RE)) set.add(m[0])
+  return set
+}
+
+/**
+ * (16) Exports that no reader module mentions.
+ *
+ * The declaring module is not its own reader: an export used only inside its own
+ * file is still dead weight at the module boundary (`export` can go, the code stays).
+ *
+ * @param {{rel: string, text: string}[]} sources modules whose exports are judged
+ * @param {{rel: string, text: string}[]} readers modules that may mention a name
+ * @param {{path: RegExp, name: string}[]} [ignore] `deadExportIgnore` entries (path matched by `globToRegExp`)
+ * @returns {{file: string, line: number, name: string, reason: string}[]} problems
+ */
+export function deadExportProblems(sources, readers, ignore = []) {
+  const judged = (Array.isArray(sources) ? sources : []).filter((file) => file && !isBarrelModule(file.text))
+  const identifiers = new Map(
+    (Array.isArray(readers) ? readers : [])
+      .filter((file) => file && !isBarrelModule(file.text))
+      .map((file) => [file.rel, identifiersOf(file.text)]),
+  )
+  const ignored = (Array.isArray(ignore) ? ignore : []).filter(
+    (entry) => entry && entry.path instanceof RegExp && typeof entry.name === 'string',
+  )
+  const problems = []
+  for (const file of judged) {
+    const seen = new Set()
+    for (const { name, line } of exportedNames(file.text)) {
+      if (seen.has(name)) continue
+      seen.add(name)
+      if (ignored.some((entry) => entry.name === name && entry.path.test(file.rel))) continue
+      let alive = false
+      for (const [rel, tokens] of identifiers) {
+        if (rel === file.rel) continue
+        if (tokens.has(name)) {
+          alive = true
+          break
+        }
+      }
+      if (alive) continue
+      problems.push({ file: file.rel, line, name, reason: `${file.rel} exports '${name}' with no reader` })
+    }
+  }
+  return problems
+}

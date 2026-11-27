@@ -39,11 +39,14 @@ import {
   BOARD_SCAN_MS,
   BOARD_TICK_OWNER_FILE,
   CLOCK_INTERVAL_MS,
+  DEAD_EXPORT_DIRS,
+  DEAD_EXPORT_READER_DIRS,
   SAFE_OWNER_FILE,
   TRANSITION_OWNER_FILES,
   WRITE_ROUTES,
   boardTickOwnerProblems,
   callSpans,
+  deadExportProblems,
   isBoardWatcherFile,
   lineOf,
   routeBlocks,
@@ -125,6 +128,7 @@ export const RULES = Object.freeze([
   'cli-owner',
   'swallow-owner',
   'board-tick-owner',
+  'dead-export',
 ])
 
 /* ------------------------------------------------------------------ */
@@ -1303,6 +1307,44 @@ async function ruleBoardTickOwner(root, findings) {
   }
 }
 
+/** Read every module below `dirs` once as `{ rel, text }`. */
+function readModules(root, dirs) {
+  const out = new Map()
+  for (const dir of Array.isArray(dirs) ? dirs : []) {
+    for (const { rel, abs } of walkCode(root, dir)) {
+      if (!out.has(rel)) out.set(rel, { rel, text: readText(abs) ?? '' })
+    }
+  }
+  return [...out.values()]
+}
+
+/** (16) Recurrence guard: an export nobody reads is dead code (Q4 / CSW3-1). One
+ * violation per export so the owning batch can tick them off one by one; a barrel
+ * never counts as a reader (`deadExportProblems`), or a re-export hides the export. */
+async function ruleDeadExport(root, findings) {
+  const rule = 'dead-export'
+  const cfg = readJson(path.join(root, LAYOUT.config)) ?? {}
+  const dirs = Array.isArray(cfg.deadExportDirs) ? cfg.deadExportDirs : DEAD_EXPORT_DIRS
+  const readerDirs = Array.isArray(cfg.deadExportReaderDirs) ? cfg.deadExportReaderDirs : DEAD_EXPORT_READER_DIRS
+  const entries = Array.isArray(cfg.deadExportIgnore) ? cfg.deadExportIgnore : []
+  const ignore = entries.flatMap((entry) => {
+    const at = String(entry ?? '').lastIndexOf('#')
+    if (at < 1) return []
+    return [{ path: globToRegExp(String(entry).slice(0, at)), name: String(entry).slice(at + 1) }]
+  })
+  const sources = readModules(root, dirs)
+  const hits = deadExportProblems(sources, readModules(root, readerDirs), ignore)
+  findings.note(rule, `${sources.length} module(s) scanned in ${dirs.join(', ')} (${entries.length} ignore entr(ies))`, {
+    value: sources.length,
+    dirs: [...dirs],
+    readers: readerDirs.length,
+    ignore: entries.length,
+  })
+  for (const hit of hits) {
+    findings.violation(rule, hit.reason, { file: hit.file, line: hit.line, name: hit.name })
+  }
+}
+
 /* --- ratchet + legacy-name soft signals --- */
 
 /** Resolve the baseline path from the coherence config. */
@@ -1468,6 +1510,7 @@ export async function analyzeRepo(root = DEFAULT_ROOT, options = {}) {
     ruleCliOwner,
     ruleSwallowOwner,
     ruleBoardTickOwner,
+    ruleDeadExport,
   ]) {
     try {
       await rule(absRoot, findings)
@@ -1587,5 +1630,7 @@ export async function main(argv = process.argv.slice(2)) {
 const invokedDirectly = process.argv[1] ? path.resolve(process.argv[1]) === SELF : false
 if (invokedDirectly) {
   const code = await main()
-  process.exit(code)
+  // `process.exit(code)` truncates stdout when the report is larger than the pipe
+  // buffer (65 pending findings were enough), so leave the exit code to the runtime.
+  process.exitCode = code
 }
