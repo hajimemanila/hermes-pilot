@@ -1,3 +1,3 @@
 /* Autopilot v2 の入れ子 manifest（規則は持たない）。デッキと AP2-4 story の 2 枚を順に読む。 */
-@import './autopilot-deck.css'; /* 479 lines — deck shell, card, action bar, <=430px tweaks */
-@import './autopilot-story.css'; /* 178 lines — AP2-4 story flick compare, live sandbox, style gacha */
+@import './autopilot-deck.css'; /* deck shell, card, action bar, <=430px tweaks */
+@import './autopilot-story.css'; /* AP2-4 story flick compare, live sandbox, style gacha */

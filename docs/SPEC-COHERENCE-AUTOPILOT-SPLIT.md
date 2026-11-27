@@ -1,6 +1,7 @@
 # SPEC: 整合性スイープ第 2 弾 — autopilot の分割・葉の抜き出し・テスト分割 (`SPEC-COHERENCE-AUTOPILOT-SPLIT`)
 
-- **Status**: decided（2026-11-27・Round 1 の 4 問はすべて「お任せ」＝推奨 A を採用して確定）
+- **Status**: archived
+- **決定済状態**: decided（2026-11-27・SEMM-6〜SEMM-10 実装＆検証完了、Round 1 の 4 問は推奨 A で確定）
 - **決定の出所**: `~/.hermes/plugin-data/hermes-pilot/review/sheets/spec-coherence-autopilot-split-1.answer.json`（`answers` 4 件すべて `choice: null` / `note: ""` / `global: ""`）
 - **対象リポジトリ**: `~/projects/hermes-mobile-pwa` @ `0b90f66`（2026-11-27 実測）
 - **前提仕様**: [SPEC-spec-execution-mode-mode-zer.md](./SPEC-spec-execution-mode-mode-zer.md)（SEMM-1〜5）/ [SPEC-coherence-audit-2.md](./SPEC-coherence-audit-2.md)（COA2-1〜5）/ [SPEC-coherence-split-batches.md](./SPEC-coherence-split-batches.md)（MRG-1〜5）/ [SPEC-COHERENCE.md](./SPEC-COHERENCE.md)

@@ -1,6 +1,7 @@
 # SPEC-AUTOPILOT-V2 — Autopilot Fast-Lane Harness, Interactive Sandbox & LiveRadar BI
 
-> **Status:** Active  
+- **Status**: archived
+> **Status:** Archived (completed AP2-1..AP2-6)  
 > **Batch prefix:** `AP2`  
 > **Supersedes / Extends:** `docs/SPEC-AUTOPILOT.md` (Archived `AP-1..AP-6`)  
 > **Target:** Hermes Mobile PWA (`apps/web`, `apps/bridge`, `scripts`, `skills`)

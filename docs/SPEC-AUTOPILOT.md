@@ -1,5 +1,6 @@
 # SPEC: v0.3.0 Autopilot Mode — スワイプデッキ＆ビジュアル優先 A2B パイプライン (`SPEC-AUTOPILOT`)
 
+- **Status**: archived
 - **状態**: 完了（`v0.3.0`・`AP-1`〜`AP-6` 実装＆検証済み）
 - **対象リポジトリ**: `~/projects/hermes-mobile-pwa`（`v0.2.5` → `v0.3.0`）
 - **前提・関連仕様**:

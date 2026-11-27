@@ -414,6 +414,9 @@ html[data-vibe='dopamine'] .ap-launcher-submit { background: var(--vibe-primary-
   .ap-lens-btn { min-height: 30px; padding: 0 6px; font-size: 10.5px; gap: 2px; }
   .ap-lens-badge { font-size: 10px; padding: 0 4px; }
 }
+@media (max-height: 430px) {
+  .ap-lens-btn::before { height: 40px; }
+}
 .ap-swipe-strip { margin: 6px 0 8px; }
 .ap-swipe-link { width: 100%; min-height: 44px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--accent); background: var(--rec-bg); color: var(--rec-fg); font-size: 12.5px; font-weight: 700; display: flex; align-items: center; justify-content: space-between; gap: 8px; white-space: nowrap; }
 
