@@ -46,9 +46,14 @@ export function LiveRadarCard({
       subscribeSync('usage', (v) => setUsage(v || null)),
       subscribeSync('reviewWaiting', (v) => setReviewItems(Array.isArray(v?.items) ? v.items : [])),
     ]
+    tickSync('live')
     tickSync('usage')
     return () => offs.forEach((off) => off?.())
   }, [])
+
+  useEffect(() => {
+    if (initialLive) setLive(initialLive)
+  }, [initialLive])
 
   const runTracked = Boolean(runStartedAt) || Number(persistedMaxTokens) > 0
   const hwKey = String(runId || activeJob?.id || (runStartedAt ? String(runStartedAt) : 'default'))

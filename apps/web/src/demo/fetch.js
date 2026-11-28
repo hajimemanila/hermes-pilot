@@ -5,10 +5,12 @@
 import { DEMO_BOARD, DEMO_SESSION, DEMO_SPEC_PATH, MIN, demoQuestions, demoRunnerLabel } from './fixtures.js'
 import {
   advanceArchitectJob,
+  advanceJobAfterReview,
   demoArchitectJobs,
   demoExecutionMode,
   demoLiveArchitect,
   demoPublicJob,
+  launchDemoSpecBatches,
   startDemoArchitectJob,
 } from './architectDemo.js'
 import {
@@ -76,9 +78,11 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
         item.status = 'done'
         item.completedAt = Date.now()
         item.review = { ...item.review, answeredAt: new Date().toISOString() }
-        state.progress.review = true
+        if (item.review?.mode === 'annotation') state.progress.visual = true
+        else state.progress.review = true
       }
       publish('review')
+      advanceJobAfterReview(item)
       return { ok: true, files: { answer: 'answer.json', sheet: null }, duplicate: false }
     }
     case 'review.remix': {
@@ -107,6 +111,7 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
         state.progress.visual = true
       }
       publish('review')
+      advanceJobAfterReview(item)
       return { ok: true, moved: 'done', files: { approval: 'approved.json' }, duplicate: false }
     }
     case 'review.reopen':
@@ -283,31 +288,7 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
     }
     case 'specs.launch': {
       const ids = Array.isArray(payload?.batchIds) ? payload.batchIds : []
-      const created = []
-      for (const id of ids) {
-        if (state.tasks.some((t) => t.title.startsWith(`[${id}]`))) continue
-        const batch = currentSpecs(state.now)
-          .flatMap((s) => s.batches)
-          .find((b) => b.id === id)
-        const task = {
-          id: `t_demo_${String(id).toLowerCase()}`,
-          board: DEMO_BOARD,
-          title: `[${id}] ${batch?.title ?? `Demo batch — ${id}`}`,
-          status: 'ready',
-          assignee: 'mobile',
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-          priority: 0,
-        }
-        state.tasks.unshift(task)
-        created.push({ id: task.id, batchId: id })
-      }
-      if (created.length) {
-        state.progress.batches = true
-        publish('tasks')
-        setTimeout(() => advanceBatches(state.gen), state.tickMs)
-      }
-      return { ok: true, created, skipped: [] }
+      return launchDemoSpecBatches(payload?.specRelPath, ids)
     }
     case 'specs.reports':
       return { reports: state.report ? [{ ...state.report }] : [] }
@@ -373,27 +354,43 @@ export async function demoFetch(path, { method = 'GET', body } = {}) {
         totalAdded: 53,
         totalRemoved: 11,
       }
-      const turns =
-        tasks.length || architectRunning
-          ? [
-              {
-                profile: 'default',
-                sessionId: DEMO_SESSION,
-                title: 'Demo — A2B pipeline in four steps',
-                source: 'mobile',
-                platform: 'pwa',
-                startedAt: at - 40_000,
-                elapsedSec: 40,
-                expiresInSec: 280,
-                lastActivity: 'Running Pre-Flight Visual Gate',
-                lastTool: demoRecentTools[0],
-                recentTools: demoRecentTools,
-                toolCount: 12,
-                contextPct: 44,
-                tokens: { input: 14200, output: 4200, total: 18400, cacheRead: 11000, costUsd: 0.04 },
-              },
-            ]
-          : []
+      const turns = []
+      if (tasks.length || architectRunning) {
+        turns.push({
+          profile: 'default',
+          sessionId: DEMO_SESSION,
+          title: tasks[0]?.title || 'Demo — A2B pipeline in four steps',
+          source: 'mobile',
+          platform: 'pwa',
+          startedAt: at - 40_000,
+          elapsedSec: 40,
+          expiresInSec: 280,
+          lastActivity: 'Running Pre-Flight Visual Gate',
+          lastTool: demoRecentTools[0],
+          recentTools: demoRecentTools,
+          toolCount: 12,
+          contextPct: 44,
+          tokens: { input: 14200, output: 4200, total: 18400, cacheRead: 11000, costUsd: 0.04 },
+        })
+        if (tasks.length >= 2) {
+          turns.push({
+            profile: 'mobile',
+            sessionId: `${DEMO_SESSION}-w2`,
+            title: tasks[1].title,
+            source: 'mobile',
+            platform: 'pwa',
+            startedAt: at - 24_000,
+            elapsedSec: 24,
+            expiresInSec: 296,
+            lastActivity: 'Updating UI styles & layout',
+            lastTool: demoRecentTools[1],
+            recentTools: demoRecentTools.slice(1, 4),
+            toolCount: 6,
+            contextPct: 38,
+            tokens: { input: 8200, output: 2400, total: 10600, cacheRead: 6400, costUsd: 0.02 },
+          })
+        }
+      }
       const hasSince = Number(route.params?.get?.('since') ?? 0) > 0
       const runTok = turns[0] || (hasSince && state.progress.batches) ? 18400 : 0
       const runCache = turns[0] || (hasSince && state.progress.batches) ? 11000 : 0

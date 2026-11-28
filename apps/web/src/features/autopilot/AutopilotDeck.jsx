@@ -46,15 +46,46 @@ export function AutopilotDeck({
   const [gachaCountByCard, setGachaCountByCard] = useState({})
   const gestureRef = useRef({ active: false, locked: null, detentDir: null, startX: 0, startY: 0, pointerId: null })
   const flyTimerRef = useRef(null)
+  const prevKeysRef = useRef(cards.map((c) => c.key))
+  const committedKeysRef = useRef(new Set())
 
-  const question = cards[index] || null
+  let effectiveIndex = index
+  if (effectiveIndex >= cards.length && cards.length > 0) {
+    const firstUncommitted = cards.findIndex((c) => !committedKeysRef.current.has(c.key))
+    if (firstUncommitted >= 0) effectiveIndex = firstUncommitted
+  }
+
+  const question = cards[effectiveIndex] || null
   const cardView = currentOptionCard(question, optIndex)
-  const nextQuestion = !cardView?.isLastOption ? question : cards[index + 1] || null
+  const nextQuestion = !cardView?.isLastOption ? question : cards[effectiveIndex + 1] || null
   const nextOptionView = nextQuestion
     ? currentOptionCard(nextQuestion, !cardView?.isLastOption ? optIndex + 1 : 0)
     : null
-  const thirdQuestion = cards[index + (!cardView?.isLastOption ? 1 : 2)] || null
+  const thirdQuestion = cards[effectiveIndex + (!cardView?.isLastOption ? 1 : 2)] || null
   const swipe = classifySwipe(drag.dx, drag.dy, undefined, { horizontalOnly: true })
+
+  useEffect(() => {
+    const nextKeys = cards.map((c) => c.key)
+    const nextKeySet = new Set(nextKeys)
+    for (const k of [...committedKeysRef.current]) {
+      if (!nextKeySet.has(k)) committedKeysRef.current.delete(k)
+    }
+    const prevKey = prevKeysRef.current[index]
+    if (prevKey && nextKeySet.has(prevKey)) {
+      const movedTo = nextKeys.indexOf(prevKey)
+      if (movedTo !== index) setIndex(movedTo)
+    } else if (nextKeys.length > 0) {
+      const firstUncommitted = cards.findIndex((c) => !committedKeysRef.current.has(c.key))
+      if (firstUncommitted >= 0) {
+        if (firstUncommitted !== index) setIndex(firstUncommitted)
+      } else if (index < nextKeys.length) {
+        setIndex(nextKeys.length)
+      }
+    } else if (index !== 0) {
+      setIndex(0)
+    }
+    prevKeysRef.current = nextKeys
+  }, [cards, index])
 
   useEffect(() => {
     setOptIndex(0)
@@ -142,6 +173,7 @@ export function AutopilotDeck({
       setFlying('down')
       flyTimerRef.current = setTimeout(() => {
         setFlying(null)
+        committedKeysRef.current.add(question.key)
         if (res.outcome.kind === 'memo') onSaveMemo?.(res.outcome.memoText, question)
         setUndo(createUndoEntry(question, 'hold', Date.now(), 3000, optIndex))
         setIndex((i) => i + 1)
@@ -163,6 +195,7 @@ export function AutopilotDeck({
     setFlying('right')
     flyTimerRef.current = setTimeout(() => {
       setFlying(null)
+      committedKeysRef.current.add(question.key)
       setUndo(createUndoEntry(question, 'go', Date.now(), 3000, optIndex))
       setIndex((i) => i + 1)
       setOptIndex(0)
@@ -248,12 +281,29 @@ export function AutopilotDeck({
     haptic('tap')
     const prev = undo
     setUndo(null)
+    if (prev?.cardKey) committedKeysRef.current.delete(prev.cardKey)
     setIndex((i) => Math.max(0, i - 1))
     setOptIndex(prev.prevOptionIndex || 0)
     onUndoAction?.(prev)
   }
 
-  if (!cardView) return null
+  if (!cardView) {
+    return (
+      <section className="ap-stage-panel ap-live-studio" aria-label={t('autopilot.live.aria')}>
+        <div className="ap-studio-card">
+          <header className="ap-studio-head">
+            <span className="ap-live-pill">
+              <span className="ap-live-dot" aria-hidden="true" />
+              {t('autopilot.live.badge')}
+            </span>
+          </header>
+          <div className="ap-ticker-compact" role="status">
+            <span className="ap-ticker-text">{t('autopilot.live.actWorking')}</span>
+          </div>
+        </div>
+      </section>
+    )
+  }
 
   const rotDeg = drag.active ? Math.max(-14, Math.min(14, drag.dx / 16)) : 0
   const stackLift = drag.active ? Math.min(1, Math.hypot(drag.dx, drag.dy) / 90) : 0
@@ -285,7 +335,7 @@ export function AutopilotDeck({
         nextOptionView={nextOptionView}
         cardView={cardView}
         question={question}
-        index={index}
+        index={effectiveIndex}
         cards={cards}
         optIndex={optIndex}
         drag={drag}
@@ -359,6 +409,7 @@ export function AutopilotDeck({
           onCollectAnnotation={(ann) => {
             const target = annotating
             const variantKey = `${target.question.key}:${target.option?.id || 'A'}`
+            committedKeysRef.current.add(target.question.key)
             setAnnotationsByVariant((prev) => ({ ...prev, [variantKey]: ann }))
             setAnnotating(null)
             celebrateAction('approve', { sfx: true })

@@ -252,11 +252,11 @@ export function App() {
   useEffect(() => {
     const onOpenBrainstorm = (e) => {
       setPendingTaskTool({ kind: 'brainstorm', ...(e?.detail || {}) })
-      setTab('tasks')
+      if (lensRef.current !== 'cockpit') setLens('cockpit'); setTab('tasks')
     }
     const onOpenSeed = (e) => {
       setPendingTaskTool({ kind: 'seed', ...(e?.detail || {}) })
-      setTab('tasks')
+      if (lensRef.current !== 'cockpit') setLens('cockpit'); setTab('tasks')
     }
     window.addEventListener(HM_EVENTS.OPEN_BRAINSTORM, onOpenBrainstorm)
     window.addEventListener(HM_EVENTS.OPEN_SEED, onOpenSeed)
@@ -391,20 +391,20 @@ export function App() {
     const onOtherUnread = (e) => setOtherChatUnread(Number(e.detail?.count) || 0)
     const onChatStreaming = (e) => setChatStreaming(Boolean(e.detail?.streaming))
     const onOpenReview = (e) => {
-      setTab('review')
+      if (lensRef.current !== 'cockpit') setLens('cockpit'); setTab('review')
       setReviewFocus({ ...(e.detail || {}), nonce: Date.now() })
     }
     const onOpenSession = (e) => {
-      setTab('chat')
+      if (lensRef.current !== 'cockpit') setLens('cockpit'); setTab('chat')
       if (!chatMountedRef.current && e.detail) setPendingChatOpen(e.detail)
     }
     // 統合レポートの導線はチャットをアンマウントしない設計なので、pending で渡せば届く
     const onDiscussPipeline = (e) => {
-      setTab('chat')
+      if (lensRef.current !== 'cockpit') setLens('cockpit'); setTab('chat')
       setPendingDiscuss({ ...(e.detail || {}), nonce: Date.now() })
     }
     const onOpenBoard = (e) => {
-      setTab('tasks')
+      if (lensRef.current !== 'cockpit') setLens('cockpit'); setTab('tasks')
       setFocusBoard({ board: e.detail?.board ?? null, nonce: Date.now() })
     }
     // どの画面からでも 1 タップで「いま何が動いているか」（LiveSheet）を開ける逃げ道。
@@ -413,7 +413,7 @@ export function App() {
     // 特定のタスクを開きたい（LiveSheet の「📋 タスク」）。ボード切替は済ませ、
     // タスク詳細を開くのは TasksPane 側（V9-B3）が受ける。
     const onOpenTask = (e) => {
-      setTab('tasks')
+      if (lensRef.current !== 'cockpit') setLens('cockpit'); setTab('tasks')
       setFocusBoard({
         board: e.detail?.board ?? null,
         taskId: e.detail?.taskId ?? e.detail?.id ?? null,

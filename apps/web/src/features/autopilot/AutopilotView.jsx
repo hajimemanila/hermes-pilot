@@ -17,7 +17,7 @@ import {
 import { readActiveChatId } from '../../lib/chatReports.js'
 import { haptic } from '../../lib/haptic.js'
 import { buildSeedPayload } from '../../lib/specSeed.js'
-import { refreshSync, setSyncParams, subscribeSync, tickSync } from '../../lib/syncSources.js'
+import { refreshSync, setSyncParams, setSyncState, subscribeSync, tickSync } from '../../lib/syncSources.js'
 import { celebrate } from '../../lib/vibe.js'
 import { MissionReceiptSheet } from '../MissionReceiptSheet.jsx'
 import {
@@ -155,6 +155,19 @@ export function AutopilotView({ overview, notify, onSwitchCockpit }) {
   }, [runAnchor?.startedAt])
 
   useEffect(() => {
+    const busyJob = (Array.isArray(jobs) ? jobs : []).find(
+      (j) => j && !j.dismissed && ['running', 'awaiting_spec'].includes(String(j.status)),
+    )
+    setSyncState({ architectBusy: Boolean(busyJob) })
+    const reviewJob = (Array.isArray(jobs) ? jobs : []).find(
+      (j) => j && !j.dismissed && String(j.status) === 'awaiting_review' && j.reviewTaskId,
+    )
+    if (reviewJob && !items.some((it) => it?.id === reviewJob.reviewTaskId)) {
+      refreshSync('reviewWaiting')
+    }
+  }, [jobs, items])
+
+  useEffect(() => {
     if (!board) return undefined
     let alive = true
     api(`/api/boards/${encodeURIComponent(board)}/preview`)
@@ -198,12 +211,14 @@ export function AutopilotView({ overview, notify, onSwitchCockpit }) {
   useEffect(() => {
     let alive = true
     for (const item of waiting) {
-      if (sheetById[item.id] || item.review?.mode === 'annotation') continue
+      if (Object.prototype.hasOwnProperty.call(sheetById, item.id) || item.review?.mode === 'annotation') continue
       api(`/api/review/${encodeURIComponent(item.id)}/data`)
         .then((res) => {
           if (alive) setSheetById((prev) => ({ ...prev, [item.id]: res }))
         })
-        .catch(() => {})
+        .catch(() => {
+          if (alive) setSheetById((prev) => ({ ...prev, [item.id]: null }))
+        })
     }
     return () => {
       alive = false
@@ -212,7 +227,10 @@ export function AutopilotView({ overview, notify, onSwitchCockpit }) {
 
   const cards = useMemo(() => {
     const out = []
-    for (const item of waiting) out.push(...buildDeckFromSheet(item, sheetById[item.id] || null))
+    for (const item of waiting) {
+      if (item.review?.mode !== 'annotation' && !Object.prototype.hasOwnProperty.call(sheetById, item.id)) continue
+      out.push(...buildDeckFromSheet(item, sheetById[item.id] || null))
+    }
     return out
   }, [waiting, sheetById])
 
@@ -366,10 +384,19 @@ export function AutopilotView({ overview, notify, onSwitchCockpit }) {
           method: 'POST',
           body: payload,
         })
+        setDecisions((prev) => {
+          const copy = { ...prev }
+          for (const c of taskCards) delete copy[c.key]
+          return copy
+        })
         notify?.(t('autopilot.answered'))
-        refreshSync('reviewWaiting')
-        refreshSync('architectJobs')
-        if (board) refreshSync('tasks')
+        await Promise.all([
+          refreshSync('reviewWaiting'),
+          refreshSync('architectJobs'),
+          refreshSync('live'),
+          refreshSync('overview'),
+          board ? refreshSync('tasks') : Promise.resolve(),
+        ])
       } catch (e) {
         notify?.(e?.message || t('review.sendFailed'))
       }

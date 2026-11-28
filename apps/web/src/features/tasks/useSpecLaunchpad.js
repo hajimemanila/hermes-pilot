@@ -11,6 +11,7 @@ import { celebrate } from '../../lib/vibe.js'
 import { readActiveChatId } from '../../lib/chatReports.js'
 import { activeSpecRunSummary, specProgress } from '../../lib/specProgress.js'
 import { specPickerList } from '../../lib/tasksView.js'
+import { refreshSync } from '../../lib/syncSources.js'
 import { useI18n } from '../../i18n/index.js'
 
 export function useSpecLaunchpad({
@@ -184,7 +185,14 @@ export function useSpecLaunchpad({
       notify(t('tasks.specLaunched', { created: (r.created ?? []).length, skipped: (r.skipped ?? []).length }))
       setSpecSheetOpen(false)
       setSpecSel([])
-      await Promise.all([loadTasks(board), loadArchitectJobs(), loadSpecs(board)])
+      await Promise.all([
+        loadTasks(board),
+        loadArchitectJobs(),
+        loadSpecs(board),
+        refreshSync('live'),
+        refreshSync('reviewWaiting'),
+        refreshSync('overview'),
+      ])
     } catch (e) {
       notify(e.message)
     } finally {

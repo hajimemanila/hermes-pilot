@@ -382,7 +382,7 @@ export function advanceBatches(gen) {
   )
   const next = pending.find((t) => t.status === 'ready') || pending.find((t) => t.status === 'running')
   if (!next) {
-    if (state.tasks.some((t) => /^\[DEMO-\d\]/.test(t.title)) && !state.report) finishPipeline()
+    if (state.tasks.some((t) => /^\[(DEMO|SEED\d+)-\d+\]/i.test(t.title)) && !state.report) finishPipeline()
     return
   }
   next.status = next.status === 'ready' ? 'running' : 'done'

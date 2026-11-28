@@ -558,7 +558,14 @@ export function useTasksData({
         } catch {
           /* 演出は本質ではない */
         }
-        await Promise.all([loadArchitectJobs(), loadTasks(board), loadSpecs(board)])
+        await Promise.all([
+          loadArchitectJobs(),
+          loadTasks(board),
+          loadSpecs(board),
+          refreshSync('live'),
+          refreshSync('reviewWaiting'),
+          refreshSync('overview'),
+        ])
       } catch (e) {
         notify(e?.message ?? t('seed.failed'))
       } finally {

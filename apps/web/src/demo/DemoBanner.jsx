@@ -35,11 +35,7 @@ export function DemoBanner() {
   const go = () => {
     haptic('tap')
     if (!jump) return
-    // 遷移先のペインはタブ切替後にマウントされ、一覧の取得も待つ。
-    // 1 回だけだと「まだマウント前」で取りこぼすので、数回まで送り直す（受信側は nonce で冪等）。
-    for (const delay of [0, 160, 600, 1200]) {
-      setTimeout(() => emitHmEvent(jump.event, jump.detail), delay)
-    }
+    emitHmEvent(jump.event, jump.detail)
   }
 
   return (

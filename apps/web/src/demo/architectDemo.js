@@ -13,7 +13,8 @@ import {
   demoTaskSpecOf,
   demoTaskStampMs,
 } from './fixtures.js'
-import { demoSpecsWithArchive, publish, state } from './store.js'
+import { advanceBatches } from './payloads.js'
+import { currentSpecs, demoSpecsWithArchive, publish, state } from './store.js'
 
 /* ------------------------------------------------------------------ *
  * V6: Architect（Seed → 仕様書 → Review → 起票）の進行
@@ -150,6 +151,7 @@ export function startDemoArchitectJob(input = {}) {
     fallbackFrom: null,
     fallbackReason: null,
     autoStart: Boolean(input.autoStart),
+    autopilot: Boolean(input.autopilot),
     // V7 §3.3 ①: 選んだ実行方針（`zero-stop` / `visual-gate`）をジョブに残す
     executionPolicy,
     dismissed: false,
@@ -209,6 +211,53 @@ export function advanceArchitectJob(id, gen = state.gen) {
   const job = state.architect.jobs.find((j) => j.id === id)
   if (!job) return null
   const key = Number(String(job.id).replace(/[^0-9]/g, '')) || 1
+  // Autopilot seed: stop at awaiting_review with an interview sheet so the swipe deck renders
+  if (job.autopilot && job.status === 'running' && !job.sheetPath) {
+    const now = Date.now()
+    const reviewTaskId = `t_demo_review_${key}`
+    const seedTitle = String(job.seed || 'New feature spec').slice(0, 48)
+    job.sheetPath = `sheets/spec-demo-seed-${key}-1.json`
+    job.reviewTaskId = reviewTaskId
+    job.reviewTitle = `[SEED${key}-1] ${seedTitle}`
+    job.status = 'awaiting_review'
+    if (!state.reviewItems.some((r) => r.id === reviewTaskId)) {
+      state.reviewItems.unshift({
+        id: reviewTaskId,
+        board: DEMO_BOARD,
+        title: job.reviewTitle,
+        status: 'blocked',
+        assignee: 'mobile',
+        createdAt: now,
+        completedAt: null,
+        result: null,
+        progress: { lastEvent: 'blocked', lastEventAt: now, heartbeatAt: now, startedAt: now },
+        review: {
+          label: `demo-seed-${key}`,
+          image: null,
+          hasCompare: false,
+          target: 'hermes-pilot-demo',
+          repo: { id: 'hermes-pilot-demo', label: 'hermes-pilot (demo)' },
+          chat: DEMO_SESSION,
+          mode: 'standard',
+          round: 1,
+          sheet: null,
+          exists: true,
+          title: seedTitle,
+          topic: 'Swipe to decide layout and interaction.',
+        },
+      })
+    }
+    const archTask = job.taskId ? state.tasks.find((t) => t.id === job.taskId) : null
+    if (archTask) {
+      archTask.status = 'blocked'
+      archTask.updatedAt = now
+      archTask.result = `Round 1 sheet filed: review ${reviewTaskId}`
+    }
+    publish('architect')
+    publish('review')
+    publish('tasks')
+    return job
+  }
   // 段 1: 設問シートを作る（`phase` は `sheetPath` から `round1_sheet` になる）
   if (job.status === 'running' && !job.sheetPath) {
     job.sheetPath = `sheets/spec-demo-seed-${key}-1.json`
@@ -260,9 +309,6 @@ export function advanceArchitectJob(id, gen = state.gen) {
   }
   job.finishedAt = Date.now()
   job.status = job.autoStart ? 'launched' : 'spec_ready'
-  if (job.autoStart) {
-    job.launched = { ok: true, created: [], skipped: [], failed: [], reason: 'demo' }
-  }
   // Hermes Native が立てた `[ARCH]` タスクも SPEC が出来た時点で終わらせる
   // （残すと `/api/live` の実行中タスクに居座り、進捗詳細の状態も嘘になる）
   const archTask = job.taskId ? state.tasks.find((t) => t.id === job.taskId) : null
@@ -272,8 +318,168 @@ export function advanceArchitectJob(id, gen = state.gen) {
     archTask.result = `SPEC written: ${spec.path}`
     archTask.events = [...(archTask.events ?? []), { kind: 'done', at: Date.now(), payload: { spec: spec.path } }]
   }
+  if (job.autoStart) {
+    const res = launchDemoSpecBatches(
+      spec.path,
+      spec.batches.map((b) => b.id),
+      { parallel: job.autopilot ? 2 : 1, skipReviewCreation: true },
+    )
+    job.launched = { ok: true, created: res.created, skipped: res.skipped, failed: [], reason: 'demo' }
+  }
   publish('architect')
   return job
+}
+
+/**
+ * Launch demo batches onto the mobile board, starting workers and syncing `spec_ready` jobs.
+ * For Cockpit launches of generated `SEED*-1` interview batches, queues a blocked Review item.
+ */
+export function launchDemoSpecBatches(specRelPath, batchIds = [], { parallel = 1, skipReviewCreation = false } = {}) {
+  const ids = Array.isArray(batchIds) ? batchIds : []
+  const now = Date.now()
+  const specs = currentSpecs(state.now)
+  const created = []
+  const skipped = []
+  let runningBudget = Math.max(0, Number(parallel) || 1)
+  let createdReview = false
+
+  for (const id of ids) {
+    if (state.tasks.some((t) => t.status !== 'archived' && t.title.startsWith(`[${id}]`))) {
+      skipped.push({ batchId: id })
+      continue
+    }
+    const owningSpec = specs.find((s) => Array.isArray(s.batches) && s.batches.some((b) => b.id === id)) || null
+    const batch = owningSpec?.batches?.find((b) => b.id === id) || null
+    const startRunning = runningBudget > 0
+    if (startRunning) runningBudget -= 1
+    const task = {
+      id: `t_demo_${String(id).toLowerCase()}`,
+      board: DEMO_BOARD,
+      spec: specRelPath || owningSpec?.path || DEMO_SPEC_PATH,
+      title: `[${id}] ${batch?.title ?? `Demo batch — ${id}`}`,
+      status: startRunning ? 'running' : 'ready',
+      assignee: 'mobile',
+      createdAt: now,
+      ...(startRunning ? { startedAt: now } : {}),
+      updatedAt: now,
+      priority: 0,
+    }
+    state.tasks.unshift(task)
+    created.push({ id: task.id, batchId: id })
+
+    if (!skipReviewCreation && /^SEED\d+-1$/i.test(String(id))) {
+      const reviewId = `t_demo_review_${String(id).toLowerCase()}`
+      if (!state.reviewItems.some((r) => r.id === reviewId)) {
+        state.reviewItems.unshift({
+          id: reviewId,
+          board: DEMO_BOARD,
+          title: `[${id}] ${batch?.title ?? 'Spec design interview'}`,
+          status: 'blocked',
+          assignee: 'mobile',
+          createdAt: now,
+          completedAt: null,
+          result: null,
+          progress: { lastEvent: 'blocked', lastEventAt: now, heartbeatAt: now, startedAt: now },
+          review: {
+            label: `demo-${String(id).toLowerCase()}`,
+            image: null,
+            hasCompare: false,
+            target: 'hermes-pilot-demo',
+            repo: { id: 'hermes-pilot-demo', label: 'hermes-pilot (demo)' },
+            chat: DEMO_SESSION,
+            mode: 'standard',
+            round: 1,
+            sheet: null,
+            exists: true,
+            title: batch?.title ?? 'Spec design interview',
+            topic: batch?.objective ?? 'Review the generated interview questions.',
+          },
+        })
+        createdReview = true
+      }
+    }
+  }
+
+  for (const job of state.architect.jobs) {
+    if (
+      job.status === 'spec_ready' &&
+      (!specRelPath || job.spec === specRelPath || job.completedSpec?.path === specRelPath)
+    ) {
+      job.status = 'launched'
+      job.launched = { ok: true, created, skipped, failed: [], reason: 'demo' }
+    }
+  }
+
+  if (created.length) {
+    if (state.report) state.report = null
+    state.progress.batches = true
+    publish('tasks')
+    publish('architect')
+    if (createdReview) publish('review')
+    setTimeout(() => advanceBatches(state.gen), state.tickMs)
+  } else if (createdReview) {
+    publish('review')
+  }
+  return { ok: true, created, skipped }
+}
+
+/**
+ * Advance linked Architect jobs & Autopilot demo pipeline after a Review item is answered/approved.
+ */
+export function advanceJobAfterReview(item) {
+  if (!item) return
+  const now = Date.now()
+  const job = state.architect.jobs.find(
+    (j) => j && !j.dismissed && j.reviewTaskId === item.id && j.status === 'awaiting_review',
+  )
+  if (job) {
+    job.status = 'awaiting_spec'
+    job.reviewSeenOnce = true
+    job.sheetPath = job.sheetPath || 'sheets/demo-review-01.json'
+    job.startedAt = now
+    const archTask = job.taskId ? state.tasks.find((t) => t.id === job.taskId) : null
+    if (archTask) {
+      archTask.status = 'running'
+      archTask.startedAt = now
+      archTask.updatedAt = now
+      archTask.result = 'Answers received — writing SPEC'
+    }
+    publish('architect')
+    publish('tasks')
+
+    const gen = state.gen
+    if (job.id === 'j_demo_0') {
+      setTimeout(() => {
+        if (gen !== state.gen || job.status !== 'awaiting_spec') return
+        const doneAt = Date.now()
+        const primarySpec = currentSpecs(state.now).find((s) => s.path === DEMO_SPEC_PATH)
+        job.spec = DEMO_SPEC_PATH
+        if (primarySpec) {
+          job.completedSpec = {
+            path: primarySpec.path,
+            title: primarySpec.title,
+            batchCount: primarySpec.batches.length,
+            batches: primarySpec.batches.map((b) => ({ id: b.id, title: b.title, mode: b.mode ?? null })),
+          }
+        }
+        job.finishedAt = doneAt
+        job.status = state.progress.batches ? 'launched' : 'spec_ready'
+        if (archTask) {
+          archTask.status = 'done'
+          archTask.updatedAt = doneAt
+          archTask.result = `SPEC ready: ${DEMO_SPEC_PATH}`
+        }
+        publish('architect')
+        publish('tasks')
+      }, state.tickMs * 4)
+    } else {
+      setTimeout(() => advanceArchitectJob(job.id, gen), state.tickMs * 2)
+    }
+  }
+
+  if (state.progress.review && state.progress.visual && !state.progress.batches) {
+    launchDemoSpecBatches(DEMO_SPEC_PATH, ['DEMO-1', 'DEMO-2', 'DEMO-3'], { parallel: 2 })
+  }
 }
 
 /**
