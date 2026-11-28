@@ -44,16 +44,23 @@ self.addEventListener('fetch', (e) => {
     (async () => {
       const isNav = e.request.mode === 'navigate' || url.pathname === '/'
       if (isNav) {
+        const hit = await caches.match('/')
+        if (hit) {
+          const net = fetch(e.request).then((res) => {
+            if (res.ok) caches.open(CACHE).then((c) => c.put('/', res.clone())).catch(() => {})
+            return res
+          })
+          return Promise.race([
+            net.catch(() => hit),
+            new Promise((resolve) => setTimeout(() => resolve(hit), 4000)),
+          ])
+        }
         try {
           const res = await fetch(e.request)
-          if (res.ok) {
-            const copy = res.clone()
-            caches.open(CACHE).then((c) => c.put('/', copy))
-          }
+          if (res.ok) caches.open(CACHE).then((c) => c.put('/', res.clone())).catch(() => {})
           return res
         } catch {
-          const hit = await caches.match('/')
-          return hit ?? offlineJson()
+          return offlineJson()
         }
       }
       const hit = await caches.match(e.request)

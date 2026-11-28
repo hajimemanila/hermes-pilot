@@ -2,14 +2,14 @@
   "id": "/",
   "name": "Hermes Pilot",
   "short_name": "Hermes Pilot",
-  "description": "Hermes Agent を外出先から見る・止める・話す（別オリジン PWA）",
+  "description": "Watch, stop and talk to Hermes Agent from anywhere (separate-origin PWA)",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#06161a",
   "theme_color": "#06161a",
-  "lang": "ja",
+  "lang": "en",
   "icons": [
     {
       "src": "/icon-192-v6.png",
