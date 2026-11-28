@@ -261,7 +261,6 @@ export function StarterStage({ recipes = [], onStartSeed, onOpenPicker, onSwitch
   return (
     <div className="ap-stage-panel ap-starter-panel">
       <div className="ap-starter-hero">
-        <div className="ap-starter-glow" aria-hidden="true" />
         <span className="ap-starter-kicker">✨ {t('autopilot.startKicker')}</span>
         <h2 className="ap-starter-title">{t('autopilot.startTitle')}</h2>
         <p className="ap-starter-sub">{t('autopilot.startSub')}</p>
@@ -318,7 +317,7 @@ export function StarterStage({ recipes = [], onStartSeed, onOpenPicker, onSwitch
       {onOpenPicker && (
         <button
           type="button"
-          className="ap-pill-ghost"
+          className="btn ap-pill-ghost"
           onClick={() => {
             haptic('tap')
             onOpenPicker()
@@ -328,7 +327,7 @@ export function StarterStage({ recipes = [], onStartSeed, onOpenPicker, onSwitch
         </button>
       )}
       {onSwitchCockpit && (
-        <button type="button" className="ap-subtle-link" onClick={onSwitchCockpit}>
+        <button type="button" className="btn ap-pill-ghost" onClick={onSwitchCockpit}>
           🎛 {t('autopilot.openCockpit')}
         </button>
       )}
@@ -533,7 +532,7 @@ export function LiveStudioCard({
           <footer className="ap-studio-foot">
             <button
               type="button"
-              className="ap-pill-ghost ap-nudge-trigger"
+              className="btn ap-pill-ghost ap-nudge-trigger"
               onClick={() => {
                 haptic('tap')
                 setMemoOpen(true)
@@ -543,7 +542,7 @@ export function LiveStudioCard({
               {queuedCount > 0 && <span className="ap-nudge-badge">{queuedCount}</span>}
             </button>
             {onSwitchCockpit && (
-              <button type="button" className="ap-pill-ghost" onClick={onSwitchCockpit}>
+              <button type="button" className="btn ap-pill-ghost" onClick={onSwitchCockpit}>
                 🎛 {t('autopilot.live.inspect')}
               </button>
             )}
@@ -617,7 +616,7 @@ export function CompletionCard({ deliverable, onOpenReceipt, onStartNew, onSwitc
           {onOpenReceipt && (
             <button
               type="button"
-              className="ap-pill-ghost"
+              className="btn ap-pill-ghost"
               onClick={() => {
                 haptic('tap')
                 onOpenReceipt()
@@ -627,7 +626,7 @@ export function CompletionCard({ deliverable, onOpenReceipt, onStartNew, onSwitc
             </button>
           )}
           {onSwitchCockpit && (
-            <button type="button" className="ap-pill-ghost" onClick={onSwitchCockpit}>
+            <button type="button" className="btn ap-pill-ghost" onClick={onSwitchCockpit}>
               🎛 {t('autopilot.openCockpit')}
             </button>
           )}

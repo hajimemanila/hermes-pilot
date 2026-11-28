@@ -178,3 +178,74 @@ export function switchThemeWithTransition(pref, applyFn, event) {
     animateShell([{ opacity: 0.76 }, { opacity: 1 }], { duration: 220, easing: 'ease-out' })
   }
 }
+
+function routeLensFocus(doc = globalThis.document) {
+  try {
+    const active = doc?.activeElement
+    if (!active || active === doc?.body || !doc?.contains?.(active)) {
+      const target = doc?.querySelector?.('.ap-lens-btn.active') ?? doc?.querySelector?.('main.panes')
+      target?.focus?.({ preventScroll: true })
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Autopilot ⇄ Cockpit のレンズ切替を、Dopamine 時のみタップ起点の円形イリス展開で演出する。
+ * Serotonin・prefers-reduced-motion・同値切替・DOM 不在時は即座に切り替える。
+ *
+ * @param {'autopilot'|'cockpit'} nextLens
+ * @param {'autopilot'|'cockpit'} prevLens
+ * @param {(lens: 'autopilot'|'cockpit') => void} applyFn
+ * @param {Event|null|undefined} [event]
+ * @returns {'autopilot'|'cockpit'}
+ */
+export function switchLensWithTransition(nextLens, prevLens, applyFn, event) {
+  if (typeof applyFn !== 'function' || nextLens === prevLens) return prevLens
+  if (getActiveVibe() !== 'dopamine' || prefersReducedMotion() || typeof document === 'undefined') {
+    applyFn(nextLens)
+    routeLensFocus()
+    return nextLens
+  }
+
+  const { x, y } = originFromEvent(event)
+  const vw = Number(globalThis.window?.innerWidth) || 390
+  const vh = Number(globalThis.window?.innerHeight) || 844
+  const maxR = Math.ceil(Math.hypot(Math.max(x, vw - x), Math.max(y, vh - y)))
+
+  const applyAndFx = () => {
+    applyFn(nextLens)
+    celebrate('vibeWarp', { x, y, sound: false })
+    playSound('approve')
+  }
+
+  if (typeof document.startViewTransition === 'function') {
+    try {
+      const vt = document.startViewTransition(applyAndFx)
+      vt.ready
+        ?.then?.(() => {
+          document.documentElement?.animate?.(
+            {
+              clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${maxR}px at ${x}px ${y}px)`],
+            },
+            {
+              duration: 400,
+              easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+              pseudoElement: '::view-transition-new(root)',
+            },
+          )
+        })
+        ?.catch?.(() => {})
+      vt.finished?.finally?.(() => routeLensFocus())
+      return nextLens
+    } catch {
+      /* startViewTransition 失敗時は下のフェードへフォールバック */
+    }
+  }
+
+  applyAndFx()
+  animateShell([{ opacity: 0.8 }, { opacity: 1 }], { duration: 220, easing: 'ease-out' })
+  routeLensFocus()
+  return nextLens
+}

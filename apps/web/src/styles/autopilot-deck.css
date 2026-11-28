@@ -54,7 +54,8 @@
 html[data-vibe='dopamine'] .ap-card,
 html[data-vibe='dopamine'] .ap-studio-card,
 html[data-vibe='dopamine'] .ap-complete-card,
-html[data-vibe='dopamine'] .ap-recipe-card {
+html[data-vibe='dopamine'] .ap-recipe-card,
+html[data-vibe='dopamine'] .ap-starter-hero {
   background: var(--vibe-card-bg);
   border-color: var(--vibe-border);
   box-shadow: var(--vibe-card-shadow);
@@ -149,6 +150,7 @@ html[data-vibe='dopamine'] .ap-recipe-card {
 }
 
 .ap-var-pill {
+  position: relative;
   min-width: 30px;
   min-height: 28px;
   padding: 0 8px;
@@ -159,6 +161,7 @@ html[data-vibe='dopamine'] .ap-recipe-card {
   font-size: 11px;
   font-weight: 800;
 }
+.ap-var-pill::before { content: ''; position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
 
 .ap-var-pill.active {
   background: var(--accent);
@@ -272,6 +275,7 @@ html[data-vibe='dopamine'] .ap-recipe-card {
 }
 
 .ap-copy-more-btn {
+  position: relative;
   align-self: flex-end;
   min-height: 28px;
   padding: 2px 10px;
@@ -282,6 +286,7 @@ html[data-vibe='dopamine'] .ap-recipe-card {
   font-size: 11px;
   font-weight: 700;
 }
+.ap-copy-more-btn::before { content: ''; position: absolute; left: 50%; top: 50%; width: 100%; min-width: 44px; height: 44px; transform: translate(-50%, -50%); }
 
 .ap-card-q-sub { margin: 0; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .ap-card-opt-hero { margin: 0; font-size: 16px; font-weight: 800; color: var(--text); display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; }
@@ -403,17 +408,13 @@ html[data-vibe='dopamine'] .ap-recipe-card {
   font-weight: 800;
   flex-shrink: 0;
 }
-html[data-vibe='dopamine'] .ap-launcher-submit { background: var(--vibe-primary-bg); color: var(--vibe-primary-fg); }
 .ap-launcher-submit:disabled { opacity: 0.45; }
 
-.ap-subtle-link,
 .ap-pill-ghost {
+  width: auto;
   min-height: 44px;
   padding: 0 14px;
   border-radius: 12px;
-  border: 1px solid var(--line-strong);
-  background: var(--bg-elev);
-  color: var(--text);
   font-size: 12px;
   font-weight: 700;
   align-self: center;
@@ -435,7 +436,6 @@ html[data-vibe='dopamine'] .ap-launcher-submit { background: var(--vibe-primary-
 .ap-studio-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .ap-live-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; background: var(--rec-bg); color: var(--rec-fg); font-size: 11px; font-weight: 800; }
 .ap-live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: ap-pulse 1.6s ease-in-out infinite; }
-.ap-batch-pill,
 .ap-elapsed-pill {
   font-size: 12px;
   font-weight: 800;
@@ -535,10 +535,11 @@ html[data-vibe='dopamine'] .ap-launcher-submit { background: var(--vibe-primary-
 }
 .ap-deliverable-btn.primary { justify-content: center; background: var(--good-bg); border-color: var(--good-line); color: var(--good-fg); }
 .ap-deliverable-btn code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ap-deliverable-path { padding: 8px 12px; border-radius: 10px; background: var(--bg-elev); font-family: monospace; font-size: 12px; color: var(--text); overflow-wrap: anywhere; }
+.ap-deliverable-path { padding: 8px 12px; border-radius: 10px; background: var(--bg-elev); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--text); overflow-wrap: anywhere; }
 
 .ap-undo-pill { align-self: center; display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-radius: 999px; background: var(--glass-strong); border: 1px solid var(--line-strong); color: var(--text); font-size: 13px; }
-.ap-undo-btn { min-height: 32px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--accent); background: var(--rec-bg); color: var(--accent); font-weight: 700; }
+.ap-undo-btn { position: relative; min-height: 32px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--accent); background: var(--rec-bg); color: var(--accent); font-weight: 700; }
+.ap-undo-btn::before { content: ''; position: absolute; left: 50%; top: 50%; width: 100%; min-width: 44px; height: 44px; transform: translate(-50%, -50%); }
 .ap-remix-bar { background: var(--glass-strong); border: 1px solid var(--line-strong); border-radius: 14px; padding: 8px; }
 .ap-remix-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .ap-remix-chip { min-height: 44px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--text); font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; }
@@ -554,6 +555,7 @@ html[data-vibe='dopamine'] .ap-launcher-submit { background: var(--vibe-primary-
 .ap-lens-btn { position: relative; }
 .ap-lens-btn::before { content: ''; position: absolute; left: 50%; top: 50%; width: 100%; height: 44px; transform: translate(-50%, -50%); }
 .ap-lens-badge { font-size: 11px; padding: 0 5px; border-radius: 999px; background: var(--warn); color: var(--on-warn); }
+.ap-lens-live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
 @media (max-width: 430px) {
   .ap-lens-btn { min-height: 30px; padding: 0 6px; font-size: 10.5px; gap: 2px; }
   .ap-lens-badge { font-size: 10px; padding: 0 4px; }
@@ -624,4 +626,134 @@ html[data-vibe='dopamine'] .ap-launcher-submit { background: var(--vibe-primary-
 }
 
 .ap-new-proj-title { font-size: 13px; font-weight: 800; color: var(--text); }
+
+/* 共通ボタン基底（個別ルールで繰り返さない） */
+.ap-act-btn, .ap-var-pill, .ap-copy-more-btn, .ap-pill-ghost, .ap-launcher-submit,
+.ap-step-btn, .ap-undo-btn, .ap-remix-chip, .ap-remix-send, .ap-lens-btn,
+.ap-swipe-link, .ap-project-btn, .ap-recipe-card, .ap-gacha-btn, .ap-gacha-chip,
+.ap-sandbox-toggle, .ap-radar-stat-btn, .ap-radar-feed-row, .ap-timelapse-btn,
+.ap-deliverable-btn.cmd {
+  cursor: pointer;
+  font-family: inherit;
+}
+
+/* Dopamine モード専用の Autopilot タクタイル＆ベベル統合層（Serotonin は一切変化しない） */
+html[data-vibe='dopamine'] .ap-lens-toggle {
+  border-color: var(--vibe-border);
+  box-shadow: inset 0 1px 0 var(--vibe-hi), 0 2px 0 var(--vibe-bevel);
+}
+
+html[data-vibe='dopamine'] .ap-project-btn:not(:disabled),
+html[data-vibe='dopamine'] .ap-deliverable-btn:not(.primary):not(:disabled),
+html[data-vibe='dopamine'] .ap-remix-chip:not(:disabled),
+html[data-vibe='dopamine'] .ap-copy-more-btn:not(:disabled),
+html[data-vibe='dopamine'] .ap-var-pill:not(.active):not(:disabled),
+html[data-vibe='dopamine'] .ap-gacha-btn:not(.active):not(:disabled),
+html[data-vibe='dopamine'] .ap-gacha-chip:not(:disabled),
+html[data-vibe='dopamine'] .ap-sandbox-toggle:not(.active):not(:disabled),
+html[data-vibe='dopamine'] .ap-timelapse-btn:not(.active):not(:disabled),
+html[data-vibe='dopamine'] .ap-undo-btn:not(:disabled) {
+  background: var(--vibe-btn-bg);
+  border-color: var(--vibe-border);
+  color: var(--text);
+  box-shadow: inset 0 1px 0 var(--vibe-hi), 0 3px 0 var(--vibe-bevel);
+}
+
+html[data-vibe='dopamine'] .ap-launcher-submit:not(:disabled),
+html[data-vibe='dopamine'] .ap-lens-btn.active,
+html[data-vibe='dopamine'] .ap-var-pill.active,
+html[data-vibe='dopamine'] .ap-timelapse-btn.active,
+html[data-vibe='dopamine'] .ap-sandbox-toggle.active {
+  background: var(--vibe-primary-bg);
+  color: var(--vibe-primary-fg);
+  border-color: var(--vibe-border);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 3px 0 var(--vibe-bevel-primary), var(--vibe-glow);
+}
+
+html[data-vibe='dopamine'] .ap-act-btn:not(:disabled),
+html[data-vibe='dopamine'] .ap-swipe-link:not(:disabled),
+html[data-vibe='dopamine'] .ap-preview-chip:not(:disabled),
+html[data-vibe='dopamine'] .ap-deliverable-btn.primary:not(:disabled) {
+  box-shadow: inset 0 1px 0 var(--vibe-hi), 0 3px 0 var(--vibe-bevel), var(--vibe-card-shadow);
+}
+
+html[data-vibe='dopamine'] .ap-gacha-btn.active,
+html[data-vibe='dopamine'] .ap-step-node.inspected .ap-step-btn {
+  border-color: var(--vibe-border-gold);
+  background: var(--vibe-chip-on-bg);
+  color: var(--vibe-chip-on-fg);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html[data-vibe='dopamine'] .ap-lens-live-dot {
+    animation: vibe-sonar-pulse 1.6s ease-out infinite;
+  }
+
+  html[data-vibe='dopamine'] .ap-lens-btn:not(:disabled),
+  html[data-vibe='dopamine'] .ap-swipe-link:not(:disabled),
+  html[data-vibe='dopamine'] .ap-project-btn:not(:disabled),
+  html[data-vibe='dopamine'] .ap-preview-chip:not(:disabled),
+  html[data-vibe='dopamine'] .ap-act-btn:not(:disabled),
+  html[data-vibe='dopamine'] .ap-recipe-card:not(:disabled),
+  html[data-vibe='dopamine'] .ap-launcher-submit:not(:disabled),
+  html[data-vibe='dopamine'] .ap-deliverable-btn:not(:disabled),
+  html[data-vibe='dopamine'] .ap-var-pill:not(:disabled),
+  html[data-vibe='dopamine'] .ap-gacha-btn:not(:disabled),
+  html[data-vibe='dopamine'] .ap-gacha-chip:not(:disabled),
+  html[data-vibe='dopamine'] .ap-copy-more-btn:not(:disabled),
+  html[data-vibe='dopamine'] .ap-remix-chip:not(:disabled),
+  html[data-vibe='dopamine'] .ap-remix-send:not(:disabled),
+  html[data-vibe='dopamine'] .ap-undo-btn:not(:disabled),
+  html[data-vibe='dopamine'] .ap-sandbox-toggle:not(:disabled),
+  html[data-vibe='dopamine'] .ap-step-btn:not(:disabled),
+  html[data-vibe='dopamine'] .ap-timelapse-btn:not(:disabled) {
+    transition: transform 70ms ease-out, box-shadow 120ms ease, filter 120ms ease;
+    transform-origin: center center;
+  }
+
+  html[data-vibe='dopamine'] .ap-lens-btn:not(:disabled):active,
+  html[data-vibe='dopamine'] .ap-swipe-link:not(:disabled):active,
+  html[data-vibe='dopamine'] .ap-project-btn:not(:disabled):active,
+  html[data-vibe='dopamine'] .ap-preview-chip:not(:disabled):active,
+  html[data-vibe='dopamine'] .ap-act-btn:not(:disabled):active,
+  html[data-vibe='dopamine'] .ap-recipe-card:not(:disabled):active,
+  html[data-vibe='dopamine'] .ap-launcher-submit:not(:disabled):active,
+  html[data-vibe='dopamine'] .ap-deliverable-btn:not(:disabled):active,
+  html[data-vibe='dopamine'] .ap-var-pill:not(:disabled):active,
+  html[data-vibe='dopamine'] .ap-gacha-btn:not(:disabled):active,
+  html[data-vibe='dopamine'] .ap-gacha-chip:not(:disabled):active,
+  html[data-vibe='dopamine'] .ap-copy-more-btn:not(:disabled):active,
+  html[data-vibe='dopamine'] .ap-remix-chip:not(:disabled):active,
+  html[data-vibe='dopamine'] .ap-remix-send:not(:disabled):active,
+  html[data-vibe='dopamine'] .ap-undo-btn:not(:disabled):active,
+  html[data-vibe='dopamine'] .ap-sandbox-toggle:not(:disabled):active,
+  html[data-vibe='dopamine'] .ap-step-btn:not(:disabled):active,
+  html[data-vibe='dopamine'] .ap-timelapse-btn:not(:disabled):active {
+    transform: translateY(2px) scale(1.08, 0.86);
+  }
+
+  html[data-vibe='dopamine'] .ap-launcher-submit.fx-sakuga-pop,
+  html[data-vibe='dopamine'] .ap-act-go.fx-sakuga-pop,
+  html[data-vibe='dopamine'] .ap-deliverable-btn.primary.fx-sakuga-pop,
+  html[data-vibe='dopamine'] .ap-lens-btn.fx-sakuga-pop {
+    animation: sakuga-spring-flash 320ms cubic-bezier(0.22, 1.35, 0.36, 1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-vibe='dopamine'] .ap-lens-live-dot {
+    animation: none;
+  }
+  html[data-vibe='dopamine'] .ap-lens-btn:not(:disabled):active,
+  html[data-vibe='dopamine'] .ap-act-btn:not(:disabled):active,
+  html[data-vibe='dopamine'] .ap-launcher-submit:not(:disabled):active {
+    transform: none;
+  }
+  html[data-vibe='dopamine'] .ap-launcher-submit.fx-sakuga-pop,
+  html[data-vibe='dopamine'] .ap-act-go.fx-sakuga-pop,
+  html[data-vibe='dopamine'] .ap-deliverable-btn.primary.fx-sakuga-pop,
+  html[data-vibe='dopamine'] .ap-lens-btn.fx-sakuga-pop {
+    animation: none;
+  }
+}
 

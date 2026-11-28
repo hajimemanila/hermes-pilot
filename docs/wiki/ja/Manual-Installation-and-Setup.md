@@ -12,14 +12,14 @@
 ### A. npm から（最短・clone 不要）
 
 ```bash
-npx hermes-pilot@0.2.4 init      # データ・トークン・同梱スキル・ペアリング QR（冪等）
-npx hermes-pilot@0.2.4 start     # ブリッジ起動（http://127.0.0.1:4097）
+npx hermes-pilot@0.3.0 init      # データ・トークン・同梱スキル・ペアリング QR（冪等）
+npx hermes-pilot@0.3.0 start     # ブリッジ起動（http://127.0.0.1:4097）
 ```
 
 ログインをまたいで常駐させるなら、一度だけ入れて `service` を使います。
 
 ```bash
-npm i -g hermes-pilot@0.2.4
+npm i -g hermes-pilot@0.3.0
 hermes-pilot service install     # macOS は launchd、Linux は systemd --user
 ```
 
@@ -32,7 +32,7 @@ npm ci
 node bin/hermes-pilot.mjs init
 ```
 
-GitHub から直接入れる場合、`--ref` は **40 桁の commit SHA** を渡してください（`--ref v0.2.4` のようなタグ指定は拒否されます）。
+GitHub から直接入れる場合、`--ref` は **40 桁の commit SHA** を渡してください（`--ref v0.3.0` のようなタグ指定は拒否されます）。
 
 ### C. このリポジトリを clone して
 

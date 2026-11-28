@@ -19,7 +19,7 @@
     "scripts/audit-responsive.mjs": 1133,
     "apps/bridge/src/pipeline-watcher.js": 1194,
     "scripts/check-coherence.mjs": 1636,
-    "apps/web/src/App.jsx": 1070,
+    "apps/web/src/App.jsx": 1068,
     "apps/web/test/demoMode.test.js": 522,
     "bin/hermes-pilot.mjs": 993,
     "apps/bridge/test/specs.test.js": 496,

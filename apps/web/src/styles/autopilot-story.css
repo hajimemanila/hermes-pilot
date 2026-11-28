@@ -59,9 +59,9 @@
   z-index: 5;
   padding: 4px 9px;
   border-radius: 999px;
-  background: var(--warn-bg, #fff7ed);
-  border: 1px solid var(--warn, #ea580c);
-  color: var(--warn-fg, #9a3412);
+  background: var(--warn-bg, rgba(245, 158, 11, 0.16));
+  border: 1px solid var(--warn);
+  color: var(--warn-fg, var(--warn));
   font-size: 11px;
   font-weight: 800;
   pointer-events: none;
@@ -108,6 +108,7 @@
 }
 
 .ap-gacha-btn {
+  position: relative;
   min-width: 34px;
   min-height: 30px;
   padding: 0 8px;
@@ -116,6 +117,7 @@
   background: var(--bg-elev);
   font-size: 13px;
 }
+.ap-gacha-btn::before { content: ''; position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
 
 .ap-gacha-btn.active {
   border-color: var(--accent);
@@ -151,6 +153,7 @@
 }
 
 .ap-gacha-chip {
+  position: relative;
   min-height: 32px;
   padding: 0 10px;
   border-radius: 999px;
@@ -163,6 +166,7 @@
   align-items: center;
   gap: 4px;
 }
+.ap-gacha-chip::before { content: ''; position: absolute; left: 50%; top: 50%; width: 100%; min-width: 44px; height: 44px; transform: translate(-50%, -50%); }
 
 .ap-gacha-chip:disabled {
   opacity: 0.45;

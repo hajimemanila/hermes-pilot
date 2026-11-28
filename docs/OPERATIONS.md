@@ -10,11 +10,11 @@ Hermes Pilot は **PWA**（`apps/web/dist`）と **ブリッジ**（`apps/bridge
 
 ```bash
 # A) npm から（clone 不要・最速。データ・トークン・同梱スキル・ペアリング QR。冪等）
-npx hermes-pilot@0.2.4 init
-npx hermes-pilot@0.2.4 start        # ブリッジ起動（必要なら UI をビルド）
+npx hermes-pilot@0.3.0 init
+npx hermes-pilot@0.3.0 start        # ブリッジ起動（必要なら UI をビルド）
 
 # 常駐させる場合（launchd / systemd --user）
-npm i -g hermes-pilot@0.2.4 && hermes-pilot service install
+npm i -g hermes-pilot@0.3.0 && hermes-pilot service install
 ```
 
 ```bash
@@ -26,7 +26,7 @@ node bin/hermes-pilot.mjs init
 ```
 
 GitHub から直接入れる場合は `hermes plugins install hajimemanila/hermes-pilot --ref <40 桁 SHA>`。
-`--ref` にタグ（`v0.2.4` 等）は渡せません（CLI が拒否）。owner/repo 指定は未レビューの
+`--ref` にタグ（`v0.3.0` 等）は渡せません（CLI が拒否）。owner/repo 指定は未レビューの
 community source としてスキャンされ、`--force` の確認が 1 回入ります。
 
 git clone から入れる場合も 2) 以降は同じ（`git clone https://github.com/hajimemanila/hermes-pilot.git`）。

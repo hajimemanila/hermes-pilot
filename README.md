@@ -7,7 +7,7 @@ kanban, chat, terminal and usage into a single installable PWA.
 
 日本語版は [`README.ja.md`](README.ja.md)。
 
-**[▶ Try the interactive demo](https://hajimemanila.github.io/hermes-pilot/)** — no install, no Hermes: a self-contained mock of the A2B flow (Spec Seed → Quick Review → Spec Launchpad → Architect progress → Mission Receipt). The single file is also in this repo at [`demo/index.html`](demo/index.html) and embeds into Google Sites.
+**[▶ Try the interactive demo](https://hajimemanila.github.io/hermes-pilot/)** — no install, no Hermes: a self-contained mock of the **v0.3.0 Autopilot Mode** (Visual Swipe Deck, Panoptes-inspired Live Radar, Before ↔ After Timelapse, Dopamine FX) and the A2B flow (Spec Seed → Quick Review → Spec Launchpad → Architect progress → Mission Receipt). The single file is also in this repo at [`demo/index.html`](demo/index.html) and embeds into Google Sites.
 
 **[📖 Manual & Showcase Wiki](docs/wiki/ja/Home.md)** — the full Japanese-edition manual (installation & setup, A2B tasks & review, chat / memos / terminal) plus the `FocusFlow` end-to-end showcase: all 48 screenshots, each scene shown as a phone portrait (`390×844`) and a tablet two-pane (`1180×820`) side by side.
 
@@ -41,6 +41,15 @@ kanban, chat, terminal and usage into a single installable PWA.
   every detail opens as a full-height sheet.
 - **No external plugins required** — repositories are found by scanning your project folders, and system
   status uses only the standard Hermes APIs.
+
+## Autopilot Mode (v0.3.0)
+
+Switch between **✨ Autopilot** and **🎛 Cockpit** from the topbar lens toggle without changing your workflow or kanban backend:
+
+- **4-act Studio** — `Starter & Recipes` (1-tap templates or 1-line idea launcher + project switcher) → `Visual Swipe Deck` → `Live Studio` → `Deliverable & Timelapse`.
+- **Visual Swipe Deck** — Story-style option flicking (`A/B/C`), hold-to-peek comparison, sandboxed `▶ Try Live` iframe preview (`allow-scripts allow-forms`), 3-roll **Style Gacha**, horizontal-only swipe with threshold detent haptics & Dopamine edge sparks, and scrollable card copy.
+- **Panoptes-inspired Live Radar & X-Ray** — 8-station orbital Context-Eye `LiveRadarCard` with Context % ⇄ Cache/Cost core toggle, X-Ray inline previews (mock screenshot, file diff bar, shell intent), `⚡ Live Nudge` reserved instruction queue with `YOU` pin, multi-worker parallel pulses (up to 3-way Autopilot wave parallelism), elapsed clock, run-unit cumulative tokens, and a tappable 4-step progress drawer.
+- **Deliverable & Timelapse** — Before ↔ After wipe slider & auto crossfade playback, same-origin preview link, 1-tap launch command copy, and **Mission Receipt**.
 
 ## The A2B pipeline (seed → running batches)
 
@@ -177,7 +186,9 @@ Every one of them is reachable from the phone and from the standard dashboard.
 
 - **Vibe mode** — `⚡ Dopamine ⇄ 🧘 Serotonin` in Settings changes how loud the app is (HUD bevels,
   chat bubble glow, topbar/badge pulses, `sakuga-vfx`-inspired spring & canvas bursts with EN/JA
-  onomatopoeia, `Working…` aurora borders, and the receipt canvas title), not what it does. Haptics and
+  onomatopoeia, `Working…` aurora & light-sweep across chat bubbles / Tasks active cards / Autopilot cards,
+  circular View Transitions on Vibe / Dark-Light / Autopilot-Cockpit switching, Autopilot swipe detent
+  haptics, and the receipt canvas title), not what it does. Haptics and
   sound are separate toggles and **survive a Vibe switch**, so turning the volume down never silently
   disables the buzz you rely on.
 - **Snippet band toggle** — the chip band above the chat composer, the annotation toolbar and the terminal
@@ -257,14 +268,14 @@ so the dashboard tab and the bundled skills are wired up for you.
 **A. From npm (published package)**
 
 ```bash
-npx hermes-pilot@0.2.4 init      # data dirs, token, bundled skills, pairing QR (idempotent)
-npx hermes-pilot@0.2.4 start     # bridge on http://127.0.0.1:4097
+npx hermes-pilot@0.3.0 init      # data dirs, token, bundled skills, pairing QR (idempotent)
+npx hermes-pilot@0.3.0 start     # bridge on http://127.0.0.1:4097
 ```
 
 To keep it running across logins instead, install it once and use the `service` subcommand:
 
 ```bash
-npm i -g hermes-pilot@0.2.4
+npm i -g hermes-pilot@0.3.0
 hermes-pilot service install     # launchd on macOS, systemd --user on Linux
 ```
 
@@ -282,7 +293,7 @@ node bin/hermes-pilot.mjs init
 ```
 
 Installing straight from GitHub instead of the catalog works too, but pass a **full 40-character
-commit SHA** (`--ref v0.2.4` is rejected — tags and branches are refused by design) and expect one
+commit SHA** (`--ref v0.3.0` is rejected — tags and branches are refused by design) and expect one
 `--force` confirmation, because an owner/repo source is scanned as an unreviewed community source:
 
 ```bash
@@ -450,9 +461,9 @@ When the banner misbehaves (never shows, never goes away, an archived spec seems
 ```bash
 npm install                 # postinstall fixes node-pty permissions
 npm run dev                 # Vite on :4098, proxies /api and /ws to :4097
-npm test                    # unit tests (933)
-npm run verify              # test + check:pwa (34 checks) + check:oauth + production build + audit:responsive + check:coherence
-npm run check:coherence     # Layer 2 contract parity: api / events / storage / docs / legacy symbols
+npm test                    # unit tests (1419)
+npm run verify              # test + check:dashboard + check:pwa (34) + check:oauth + build + audit:responsive + check:term-enter + check:coherence + check:cold-install
+npm run check:coherence     # Layer 2 contract parity: api / events / storage / docs / dead-export / sync-owner / board-tick-owner
 npm run build:demo          # static interactive demo -> apps/web/dist-demo (+ google-sites-embed.html)
 npm run deploy              # atomic, verified swap of apps/web/dist
 npm run migrate:pilot       # the same migration as `init`, on demand
@@ -463,12 +474,15 @@ node bin/hermes-pilot.mjs --help
 
 | Step | What it proves |
 |---|---|
-| `npm test` | **933** unit / integration tests, 0 fail (node:test, no framework). |
+| `npm test` | **1419** unit / integration tests, 0 fail (node:test, no framework). |
+| `check:dashboard` | Hermes dashboard plugin files are synced identically (`sync-dashboard.mjs --check`). |
 | `check:pwa` | **34/34** PWA checks against `apps/web/public` (manifest, icons, maskable, service worker, viewport). |
 | `check:oauth` | **0** violations: no device credential or OAuth token is readable from the browser bundle. |
 | `build` | Vite production build succeeds and contains no `demo/` code. |
 | `audit:responsive` | layout audit at `390×844`, `844×390`, `820×1180` … — tap targets ≥ 44 px, no clipping regressions. |
-| `check:coherence` | **5** Layer 2 rules (`api-parity`, `event-contract`, `storage-contract`, `docs-scripts-parity`, `legacy-reentry`), 0 hard fail. |
+| `check:term-enter` | Terminal Enter key & PTY input behavior regression check passes. |
+| `check:coherence` | **16** Layer 2 rules (`api-parity`, `event-contract`, `storage-contract`, `docs-scripts-parity`, `dead-export`, `sync-owner`, `board-tick-owner`, …), 0 hard fail. |
+| `check:cold-install` | Clean package install / CLI smoke verification passes. |
 
 Layout:
 

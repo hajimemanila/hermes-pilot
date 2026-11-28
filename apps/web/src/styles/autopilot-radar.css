@@ -1,6 +1,7 @@
 /* SPEC-PANOPTES-RADAR: Orbital Context-Eye LiveRadarCard + Vibe Mode & BeforeAfterTimelapse */
 
 .ap-radar-card {
+  --ap-worker-3: #a78bfa;
   margin-top: 2px;
   padding: 7px 9px;
   border-radius: 14px;
@@ -74,7 +75,7 @@
 .ap-radar-spoke.worker-w2,
 .ap-radar-pulse-line.worker-w2 { stroke: var(--warn); }
 .ap-radar-spoke.worker-w3,
-.ap-radar-pulse-line.worker-w3 { stroke: #a78bfa; }
+.ap-radar-pulse-line.worker-w3 { stroke: var(--ap-worker-3); }
 
 .ap-radar-pulse-line {
   stroke: var(--accent);
@@ -105,12 +106,12 @@
 }
 
 .ap-radar-station-node.worker-w3.active .ap-radar-station-disc {
-  stroke: #a78bfa;
+  stroke: var(--ap-worker-3);
 }
 
 .ap-radar-station-node.attention .ap-radar-station-disc {
   stroke: var(--warn);
-  fill: var(--warn-bg, #fff7ed);
+  fill: var(--warn-bg, rgba(245, 158, 11, 0.16));
 }
 
 .ap-radar-station-node.error .ap-radar-station-disc {
@@ -132,7 +133,7 @@
   pointer-events: none;
 }
 .ap-radar-worker-tag.worker-w2 { fill: var(--warn); }
-.ap-radar-worker-tag.worker-w3 { fill: #a78bfa; }
+.ap-radar-worker-tag.worker-w3 { fill: var(--ap-worker-3); }
 
 .ap-radar-err-dot {
   fill: var(--bad);
@@ -164,7 +165,7 @@
 }
 
 .ap-radar-ping.worker-w2 { stroke: var(--warn); }
-.ap-radar-ping.worker-w3 { stroke: #a78bfa; }
+.ap-radar-ping.worker-w3 { stroke: var(--ap-worker-3); }
 
 /* Central Context Eye */
 .ap-radar-eye {
@@ -294,7 +295,7 @@ html[data-vibe='serotonin'] .ap-radar-nudge-pin {
   background: var(--accent);
 }
 .ap-radar-worker-chip.worker-w2 .ap-radar-worker-dot { background: var(--warn); }
-.ap-radar-worker-chip.worker-w3 .ap-radar-worker-dot { background: #a78bfa; }
+.ap-radar-worker-chip.worker-w3 .ap-radar-worker-dot { background: var(--ap-worker-3); }
 
 .ap-radar-worker-st {
   color: var(--muted);
@@ -359,7 +360,7 @@ html[data-vibe='serotonin'] .ap-radar-nudge-pin {
 }
 .ap-xray-badge.ok { background: var(--good-bg); color: var(--good-fg); }
 .ap-xray-badge.err { background: var(--danger-bg); color: var(--danger-fg); }
-.ap-xray-badge.warn { background: var(--warn-bg, #fff7ed); color: var(--warn-fg, #9a3412); }
+.ap-xray-badge.warn { background: var(--warn-bg, rgba(245, 158, 11, 0.16)); color: var(--warn-fg, var(--warn)); }
 
 .ap-xray-cmd {
   padding: 3px 6px;
@@ -611,6 +612,7 @@ html[data-vibe='serotonin'] .ap-radar-nudge-pin {
 }
 
 .ap-timelapse-btn {
+  position: relative;
   min-height: 32px;
   padding: 0 10px;
   border-radius: 999px;
@@ -620,6 +622,7 @@ html[data-vibe='serotonin'] .ap-radar-nudge-pin {
   font-size: 11px;
   font-weight: 800;
 }
+.ap-timelapse-btn::before { content: ''; position: absolute; left: 50%; top: 50%; width: 100%; min-width: 44px; height: 44px; transform: translate(-50%, -50%); }
 
 .ap-timelapse-btn.active {
   background: var(--accent);

@@ -35,7 +35,14 @@ const SAKUGA_SPRING_SELECTOR =
 
 /** Tier 2: 状態切替・セグメント・トグル。 */
 const TIER2_SWITCH_SELECTOR = '.hm-switch, .seed-toggle'
-const TIER2_SEGMENT_SELECTOR = '.seed-seg-btn, .chip, .prof-chip, .snippet-chip.trigger, .settings-nav-chip'
+const TIER2_SEGMENT_SELECTOR =
+  '.seed-seg-btn, .chip, .prof-chip, .snippet-chip.trigger, .settings-nav-chip, .ap-lens-btn, .ap-var-pill, .ap-step-btn, .ap-timelapse-btn, .ap-sandbox-toggle'
+/** Dopamine 限定で追加する Autopilot HTML 操作要素（バネ変形＋作画 VFX＋追加ハプティック）。 */
+const DOPAMINE_AP_SPRING_SELECTOR =
+  '.ap-lens-btn, .ap-swipe-link, .ap-project-btn, .ap-preview-chip, .ap-pill-ghost, .ap-act-btn, .ap-recipe-card, .ap-launcher-submit, .ap-deliverable-btn, .ap-var-pill, .ap-gacha-btn, .ap-gacha-chip, .ap-copy-more-btn, .ap-remix-chip, .ap-remix-send, .ap-undo-btn, .ap-sandbox-toggle, .ap-step-btn, .ap-radar-stat-btn, .ap-radar-feed-row, .ap-timelapse-btn'
+/** SVG 座標系・細長バーのため CSS transform を当てず Dopamine ハプティック＋Canvas のみ出す要素。 */
+const DOPAMINE_AP_SVG_TAP_SELECTOR = '.ap-radar-station-node, .ap-radar-eye, .ap-story-seg'
+const DOPAMINE_TAP_SELECTOR = `${HAPTIC_TARGET_SELECTOR}, ${DOPAMINE_AP_SPRING_SELECTOR}, ${DOPAMINE_AP_SVG_TAP_SELECTOR}`
 
 const SFX_KEY_BY_KIND = {
   fastTrack: 'fx.sfx.fastTrack',
@@ -483,43 +490,56 @@ export function FxLayer() {
     if (vibe !== 'dopamine' || isReducedMotion()) return undefined
     const onClick = (e) => {
       if (getActiveVibe() !== 'dopamine') return
-      const el = e.target?.closest?.(HAPTIC_TARGET_SELECTOR)
+      const el = e.target?.closest?.(DOPAMINE_TAP_SELECTOR)
       if (!el || el.disabled) return
 
-      const isSpringTarget = el.matches(SAKUGA_SPRING_SELECTOR)
-      if (!isSpringTarget) {
-        // Tier 4（リスト行・サマリ等）は控えめな沈み込みのみ（Canvas 爆発は出さない）
-        el.classList.remove('fx-sakuga-lite')
-        void el.offsetWidth
-        el.classList.add('fx-sakuga-lite')
-        later(() => el.classList.remove('fx-sakuga-lite'), 180)
-        return
+      const isSvgOrBarTap = el.matches(DOPAMINE_AP_SVG_TAP_SELECTOR)
+      const isSpringTarget =
+        !isSvgOrBarTap && (el.matches(SAKUGA_SPRING_SELECTOR) || el.matches(DOPAMINE_AP_SPRING_SELECTOR))
+      const isSwitch = el.matches(TIER2_SWITCH_SELECTOR)
+      const isSegment = !isSwitch && el.matches(TIER2_SEGMENT_SELECTOR)
+      const isSend = el.classList.contains('send') && !el.classList.contains('stop')
+      const isPrimary =
+        el.classList.contains('primary') ||
+        el.classList.contains('fast-track') ||
+        el.classList.contains('seed-submit') ||
+        el.classList.contains('ak-empty-btn') ||
+        el.classList.contains('ak-new-btn') ||
+        el.classList.contains('ap-launcher-submit') ||
+        el.classList.contains('ap-act-go') ||
+        el.classList.contains('ap-remix-send') ||
+        (el.classList.contains('spec-banner-btn') && !el.classList.contains('ghost')) ||
+        isSend
+
+      if (isSvgOrBarTap || el.matches(DOPAMINE_AP_SPRING_SELECTOR)) {
+        haptic(isPrimary || isSegment || isSwitch ? 'action' : 'tap')
       }
 
-      el.classList.remove('fx-sakuga-pop')
-      // reflow 1 回だけで同じアニメーションを再トリガ
-      void el.offsetWidth
-      el.classList.add('fx-sakuga-pop')
-      later(() => el.classList.remove('fx-sakuga-pop'), 340)
+      if (!isSvgOrBarTap) {
+        if (!isSpringTarget) {
+          // Tier 4（リスト行・サマリ等）は控えめな沈み込みのみ（Canvas 爆発は出さない）
+          el.classList.remove('fx-sakuga-lite')
+          void el.offsetWidth
+          el.classList.add('fx-sakuga-lite')
+          later(() => el.classList.remove('fx-sakuga-lite'), 180)
+          return
+        }
+
+        el.classList.remove('fx-sakuga-pop')
+        // reflow 1 回だけで同じアニメーションを再トリガ
+        void el.offsetWidth
+        el.classList.add('fx-sakuga-pop')
+        later(() => el.classList.remove('fx-sakuga-pop'), 340)
+      }
 
       if (document.visibilityState !== 'hidden') {
         const rect = el.getBoundingClientRect()
         if (rect.width > 0 && rect.height > 0) {
-          const isSwitch = el.matches(TIER2_SWITCH_SELECTOR)
-          const isSegment = !isSwitch && el.matches(TIER2_SEGMENT_SELECTOR)
-          const isSend = el.classList.contains('send') && !el.classList.contains('stop')
-          const isPrimary =
-            el.classList.contains('primary') ||
-            el.classList.contains('fast-track') ||
-            el.classList.contains('seed-submit') ||
-            el.classList.contains('ak-empty-btn') ||
-            el.classList.contains('ak-new-btn') ||
-            (el.classList.contains('spec-banner-btn') && !el.classList.contains('ghost')) ||
-            isSend
-          const kind = isSwitch || isSegment ? 'toggle' : isPrimary ? 'tapImpact' : 'tap'
+          const isRadarEyeOrSeg = el.matches('.ap-radar-eye, .ap-story-seg')
+          const kind = isSwitch || isSegment || isRadarEyeOrSeg ? 'toggle' : isPrimary ? 'tapImpact' : 'tap'
           const sfxText = isSwitch
             ? tRef.current('fx.sfx.toggle')
-            : isSegment
+            : isSegment || isRadarEyeOrSeg
               ? tRef.current('fx.sfx.tick')
               : isSend
                 ? tRef.current('fx.sfx.send')

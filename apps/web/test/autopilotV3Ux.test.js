@@ -118,3 +118,46 @@ test('AutopilotDeck axis-locks vertical scroll and CSS enables scrollable .ap-vi
   assert.match(cardsSrc, /ap-elapsed-pill/)
   assert.doesNotMatch(cardsSrc, /ap-batch-pill/)
 })
+
+test('Dopamine-only FX: running bars & Autopilot cards sweep, lens iris transition, Autopilot tap FX, and dead CSS pruned', () => {
+  const vibeCss = read('apps/web/src/styles/vibe.css')
+  assert.match(vibeCss, /html\[data-vibe='dopamine'\]\s+\.job-bar:not\(\.failed\):not\(\.stalled\):not\(\.queued\):not\(\.review\)/)
+  assert.match(vibeCss, /html\[data-vibe='dopamine'\]\s+\.ap-studio-card/)
+  assert.match(vibeCss, /html\[data-vibe='dopamine'\]\s+\.ap-card-front::after/)
+  assert.match(vibeCss, /html\[data-vibe='dopamine'\]\s+\.ap-starter-hero::after/)
+  assert.match(vibeCss, /html\[data-vibe='dopamine'\]\s+\.ap-recipe-card::after/)
+  assert.match(vibeCss, /html\[data-vibe='dopamine'\]\s+\.ap-complete-card::after/)
+
+  const fxSrc = read('apps/web/src/components/FxLayer.jsx')
+  for (const sel of ['.ap-lens-btn', '.ap-step-btn', '.ap-radar-station-node', '.ap-radar-eye', '.ap-pill-ghost']) {
+    assert.ok(fxSrc.includes(sel), `FxLayer missing Dopamine tap target: ${sel}`)
+  }
+
+  const appSrc = read('apps/web/src/App.jsx')
+  assert.match(appSrc, /switchLensWithTransition/)
+  const viewSrc = read('apps/web/src/features/autopilot/AutopilotView.jsx')
+  assert.match(viewSrc, /onChange\('autopilot',\s*e\)/)
+  assert.match(viewSrc, /onChange\('cockpit',\s*e\)/)
+
+  const deckCss = read('apps/web/src/styles/autopilot-deck.css')
+  assert.doesNotMatch(deckCss, /\.ap-batch-pill\b/)
+  assert.doesNotMatch(deckCss, /\.ap-subtle-link\b/)
+  for (const sel of ['.ap-var-pill::before', '.ap-copy-more-btn::before', '.ap-undo-btn::before']) {
+    assert.ok(deckCss.includes(sel), `autopilot-deck.css missing 44px tap target: ${sel}`)
+  }
+
+  const storyCss = read('apps/web/src/styles/autopilot-story.css')
+  assert.ok(storyCss.includes('.ap-gacha-btn::before'))
+  assert.ok(storyCss.includes('.ap-gacha-chip::before'))
+
+  const radarCss = read('apps/web/src/styles/autopilot-radar.css')
+  assert.ok(radarCss.includes('.ap-timelapse-btn::before'))
+
+  const deckSrc = read('apps/web/src/features/autopilot/AutopilotDeck.jsx')
+  assert.match(deckSrc, /detentDir/)
+  assert.match(deckSrc, /celebrate\('spark'/)
+
+  assert.match(viewSrc, /ap-lens-live-dot/)
+  assert.match(appSrc, /runningCount=\{running\}/)
+  assert.match(read('apps/web/src/features/autopilot/AutopilotCards.jsx'), /btn ap-pill-ghost/)
+})

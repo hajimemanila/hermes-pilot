@@ -1,8 +1,9 @@
 # Interactive Demo（静的同梱物）
 
-`npm run build:demo` が生成する **自己完結の単一 HTML**（外部参照 0・約 950 KB）です。
-Hermes に接続せず、モック API で PWA の主要フロー（Spec Seed → Quick Review → Spec Launchpad →
-Architect 進行 → Mission Receipt）を試せます。
+`npm run build:demo` が生成する **自己完結の単一 HTML**（外部参照 0・約 1.3 MB）です。
+Hermes に接続せず、モック API で PWA の **v0.3.0 Autopilot モード**（ビジュアル・スワイプデッキ /
+Panoptes 着想 Live Radar / Before ↔ After タイムラプス / Dopamine 演出）および主要 A2B フロー
+（Spec Seed → Quick Review → Spec Launchpad → Architect 進行 → Mission Receipt）を試せます。
 
 - そのまま開く: `demo/index.html` をブラウザで開く（`file://` でも可）
 - 公開 URL: https://hajimemanila.github.io/hermes-pilot/

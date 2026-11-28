@@ -1,6 +1,6 @@
 # SPEC: 整合性スイープ第 3 弾 — 巨大 pane の分割・重複ヘルパーの単一定義化・未参照 export の機械検出 (`SPEC-COHERENCE-SWEEP-3`)
 
-- **Status**: open
+- **Status**: archived
 - **決定済状態**: decided（2026-11-27・Round 1 の 4 問はすべて推奨 A で確定）
 - **決定の出所**: `~/.hermes/plugin-data/hermes-pilot/review/sheets/spec-coherence-sweep-3-1.answer.json`（`answers` 4 件すべて `choice: "A"` / `note: ""` / `global: ""`）
 - **前提仕様**: [SPEC-spec-execution-mode-mode-zer.md](./SPEC-spec-execution-mode-mode-zer.md) / [SPEC-COHERENCE-AUTOPILOT-SPLIT.md](./SPEC-COHERENCE-AUTOPILOT-SPLIT.md)（SEMM-6〜10）/ [SPEC-coherence-split-batches.md](./SPEC-coherence-split-batches.md) / [SPEC-COHERENCE.md](./SPEC-COHERENCE.md)

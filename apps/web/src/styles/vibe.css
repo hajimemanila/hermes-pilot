@@ -214,17 +214,28 @@ html[data-vibe='dopamine'] .ak-allclear {
 }
 
 html[data-vibe='dopamine'] .thinking-card,
-html[data-vibe='dopamine'] .chat-live-card.running {
+html[data-vibe='dopamine'] .chat-live-card.running,
+html[data-vibe='dopamine'] .job-bar:not(.failed):not(.stalled):not(.queued):not(.review),
+html[data-vibe='dopamine'] .ap-studio-card {
   --vibe-glow-a: rgba(34, 211, 238, 0.92);
   --vibe-glow-b: rgba(167, 139, 250, 0.72);
   --vibe-glow-shadow: rgba(34, 211, 238, 0.24);
   position: relative;
   overflow: hidden;
   isolation: isolate;
+}
+
+html[data-vibe='dopamine'] .thinking-card,
+html[data-vibe='dopamine'] .chat-live-card.running {
   /* 左 3px のベタ帯と回転ボーダーが二重衝突して段差に見えるのを防ぎつつ横幅を 1px も変えない（3+11 -> 1+13） */
   border-left-width: 1px;
   padding-left: 13px;
-  animation: vibe-working-glow 2.8s ease-in-out infinite;
+}
+
+html[data-vibe='dopamine'] .job-bar:not(.failed):not(.stalled):not(.queued):not(.review) {
+  /* Tasks 最上部稼働カード: 左 3px + 12px -> 1px + 14px で横幅 1px も変えずに回転ボーダーを収める */
+  border-left-width: 1px;
+  padding-left: 14px;
 }
 
 html[data-vibe='dopamine'] .thinking-card[data-heat='high'],
@@ -235,7 +246,9 @@ html[data-vibe='dopamine'] .chat-live-card.running[data-heat='high'] {
 }
 
 html[data-vibe='dopamine'] .thinking-card::before,
-html[data-vibe='dopamine'] .chat-live-card.running::before {
+html[data-vibe='dopamine'] .chat-live-card.running::before,
+html[data-vibe='dopamine'] .job-bar:not(.failed):not(.stalled):not(.queued):not(.review)::before,
+html[data-vibe='dopamine'] .ap-studio-card::before {
   content: '';
   position: absolute;
   inset: 0;
@@ -255,11 +268,16 @@ html[data-vibe='dopamine'] .chat-live-card.running::before {
   -webkit-mask-composite: xor;
   mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   mask-composite: exclude;
-  animation: vibe-orbit-spin 4.5s linear infinite;
 }
 
 html[data-vibe='dopamine'] .thinking-card::after,
-html[data-vibe='dopamine'] .chat-live-card.running::after {
+html[data-vibe='dopamine'] .chat-live-card.running::after,
+html[data-vibe='dopamine'] .job-bar:not(.failed):not(.stalled):not(.queued):not(.review)::after,
+html[data-vibe='dopamine'] .ap-studio-card::after,
+html[data-vibe='dopamine'] .ap-card-front::after,
+html[data-vibe='dopamine'] .ap-starter-hero::after,
+html[data-vibe='dopamine'] .ap-recipe-card::after,
+html[data-vibe='dopamine'] .ap-complete-card::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -268,18 +286,67 @@ html[data-vibe='dopamine'] .chat-live-card.running::after {
   background: linear-gradient(
     115deg,
     transparent 20%,
-    rgba(94, 234, 212, 0.08) 48%,
-    rgba(251, 191, 36, 0.06) 54%,
+    rgba(94, 234, 212, 0.1) 48%,
+    rgba(251, 191, 36, 0.07) 54%,
     transparent 80%
   );
   transform: translateX(-120%);
-  animation: vibe-surface-sweep 2.8s ease-in-out infinite;
+}
+
+html[data-vibe='dopamine'] .ap-card-front::after {
+  z-index: 4;
+}
+
+html[data-vibe='dopamine'] .ap-starter-hero::after,
+html[data-vibe='dopamine'] .ap-recipe-card::after,
+html[data-vibe='dopamine'] .ap-complete-card::after {
+  z-index: 2;
+}
+
+html[data-vibe='dopamine'] .ap-starter-hero,
+html[data-vibe='dopamine'] .ap-recipe-card,
+html[data-vibe='dopamine'] .ap-complete-card {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
 }
 
 html[data-vibe='dopamine'] .thinking-card > *,
-html[data-vibe='dopamine'] .chat-live-card.running > * {
+html[data-vibe='dopamine'] .chat-live-card.running > *,
+html[data-vibe='dopamine'] .job-bar:not(.failed):not(.stalled):not(.queued):not(.review) > *,
+html[data-vibe='dopamine'] .ap-studio-card > * {
   position: relative;
   z-index: 1;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html[data-vibe='dopamine'] .thinking-card,
+  html[data-vibe='dopamine'] .chat-live-card.running,
+  html[data-vibe='dopamine'] .job-bar:not(.failed):not(.stalled):not(.queued):not(.review),
+  html[data-vibe='dopamine'] .ap-studio-card {
+    animation: vibe-working-glow 2.8s ease-in-out infinite;
+  }
+
+  html[data-vibe='dopamine'] .thinking-card::before,
+  html[data-vibe='dopamine'] .chat-live-card.running::before,
+  html[data-vibe='dopamine'] .job-bar:not(.failed):not(.stalled):not(.queued):not(.review)::before,
+  html[data-vibe='dopamine'] .ap-studio-card::before {
+    animation: vibe-orbit-spin 4.5s linear infinite;
+  }
+
+  html[data-vibe='dopamine'] .thinking-card::after,
+  html[data-vibe='dopamine'] .chat-live-card.running::after,
+  html[data-vibe='dopamine'] .job-bar:not(.failed):not(.stalled):not(.queued):not(.review)::after,
+  html[data-vibe='dopamine'] .ap-studio-card::after {
+    animation: vibe-surface-sweep 2.8s ease-in-out infinite;
+  }
+
+  html[data-vibe='dopamine'] .ap-card-front::after,
+  html[data-vibe='dopamine'] .ap-starter-hero::after,
+  html[data-vibe='dopamine'] .ap-recipe-card::after,
+  html[data-vibe='dopamine'] .ap-complete-card::after {
+    animation: vibe-surface-sweep 4.6s ease-in-out infinite;
+  }
 }
 
 html[data-vibe='dopamine'] .vibe-settle-flash {

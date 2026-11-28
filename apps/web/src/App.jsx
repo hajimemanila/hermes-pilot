@@ -1,17 +1,10 @@
 import React, { Suspense, lazy, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { flushSync } from 'react-dom'
 import { readDeepLink } from './lib/deeplink.js'
-
 import { appBadgeCount, navBadgeState, pendingCount, runningCount, unseenNotices, waitingCount } from './lib/reviewView.js'
 import { cachePercent, gwState, latestToolName, reviewJumpTarget, runningTotal } from './lib/telemetry.js'
-import {
-  SEEN_MAP_KEY,
-  SEEN_NAV_KEY,
-  newerThan,
-  otherUnreadReports,
-  readActiveChatId,
-  readSeenMap,
-  unseenPipelineReports,
-} from './lib/chatReports.js'
+import { SEEN_MAP_KEY, SEEN_NAV_KEY, newerThan, otherUnreadReports, readActiveChatId, readSeenMap, unseenPipelineReports } from './lib/chatReports.js'
+import { switchLensWithTransition } from './lib/modeTransition.js'
 import { TasksPane } from './features/TasksPane.jsx'
 import { ChatPane } from './features/ChatPane.jsx'
 import { SettingsPane } from './features/SettingsPane.jsx'
@@ -285,6 +278,11 @@ export function App() {
   const [usageOpen, setUsageOpen] = useState(false)
   const [liveOpen, setLiveOpen] = useState(false)
   const [lens, setLens] = useState('cockpit')
+  const lensRef = useRef(lens)
+  lensRef.current = lens
+  const switchLens = useCallback((next, ev) => {
+    switchLensWithTransition(next, lensRef.current, (v) => { try { flushSync(() => setLens(v)) } catch { setLens(v) } }, ev)
+  }, [])
   const chatMountedRef = useRef(chatMounted)
   chatMountedRef.current = chatMounted
   const chatSeenRef = useRef(0)
@@ -430,7 +428,7 @@ export function App() {
     window.addEventListener(HM_EVENTS.OPEN_BOARD, onOpenBoard)
     window.addEventListener(HM_EVENTS.OPEN_LIVE, onOpenLive)
     window.addEventListener(HM_EVENTS.OPEN_TASK, onOpenTask)
-    const onOpenAutopilot = () => setLens('autopilot')
+    const onOpenAutopilot = () => switchLens('autopilot')
     window.addEventListener(HM_EVENTS.OPEN_AUTOPILOT, onOpenAutopilot)
     return () => {
       window.removeEventListener(HM_EVENTS.CHAT_UNREAD, onOtherUnread)
@@ -809,7 +807,7 @@ export function App() {
         >
           Hermes <b>Pilot</b>
         </span>
-        <AutopilotLensToggle lens={lens} onChange={setLens} waitingCount={waitingTotal} />
+        <AutopilotLensToggle lens={lens} onChange={switchLens} waitingCount={waitingTotal} runningCount={running} />
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <button className="icon-btn" aria-label={t('app.search')} onClick={() => { haptic('tap'); setSearchOpen(true) }}><Icon name="search" size={18} /></button>
           <span
@@ -896,8 +894,8 @@ export function App() {
         </div>
       ) : null}
 
-      <main className="panes">
-        {booting ? <Loader label={t('common.loading')} /> : lens === 'autopilot' ? <AutopilotView overview={overview} notify={notify} onSwitchCockpit={() => setLens('cockpit')} /> : (
+      <main className="panes" tabIndex={-1}>
+        {booting ? <Loader label={t('common.loading')} /> : lens === 'autopilot' ? <AutopilotView overview={overview} notify={notify} onSwitchCockpit={(e) => switchLens('cockpit', e)} /> : (
           <>
             {mountedTabs.tasks ? (
               <TabHost active={tab === 'tasks'}>

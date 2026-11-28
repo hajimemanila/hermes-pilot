@@ -7,7 +7,7 @@ PWA プラグインです。エージェントが判断を仰ぐ場面を「1 �
 
 English README: [`README.md`](README.md)
 
-**[▶ インタラクティブデモを試す](https://hajimemanila.github.io/hermes-pilot/)** — インストール不要・Hermes 不要。A2B フロー（Spec Seed → Quick Review → Spec Launchpad → Architect 進行 → Mission Receipt）をモックで一通り触れます。単一ファイルは [`demo/index.html`](demo/index.html) にも同梱（Google Sites に埋め込み可）。
+**[▶ インタラクティブデモを試す](https://hajimemanila.github.io/hermes-pilot/)** — インストール不要・Hermes 不要。**v0.3.0 Autopilot モード**（ビジュアル・スワイプデッキ、Panoptes 着想の Live Radar、Before ↔ After タイムラプス、Dopamine 演出）と A2B フロー（Spec Seed → Quick Review → Spec Launchpad → Architect 進行 → Mission Receipt）をモックで一通り触れます。単一ファイルは [`demo/index.html`](demo/index.html) にも同梱（Google Sites に埋め込み可）。
 
 **[📖 マニュアル＆ショーケース Wiki](docs/wiki/ja/Home.md)** — 全 48 カットの日本語マニュアル（導入・設定 / A2B タスク＆レビュー / Chat・Memos・Terminal）と、`FocusFlow` を題材にした一気通貫ショーケース。各シーンはスマホ縦（`390×844`）とタブレット 2 ペイン（`1180×820`）を並べて見比べられます。
 
@@ -39,6 +39,15 @@ English README: [`README.md`](README.md)
   680px 未満は詳細が全画面シートで開きます
 - **外部プラグイン不要** — リポジトリはプロジェクトフォルダの 1 階層スキャンで見つけ、システム状態は
   Hermes 標準 API だけで組み立てます
+
+## Autopilot モード（v0.3.0）
+
+トップバーのレンズトグル（`✨ Autopilot ⇄ 🎛 Cockpit`）から、既存のカンバンや作業状態を変えずにライト層向け 4 幕スタジオへ切り替えられます。
+
+- **4 幕スタジオ** — `Starter & Recipes`（レシピカードまたは 1 行ランチャー＋プロジェクト切替）→ `Visual Swipe Deck` → `Live Studio` → `Deliverable & Timelapse`。
+- **ビジュアル・スワイプデッキ** — ストーリー風フリック比較（`A/B/C`）、長押し Peek 比較、サンドボックス `▶ 触ってみる` ライブ iframe、最大 3 回の**スタイル・ガチャ**、横専用スワイプ（閾値到達ハプティック＋Dopamine 端スパーク）、独立スクロール本文を統合。
+- **Panoptes 着想 Live Radar & X-Ray** — 8 ステーション軌道＋Context-Eye `LiveRadarCard`（Context % ⇄ Cache/Cost 切替）、X-Ray インライン展開（モックスクショ／ファイル差分バー／コマンド意図）、`⚡ 割り込み指示（Live Nudge）` 予約＆`YOU` ピン、マルチワーカー並列パルス（最大 3 並列 wave）、開始時からの経過タイマー、実行単位トークン累積、タップ振り返り 4 段階ドロワーを搭載。
+- **成果物＆タイムラプス** — Before ↔ After ワイプ＆自動クロスフェード比較、同一オリジンプレビュー、起動コマンド 1 タップコピー、**Mission Receipt**。
 
 ## A2B パイプライン（種 → 自走するバッチ）
 
@@ -170,8 +179,9 @@ Pilot 未使用の環境には触りません（実行前に `.bak-<stamp>` を�
 
 - **Vibe モード** — 設定の `⚡ ドーパミン ⇄ 🧘 セロトニン` は「見た目と手触りの強さ」だけを変え、機能は変えません
   （Dopamine 時は 3D ベベルの HUD ルック、チャットバブルグロー、上部バナー＆ドット明滅、EN/JA 擬音付き
-  `sakuga-vfx` 風バネ＆Canvas 作画エフェクト、`Working…` オーロラグローが有効になり、Serotonin 時は静謐な
-  フラット表示へ戻ります）。ハプティクスと効果音は独立トグルで、**Vibe を切り替えても維持**されます（音量を
+  `sakuga-vfx` 風バネ＆Canvas 作画エフェクト、`Working…` オーロラ＆チャット・Tasks 稼働カード・Autopilot カードの光スイープ、
+  Vibe / Dark-Light / Autopilot-Cockpit 切替時の円形展開トランジション、Autopilot スワイプ閾値ハプティックが有効になり、
+  Serotonin 時は静謐なフラット表示へ戻ります）。ハプティクスと効果音は独立トグルで、**Vibe を切り替えても維持**されます（音量を
   下げたつもりが振動まで止まる事故を起こさないため）。
 - **スニペット帯トグル** — チャット入力欄の上、注釈ツールバー、端末キーのチップ帯はそれぞれ折りたためます。
   選択は帯ごとに記憶され、390px の画面で入力欄とキーボードが場所を取り合いません。
@@ -242,14 +252,14 @@ data URL として組み立てるため、デモは外部ネットワークに�
 **A. npm から（公開パッケージ）**
 
 ```bash
-npx hermes-pilot@0.2.4 init      # データ・トークン・同梱スキル・ペアリング QR（冪等）
-npx hermes-pilot@0.2.4 start     # ブリッジ起動（http://127.0.0.1:4097）
+npx hermes-pilot@0.3.0 init      # データ・トークン・同梱スキル・ペアリング QR（冪等）
+npx hermes-pilot@0.3.0 start     # ブリッジ起動（http://127.0.0.1:4097）
 ```
 
 ログインをまたいで常駐させるなら、一度だけ入れて `service` を使います。
 
 ```bash
-npm i -g hermes-pilot@0.2.4
+npm i -g hermes-pilot@0.3.0
 hermes-pilot service install     # macOS は launchd、Linux は systemd --user
 ```
 
@@ -266,7 +276,7 @@ node bin/hermes-pilot.mjs init
 ```
 
 GitHub から直接入れることもできますが、`--ref` は**40 桁の commit SHA** を渡してください
-（`--ref v0.2.4` のようなタグ指定は CLI が拒否します）。owner/repo 指定は未レビューの
+（`--ref v0.3.0` のようなタグ指定は CLI が拒否します）。owner/repo 指定は未レビューの
 community source としてスキャンされるため、`--force` の確認が 1 回入ります。
 
 **C. このリポジトリを clone して**
@@ -426,9 +436,9 @@ review/        sheets/, shots/, library/, feed.jsonl, chat-reports.jsonl, task-c
 ```bash
 npm install                 # postinstall が node-pty の権限を直す
 npm run dev                 # Vite :4098（/api・/ws は 4097 へプロキシ）
-npm test                    # 単体テスト（933 件）
-npm run verify              # test + check:pwa（34 項目）+ check:oauth + 本番ビルド + audit:responsive + check:coherence
-npm run check:coherence     # Layer 2 契約パリティ: api / events / storage / docs / 旧シンボル
+npm test                    # 単体テスト（1419 件）
+npm run verify              # test + check:dashboard + check:pwa（34 項目）+ check:oauth + 本番ビルド + audit:responsive + check:term-enter + check:coherence + check:cold-install
+npm run check:coherence     # Layer 2 契約パリティ: api / events / storage / docs / dead-export / sync-owner / board-tick-owner
 npm run build:demo          # バックエンド不要の静的デモ → apps/web/dist-demo（+ google-sites-embed.html）
 npm run deploy              # 検証付きで dist を原子的に切替（無停止）
 npm run migrate:pilot       # init と同じ移行を単体で実行
@@ -439,12 +449,15 @@ node bin/hermes-pilot.mjs --help
 
 | 手順 | 何を保証するか |
 |---|---|
-| `npm test` | **933 件**の単体・結合テストが 0 fail（node:test、フレームワーク無し） |
+| `npm test` | **1419 件**の単体・結合テストが 0 fail（node:test、フレームワーク無し） |
+| `check:dashboard` | Hermes ダッシュボードのプラグインファイルが一致していること（`sync-dashboard.mjs --check`） |
 | `check:pwa` | `apps/web/public` に対する **34/34** 項目（マニフェスト・アイコン・マスカブル・Service Worker・viewport） |
 | `check:oauth` | **0 違反**: 端末の資格情報や OAuth トークンがブラウザ側バンドルから読めないこと |
 | `build` | Vite 本番ビルドが通り、`demo/` のコードが混入していないこと |
 | `audit:responsive` | `390×844` / `844×390` / `820×1180` などのレイアウト監査（タップ 44px 以上・新規の見切れなし） |
-| `check:coherence` | Layer 2 の **5 ルール**（`api-parity` / `event-contract` / `storage-contract` / `docs-scripts-parity` / `legacy-reentry`）で hard fail 0 |
+| `check:term-enter` | ターミナルの Enter キー＆PTY 入力の回帰チェックが通ること |
+| `check:coherence` | Layer 2 の **16 ルール**（`api-parity` / `event-contract` / `storage-contract` / `docs-scripts-parity` / `dead-export` / `sync-owner` / `board-tick-owner` 等）で hard fail 0 |
+| `check:cold-install` | クリーンインストール／CLI スモーク検査が通ること |
 
 構成:
 

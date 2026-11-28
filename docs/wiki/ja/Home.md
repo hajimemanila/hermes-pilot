@@ -52,7 +52,7 @@ flowchart LR
 
 自分の環境で 10 分だけ試すときの最短経路です（詳細な検査票は [`docs/WIKI-SHOTLIST.md`](../../WIKI-SHOTLIST.md)）。
 
-- [ ] `npx hermes-pilot@0.2.4 init` → `start` でブリッジが `http://127.0.0.1:4097` で応答する
+- [ ] `npx hermes-pilot@0.3.0 init` → `start` でブリッジが `http://127.0.0.1:4097` で応答する
 - [ ] スマホで QR を読み、`HttpOnly` セッション Cookie でログインできる（アドレスバーにトークンが残らない）
 - [ ] Settings の **PWA 診断** が manifest / icons / Service Worker / scope で緑になる
 - [ ] Tasks タブの `📝 Spec Seed` に 1 行を入れ、Quick Review の 3 問に 1 タップで答える

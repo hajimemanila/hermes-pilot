@@ -12,7 +12,7 @@ import {
   resolveOptionSwipe,
 } from '../../lib/autopilotDeck.js'
 import { haptic } from '../../lib/haptic.js'
-import { celebrateAction } from '../../lib/vibe.js'
+import { celebrate, celebrateAction, getActiveVibe } from '../../lib/vibe.js'
 import { AnnotationEditor } from '../AnnotationEditor.jsx'
 import { DeckActionBar } from './DeckActionBar.jsx'
 import { DeckCardStage } from './DeckCardStage.jsx'
@@ -44,7 +44,7 @@ export function AutopilotDeck({
   const [liveSandbox, setLiveSandbox] = useState(false)
   const [annotationsByVariant, setAnnotationsByVariant] = useState({})
   const [gachaCountByCard, setGachaCountByCard] = useState({})
-  const gestureRef = useRef({ active: false, locked: null, startX: 0, startY: 0, pointerId: null })
+  const gestureRef = useRef({ active: false, locked: null, detentDir: null, startX: 0, startY: 0, pointerId: null })
   const flyTimerRef = useRef(null)
 
   const question = cards[index] || null
@@ -181,6 +181,7 @@ export function AutopilotDeck({
     gestureRef.current = {
       active: true,
       locked: null,
+      detentDir: null,
       startX: e.clientX,
       startY: e.clientY,
       pointerId: e.pointerId,
@@ -202,6 +203,23 @@ export function AutopilotDeck({
       g.locked = 'h'
       e.currentTarget?.setPointerCapture?.(e.pointerId)
     }
+    const liveSwipe = classifySwipe(dx, 0, undefined, { horizontalOnly: true })
+    if (liveSwipe.committed && liveSwipe.direction) {
+      if (g.detentDir !== liveSwipe.direction) {
+        g.detentDir = liveSwipe.direction
+        haptic('tap')
+        if (getActiveVibe() === 'dopamine') {
+          const rect = e.currentTarget?.getBoundingClientRect?.()
+          celebrate('spark', {
+            x: rect ? Math.round(liveSwipe.direction === 'right' ? rect.right - 14 : rect.left + 14) : null,
+            y: rect ? Math.round(rect.top + rect.height * 0.42) : null,
+            sound: false,
+          })
+        }
+      }
+    } else if (g.detentDir !== null) {
+      g.detentDir = null
+    }
     const gx = Math.max(10, Math.min(90, Math.round(50 + dx / 5)))
     setDrag({ active: true, dx, dy: 0, gx, gy: 35 })
   }
@@ -212,6 +230,7 @@ export function AutopilotDeck({
     const wasHorizontal = g.active && g.locked === 'h'
     g.active = false
     g.locked = null
+    g.detentDir = null
     if (!wasHorizontal) return
     const finalSwipe = classifySwipe(e.clientX - g.startX, e.clientY - g.startY, undefined, { horizontalOnly: true })
     const rect = e.currentTarget?.getBoundingClientRect?.()

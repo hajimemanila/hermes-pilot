@@ -1,4 +1,4 @@
-**Hermes Pilot v0.2.4 — 日本語マニュアル**
+**Hermes Pilot v0.3.0 — 日本語マニュアル**
 
 - [🏠 ホーム（全体像と A2B パイプライン）](Home.md)
 - [🚀 ショーケース: アイデア → プロダクト](Showcase-From-Idea-to-Product.md)

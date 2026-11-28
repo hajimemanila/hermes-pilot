@@ -709,3 +709,11 @@ button.memo-check-row {
 ::view-transition-new(root) {
   z-index: 9998;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}

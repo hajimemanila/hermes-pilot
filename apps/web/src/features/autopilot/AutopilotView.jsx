@@ -31,7 +31,7 @@ import { AutopilotDeck } from './AutopilotDeck.jsx'
 
 const AP_BOARD_KEY = HM_STORAGE.BOARD
 
-export function AutopilotLensToggle({ lens, onChange, waitingCount = 0 }) {
+export function AutopilotLensToggle({ lens, onChange, waitingCount = 0, runningCount = 0 }) {
   const { t } = useI18n()
   return (
     <div className="ap-lens-toggle" role="tablist" aria-label={t('autopilot.lens.aria')}>
@@ -40,12 +40,13 @@ export function AutopilotLensToggle({ lens, onChange, waitingCount = 0 }) {
         role="tab"
         aria-selected={lens === 'autopilot'}
         className={`ap-lens-btn${lens === 'autopilot' ? ' active' : ''}`}
-        onClick={() => {
+        onClick={(e) => {
           haptic('tap')
-          onChange('autopilot')
+          onChange('autopilot', e)
         }}
       >
         <span>✨ {t('autopilot.lens.autopilot')}</span>
+        {lens !== 'autopilot' && runningCount > 0 && <span className="ap-lens-live-dot" aria-hidden="true" />}
         {waitingCount > 0 && <span className="ap-lens-badge">{waitingCount}</span>}
       </button>
       <button
@@ -53,9 +54,9 @@ export function AutopilotLensToggle({ lens, onChange, waitingCount = 0 }) {
         role="tab"
         aria-selected={lens === 'cockpit'}
         className={`ap-lens-btn${lens === 'cockpit' ? ' active' : ''}`}
-        onClick={() => {
+        onClick={(e) => {
           haptic('tap')
-          onChange('cockpit')
+          onChange('cockpit', e)
         }}
       >
         <span>🎛 {t('autopilot.lens.cockpit')}</span>
