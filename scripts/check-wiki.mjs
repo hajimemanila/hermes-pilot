@@ -33,11 +33,12 @@ import { WIKI_SHOTS, isValidPng } from './capture-wiki.mjs'
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const DEFAULT_ROOT = path.resolve(HERE, '..')
 
-/** The six pages every language directory must provide (D1 / 3.1). */
+/** The seven pages every language directory must provide. */
 export const WIKI_PAGES = Object.freeze([
   'Home.md',
   '_Sidebar.md',
   'Showcase-From-Idea-to-Product.md',
+  'Showcase-Autopilot-Mode.md',
   'Manual-Installation-and-Setup.md',
   'Manual-A2B-Tasks-and-Review.md',
   'Manual-Chat-Memos-and-Terminal.md',

@@ -49,7 +49,7 @@ node bin/hermes-pilot.mjs init
 
 1. `~/.hermes/plugin-data/hermes-pilot/`（と `review/{sheets,shots,library}`）を作成
 2. **256-bit hex のアプリトークン**を `token` に `0600` で生成（既にあれば作り直さない）
-3. 旧 `~/Projects/akapen` / `~/.hermes/plugin-data/akapen` / `~/.hermes/mobile-pwa` があれば移行（コピーのみ・`mtime` 保持）
+3. 旧バージョンのデータディレクトリが残っている場合のみ、設定を非破壊で移行（コピーのみ・更新時刻保持）
 4. 同梱スキル `quick-review` / `annotation` / `spec-architect` を `~/.hermes/skills/` と Pilot プロファイルの `profiles/<pilot>/skills/` へ配置
 5. 到達可能なアドレス（Tailscale の MagicDNS 名、無ければ LAN IP）を検出して、**ペアリング URL とターミナル QR** を表示
 
@@ -132,7 +132,7 @@ Settings → **PWA 診断を実行** を押すと、その場で manifest とア
 | manifest 取得 / manifest の JSON | `/manifest.webmanifest` が認証なしで 200 を返し、JSON として読める | 公開パスを絞りすぎていないか（`/manifest.webmanifest` は認証不要が正） |
 | start_url が scope 内 | `start_url` が `scope` の内側 | リバースプロキシのパス接頭辞と `scope` を揃える |
 | id が同一オリジン | `id`（未指定なら `start_url`）が同じオリジン | 別ホスト名で開いていないか（MagicDNS 名と LAN IP の混在） |
-| 192px 以上の any アイコン / 512px 以上の any アイコン | それぞれ 1 枚以上 | 無いと **インストール不可**。`apps/web/public/icon-192-v6.png` / `icon-512-v6.png` が配られているか確認（生成は `node scripts/make-icons.mjs`） |
+| 192px 以上の any アイコン / 512px 以上の any アイコン | それぞれ 1 枚以上 | 無いと **インストール不可**。アイコンファイル（`icon-192-v6.png` / `icon-512-v6.png`）が配信されているか確認 |
 | maskable アイコン | `purpose: maskable` が 1 枚以上 | 無いとホーム画面で白い枠が出る |
 | Service Worker 制御 | 今のページが SW の制御下にあり、`scope` をカバーしている | 一度ハードリロード。`/sw.js` が配信されているか確認 |
 | 今の表示モード | `standalone` | ブラウザ表示のままなら、インストール後にホーム画面から起動する |
@@ -175,4 +175,7 @@ node bin/hermes-pilot.mjs init --force      # 更新後にダッシュボード�
 
 ---
 
-次は [Manual: A2B タスクとレビュー](Manual-A2B-Tasks-and-Review.md) へ。1 行の種からバッチを起票し、赤入れで検収する流れを扱います。
+次は目的のスタイルに合わせて進めます：
+
+- 手軽にスワイプ主体で進めたい場合 → [ショーケース②: オートパイロット編](Showcase-Autopilot-Mode.md)
+- カンバン・仕様書・詳細 diff までじっくり操作したい場合 → [Manual: A2B タスクとレビュー](Manual-A2B-Tasks-and-Review.md)

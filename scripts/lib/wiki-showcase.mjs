@@ -182,9 +182,38 @@ export const SC_STATE = Object.freeze({
     await __q('.ak-fasttrack, .ak-opt'); await __t(700);
     return true})()`,
 
-  /** SC03: Spec Launchpad showing batches with Execution Mode & Recommended Role expanded. */
+  /** SC03: Spec Launchpad showing FocusFlow batches with Execution Mode & Recommended Role expanded. */
   SC03: () => `(async()=>{${SC_PRELUDE}
-    if(!__click('.spec-bar')) throw new Error('spec bar not found');
+    if(!window.__ffSc03Installed){
+      window.__ffSc03Installed=true;
+      const orig=window.fetch.bind(window);
+      const ffSpecs={
+        ok:true,
+        repo:'focusflow',
+        specs:[{
+          path:'docs/SPEC-FOCUSFLOW.md',
+          title:'SPEC: FocusFlow — ミニマル・ポモドーロ＆タスクタイマー',
+          mtime:Date.now()-60000,
+          valid:true,
+          batches:[
+            {id:'FF-1',title:'25分/5分タイマーコアと日次トマト集計',objective:'localStorage 保存と 00:00 到達イベントを実装',mode:'Zero-Stop',section:'- Recommended Role: role:builder\\n- Verify: npm test'},
+            {id:'FF-2',title:'大型カウントダウン＆親指スタートボタン UI',objective:'Visual Gate 用の実機 390/1180 スクショを添付',mode:'Visual Gate',section:'- Recommended Role: role:visual-reviewer\\n- Verify: npm run build'},
+            {id:'FF-3',title:'休憩自動開始オプションとバイブ／効果音連携',objective:'Dopamine/Serotonin 設定に応じた終了通知',mode:'Zero-Stop',section:'- Recommended Role: role:builder\\n- Verify: npm test'},
+          ]
+        }],
+        archivedSpecs:[]
+      };
+      window.fetch=async(url,opts)=>{
+        const u=String(url);
+        if(/\\/api\\/specs(\\?|$)/.test(u)) return __jsonRes(ffSpecs);
+        return orig(url,opts);
+      };
+    }
+    const ref=[...document.querySelectorAll('.list-head button')].pop();
+    if(ref){ ref.click(); await __t(900); }
+    const bar=await __q('.spec-bar');
+    if(!bar) throw new Error('spec bar not found');
+    bar.click();
     const body=await __q('.sheet .sheet-body'); await __t(700);
     const batches=[...document.querySelectorAll('.spec-batch')];
     if(!batches.length) throw new Error('no batch in the launchpad');
@@ -360,6 +389,9 @@ export const SC_STATE = Object.freeze({
       const orig=window.fetch.bind(window);
       window.fetch=async(url,opts)=>{
         const u=String(url);
+        if(u.includes('/api/specs/reports')){
+          return __jsonRes({reports:[{taskId:'t_ff_done',at:Date.now()-30000,board:'focusflow',spec:'docs/SPEC-FOCUSFLOW.md',label:'FocusFlow — ミニマル・ポモドーロ＆タスクタイマー',text:'# FocusFlow 完了サマリ\\n- 4/4 バッチ完了\\n- verify: 42/42 pass'}]});
+        }
         if(u.includes('/api/telemetry/receipt')){
           const r=await orig(url,opts);
           const j=await r.clone().json().catch(()=>({}));
@@ -391,7 +423,12 @@ export const SC_STATE = Object.freeze({
         return orig(url,opts);
       };
     }
-    const btn=[...document.querySelectorAll('.report-card-btn')].find((b)=>/完了レシート|receipt/i.test(b.textContent));
+    let btn=[...document.querySelectorAll('.report-card-btn')].find((b)=>/完了レシート|receipt/i.test(b.textContent));
+    if(!btn){
+      const ref=[...document.querySelectorAll('.list-head button')].pop();
+      if(ref){ ref.click(); await __t(1000); }
+      btn=[...document.querySelectorAll('.report-card-btn')].find((b)=>/完了レシート|receipt/i.test(b.textContent));
+    }
     if(!btn) throw new Error('completion receipt button not found'); btn.click();
     const body=await __q('.sheet .sheet-body'); await __t(3000);
     if(body) body.scrollTop=0; await __t(400);

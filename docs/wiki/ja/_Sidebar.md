@@ -1,7 +1,11 @@
-**Hermes Pilot v0.3.0 — 日本語マニュアル**
+**Hermes Pilot v0.3.0 — 日本語ガイド**
 
-- [🏠 ホーム（全体像と A2B パイプライン）](Home.md)
-- [🚀 ショーケース: アイデア → プロダクト](Showcase-From-Idea-to-Product.md)
+- [🏠 ホーム（全体像と 2 モード案内）](Home.md)
+
+**ショーケース編**
+
+- [🎛 ショーケース①: コックピット編](Showcase-From-Idea-to-Product.md)
+- [✨ ショーケース②: オートパイロット編](Showcase-Autopilot-Mode.md)
 
 **マニュアル編（3 部作）**
 
@@ -13,4 +17,3 @@
 
 - [▶ インタラクティブデモ](https://hajimemanila.github.io/hermes-pilot/)
 - [README（日本語）](../../../README.ja.md)
-- [撮影台本＆ドッグフーディング検査票](../../WIKI-SHOTLIST.md)

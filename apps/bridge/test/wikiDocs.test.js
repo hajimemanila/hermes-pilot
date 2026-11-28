@@ -27,6 +27,7 @@ import {
   resolveRef,
 } from '../../../scripts/check-wiki.mjs'
 import { WIKI_SHOTS, isValidPng } from '../../../scripts/capture-wiki.mjs'
+import { transformWikiPage } from '../../../scripts/sync-github-wiki.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.resolve(HERE, '..', '..', '..')
@@ -34,8 +35,10 @@ const CHECKER = path.join(REPO_ROOT, 'scripts', 'check-wiki.mjs')
 const WIKI_DIR = path.join(REPO_ROOT, 'docs', 'wiki', 'ja')
 const ASSETS_DIR = path.join(REPO_ROOT, 'docs', 'wiki', 'assets', 'ja')
 
-/** 期待するカット名（`MN01_..._390.png` 形式）48 件。 */
+/** 期待するカット名（`MN01_..._390.png` 形式）60 件。 */
 const SHOT_NAMES = WIKI_SHOTS.flatMap((entry) => SHOT_SIZES.map((size) => `${entry.id}_${entry.slug}_${size}.png`))
+const EXPECTED_PAGES = WIKI_PAGES.length
+const EXPECTED_SHOTS = SHOT_NAMES.length
 
 /** 一時ディレクトリを作る（テストごとに独立、後始末は OS に任せる）。 */
 function tempRoot(prefix = 'hm-wiki-') {
@@ -85,17 +88,18 @@ function buildGoodWiki() {
   return root
 }
 
-// --- 1. 実リポジトリ（本物の 48 枚） -------------------------------------------
+// --- 1. 実リポジトリ（本物の 60 枚） -------------------------------------------
 
-test('48 カットすべてが docs/wiki/assets/ja に実在する有効な PNG である', () => {
-  assert.equal(SHOT_NAMES.length, 48)
+test('60 カットすべてが docs/wiki/assets/ja に実在する有効な PNG である', () => {
+  assert.equal(EXPECTED_PAGES, 7)
+  assert.equal(SHOT_NAMES.length, 60)
   const missing = SHOT_NAMES.filter((name) => !fs.existsSync(path.join(ASSETS_DIR, name)))
   assert.deepEqual(missing, [], `欠けているカット: ${missing.join(', ')}`)
   const invalid = SHOT_NAMES.filter((name) => !isValidPng(path.join(ASSETS_DIR, name)))
   assert.deepEqual(invalid, [], `壊れた PNG: ${invalid.join(', ')}`)
 })
 
-test('checkWiki は実リポジトリの ja Wiki を 6 ページ・48/48・リンク切れ 0 と判定する', async () => {
+test('checkWiki は実リポジトリの ja Wiki を 7 ページ・60/60・リンク切れ 0 と判定する', async () => {
   const report = await checkWiki({ root: REPO_ROOT, lang: 'ja' })
   assert.deepEqual(report.errors, [])
   assert.deepEqual(report.missingPages, [])
@@ -106,14 +110,14 @@ test('checkWiki は実リポジトリの ja Wiki を 6 ページ・48/48・リ�
   assert.deepEqual(report.shots.missing, [])
   assert.equal(report.ok, true)
   assert.deepEqual(report.pages.sort(), [...WIKI_PAGES].sort())
-  assert.equal(report.shots.total, 48)
-  assert.equal(report.shots.referenced, 48)
+  assert.equal(report.shots.total, EXPECTED_SHOTS)
+  assert.equal(report.shots.referenced, EXPECTED_SHOTS)
 })
 
 test('CI 用サマリ行が SPEC の契約どおりの書式で出る', async () => {
   const report = await checkWiki({ root: REPO_ROOT, lang: 'ja' })
   const line = formatSummary(report)
-  assert.match(line, /^check-wiki: OK, 6 page\(s\), 48\/48 shot\(s\) referenced, 0 broken link\(s\) \(lang=ja\)$/)
+  assert.equal(line, `check-wiki: OK, ${EXPECTED_PAGES} page(s), ${EXPECTED_SHOTS}/${EXPECTED_SHOTS} shot(s) referenced, 0 broken link(s) (lang=ja)`)
 })
 
 test('CLI `node scripts/check-wiki.mjs --lang ja` は exit 0 で OK 行を 1 行出す', () => {
@@ -121,7 +125,29 @@ test('CLI `node scripts/check-wiki.mjs --lang ja` は exit 0 で OK 行を 1 行
     cwd: REPO_ROOT,
     encoding: 'utf8',
   })
-  assert.match(stdout, /check-wiki: OK, 6 page\(s\), 48\/48 shot\(s\) referenced, 0 broken link\(s\) \(lang=ja\)/)
+  assert.ok(stdout.includes(`check-wiki: OK, ${EXPECTED_PAGES} page(s), ${EXPECTED_SHOTS}/${EXPECTED_SHOTS} shot(s) referenced, 0 broken link(s) (lang=ja)`))
+})
+
+test('一般向け Wiki ページに個人用・ドッグフーディング・撮影内部リンクが残っていない', () => {
+  const banned = ['ドッグフーディング', 'WIKI-SHOTLIST', 'SPEC-WIKI', 'recipes/README', 'akapen']
+  for (const page of WIKI_PAGES) {
+    const body = fs.readFileSync(path.join(WIKI_DIR, page), 'utf8')
+    for (const term of banned) {
+      assert.equal(body.includes(term), false, `${page} に一般向けでない語句が残っています: ${term}`)
+    }
+  }
+})
+
+test('transformWikiPage は画像・ページ間・リポジトリリンクを GitHub Wiki 形式に変換する', () => {
+  const sample = [
+    '![AP01](../assets/ja/AP01_autopilot-starter_390.png)',
+    '[詳細](Manual-A2B-Tasks-and-Review.md#1-6-テスト)',
+    '[README](../../../README.ja.md)',
+  ].join('\n')
+  const out = transformWikiPage(sample, { repo: 'hajimemanila/hermes-pilot', branch: 'main', lang: 'ja' })
+  assert.ok(out.includes('https://raw.githubusercontent.com/hajimemanila/hermes-pilot/main/docs/wiki/assets/ja/AP01_autopilot-starter_390.png'))
+  assert.ok(out.includes('[詳細](Manual-A2B-Tasks-and-Review#1-6-テスト)'))
+  assert.ok(out.includes('[README](https://github.com/hajimemanila/hermes-pilot/blob/main/README.ja.md)'))
 })
 
 // --- 2. README からの導線 -----------------------------------------------------
@@ -144,7 +170,7 @@ test('正しい一時 Wiki なら checkWiki は緑（合格側の基準点）', 
   const root = buildGoodWiki()
   const report = await checkWiki({ root, lang: 'ja' })
   assert.equal(report.ok, true, formatSummary(report))
-  assert.equal(report.shots.referenced, 48)
+  assert.equal(report.shots.referenced, EXPECTED_SHOTS)
   assert.deepEqual(report.brokenLinks, [])
 })
 
@@ -154,7 +180,7 @@ test('ページが 1 枚欠けたら missingPages で落ちる', async () => {
   const report = await checkWiki({ root, lang: 'ja' })
   assert.equal(report.ok, false)
   assert.deepEqual(report.missingPages, ['Manual-Chat-Memos-and-Terminal.md'])
-  assert.match(formatSummary(report), /^check-wiki: FAIL, 5 page\(s\)/)
+  assert.ok(formatSummary(report).startsWith(`check-wiki: FAIL, ${EXPECTED_PAGES - 1} page(s)`))
 })
 
 test('リンク切れは where（ページ:行）付きで報告される', async () => {
@@ -186,7 +212,7 @@ test('参照されないカットは unreferenced shot として 1 件ずつ挙�
   const report = await checkWiki({ root, lang: 'ja' })
   assert.equal(report.ok, false)
   assert.deepEqual(report.shots.missing, ['SC09_coherence-refactor-sheet_1180.png'])
-  assert.equal(report.shots.referenced, 47)
+  assert.equal(report.shots.referenced, EXPECTED_SHOTS - 1)
 })
 
 test('見出しの無いページ・短すぎるページも落ちる', async () => {
@@ -206,8 +232,11 @@ test('--partial は未執筆ページと未参照カットを pending として�
   assert.equal(report.ok, true, formatSummary(report))
   assert.equal(report.pages.length, 1)
   assert.equal(report.shots.referenced, 1)
-  assert.equal(report.shots.pending.length, 47)
-  assert.match(formatSummary(report), /^check-wiki: OK \(partial\), 1\/6 page\(s\), 1\/48 shot\(s\) referenced, 0 broken link\(s\), 47 pending shot\(s\), 5 pending page\(s\) \(lang=ja\)$/)
+  assert.equal(report.shots.pending.length, EXPECTED_SHOTS - 1)
+  assert.equal(
+    formatSummary(report),
+    `check-wiki: OK (partial), 1/${EXPECTED_PAGES} page(s), 1/${EXPECTED_SHOTS} shot(s) referenced, 0 broken link(s), ${EXPECTED_SHOTS - 1} pending shot(s), ${EXPECTED_PAGES - 1} pending page(s) (lang=ja)`,
+  )
 })
 
 // --- 4. 部品（パーサとパス解決） -----------------------------------------------

@@ -7,9 +7,9 @@
  *
  * Supports:
  * - `--status [--lang ja|en]`
- * - `--assert-complete [--lang ja|en]` (verifies all 48 PNGs for `<lang>` exist and have valid PNG headers)
+ * - `--assert-complete [--lang ja|en]` (verifies all 60 PNGs for `<lang>` exist and have valid PNG headers)
  * - `--update-checklist [--lang ja|en] [--dry-run]` (rewrites the `JA 390` / `JA 1180` (or `EN *`) tick boxes in `docs/WIKI-SHOTLIST.md` from the real PNG state)
- * - `--preset manual [--lang ja|en]` (captures baseline 6 tabs x 2 sizes)
+ * - `--preset manual|showcase|autopilot|all [--lang ja|en]` (captures baseline tabs, showcase, autopilot, or all shots)
  * - `--id <ID>[,<ID>...] [--lang ja|en] [--tab <tab>] [--click <selector>] [--eval <js>] [--unauth] [--theme dark|light] [--vibe dopamine|serotonin]`
  */
 
@@ -18,9 +18,10 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { AP_STATE } from './lib/wiki-autopilot.mjs'
 import { SC_STATE, SHOWCASE_SEEDS } from './lib/wiki-showcase.mjs'
 
-export { SC_STATE, SHOWCASE_SEEDS }
+export { AP_STATE, SC_STATE, SHOWCASE_SEEDS }
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const ASSETS_ROOT = path.join(ROOT, 'docs', 'wiki', 'assets')
@@ -68,6 +69,12 @@ export const WIKI_SHOTS = Object.freeze([
   { id: 'SC07', slug: 'mission-receipt', tab: 'tasks', auto: false, label: 'Showcase 7: Mission Receipt 1200x630 PNG & 280-char share' },
   { id: 'SC08', slug: 'memos-to-brainstorm', tab: 'notes', auto: false, label: 'Showcase 8: Memos idea handoff to Brainstorm sheet' },
   { id: 'SC09', slug: 'coherence-refactor-sheet', tab: 'tasks', auto: false, label: 'Showcase 9: Coherence live band & Refactor sheet' },
+  { id: 'AP01', slug: 'autopilot-starter', tab: 'tasks', auto: false, label: 'Autopilot 1: Visual Starter Stage & 1-line launcher' },
+  { id: 'AP02', slug: 'autopilot-swipe-deck', tab: 'tasks', auto: false, label: 'Autopilot 2: Option-Cycle swipe deck & visual mock' },
+  { id: 'AP03', slug: 'autopilot-gacha-remix', tab: 'tasks', auto: false, label: 'Autopilot 3: Style Gacha & Remix chips over deck' },
+  { id: 'AP04', slug: 'autopilot-live-radar', tab: 'tasks', auto: false, label: 'Autopilot 4: Live Studio & 2-worker Panoptes Radar' },
+  { id: 'AP05', slug: 'autopilot-xray-nudge', tab: 'tasks', auto: false, label: 'Autopilot 5: X-Ray preview, step drawer & Live Nudge' },
+  { id: 'AP06', slug: 'autopilot-complete-card', tab: 'tasks', auto: false, label: 'Autopilot 6: Completion card & Before/After timelapse' },
 ])
 
 export function shotPath(lang, entry, sizeKey) {
@@ -278,7 +285,7 @@ export function updateChecklist({ lang = 'ja', dryRun = false } = {}) {
   for (let i = 0; i < lines.length; i += 1) {
     if (!lines[i].startsWith('|')) continue
     const cells = lines[i].split('|')
-    const m = /\*\*(MN\d{2}|SC\d{2})\*\*/.exec(cells[1] ?? '')
+    const m = /\*\*(MN\d{2}|SC\d{2}|AP\d{2})\*\*/.exec(cells[1] ?? '')
     if (!m) continue
     const entry = WIKI_SHOTS.find((s) => s.id === m[1])
     if (!entry) continue
@@ -402,8 +409,9 @@ async function runCapture(args) {
   const targets = []
   if (args.preset === 'manual') targets.push(...WIKI_SHOTS.filter((s) => s.auto))
   else if (args.preset === 'showcase') targets.push(...WIKI_SHOTS.filter((s) => Boolean(SC_STATE[s.id])))
+  else if (args.preset === 'autopilot') targets.push(...WIKI_SHOTS.filter((s) => Boolean(AP_STATE[s.id])))
   else if (args.preset === 'all') targets.push(...WIKI_SHOTS)
-  else if (args.preset) throw new Error(`Unknown --preset "${args.preset}" (supported: manual, showcase, all)`)
+  else if (args.preset) throw new Error(`Unknown --preset "${args.preset}" (supported: manual, showcase, autopilot, all)`)
 
   for (const id of args.ids) {
     const found = WIKI_SHOTS.find((s) => s.id === id)
@@ -514,7 +522,8 @@ async function runCapture(args) {
             await sleep(700)
           }
         }
-        const entryEval = !args.evalJs && SC_STATE[entry.id] ? SC_STATE[entry.id](args.lang) : ''
+        const recipeFn = SC_STATE[entry.id] || AP_STATE[entry.id]
+        const entryEval = !args.evalJs && recipeFn ? recipeFn(args.lang) : ''
         const shotEval = args.evalJs || entryEval
         if (shotEval) {
           // 1 回目はレンダリング途中で空振りすることがある（実測: 1180 の 1 枚目）。

@@ -1,6 +1,6 @@
-# Hermes Pilot v0.2.4 — Wiki 撮影台本 兼 ドッグフーディング・チェックリスト
+# Hermes Pilot v0.3.0 — Wiki スクリーンショット撮影台本
 
-このドキュメントは、**① `v0.2.4` の実機ドッグフーディング検査票**、**② GitHub Wiki（Manual編・Showcase編）の網羅的スクリーンショット撮影台本**、および **③ 次期 `v0.3.0` Autopilot Mode の初期レシピ原石の収穫シート** を兼ねています。
+このドキュメントは、GitHub Wiki（Manual編・Showcase編①②）の全 **30 ID × 2 サイズ（計 60 枚）** の撮影台本および自動チェックリスト進捗表です。
 
 ---
 
@@ -93,12 +93,26 @@ docs/wiki/assets/
 
 ---
 
-## 5. Wiki ページ構成案（スクショ収集完了後に組版する構成）
+## 5. Showcase 編②：オートパイロットモード一気通貫（AP01〜AP06）
 
-スクショが揃い次第、以下の構成で日本語版 Wiki を作成し、その後英語版へ展開します。
+> 💡 `node scripts/capture-wiki.mjs --preset autopilot --lang ja` で FocusFlow の 4 幕オートパイロット全 12 カットを一括自動撮影できます。
 
-1. **`Home.md`** — Hermes Pilot の全体像（30秒でわかる A2B パイプライン図解 ＋ Interactive Demo リンク ＋ 目次）
-2. **`Showcase-From-Idea-to-Product.md`** — 【ショーケース】1行のアイデアからプロトタイプ完成・赤入れ・機能追加・リファクタリングまで（`SC01`〜`SC09` をスマホ＆タブレット並列で解説）
-3. **`Manual-Installation-and-Setup.md`** — インストール、ペアリング、`Optimise this Hermes`（抽象ロール委譲設定）、PWA 診断（`MN01`, `MN02`, `MN14`, `MN15`）
-4. **`Manual-A2B-Tasks-and-Review.md`** — Tasks タブ、Spec Launchpad、Quick Review 1タップ承認、Annotation 赤入れ＆Before/After 検収（`MN03`〜`MN06`）
-5. **`Manual-Chat-Memos-and-Terminal.md`** — Chat（ストリーミング・バブルメニュー・セッション管理）、Memos（アイデア＆レポートInbox）、Terminal（実PTY）、Theme & Vibe 設定（`MN07`〜`MN13`）
+| ID | ファイル名ベース (`<ID>_<slug>`) | タブ | フェーズ | 確認項目 | JA `390` | JA `1180` | EN `390` | EN `1180` |
+| :--- | :--- | :--- | :--- | :--- | :---: | :---: | :---: | :---: |
+| **AP01** | `AP01_autopilot-starter` | Autopilot | **Act 1. スターター** | 4 レシピカード・1 行入力ランチャー・プロジェクトバーが崩れないか | [x] | [x] | [ ] | [ ] |
+| **AP02** | `AP02_autopilot-swipe-deck` | Autopilot | **Act 2. スワイプデッキ** | Option-Cycle（1 選択肢 = 1 カード）・ビジュアルモック・4 方向バーが揃うか | [x] | [x] | [ ] | [ ] |
+| **AP03** | `AP03_autopilot-gacha-remix` | Autopilot | **Act 2. スタイルガチャ** | 🎲 スタイルガチャ＆リミックスチップがカード上に違和感なく展開されるか | [x] | [x] | [ ] | [ ] |
+| **AP04** | `AP04_autopilot-live-radar` | Autopilot | **Act 3. ライブ軌道レーダー** | 2 並列ワーカー（W1/W2）色分けパルス・中央アイリス・実況ティッカーが動くか | [x] | [x] | [ ] | [ ] |
+| **AP05** | `AP05_autopilot-xray-nudge` | Autopilot | **Act 3. X-Ray & Live Nudge** | X-Ray 差分バー・ステップ振り返りドロワー・YOU 象限 Nudge ピンが見えるか | [x] | [x] | [ ] | [ ] |
+| **AP06** | `AP06_autopilot-complete-card` | Autopilot | **Act 4. 完了カード** | Before/After タイムラプス・成果物リンク・起動コマンド・レシート導線が揃うか | [x] | [x] | [ ] | [ ] |
+
+---
+
+## 6. Wiki ページ構成（v0.3.0）
+
+1. **`Home.md`** — Hermes Pilot の全体像（A2B + Autopilot 2 モード案内 ＋ Interactive Demo リンク ＋ 目次）
+2. **`Showcase-From-Idea-to-Product.md`** — ショーケース①：コックピット編（`SC01`〜`SC09`）
+3. **`Showcase-Autopilot-Mode.md`** — ショーケース②：オートパイロット編（`AP01`〜`AP06`）
+4. **`Manual-Installation-and-Setup.md`** — インストール、ペアリング、環境最適化、PWA 診断（`MN01`, `MN02`, `MN14`, `MN15`）
+5. **`Manual-A2B-Tasks-and-Review.md`** — Tasks タブ、Spec Launchpad、Quick Review、Annotation 赤入れ＆検収（`MN03`〜`MN06`）
+6. **`Manual-Chat-Memos-and-Terminal.md`** — Chat、Memos、Terminal、Theme & Vibe 設定（`MN07`〜`MN13`）
